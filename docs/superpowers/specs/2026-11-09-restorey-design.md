@@ -1,6 +1,6 @@
 # Restorey — design
 
-Date: 9 November 2026 · Status: approved by the owner on 9 Nov 2026, except the (review 3) items, which await the owner's decision · Author: Jayden Kerr (with Claude)
+Date: 9 November 2026 · Status: approved by the owner on 9 Nov 2026, including all (review 3) and (review 4) items · Author: Jayden Kerr (with Claude)
 
 Restorey is a free, open-source macOS app that puts an Arq/Backblaze-quality front end on
 [restic](https://restic.net). In the owner's words: "an open source version of Arq based on restic."
@@ -10,7 +10,7 @@ Provenance of each decision is marked:
 - **(decided)** — the owner said this during brainstorming.
 - **(my call)** — Claude's default, which the owner hasn't objected to. The builder may revisit it, but should flag the change.
 - **(builder)** — deliberately left to whoever plans and builds it.
-- **(review 3)** — added in the third review pass on 9 Nov 2026 after checking restic 0.19.1's documentation and source. These are my calls unless marked otherwise; the owner has not yet seen them.
+- **(review 3)** — added in the third review pass on 9 Nov 2026 after checking restic 0.19.1's documentation and source. The owner approved all of them on 9 Nov 2026.
 - **(review 4)** — five architectural gaps raised in the fourth review pass on 9 Nov 2026 and accepted by the owner: agent notification identity (§8), how backend credentials reach restic (§7), agent liveness without a check-in URL (§6.2), agent restart on manual updates (§8), and where the recovery kit is saved (§7).
 
 ---
