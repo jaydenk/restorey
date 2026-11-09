@@ -65,6 +65,10 @@ final class AgentService: NSObject, AgentXPC, NSXPCListenerDelegate, @unchecked 
             return await runRestic(["init", "--json"], source: source, label: "initRepo")
         case "backup":
             let paths = (request["paths"] as? [String]) ?? Self.probePaths
+            // Absolute paths only, and "--" before them, so a path can never be read as a flag.
+            guard !paths.isEmpty, paths.allSatisfy({ $0.hasPrefix("/") }) else {
+                return ["error": "paths must be absolute"]
+            }
             return await backup(paths: paths, source: source, label: "backup")
         case "probeFDA":
             return await probeFDA()
@@ -131,7 +135,7 @@ final class AgentService: NSObject, AgentXPC, NSXPCListenerDelegate, @unchecked 
     }
 
     func backup(paths: [String], source: ResticRunner.PasswordSource, label: String) async -> [String: Any] {
-        await runRestic(["backup", "--json", "--host", "restorey-spike", "--tag", "restorey-spike"] + paths,
+        await runRestic(["backup", "--json", "--host", "restorey-spike", "--tag", "restorey-spike", "--"] + paths,
                         source: source, label: label)
     }
 

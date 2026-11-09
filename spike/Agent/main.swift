@@ -19,11 +19,14 @@ if arguments.count >= 2, arguments[1] == "print-password" {
 // Agent mode: launchd starts this via the embedded LaunchAgent plist.
 let service = AgentService()
 let listener = NSXPCListener(machServiceName: SpikeIDs.agentLabel)
-if let team = Bundle.main.object(forInfoDictionaryKey: "SpikeTeamID") as? String, !team.isEmpty {
-    // Only the spike app (same team) may connect.
-    listener.setConnectionCodeSigningRequirement(
-        "identifier \"\(SpikeIDs.appBundleID)\" and anchor apple generic and certificate leaf[subject.OU] = \"\(team)\"")
+// Only the spike app (same team) may connect. Fail closed: no team ID, no listener.
+guard let team = Bundle.main.object(forInfoDictionaryKey: "SpikeTeamID") as? String,
+      team.range(of: "^[A-Z0-9]{10}$", options: .regularExpression) != nil else {
+    agentLog.fault("SpikeTeamID missing or malformed; refusing to start the XPC listener")
+    exit(1)
 }
+listener.setConnectionCodeSigningRequirement(
+    "identifier \"\(SpikeIDs.appBundleID)\" and anchor apple generic and certificate leaf[subject.OU] = \"\(team)\"")
 listener.delegate = service
 listener.resume()
 agentLog.notice("agent started, pid \(getpid()), build \(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?")")

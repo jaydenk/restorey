@@ -34,7 +34,15 @@ final class ProbeModel {
     var isInApplications: Bool { bundlePath.hasPrefix("/Applications/") }
 
     func append(_ title: String, _ text: String) {
-        log.insert("[\(Timestamp.now())] \(title)\n\(text)", at: 0)
+        let entry = "[\(Timestamp.now())] \(title)\n\(text)"
+        log.insert(entry, at: 0)
+        // Mirrored to a file so results can be read without screen scraping. No secrets are logged.
+        let file = SpikeIDs.cacheDir.appendingPathComponent("app-log.txt")
+        try? FileManager.default.createDirectory(at: SpikeIDs.cacheDir, withIntermediateDirectories: true)
+        let data = Data((entry + "\n\n").utf8)
+        if let handle = try? FileHandle(forWritingTo: file) {
+            handle.seekToEndOfFile(); handle.write(data); try? handle.close()
+        } else { try? data.write(to: file) }
     }
 
     func onLaunch() async {
