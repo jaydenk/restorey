@@ -26,6 +26,7 @@ because the App Store sandbox rules out the Full Disk Access a backup tool needs
 
 - [Design](docs/superpowers/specs/2026-11-09-restorey-design.md)
 - [Menu bar and restore window mockup](docs/mockups/menubar-and-restore.html)
+- [Platform spike plan](docs/superpowers/plans/2026-11-10-platform-spike.md)
 
 ## Restoring without Restorey
 
