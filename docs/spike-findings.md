@@ -169,4 +169,28 @@ The end-to-end `credential_process` run against a local S3 server. MinIO's commu
 
 ## Phase B — Developer ID, notarisation, real quarantine
 
-_Pending (Task 8)._
+### Build (Task 8), 9 Nov 2026 23:46–23:48 UTC (10 Nov 10:16–10:18)
+
+- `spike/scripts/release.sh`, adapted from scrap's release script: archive, `-exportArchive` with `method=developer-id` and `destination=upload`, poll `-exportNotarizedApp`. Notarised and stapled. `spctl`: `accepted, source=Notarized Developer ID, origin=Developer ID Application: Jayden Kerr (X72LEXP4DY)`.
+- **The export re-signed every piece of nested code with Developer ID and a secure timestamp:** the app, the agent app, and `Contents/Helpers/restic`. restic doesn't need a manual re-sign step. `get-task-allow` is gone. Xcode created explicit profiles, "Mac Team Direct Provisioning Profile: com.jaydenkerr.restorey.spike" and "…spike.agent", which both carry the keychain group.
+- **The Developer ID designated requirement pins the team, not a certificate:** `anchor apple generic and identifier "…" and (certificate leaf[field.1.2.840.113635.100.6.1.9] or certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] = X72LEXP4DY)`. This is what should let grants survive certificate renewal.
+
+### A copy run from the DMG breaks the installed agent (10 Nov 2026 23:48:52 UTC) — **anti-goal 1**
+
+With development-signed 0.0.3 installed in /Applications and its agent running, the notarised 0.1.0 app was opened **straight from the mounted, quarantined DMG**:
+
+1. It ran **translocated**, from `/private/var/folders/…/AppTranslocation/<uuid>/d/RestoreySpike.app`. The app detected this (`translocated=true`) and **refused to register** as designed.
+2. **But Background Task Management re-pointed the existing registration at that copy anyway.** `backgroundtaskmanagementd: _bundleURLForAuditToken: updating item … name=RestoreySpike` fired just from the app launching and reading `SMAppService.status`. No `register()` call was made.
+3. The copy's version handshake (0.0.3 ≠ 0.1.0) asked the installed agent to exit. launchd then relaunched the agent **from `/Volumes/Restorey Spike/…/RestoreySpikeAgent`**, the DMG copy, and AMFI killed it: `Launch Constraint Violation (enforcing) … (Constraint not matched)`. smd had stored a launch constraint (an LWCR) at registration that matches the *development* signature.
+4. launchd: "removing service since it exited with consistent failure". After that: `state = spawn scheduled`, `last exit code = 78: EX_CONFIG`, `needs LWCR update`. **No agent runs, so no backups run**, until something re-registers.
+
+**Consequences for v0.1:**
+- The version handshake, and anything else that can restart or change the agent, must run **only** when the app is non-translocated and in /Applications. That's the same gate as `register()`. A copy run from elsewhere must do nothing except show "Move Restorey to Applications".
+- **Merely launching** a copy from elsewhere can re-point the BTM registration. So every launch of the real /Applications copy must check that the registration points at itself and that the agent is actually running (the heartbeat in spec §6.2). If it isn't, re-register: `unregister()` then `register()`. The menu bar app's heartbeat would also catch this, with "Background agent isn't running".
+- Moving between signing identities (development to Developer ID) invalidates the launch constraint. Only re-registering fixes that. Phase B still has to show whether Developer ID 0.1.0 → 0.1.1 keeps the constraint satisfied.
+
+### Translocation from /Applications (simulation limits)
+
+- A copy in /Applications that was given `com.apple.quarantine` with `xattr` was **still translocated** when opened.
+- So was a copy made by **Finder's AppleScript `duplicate`** from the quarantined DMG: the flag `0081;…` was kept and the app was translocated.
+- The real case, the user dragging in Finder, is done by the owner below.
