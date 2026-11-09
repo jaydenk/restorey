@@ -64,7 +64,13 @@ final class AgentService: NSObject, AgentXPC, NSXPCListenerDelegate, @unchecked 
         case "initRepo":
             return await runRestic(["init", "--json"], source: source, label: "initRepo")
         case "backup":
-            let paths = (request["paths"] as? [String]) ?? Self.probePaths
+            guard let explicit = request["paths"] as? [String] else {
+                // Probe paths are the owner's private folders: dry-run only (opens the repo with the
+                // password, reads every file, writes nothing).
+                return await backup(paths: Self.probePaths.filter { FileManager.default.fileExists(atPath: $0) },
+                                    source: source, label: "backup", dryRun: true)
+            }
+            let paths = explicit
             // Absolute paths only, and "--" before them, so a path can never be read as a flag.
             guard !paths.isEmpty, paths.allSatisfy({ $0.hasPrefix("/") }) else {
                 return ["error": "paths must be absolute"]
@@ -134,8 +140,9 @@ final class AgentService: NSObject, AgentXPC, NSXPCListenerDelegate, @unchecked 
         }
     }
 
-    func backup(paths: [String], source: ResticRunner.PasswordSource, label: String) async -> [String: Any] {
-        await runRestic(["backup", "--json", "--host", "restorey-spike", "--tag", "restorey-spike", "--"] + paths,
+    func backup(paths: [String], source: ResticRunner.PasswordSource, label: String, dryRun: Bool = false) async -> [String: Any] {
+        await runRestic(["backup", "--json"] + (dryRun ? ["--dry-run"] : [])
+                        + ["--host", "restorey-spike", "--tag", "restorey-spike", "--"] + paths,
                         source: source, label: label)
     }
 
@@ -165,7 +172,7 @@ final class AgentService: NSObject, AgentXPC, NSXPCListenerDelegate, @unchecked 
             try? await Task.sleep(for: .seconds(seconds))
             let keychain = SpikeKeychain.read(account: SpikeIDs.keychainAccount)
             var dict = await backup(paths: Self.probePaths.filter { FileManager.default.fileExists(atPath: $0) },
-                                    source: source, label: "scheduled")
+                                    source: source, label: "scheduled", dryRun: true)
             dict["keychainPreRead"] = SpikeKeychain.describe(keychain.1)
             record(dict)
         }

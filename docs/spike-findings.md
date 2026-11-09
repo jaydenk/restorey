@@ -120,7 +120,18 @@ The end-to-end `credential_process` run against a local S3 server. MinIO's commu
 
 ## H6 — Manual N→N+1 update
 
-_Pending (Tasks 7 and 8)._
+### Phase A (Apple Development, 0.0.1 → 0.0.2), 9 Nov 2026 22:52–22:56 UTC (10 Nov 09:22–09:26)
+
+**Verdict: confirmed.** The version handshake and the "finish the run, then exit" restart work. The grants survive.
+
+1. 22:52:30: a keychain-backed backup (dry run, about 50 s) was started on 0.0.1 (agent pid 41712, restic pid 45074).
+2. 22:52:35: `spike/scripts/install.sh` quit the app and replaced `/Applications/RestoreySpike.app` with 0.0.2, the same as dragging from a DMG. **The old agent kept running the old, now deleted binary** (`lsof` txt entries), and its restic kept running.
+3. 22:52:38: 0.0.2 launched. The handshake saw `agent build 0.0.1 ≠ app build 0.0.2` and sent `prepareForRestart`.
+4. 22:53:20: the in-flight backup **finished normally (exit 0)**. The agent then replied `exiting: true` and called `exit(0)`.
+5. 22:53:22: launchd's `KeepAlive` started the new agent (pid 45266) from the new binary, and the handshake reported `build 0.0.2 — MATCH`. The app-to-agent gap was **under 2 s**.
+6. With **no new grants**, on 0.0.2: the FDA probe passed (all `ok`, restic exit 0, 0 permission errors), the keychain-backed backup passed (exit 0, no prompt), and Login Items still showed `enabled, allowed, notified` (generation 16).
+- Both builds' designated requirements are identical (identifier plus the same Apple Development certificate clause), which is why the grants carried over. This doesn't yet show what happens when the certificate changes. That's phase B.
+- **Consequence for v0.1:** ship this exactly as built. Treat the handshake as part of every app launch, and give the drain a generous timeout: it waited 42 s here for a real run and should allow for a multi-hour first backup. While waiting, the UI must show something like "Finishing the current backup before updating the agent".
 
 ## Phase B — Developer ID, notarisation, real quarantine
 
