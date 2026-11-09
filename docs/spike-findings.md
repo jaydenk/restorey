@@ -26,6 +26,18 @@ restic: identifier "com.jaydenkerr.restorey.spike.restic" and … (same certific
 
 ## H1 — One Full Disk Access grant covers the agent and restic
 
+**Verdict: confirmed (phase A, Apple Development signing).** One FDA grant to `RestoreySpike.app` covers the LaunchAgent and the restic it launches. Nothing else appears in the FDA list and nothing else needs granting.
+
+### With the grant, 9 Nov 2026 22:41 UTC (10 Nov 09:11)
+
+- The owner added only `/Applications/RestoreySpike.app` under Privacy & Security → Full Disk Access. It showed as "RestoreySpike" with its icon, and macOS added nothing else.
+- **The grant reached the already-running agent** (pid 35286, started before the grant) **with no restart.**
+- In the agent: Safari, Mail and Messages all `ok`.
+- restic as the agent's child: **exit code 0, 0 permission errors**, 128,922 files and 20.3 GB processed in 84 s.
+- TCC log (`log stream`, subsystem `com.apple.TCC`): `Handling access request to kTCCServiceSystemPolicyAllFiles, from Sub:{com.jaydenkerr.restorey.spike}Resp:{TCCDProcess: identifier=com.jaydenkerr.restorey.spike.agent, pid=35286 …}`. The **subject is the app's bundle ID** and the agent is the responsible process. restic produced no separate request. This matches Apple DTS's description: an `SMAppService`-installed agent makes the app the responsible code, and so do its children.
+- **Safety note for the probe itself:** a real backup of those folders copied about 10 GB of the owner's mail and messages into the local test repository. The repository and its password file were deleted straight afterwards, and later FDA probes use `restic backup --dry-run`, which still reads every file but writes nothing. The real app's onboarding FDA check should probe the same way, by listing a directory, never by backing up the user's mail.
+- **Unverified in phase A:** the fallback path (§12.1 "guided two-item grant") wasn't needed, so it wasn't exercised.
+
 ### Negative control (no grant), 9 Nov 2026 22:35 UTC (10 Nov 09:05)
 
 - Triggered over XPC from the app, so the agent runs under launchd. The terminal used for inspection has no FDA itself: it can't open `~/Library/Application Support/com.apple.TCC/TCC.db`.
@@ -51,6 +63,8 @@ _Pending (Task 4)._
   - A following exclusive `restic check` **failed at once with exit code 11**: "repository is already locked by PID 33485". So taking an exclusive lock doesn't skip stale locks.
   - A plain `restic unlock` (no `--remove-all`) removed it, and `check` then passed. restic 0.19.1 `internal/restic/lock.go` `Stale()` counts a lock as stale if it is more than 30 min old (`StaleLockTimeout`), or if it was created on **this host** and its pid can't be reached.
   - **Consequence for v0.1:** run a plain `restic unlock` before maintenance commands, and after any agent restart. It only removes locks restic itself judges stale, so another live client's lock is never touched, which meets spec §5.6 and §12.5. Never use `--remove-all`.
+- **The user switches the agent off in Login Items (review focus 4)**, 22:37:41–22:38:05 UTC. The owner reports the entry shows as "RestoreySpike" with its icon. Switching it off made launchd **remove the job and stop the agent** ("service inactive … removing service"). The app's heartbeat then failed ("Could not find job with label …"). Switching it on re-submitted the job ("Setting service … to enabled (initiated by smd)") and launchd started a new agent within 0.2 s. **Consequence:** the menu bar app's heartbeat is what catches this (spec §6.2), because nothing else does. Not captured: the exact `SMAppService.Status` value while it was off. `sfltool dumpbtm` hung, and polling it from a script is not usable.
+- **Background Task Management stores a SHA-256 of the agent executable** (`BTMConfigSHA256Checksum` in `backgroundtaskmanagementd` logs). Task 7 checks whether a changed binary after an update triggers re-approval.
   - **Caveat:** restic compares `os.Hostname()`, which on this Mac is the network-dependent `pepper.home.kerr.host`. After a network change, the Mac's own crashed-run locks look foreign until they are 30 minutes old.
 
 ## H4 — How backend credentials reach restic

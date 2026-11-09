@@ -152,7 +152,10 @@ final class AgentService: NSObject, AgentXPC, NSXPCListenerDelegate, @unchecked 
             }
         }
         let existing = Self.probePaths.filter { fm.fileExists(atPath: $0) }
-        let restic = await backup(paths: existing, source: .env, label: "probeFDA-restic")
+        // --dry-run still reads and chunks every file (so TCC is exercised) but writes nothing:
+        // a real backup of these folders put ~10 GB of the owner's mail into the test repo.
+        let restic = await runRestic(["backup", "--json", "--dry-run", "--host", "restorey-spike", "--"] + existing,
+                                     source: .env, label: "probeFDA-restic")
         return ["inAgent": inAgent, "restic": restic, "agentPid": getpid()]
     }
 
