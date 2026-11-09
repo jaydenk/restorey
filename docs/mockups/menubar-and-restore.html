@@ -1,0 +1,102 @@
+<h2>First pass: menu bar + restore window</h2>
+<p class="subtitle">A rough layout to react to — what's wrong, missing, or unnecessary? (Not final styling.)</p>
+
+<style>
+  .mb { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; font-size: 13px; }
+  .menu { width: 290px; background: rgba(246,246,246,.97); color:#1d1d1f; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.25); padding: 6px 0; border: 1px solid rgba(0,0,0,.12); }
+  .menu .row { padding: 4px 14px; }
+  .menu .sep { height:1px; background: rgba(0,0,0,.1); margin: 6px 0; }
+  .menu .item { padding: 4px 14px; border-radius: 5px; margin: 0 5px; }
+  .menu .item:hover { background:#0a64d8; color:#fff; }
+  .muted { color:#6e6e73; font-size:12px; }
+  .bar { height:6px; background:#ddd; border-radius:3px; overflow:hidden; margin:6px 0 4px; }
+  .bar > div { height:100%; background:#0a84ff; width:42%; }
+  .menubar-strip { background: #e9e9ec; color:#1d1d1f; padding: 3px 10px; border-radius: 6px 6px 0 0; font-size:12px; display:flex; justify-content:flex-end; gap:14px; width: 290px; box-sizing: border-box; }
+  .icon-on { font-weight:600; }
+  .tm { display:flex; gap:0; background:#1b1b1f; border-radius:12px; overflow:hidden; color:#f5f5f7; height: 360px; }
+  .tm .finder { flex:1; display:flex; flex-direction:column; background:#2a2a2e; margin:18px 0 18px 18px; border-radius:8px; overflow:hidden; }
+  .tm .toolbar { padding:8px 12px; background:#333338; font-size:12px; display:flex; justify-content:space-between; }
+  .tm .cols { display:flex; flex:1; font-size:12px; }
+  .tm .col { flex:1; border-right:1px solid #3a3a40; padding:6px 0; }
+  .tm .col div { padding:3px 10px; }
+  .tm .col .sel { background:#0a64d8; }
+  .tm .col .dim { color:#8e8e93; }
+  .tm .footer { padding:10px 12px; display:flex; justify-content:space-between; align-items:center; background:#333338; font-size:12px; }
+  .tm .btn { background:#0a84ff; color:#fff; padding:4px 12px; border-radius:6px; }
+  .tm .btn2 { background:#4a4a50; color:#fff; padding:4px 12px; border-radius:6px; margin-right:6px; }
+  .tm .timeline { width:120px; padding:18px 10px; display:flex; flex-direction:column; justify-content:space-between; align-items:flex-end; font-size:11px; color:#8e8e93; }
+  .tm .timeline .now { color:#f5f5f7; font-weight:600; }
+  .tm .timeline .cur { color:#0a84ff; font-weight:700; }
+  .tick { display:flex; align-items:center; gap:6px; }
+  .tick span.t { display:inline-block; width:14px; height:2px; background:#5a5a60; }
+  .tick.cur span.t { background:#0a84ff; width:22px; }
+</style>
+
+<div class="split mb">
+  <div class="mockup">
+    <div class="mockup-header">Menu bar — idle</div>
+    <div class="mockup-body">
+      <div class="menubar-strip"><span>🔋</span><span class="icon-on">⟲ ✓</span><span>Mon 10:42</span></div>
+      <div class="menu">
+        <div class="row"><b>Up to date</b><br><span class="muted">Last backup: Today, 10:00 · 412 MB uploaded</span></div>
+        <div class="row muted">Next backup: Today, 11:00</div>
+        <div class="row muted">Destination: B2 · pepper-backup · 486 GB</div>
+        <div class="sep"></div>
+        <div class="item">Back Up Now</div>
+        <div class="item">Restore Files…</div>
+        <div class="sep"></div>
+        <div class="item">Settings…</div>
+        <div class="item">Quit</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">Menu bar — backup in progress</div>
+    <div class="mockup-body">
+      <div class="menubar-strip"><span>🔋</span><span class="icon-on">⟲ ↑</span><span>Mon 11:00</span></div>
+      <div class="menu">
+        <div class="row"><b>Backing up…</b>
+          <div class="bar"><div></div></div>
+          <span class="muted">1.2 GB of 2.9 GB · 3,410 files left · ~6 min</span><br>
+          <span class="muted">Uploading at 18 MB/s</span>
+        </div>
+        <div class="row muted">Last backup: Today, 10:00</div>
+        <div class="sep"></div>
+        <div class="item">Pause Backup</div>
+        <div class="item">Restore Files…</div>
+        <div class="sep"></div>
+        <div class="item">Settings…</div>
+        <div class="item">Quit</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup mb" style="margin-top:20px">
+  <div class="mockup-header">Restore window — Time Machine style (folder columns + timeline on the right)</div>
+  <div class="mockup-body">
+    <div class="tm">
+      <div class="finder">
+        <div class="toolbar"><span>◀ ▶ &nbsp; Documents › Development › kitty</span><span>🔍 Search this snapshot</span></div>
+        <div class="cols">
+          <div class="col"><div>Desktop</div><div class="sel">Documents</div><div>Downloads</div><div>Music</div><div>Pictures</div></div>
+          <div class="col"><div>Admin</div><div class="sel">Development</div><div>Receipts</div><div>Tax</div></div>
+          <div class="col"><div>AGENT</div><div class="sel">kitty</div><div>parcelTracker</div><div class="dim">old-kitty (deleted 3 Nov)</div></div>
+          <div class="col"><div>README.md</div><div class="sel">budget.sqlite</div><div>notes.md</div></div>
+        </div>
+        <div class="footer"><span>Snapshot: <b>Sat 7 Nov 2026, 15:00</b> · budget.sqlite — 4.1 MB</span><span><span class="btn2">Cancel</span><span class="btn">Restore to Downloads</span></span></div>
+      </div>
+      <div class="timeline">
+        <div class="tick now">Now <span class="t"></span></div>
+        <div class="tick">Today 10:00 <span class="t"></span></div>
+        <div class="tick">Yesterday <span class="t"></span></div>
+        <div class="tick cur">Sat 7 Nov 15:00 <span class="t"></span></div>
+        <div class="tick">Thu 5 Nov <span class="t"></span></div>
+        <div class="tick">October <span class="t"></span></div>
+        <div class="tick">September <span class="t"></span></div>
+        <div class="tick">2025 <span class="t"></span></div>
+      </div>
+    </div>
+  </div>
+</div>
