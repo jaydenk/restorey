@@ -92,7 +92,31 @@ Recommendation: option 2 in v0.1, plus the README statement from option 1. Optio
 
 ## H4 — How backend credentials reach restic
 
-_Pending (Task 6)._
+**Verdict: environment variables are readable by other same-user processes (confirmed). A better route exists for S3, and so for B2 through its S3 API (confirmed from source, not run end-to-end).**
+
+### Child environments are not private (10 Nov 2026 UTC 22:58 (09:28))
+
+The bundled, hardened-runtime restic was started with `SPIKE_FAKE_SECRET=…` in its environment. A separate process running as the same user then read that variable two ways: with `ps -E -ww -p <pid>`, and with `sysctl(CTL_KERN, KERN_PROCARGS2, pid)` (rc 0, secret present). `launchctl procinfo` needs root and isn't needed. So **any backend key passed as an environment variable is readable by any same-user process for as long as restic runs**, which matches spec §7's caution. The test's parent was a shell, not the agent. The check is based on uid, so the parent shouldn't matter.
+
+### What restic 0.19.1 accepts (source, with file and line)
+
+- **S3** (`internal/backend/s3/s3.go:103–132`): `credentials.NewChainCredentials` over `Static` (test only), `EnvAWS`, `EnvMinio`, `FileAWSCredentials`, `FileMinioClient` and `IAM`, in that order. `EnvAWS` comes first, so any `AWS_*` variables in the child environment win.
+- **`FileAWSCredentials`** (minio-go **v7.1.0**, the version restic pins, `pkg/credentials/file_aws_credentials.go:74–140`) honours `AWS_SHARED_CREDENTIALS_FILE`, `AWS_PROFILE`, and **`credential_process`**. The process is run with `exec.Command` and must print `{"AccessKeyId","SecretAccessKey","SessionToken"?,"Expiration"?}`. Two constraints:
+  - the line is split with `strings.Fields`, so **no quoting is possible and the helper's path must not contain spaces**
+  - it needs at least two arguments, e.g. `<helper> s3-credentials --plan <id>`
+- **B2 native** (`internal/backend/b2/config.go:90–93`, `b2.go:63–78`): `B2_ACCOUNT_ID` and `B2_ACCOUNT_KEY` from the environment only. Nothing else.
+- **restic's own docs** (`doc/030_preparing_a_new_repo.rst:458–463`): "the recommended way to utilize Backblaze B2 is by using its S3-compatible API".
+
+### Recommendation for v0.1
+
+- **S3 and B2:** use restic's S3 backend, so B2 goes through its S3-compatible endpoint, as restic recommends. Pass no `AWS_*` variables. Write a per-plan shared-credentials file in Restorey's Application Support (mode 0600) that holds **only** `[restorey-<plan id>] credential_process = <agent executable> s3-credentials --plan <id>`, and set `AWS_SHARED_CREDENTIALS_FILE` and `AWS_PROFILE` in restic's environment. The secret then never appears in an environment variable or a file. It reaches restic through a pipe, from the same keychain-backed helper as the repository password, with the same confused-deputy caveat (H2).
+- The real app's bundle path must contain **no spaces**: `/Applications/Restorey.app/Contents/Helpers/RestoreyAgent.app/Contents/MacOS/RestoreyAgent` is fine. The helper should check its own path at startup and refuse to run otherwise.
+- **Other backends** (raw repository string plus variables, spec §5.3): child environment only, and the README says plainly that the environment is readable by other processes running as the user while a run is in progress.
+- README wording (spec §7): "Repository passwords and S3/B2 keys are read from your Keychain by Restorey's background agent and handed to restic through a pipe. They are never written to disk or put in environment variables. Credentials for other backends are passed to restic as environment variables while it runs; other programs running as you can read those."
+
+### Not done
+
+The end-to-end `credential_process` run against a local S3 server. MinIO's community images are no longer published, and auto mode blocked running `moto` from PyPI. **To do in v0.1:** check it against the owner's real B2 bucket through its S3 endpoint, with an unset `AWS_*` environment as the negative control. Without credentials restic should fail, because `s3.go:146` errors when no credentials are found.
 
 ## H6 — Manual N→N+1 update
 
