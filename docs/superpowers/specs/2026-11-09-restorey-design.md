@@ -354,7 +354,7 @@ A failure of any check is an alert-worthy event, with the same severity as a fai
   - Homebrew cask `restorey`.
   - In-app updates via Sparkle with EdDSA-signed appcast.
   - Builds come from CI, not a laptop (owner rule).
-- **CI:** macOS build and test on the owner's build Mac "birdseye" via `remote-ci`. Unit tests run on every push; signing and notarisation run on tags.
+- **CI:** macOS build and test. Unit tests run on every push; signing and notarisation run on tags. (Corrected 10 Nov 2026: not on birdseye, which the owner keeps for iOS work. The CI host is chosen in the v0.1 plan.)
 - **Localisation:** Australian English is the development language (owner rule). Other localisations are welcome later.
 - **Docs:** a README with install, first-run, an FDA explanation, and a "how to restore without Restorey" section. That section is the plain restic commands, because a backup tool's users must be able to recover if the tool disappears.
 
@@ -437,7 +437,7 @@ An early release before the full feature set is fine, as long as it follows "goo
 
 **Methodology (my call, in line with the owner's standing rules):**
 - test-driven development
-- CI from the first commit (build and test on birdseye via `remote-ci`)
+- CI from the first commit (host chosen in the v0.1 plan; not birdseye)
 - signed and notarised builds from the first release, because Full Disk Access depends on a stable signature
 - semantic versioning, with `0.x` pre-releases on GitHub Releases
 - a changelog

@@ -17,7 +17,7 @@ These facts shape the tasks. Check them again only if a probe contradicts them.
 - **TCC responsibility.** Apple DTS ([forum 756510](https://developer.apple.com/forums/thread/756510)) says this about agents: "If the daemon or agent was installed by `SMAppService`, that makes the app the responsible code." For child processes it says: "Spawned as a child process … by an app — The system treats the app as the responsible code." DTS adds that the algorithm "is not documented, has changed in the past". Hypothesis H1 is therefore that one FDA grant to `RestoreySpike.app` covers the agent and restic. This has to be proven from launchd context. A probe run from Terminal inherits Terminal's own grant and proves nothing. Restic Station's docs note the same confound.
 - **Plist location.** Apple's ["Updating helper executables"](https://developer.apple.com/documentation/servicemanagement/updating-helper-executables-from-earlier-versions-of-macos) says agent plists go in `Contents/Library/LaunchAgents/`. `BundleProgram` is a path relative to the bundle, and "LaunchAgents … in the app bundle automatically associate with that app in the Login Items panel". So `AssociatedBundleIdentifiers` is not needed.
 - **Keychain access groups need a provisioning profile on macOS.** Apple DTS forum threads and TN3125 say every claim in `keychain-access-groups` must be backed by an embedded provisioning profile. Without one, calls fail with `-34018`. A February 2026 third-party report adds that each nested helper needs its own profile. So the "password helper" has to be a bundle that can embed a profile. A bare tool can't. This plan uses the agent app's own executable with a `print-password` argument as `RESTIC_PASSWORD_COMMAND`, rather than a third binary. Restic Station uses `/usr/bin/security` with `-T /usr/bin/security` ACLs instead. Under that scheme any same-user process can read every secret silently, which is a further reason not to copy it.
-- **Signing identities available today:** only "Apple Development: Jayden Kerr", on both this Mac and birdseye. There is no "Developer ID Application" identity and no `notarytool` profile. Tasks 1–7 (phase A) run with Apple Development signing plus a macOS development provisioning profile. Task 8 (phase B) needs Developer ID and notarisation, and it is the only way to test a real quarantined DMG through Gatekeeper. Phase B is blocked until the owner has those.
+- **Signing.** Team `X72LEXP4DY` is a paid programme. It goes in a gitignored `spike/Config/Local.xcconfig`, following `../scrap/Config`. Tasks 1–7 (phase A) use automatic Apple Development signing with development provisioning profiles, created by `-allowProvisioningUpdates` through the Xcode account on this Mac. Task 8 (phase B) uses scrap's release flow (`../scrap/scripts/release.sh`) with the same account: archive, `-exportArchive` with `method=developer-id` and `destination=upload`, then poll `-exportNotarizedApp`. Xcode manages a cloud-managed Developer ID certificate and its profiles, so no local certificate or `notarytool` profile is needed.
 
 ## Global constraints
 
@@ -27,7 +27,7 @@ These facts shape the tasks. Check them again only if a probe contradicts them.
 - restic is pinned to 0.19.1, downloaded from the upstream GitHub release, checked against the release's `SHA256SUMS`, and re-signed with the app's identity and hardened runtime. Never use the Homebrew binary.
 - The agent plist sets `KeepAlive` true, `ProcessType` `Adaptive` and never `Background` (spec §8), plus `MachServices` {`com.jaydenkerr.restorey.spike.agent`: true}.
 - Every probe runs in the agent and is triggered over XPC. None runs from Terminal.
-- Builds come from birdseye via `remote-ci`. Probes run on this Mac, the owner's, because they need a logged-in GUI session and a person to click TCC grants.
+- Builds and probes both run on this Mac, the owner's. The owner said birdseye is for iOS only. Probes need a logged-in GUI session and a person to click TCC grants.
 - Australian English in all UI text and docs. Timestamps in the findings doc are UTC with the local time in brackets.
 - Never write secrets to logs, the findings doc or the repo. The spike repo password is a random value generated at test time.
 
@@ -49,7 +49,8 @@ These facts shape the tasks. Check them again only if a probe contradicts them.
 - Create: `spike/Agent/` (`main.swift`, `Info.plist`, `Agent.entitlements`)
 - Create: `spike/Shared/AgentProtocol.swift`
 - Create: `spike/LaunchAgents/com.jaydenkerr.restorey.spike.agent.plist`
-- Create: `spike/scripts/fetch-restic.sh`, `spike/scripts/make-dmg.sh`, `scripts/ci.sh`, `scripts/fetch-dmg.sh`
+- Create: `spike/scripts/fetch-restic.sh`, `spike/scripts/make-dmg.sh`, `spike/scripts/build.sh`
+- Create: `spike/Config/Base.xcconfig` (`#include? "Local.xcconfig"`), `spike/Config/Local.example.xcconfig`; local-only `spike/Config/Local.xcconfig` (`DEVELOPMENT_TEAM = X72LEXP4DY`, gitignored)
 - Create: `docs/spike-findings.md` (one heading per hypothesis H1–H6, plus an environment section)
 - Modify: `.gitignore` (add `spike/vendor/`, `spike/*.xcodeproj`)
 
@@ -59,18 +60,18 @@ These facts shape the tasks. Check them again only if a probe contradicts them.
   - `RestoreySpike.app/Contents/Helpers/RestoreySpikeAgent.app`
   - `RestoreySpike.app/Contents/Helpers/restic`
   - `RestoreySpike.app/Contents/Library/LaunchAgents/com.jaydenkerr.restorey.spike.agent.plist`, with `BundleProgram` = `Contents/Helpers/RestoreySpikeAgent.app/Contents/MacOS/RestoreySpikeAgent`
-- Produces `scripts/ci.sh [--version X.Y.Z]`. It builds, signs, verifies and writes `build/RestoreySpike-<version>.dmg`.
+- Produces `spike/scripts/build.sh [--version X.Y.Z]`. It builds, signs, verifies and writes `spike/build/RestoreySpike-<version>.dmg`.
 
 - [ ] **Step 1:** Write `fetch-restic.sh`. It downloads `restic_0.19.1_darwin_arm64.bz2` and `SHA256SUMS` into `spike/vendor/`, exits non-zero on a checksum mismatch, and decompresses to `spike/vendor/restic`.
-- [ ] **Step 2:** Write `project.yml`. Both targets use automatic signing with `DEVELOPMENT_TEAM` read from the environment (never committed) and hardened runtime on. The app has `LSUIElement` true. A post-build script copies the agent app and `vendor/restic` into `Contents/Helpers/` and the plist into `Contents/Library/LaunchAgents/`. It then re-signs `restic` with `codesign --force --options runtime --sign "$EXPANDED_CODE_SIGN_IDENTITY"`. Both entitlements files hold only `keychain-access-groups` with the group above.
-- [ ] **Step 3:** Write `make-dmg.sh` (`hdiutil create -format UDZO` containing the app and an `/Applications` symlink) and `scripts/ci.sh`. `ci.sh` runs `xcodegen generate`, `xcodebuild -allowProvisioningUpdates build`, then `codesign --verify --deep --strict --verbose=2`, then `make-dmg.sh`. Write `scripts/fetch-dmg.sh`, which copies `build/*.dmg` back from the directory that `remote-sync` prints.
-- [ ] **Step 4:** Run `remote-ci` in the background. Expected: exit 0 and a DMG present after `fetch-dmg.sh`.
+- [ ] **Step 2:** Write `project.yml`. Both targets use automatic signing, with `DEVELOPMENT_TEAM` coming from `Config/Local.xcconfig` (never committed), and hardened runtime on. The app has `LSUIElement` true. A post-build script copies the agent app and `vendor/restic` into `Contents/Helpers/` and the plist into `Contents/Library/LaunchAgents/`. It then re-signs `restic` with `codesign --force --options runtime --sign "$EXPANDED_CODE_SIGN_IDENTITY"`. Both entitlements files hold only `keychain-access-groups` with the group above.
+- [ ] **Step 3:** Write `make-dmg.sh` (`hdiutil create -format UDZO` containing the app and an `/Applications` symlink) and `build.sh`. `build.sh` runs `xcodegen generate`, `xcodebuild -allowProvisioningUpdates build` into `spike/build/DerivedData`, then `codesign --verify --deep --strict --verbose=2`, then `make-dmg.sh`.
+- [ ] **Step 4:** Run `spike/scripts/build.sh`. Expected: exit 0 and a DMG in `spike/build/`.
 - [ ] **Step 5:** Verify locally:
   - `codesign -d --entitlements - --xml` on the app and the agent shows the access group.
   - `codesign -dv` shows the same TeamIdentifier on the app, the agent and restic.
   - `Contents/embedded.provisionprofile` exists in both the app and the agent.
 
-  Record `codesign -d -r-` (the designated requirement) for all three in the findings environment section. If birdseye can't create a development profile because no account is signed in or this Mac isn't registered as a device, stop and tell the owner.
+  Record `codesign -d -r-` (the designated requirement) for all three in the findings environment section. If Xcode can't create a development profile, stop and tell the owner.
 - [ ] **Step 6:** Commit (`spike: scaffold signed app, agent and bundled restic`).
 
 ### Task 2: Agent registration, XPC heartbeat and lifecycle
@@ -171,7 +172,7 @@ These facts shape the tasks. Check them again only if a probe contradicts them.
 - Produces `AgentXPC.prepareForRestart(withReply:)`. The agent stops accepting new runs, waits for any running restic to exit, replies, then calls `exit(0)`, after which `KeepAlive` relaunches it.
 - On launch, the app compares its `CFBundleVersion` with `ping().build`. If they differ it calls `prepareForRestart`, then polls `ping` until the build matches, with a 60-second timeout, and shows the result.
 
-- [ ] **Step 1:** Build two DMGs with `remote-ci -- --version 0.0.1` and `remote-ci -- --version 0.0.2`. They must differ only in version.
+- [ ] **Step 1:** Build two DMGs with `spike/scripts/build.sh --version 0.0.1` and `--version 0.0.2`. They must differ only in version.
 - [ ] **Step 2:** Install 0.0.1, register, grant FDA, store the keychain password, and run Task 3's probe and Task 4's keychain backup. Both should pass.
 - [ ] **Step 3:** Start a long `runBackup`. While it runs, quit the app and drag 0.0.2 over it from the quarantined DMG. Record:
   - that the old agent pid is still alive and running the old binary (`lsof -p <pid> | grep txt`)
@@ -180,11 +181,11 @@ These facts shape the tasks. Check them again only if a probe contradicts them.
 - [ ] **Step 5:** Run the FDA and keychain probes again with no new grants. Compare `codesign -d -r-` between versions. Expected: identical requirements, and both probes pass with no prompts.
 - [ ] **Step 6:** Write up H6 phase A. Commit.
 
-### Task 8: Developer ID, notarisation and a real quarantined DMG (phase B — blocked on the owner)
+### Task 8: Developer ID, notarisation and a real quarantined DMG (phase B)
 
-**Prerequisites (owner):** a paid Apple Developer Program membership; a "Developer ID Application" certificate in birdseye's keychain; a `notarytool` keychain profile on birdseye (`xcrun notarytool store-credentials`); a Developer ID provisioning profile for both bundle IDs with the keychain group.
+**Files:** Create `spike/scripts/release.sh` and `spike/ExportOptions.plist`, adapted from `../scrap/scripts/release.sh` (drop its CloudKit and push entitlement checks). Modify `spike/App/RestoreySpikeApp.swift`.
 
-**Files:** Modify `scripts/ci.sh` (a `--release` flag: Developer ID signing, `xcrun notarytool submit --wait`, `xcrun stapler staple` on the DMG), `spike/App/RestoreySpikeApp.swift`
+- Before relying on the export, check that it re-signed every piece of nested code with Developer ID: the agent app, `Contents/Helpers/restic`, and both embedded profiles. Run `codesign -dv` on each. If restic was missed, re-sign it before notarising and record that.
 
 **Interfaces:**
 - Produces a launch-time check in the app: `isTranslocated` (the bundle path contains `/AppTranslocation/`) and `isInApplications` (`/Applications/` prefix). Either failing means the app shows "Move to Applications" and registers nothing (spec §8).
