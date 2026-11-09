@@ -75,6 +75,8 @@ struct ResticRunner: Sendable {
         process.arguments = ["--repo", repoPath,
                              "--cache-dir", SpikeIDs.cacheDir.appendingPathComponent("restic").path] + arguments
         process.environment = try environment()
+        // Spec §8: backups should be noticeable but not disruptive.
+        process.qualityOfService = .utility
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err

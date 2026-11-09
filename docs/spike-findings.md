@@ -98,7 +98,7 @@ Recommendation: option 2 in v0.1, plus the README statement from option 1. Optio
 2. **The agent posts before asking for itself:** `UNUserNotificationCenter.add` returned **`posted: true`, but nothing appeared on screen.** The app's permission does **not** cover the agent, and the failure is **silent**: no error and no banner.
 3. **The agent asks for itself:** a **second** system prompt appeared, again named "Restorey Spike" with the same icon (`CFBundleDisplayName` "Restorey Spike" and the shared icon). Result `granted=true`.
 4. **The agent posts again:** the banner "Test notification from the background agent" appeared, labelled "Restorey Spike".
-5. **System Settings → Notifications:** **two entries, both "Restorey Spike"** with the same icon. One has badges, sounds and desktop (the app), the other sounds and desktop only (the agent, which didn't ask for `.badge`… it did ask; the difference isn't explained).
+5. **System Settings → Notifications:** **two entries, both "Restorey Spike"** with the same icon. One has badges, sounds and desktop: that's the agent, which requested `[.alert, .sound, .badge]`. The other has sounds and desktop only: that's the app, which requested `[.alert, .sound]`. This confirms the two entries are the two bundles.
 
 **Consequences for v0.1:**
 - Onboarding has to request notification permission **from the agent**, over XPC. The menu bar app has no reason to post notifications itself, so it shouldn't request permission at all. That leaves one entry in Notifications instead of two identical ones, which would confuse people.
@@ -110,11 +110,18 @@ Recommendation: option 2 in v0.1, plus the README statement from option 1. Optio
 
 - A backup the agent scheduled itself (90 s timer, no XPC request pending) took **more than 4 minutes** for the same dry run that took about 50 s when triggered over XPC. During it, `ps -o pri` showed **priority 4** for both the agent and restic, which is Darwin's throttled background band. restic used about 8% CPU. `launchctl print` showed `spawn type = adaptive (6)`.
 - launchd's Adaptive type keeps the job at background priority except while it is serving an XPC request. Every earlier test run was triggered over XPC from the app, so it ran boosted. **The scheduled backups that make up nearly all of Restorey's work would always run throttled.**
-- Spec §8 says "Use `ProcessType=Adaptive` or `Standard`". **Adaptive is wrong for this agent.** Next check (0.0.3): `ProcessType=Standard`, with restic spawned at a utility-level QoS.
+- Spec §8 says "Use `ProcessType=Adaptive` or `Standard`". **Adaptive is wrong for this agent.**
+- The throttled run was stopped with SIGINT after **954 s**. restic exited **130** and **removed its own lock** (`locks/` empty), which confirms the pause path in spec §5.1. Its keychain pre-read while the screen was locked had returned `0 (No error.)`.
+
+### Fix verified: `ProcessType=Standard` (0.0.3), 9 Nov 2026 23:21–23:23 UTC
+
+- **A plist change in an update is not picked up.** After 0.0.3 (plist `ProcessType` changed to `Standard`) replaced 0.0.2 and launchd relaunched the agent, `launchctl print` **still showed `spawn type = adaptive (6)`**. launchd keeps the job definition submitted at `register()` time. Only **`unregister()` followed by `register()`** applied the new plist: `spawn type = daemon (3)`, with no approval prompt. **Consequence for v0.1:** whenever the embedded plist changes, the update path has to re-register, not just restart the agent. Simplest is for the version handshake to unregister and re-register whenever the plist's hash differs from the one stored at the last registration.
+- The agent then scheduled its own run (60 s after start, no XPC pending): the agent was at **priority 20**, restic (`Process.qualityOfService = .utility`) at **priority 46, about 324% CPU**, and the same keychain-backed dry run **finished in 69 s, exit 0** (it had been stopped after 954 s under Adaptive).
+- **Consequence for v0.1:** use `ProcessType=Standard`. restic at roughly 3 cores is "noticeable". Whether it's "disruptive" needs the spec §8 measurement on a real first backup, and `GOMAXPROCS` may be the lever if it is. Record that measurement in `docs/` as the spec asks.
 
 ## H2 addendum — keychain while the screen is locked (Task 4 step 4), 9 Nov 2026 23:02–23:03 UTC
 
-- The owner locked the screen (⌃⌘Q) at 23:02:06. The scheduled run fired at 23:03:39 with the screen still locked. The agent's in-process `SecItemCopyMatching` worked, restic ran `print-password` at 23:03:40, and restic **opened the repository and went on to read files**, so the password was returned while locked. This is as expected for `kSecAttrAccessibleAfterFirstUnlock`. The result line is pending (the run was throttled, see above).
+- The owner locked the screen (⌃⌘Q) at 23:02:06. The scheduled run fired at 23:03:39 with the screen still locked. The agent's in-process `SecItemCopyMatching` worked, restic ran `print-password` at 23:03:40, and restic **opened the repository and went on to read files**, so the password was returned while locked. This is as expected for `kSecAttrAccessibleAfterFirstUnlock`. The run, throttled as described above, was stopped with SIGINT after 954 s (exit code 130). The keychain step had already succeeded.
 - **Not done yet:** the reboot test, where the agent starts at login and runs 60 s later. The owner will do it later. The `run-at-start` flag is still set.
 
 ## H4 — How backend credentials reach restic
