@@ -194,3 +194,22 @@ With development-signed 0.0.3 installed in /Applications and its agent running, 
 - A copy in /Applications that was given `com.apple.quarantine` with `xattr` was **still translocated** when opened.
 - So was a copy made by **Finder's AppleScript `duplicate`** from the quarantined DMG: the flag `0081;…` was kept and the app was translocated.
 - The real case, the user dragging in Finder, is done by the owner below.
+
+### Real drag install and Developer ID update, 9 Nov 2026 23:53–23:59 UTC (10 Nov 10:23–10:29)
+
+1. **The owner dragged 0.1.0 from the quarantined DMG into /Applications in Finder and opened it.** Gatekeeper showed its usual "downloaded from the Internet" prompt. The app ran from `/Applications/RestoreySpike.app` and was **not translocated** (quarantine flag `01c1`, user-approved). A real Finder drag is the only install path that avoids translocation. Scripted copies, `xattr` and Finder `duplicate` don't.
+2. **The agent was still dead** from the DMG-copy incident above (`EX_CONFIG`), yet **`SMAppService.status` reported `enabled`**. The status API doesn't show whether the agent is alive. Only the heartbeat does (spec §6.2). `unregister()` then `register()` fixed it: the agent was running at once, with a new launch constraint and no approval prompt.
+3. **What carried over from the Apple Development builds to Developer ID** (same bundle IDs, new designated requirement):
+
+   | Grant | Carried over? | Why |
+   |---|---|---|
+   | Data protection keychain item created by the development build | **Yes**: `found: true`, status 0, no prompt | Access is by team-prefixed access group, not by signature |
+   | Notification permission (agent) | **Yes**: `authorizationStatus 2` | Keyed by bundle ID |
+   | Full Disk Access | **No**: agent `denied 257`, restic exit 3 | TCC stores the designated requirement |
+
+   - In System Settings the FDA entry was still listed, but **switched off**. The owner switched it on again, and nothing needed removing or re-adding. The 0.1.0 self-scheduled run that went before that failed (exit 3, 6 permission errors), as expected.
+   - **Consequence:** the owner's own development builds should use a separate bundle ID, as scrap's Debug does with `.dev`. That way, switching between development and release builds never invalidates the release app's FDA grant.
+4. **Developer ID 0.1.0 → 0.1.1 (H6, phase B)**: the owner dragged 0.1.1 over 0.1.0 (Replace) from a quarantined DMG and opened it, with the Gatekeeper prompt as before.
+   - The handshake asked the 0.1.0 agent to drain and exit, and the 0.1.1 agent was running **2 s later** (`last exit code = 0`). The **launch constraint was still satisfied with no re-registration**, because both builds have the team-based requirement.
+   - With **no new grants**, the 0.1.1 agent's self-scheduled keychain-backed run over the private folders: **exit code 0, 0 permission errors, 65 s, keychain pre-read status 0, no prompts.**
+   - **H1, H2 and H6 hold under Developer ID** across an N→N+1 update. This is spec §12.1's target: "one Full Disk Access grant, made once, that survives updates".
