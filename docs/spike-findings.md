@@ -47,7 +47,30 @@ restic: identifier "com.jaydenkerr.restorey.spike.restic" and … (same certific
 
 ## H2 — Keychain password helper from launchd, no prompt
 
-_Pending (Task 4)._
+**Verdict: confirmed with a condition (phase A).** The agent's own executable, run as `RESTIC_PASSWORD_COMMAND`, reads a data protection keychain item that the app created, from launchd context, with no prompt. **Condition:** as built, any process running as the user can run that helper and get the password. See "Confused deputy" below.
+
+### Results, 9 Nov 2026 22:46–22:52 UTC (10 Nov 09:16–09:22)
+
+- The app stored the item with `SecItemAdd` (`kSecUseDataProtectionKeychain`, access group `X72LEXP4DY.com.jaydenkerr.restorey.spike`, `kSecAttrAccessibleAfterFirstUnlock`). Result: `0 (No error.)`.
+- The agent, a different bundle ID in the same group, read it in-process from launchd context: `found: true, status 0`, no dialog.
+- `restic init` with `RESTIC_PASSWORD_COMMAND='<agent executable>' print-password --account spike-repo`, run by the agent under launchd: **exit code 0**. A later keychain-backed `backup --dry-run` that opened the repository: **exit code 0**, so the helper returned the same secret both times (a mismatch would be exit 12).
+- **Negative controls:**
+  - `security find-generic-password -s com.jaydenkerr.restorey.spike -a spike-repo` → "could not be found". The item is in the data protection keychain, which `/usr/bin/security` doesn't search. This confirms spec §7's reason for not copying Restic Station.
+  - An ad-hoc re-signed copy of the agent bundle with no entitlements → `-34018 (A required entitlement is not present.)`.
+  - A copy re-signed with the real Apple Development identity and the `keychain-access-groups` entitlement but **with `embedded.provisionprofile` removed** → **killed at launch (exit 137, SIGKILL by AMFI)**. So every executable that claims the access group needs its own embedded profile, which means it has to be a bundle. This is why the password helper is the agent app's own executable rather than a bare tool.
+  - The FDA dry-run after two in-place binary replacements (same designated requirement, new cdhash): still `ok`, exit code 0. **FDA survives a rebuild that keeps the same requirement.**
+
+### Confused deputy (needs an owner decision before v0.1)
+
+Running the installed, correctly signed helper from Terminal, `…/RestoreySpikeAgent print-password --account spike-repo`, **printed the password (exit 0)**. The keychain's access-group check proves only that the *helper* is allowed to read the item. It says nothing about who launched the helper. So any process running as the user can read every repository password by running our own binary. That's narrower than Restic Station's `-T /usr/bin/security` scheme, but the same kind of hole.
+
+Options for v0.1, from least to most effort:
+
+1. **Accept and document.** Same-user code execution can already do a lot, e.g. read `~/Library` and the restic cache. State it in the README.
+2. **Verify the parent chain in `print-password`.** Refuse unless the parent process is the bundled restic (code signature: identifier `…restic` plus the team) and its parent is the agent. Use `proc_pidpath` plus `SecCodeCopyGuestWithAttributes` on the parent's audit token. This raises the bar, but an attacker can still run the bundled restic with our helper as its password command. restic then holds the password and could, for example, `key add` a new key.
+3. **One-time token.** The agent puts a random nonce in restic's environment, and `print-password` asks the agent over XPC (the agent verifies the caller's code signature) to exchange the nonce for the secret, once. This stops "run the helper by hand". It doesn't stop an attacker who can read the restic child's environment while it runs (see H4).
+
+Recommendation: option 2 in v0.1, plus the README statement from option 1. Option 3 only if H4 shows child environments are not readable by other same-user processes.
 
 ## H3 — Agent process shape: registration, lifecycle, notifications
 
