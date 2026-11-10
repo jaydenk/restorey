@@ -91,7 +91,10 @@ private final class ClientConnections: Sendable {
         connections.withLock { _ = $0.removeValue(forKey: key) }
     }
 
+    /// Copies the connections out under the lock and calls `body` after releasing it, so a slow or
+    /// re-entrant XPC call never runs while the lock is held.
     func forEach(_ body: (NSXPCConnection) -> Void) {
-        connections.withLock { for box in $0.values { body(box.connection) } }
+        let boxes = connections.withLock { Array($0.values) }
+        for box in boxes { body(box.connection) }
     }
 }

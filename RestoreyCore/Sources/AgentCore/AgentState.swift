@@ -1,72 +1,19 @@
 import Foundation
 import RestoreyCore
 
-/// The payload of `config.json` (schema `ConfigMigrations.currentVersion`): `{"plans":[…]}`.
-public struct ConfigFile: Codable, Sendable, Equatable {
-    public var plans: [Plan]
-
-    public init(plans: [Plan] = []) {
-        self.plans = plans
-    }
-}
-
-/// Why the agent refused a request. `message` is the Australian English sentence the XPC reply carries.
-public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
-    /// `config.json` or `state.json` could not be read; `AgentStatus.configError` says why.
-    case configUnavailable
-    /// `prepareForRestart` was called; the agent is waiting to exit.
-    case draining
-    case invalidPlan([PlanValidationError])
-    case unknownPlan
-    case planRunning(name: String)
-    case alreadyRunning(name: String)
-    /// A `SavePlanRequest` carried a secret keyed to another plan.
-    case foreignSecret
-    /// Implemented by a later task (backups, repository creation and adoption arrive with the runner).
-    case notYetAvailable
-    /// Writing a store, the keychain or a file failed. The text names the step, never a secret.
-    case storage(String)
-    /// The XPC payload could not be decoded.
-    case invalidRequest(String)
-
-    public var message: String {
-        switch self {
-        case .configUnavailable: "Restorey can't change its settings until the problem with them is fixed"
-        case .draining: "Restorey is finishing the current backup before updating the agent"
-        case .invalidPlan(let errors):
-            errors.map(Self.message(for:)).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-                .joined(separator: ". ")
-        case .unknownPlan: "There's no plan with that ID"
-        case .planRunning(let name): "\(name) is backing up. Wait for it to finish, then delete it"
-        case .alreadyRunning(let name): "\(name) is already backing up"
-        case .foreignSecret: "A secret in the request belongs to a different plan"
-        case .notYetAvailable: "That isn't available in this build of Restorey yet"
-        case .storage(let detail): detail
-        case .invalidRequest(let detail): "Restorey couldn't read the request: \(detail)"
-        }
-    }
-
-    public var description: String { message }
-
-    private static func message(for error: PlanValidationError) -> String {
-        switch error {
-        case .emptyHostLabel: "The host label can't be empty"
-        case .noSources: "Choose at least one source folder"
-        case .relativeSource: "Source folders must be absolute paths"
-        case .intervalTooShort: "Backups can't run more often than every 5 minutes"
-        }
-    }
-}
-
 /// The testable heart of the agent: it owns `config.json`, `state.json` and the plans' keychain
 /// secrets (the agent is their only writer), tracks in-flight runs, and builds `AgentStatus`.
 ///
 /// If either file cannot be read when the agent starts (newer schema, corrupt, no migration), the agent
 /// enters a config-error state: it reports the problem in `status`, refuses every mutating call and
-/// never writes either file, so the user's plans survive (Review Focus 2).
+/// never writes either file, so the user's plans survive (Review Focus 2). When only `state.json` is
+/// unreadable the plans are still listed, each stopped with the reason.
 ///
-/// Calls that write are serialised, so two requests arriving together over XPC can never interleave
-/// across the stores' `await`s and lose an update.
+/// Calls that write are serialised through a FIFO write gate, so two requests arriving together over
+/// XPC can never interleave across the stores' `await`s and lose an update.
+///
+/// While draining (`prepareForRestart`), every mutating call except `pause` is refused. Pause stays
+/// allowed so the user can still stop a long first backup; the next agent honours `pausedUntil`.
 public actor AgentState {
     public static let pauseDuration: TimeInterval = 3600
     /// Progress pushes are at most this often; phase changes are always pushed.
@@ -78,8 +25,8 @@ public actor AgentState {
         var retrying: String?
     }
 
-    private let configStore: VersionedStore<ConfigFile>
-    private let stateStore: VersionedStore<RunState>
+    private let configStore: any PayloadStore<ConfigFile>
+    private let stateStore: any PayloadStore<RunState>
     private let secrets: any SecretStore
     private let credentialsDirectory: URL
     private let now: @Sendable () -> Date
@@ -87,9 +34,14 @@ public actor AgentState {
     private var config: ConfigFile
     private var runState: RunState
     private let loadError: String?
+    /// `config.json` loaded but `state.json` did not: the plans are listed as stopped.
+    private let onlyStateUnreadable: Bool
 
     public private(set) var isDraining = false
     private var running: [UUID: RunProgress] = [:]
+    /// Plans `deletePlan` has started removing. No run may begin on them.
+    private var deleting: Set<UUID> = []
+    /// `prepareForRestart` callers, woken whenever the agent may have become idle.
     private var drainWaiters: [CheckedContinuation<Void, Never>] = []
 
     private var writeInFlight = false
@@ -102,8 +54,8 @@ public actor AgentState {
     /// - Parameters:
     ///   - credentialsDirectory: where `CredentialsFile` keeps the plans' `s3/<id>.ini` files.
     public init(
-        configStore: VersionedStore<ConfigFile>,
-        stateStore: VersionedStore<RunState>,
+        configStore: any PayloadStore<ConfigFile>,
+        stateStore: any PayloadStore<RunState>,
         secrets: any SecretStore,
         credentialsDirectory: URL,
         now: @escaping @Sendable () -> Date
@@ -126,26 +78,33 @@ public actor AgentState {
             startupError = "Restorey can't create its settings folder \(directory.path): \(error.localizedDescription)"
         }
         await self.init(
-            configStore: VersionedStore(
-                fileURL: directory.appendingPathComponent("config.json"),
-                currentVersion: ConfigMigrations.currentVersion, migrations: ConfigMigrations.migrations),
-            stateStore: VersionedStore(
-                fileURL: directory.appendingPathComponent("state.json"),
-                currentVersion: Self.stateSchemaVersion, migrations: [:]),
+            configStore: Self.configStore(in: directory), stateStore: Self.stateStore(in: directory),
             secrets: secrets, credentialsDirectory: directory, now: now, startupError: startupError)
     }
 
+    public static func configStore(in directory: URL) -> VersionedStore<ConfigFile> {
+        VersionedStore(
+            fileURL: directory.appendingPathComponent("config.json"),
+            currentVersion: ConfigMigrations.currentVersion, migrations: ConfigMigrations.migrations)
+    }
+
+    public static func stateStore(in directory: URL) -> VersionedStore<RunState> {
+        VersionedStore(
+            fileURL: directory.appendingPathComponent("state.json"),
+            currentVersion: stateSchemaVersion, migrations: [:])
+    }
+
     private init(
-        configStore: VersionedStore<ConfigFile>,
-        stateStore: VersionedStore<RunState>,
+        configStore: any PayloadStore<ConfigFile>,
+        stateStore: any PayloadStore<RunState>,
         secrets: any SecretStore,
         credentialsDirectory: URL,
         now: @escaping @Sendable () -> Date,
         startupError: String?
     ) async {
         var loadError = startupError
-        var config = ConfigFile()
-        var runState = RunState()
+        var config: ConfigFile?
+        var runState: RunState?
         if loadError == nil {
             do {
                 config = try await configStore.load() ?? ConfigFile()
@@ -165,9 +124,10 @@ public actor AgentState {
         self.secrets = secrets
         self.credentialsDirectory = credentialsDirectory
         self.now = now
-        self.config = loadError == nil ? config : ConfigFile()
-        self.runState = loadError == nil ? runState : RunState()
+        self.config = config ?? ConfigFile()
+        self.runState = runState ?? RunState()
         self.loadError = loadError
+        self.onlyStateUnreadable = config != nil && runState == nil
     }
 
     private static func describeLoadFailure(_ error: any Error, file: String) -> String {
@@ -194,8 +154,15 @@ public actor AgentState {
 
     public func status() -> AgentStatus {
         let now = now()
-        guard loadError == nil else {
-            return AgentStatus(plans: [], configError: loadError, fdaMissing: nil, generatedAt: now)
+        if let loadError {
+            // Without history nothing can be scheduled, but the user still sees their plans.
+            let plans = onlyStateUnreadable
+                ? config.plans.map {
+                    PlanStatus(plan: $0, phase: .stopped(reason: loadError), lastRecord: nil, nextRunAt: nil,
+                               alerts: [.configurationError])
+                }
+                : []
+            return AgentStatus(plans: plans, configError: loadError, fdaMissing: nil, generatedAt: now)
         }
         return AgentStatus(
             plans: config.plans.map { planStatus($0, now: now) }, configError: nil, fdaMissing: nil,
@@ -234,50 +201,57 @@ public actor AgentState {
 
     // MARK: Plans
 
-    /// Validates, writes the secrets, then the config. If a secret cannot be written the config is
-    /// left as it was. `recoveryKitConfirmedAt` is agent-owned: a new plan starts unconfirmed and an
-    /// existing plan keeps its confirmation, whatever the request says.
+    /// Validates, writes the secrets, then the config. If a secret write or the config write fails,
+    /// every submitted secret is put back as it was (new keys deleted) and the config is unchanged.
+    ///
+    /// `recoveryKitConfirmedAt` is agent-owned. A new plan starts unconfirmed. An existing plan keeps its
+    /// confirmation only if the repository is the same and every submitted secret equals the keychain's
+    /// current value; otherwise the recovery details the user saved no longer match, so it is cleared.
     public func savePlan(_ request: SavePlanRequest) async throws -> AgentStatus {
-        try await serialisedWrite {
-            try requireLoaded()
-            guard !isDraining else { throw AgentError.draining }
-            let errors = request.plan.validationErrors()
-            guard errors.isEmpty else { throw AgentError.invalidPlan(errors) }
-            guard request.secrets.allSatisfy({ $0.key.planID == request.plan.id }) else {
-                throw AgentError.foreignSecret
-            }
-
+        try requireMutable()
+        let errors = request.plan.validationErrors()
+        guard errors.isEmpty else { throw AgentError.invalidPlan(errors) }
+        guard request.secrets.allSatisfy({ $0.key.planID == request.plan.id }) else {
+            throw AgentError.foreignSecret
+        }
+        return try await serialisedWrite {
+            let planSecrets = try PlanSecrets(store: secrets, entries: request.secrets)
             var plan = request.plan
             var updated = config
             if let index = updated.plans.firstIndex(where: { $0.id == plan.id }) {
-                plan.recoveryKitConfirmedAt = updated.plans[index].recoveryKitConfirmedAt
+                let stored = updated.plans[index]
+                let unchanged = stored.repository == plan.repository && !planSecrets.changesAnyValue
+                plan.recoveryKitConfirmedAt = unchanged ? stored.recoveryKitConfirmedAt : nil
                 updated.plans[index] = plan
             } else {
                 plan.recoveryKitConfirmedAt = nil
                 updated.plans.append(plan)
             }
 
-            for entry in request.secrets {
-                do {
-                    try secrets.write(entry.value, for: entry.key)
-                } catch {
-                    throw AgentError.storage(
-                        "Restorey couldn't save \(entry.key.account) in the Keychain: \(error)")
-                }
+            try planSecrets.write()
+            do {
+                try await saveConfig(updated)
+            } catch {
+                let message = (error as? AgentError)?.message ?? "\(error)"
+                throw AgentError.storage(message + PlanSecrets.describe(planSecrets.restore()))
             }
-            try await saveConfig(updated)
             return pushStatus()
         }
     }
 
     /// Removes the plan from the config, then its secrets, credentials file and history. The
-    /// repository is never touched. A running plan cannot be deleted.
+    /// repository is never touched. A running plan cannot be deleted, and from the moment this is called
+    /// no run can begin on the plan.
     public func deletePlan(_ id: UUID) async throws -> AgentStatus {
-        try await serialisedWrite {
-            try requireLoaded()
-            let plan = try requirePlan(id)
-            guard running[id] == nil else { throw AgentError.planRunning(name: plan.name) }
+        try requireMutable()
+        let plan = try requirePlan(id)
+        guard !deleting.contains(id) else { throw AgentError.planDeleting(name: plan.name) }
+        guard running[id] == nil else { throw AgentError.planRunning(name: plan.name) }
+        // Marked before the first await, so beginRun can't slip in while this waits on the stores.
+        deleting.insert(id)
+        defer { deleting.remove(id) }
 
+        return try await serialisedWrite {
             var updated = config
             updated.plans.removeAll { $0.id == id }
             try await saveConfig(updated)
@@ -307,34 +281,35 @@ public actor AgentState {
     /// Records that the user has saved the plan's recovery details. Until then the plan never runs
     /// on its own.
     public func confirmRecoveryKit(_ id: UUID) async throws -> AgentStatus {
-        try await serialisedWrite {
-            try requireLoaded()
-            _ = try requirePlan(id)
+        try requireMutable()
+        _ = try requirePlan(id)
+        return try await serialisedWrite {
             var updated = config
-            if let index = updated.plans.firstIndex(where: { $0.id == id }) {
-                updated.plans[index].recoveryKitConfirmedAt = now()
-            }
+            guard let index = updated.plans.firstIndex(where: { $0.id == id }) else { throw AgentError.unknownPlan }
+            updated.plans[index].recoveryKitConfirmedAt = now()
             try await saveConfig(updated)
             return pushStatus()
         }
     }
 
     /// Pauses for `pauseDuration`, after which the plan is due at once. Interrupting a run that is in
-    /// progress is the runner's job.
+    /// progress is the runner's job. Allowed while draining.
     public func pause(_ id: UUID) async throws -> AgentStatus {
+        try requireLoaded()
         let until = now().addingTimeInterval(Self.pauseDuration)
         return try await updateHistory(id) { $0.pausedUntil = until }
     }
 
     public func resume(_ id: UUID) async throws -> AgentStatus {
-        try await updateHistory(id) { $0.pausedUntil = nil }
+        try requireMutable()
+        return try await updateHistory(id) { $0.pausedUntil = nil }
     }
 
     private func updateHistory(
         _ id: UUID, _ change: (inout PlanRunHistory) -> Void
     ) async throws -> AgentStatus {
-        try await serialisedWrite {
-            try requireLoaded()
+        _ = try requirePlan(id)
+        return try await serialisedWrite {
             _ = try requirePlan(id)
             var state = runState
             change(&state.plans[id, default: PlanRunHistory()])
@@ -364,16 +339,17 @@ public actor AgentState {
     }
 
     private func requireRunnable(_ id: UUID?) throws {
-        try requireLoaded()
-        guard !isDraining else { throw AgentError.draining }
+        try requireMutable()
         if let id { _ = try requirePlan(id) }
     }
 
     /// Registers an in-flight run. Refused while draining, in the config-error state, for an unknown
-    /// plan, or when the plan is already running. Every successful call must be paired with `endRun`.
+    /// plan, a plan being deleted, or a plan already running. Every successful call must be paired with
+    /// `endRun`.
     public func beginRun(planID: UUID) throws {
         try requireRunnable(nil)
         let plan = try requirePlan(planID)
+        guard !deleting.contains(planID) else { throw AgentError.planDeleting(name: plan.name) }
         guard running[planID] == nil else { throw AgentError.alreadyRunning(name: plan.name) }
         running[planID] = RunProgress()
         pushStatus()
@@ -395,25 +371,39 @@ public actor AgentState {
     public func endRun(planID: UUID) {
         guard running.removeValue(forKey: planID) != nil else { return }
         pushStatus()
-        if running.isEmpty {
-            let waiters = drainWaiters
-            drainWaiters.removeAll()
-            for waiter in waiters { waiter.resume() }
+        wakeDrainersIfIdle()
+    }
+
+    /// Stops new runs and most writes, and returns once no run is in flight and no write is running or
+    /// queued. There is deliberately no timeout: a long first backup is waited for (spec §8). Draining
+    /// is never undone; the agent exits afterwards.
+    public func prepareForRestart() async {
+        isDraining = true
+        while !isIdle {
+            await withCheckedContinuation { drainWaiters.append($0) }
         }
     }
 
-    /// Stops new runs and returns once no run is in flight. There is deliberately no timeout: a long
-    /// first backup is waited for (spec §8). Draining is never undone; the agent exits afterwards.
-    public func prepareForRestart() async {
-        isDraining = true
-        guard !running.isEmpty else { return }
-        await withCheckedContinuation { drainWaiters.append($0) }
+    private var isIdle: Bool { running.isEmpty && !writeInFlight && writeWaiters.isEmpty }
+
+    /// Wakes every drainer; each re-checks `isIdle` and waits again if something is still going on.
+    private func wakeDrainersIfIdle() {
+        guard isIdle, !drainWaiters.isEmpty else { return }
+        let waiters = drainWaiters
+        drainWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
     }
 
     // MARK: Helpers
 
     private func requireLoaded() throws {
         if loadError != nil { throw AgentError.configUnavailable }
+    }
+
+    /// Loaded and not draining: the gate for every mutating call except `pause`.
+    private func requireMutable() throws {
+        try requireLoaded()
+        guard !isDraining else { throw AgentError.draining }
     }
 
     private func requirePlan(_ id: UUID) throws -> Plan {
@@ -441,15 +431,21 @@ public actor AgentState {
     }
 
     /// Runs `body` with no other write in progress. Without this, two writes could each read `config`,
-    /// suspend on the store, and the second would overwrite the first.
+    /// suspend on the store, and the second would overwrite the first. The gate is handed directly to the
+    /// next waiter, so it is never seen idle between two queued writes.
     private func serialisedWrite<T>(_ body: () async throws -> T) async throws -> T {
-        while writeInFlight {
+        if writeInFlight {
             await withCheckedContinuation { writeWaiters.append($0) }
+        } else {
+            writeInFlight = true
         }
-        writeInFlight = true
         defer {
-            writeInFlight = false
-            if !writeWaiters.isEmpty { writeWaiters.removeFirst().resume() }
+            if writeWaiters.isEmpty {
+                writeInFlight = false
+                wakeDrainersIfIdle()
+            } else {
+                writeWaiters.removeFirst().resume()
+            }
         }
         return try await body()
     }

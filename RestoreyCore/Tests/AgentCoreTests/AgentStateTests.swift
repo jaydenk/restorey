@@ -41,6 +41,50 @@ struct AgentStateTests {
         func deleteAll(planID: UUID) throws {}
     }
 
+    /// Wraps the real store so a test can make the next save fail, or hold it until released.
+    actor ControlledStore<Payload: Codable & Sendable>: PayloadStore {
+        struct Failure: Error {}
+        private let inner: VersionedStore<Payload>
+        private var holdNext = false
+        private var failNext = false
+        private var held: CheckedContinuation<Void, Never>?
+        private var heldWaiters: [CheckedContinuation<Void, Never>] = []
+
+        init(_ inner: VersionedStore<Payload>) { self.inner = inner }
+
+        func load() async throws -> Payload? { try await inner.load() }
+
+        func save(_ payload: Payload) async throws {
+            if failNext { failNext = false; throw Failure() }
+            if holdNext {
+                holdNext = false
+                await withCheckedContinuation { continuation in
+                    held = continuation
+                    heldWaiters.forEach { $0.resume() }
+                    heldWaiters.removeAll()
+                }
+            }
+            try await inner.save(payload)
+        }
+
+        func holdNextSave() { holdNext = true }
+        func failNextSave() { failNext = true }
+        func waitUntilHeld() async {
+            if held != nil { return }
+            await withCheckedContinuation { heldWaiters.append($0) }
+        }
+        func release() { held?.resume(); held = nil }
+    }
+
+    private static func makeState(
+        _ dir: TempDirectory, configStore: ControlledStore<ConfigFile>, secrets: any SecretStore,
+        clock: TestClock = TestClock()
+    ) async -> AgentState {
+        await AgentState(
+            configStore: configStore, stateStore: AgentState.stateStore(in: dir.url), secrets: secrets,
+            credentialsDirectory: dir.url, now: clock.function)
+    }
+
     private static func plan(id: UUID = UUID(), sources: [String] = ["/Users/me/Documents"], now: Date) -> Plan {
         var plan = Plan.newHotPlan(
             name: "Home",
@@ -207,6 +251,58 @@ struct AgentStateTests {
         plan.recoveryKitConfirmedAt = nil
         _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: []))
         #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == confirmedAt)
+        // Resending the same secrets changes nothing the user saved.
+        _ = try await state.savePlan(Self.request(plan))
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == confirmedAt)
+    }
+
+    @Test func repositoryChangeResetsTheRecoveryKit() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        var plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        _ = try await state.confirmRecoveryKit(plan.id)
+        plan.repository = .raw(repository: "rest:http://nas/repo", environmentNames: [])
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: []))
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == nil)
+    }
+
+    @Test func passwordChangeResetsTheRecoveryKit() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        _ = try await state.confirmRecoveryKit(plan.id)
+        _ = try await state.savePlan(Self.request(plan, password: "a new password"))
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == nil)
+    }
+
+    @Test func configWriteFailureRestoresTheOldSecrets() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let secrets = InMemorySecretStore()
+        let store = ControlledStore(AgentState.configStore(in: dir.url))
+        let state = await Self.makeState(dir, configStore: store, secrets: secrets, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan, password: "old password"))
+        let configBefore = try Data(contentsOf: dir.config)
+
+        await store.failNextSave()
+        let newKey = SecretKey.environment(plan.id, name: "RESTIC_REST_PASSWORD")
+        await #expect(throws: AgentError.self) {
+            try await state.savePlan(SavePlanRequest(plan: plan, secrets: [
+                SecretEntry(key: .repositoryPassword(plan.id), value: "new password"),
+                SecretEntry(key: .s3SecretAccessKey(plan.id), value: "new key-secret"),
+                SecretEntry(key: newKey, value: "added"),
+            ]))
+        }
+        #expect(try secrets.read(.repositoryPassword(plan.id)) == "old password")
+        #expect(try secrets.read(.s3SecretAccessKey(plan.id)) == "key-secret")
+        #expect(try secrets.read(.s3AccessKeyID(plan.id)) == "key-id")
+        #expect(try secrets.read(newKey) == nil)
+        #expect(try Data(contentsOf: dir.config) == configBefore)
     }
 
     // MARK: Deleting
@@ -261,6 +357,32 @@ struct AgentStateTests {
         } throws: { Self.message($0) == "Home is backing up. Wait for it to finish, then delete it" }
         await state.endRun(planID: plan.id)
         _ = try await state.deletePlan(plan.id)
+    }
+
+    @Test func beginRunIsRefusedWhileThePlanIsBeingDeleted() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let store = ControlledStore(AgentState.configStore(in: dir.url))
+        let state = await Self.makeState(dir, configStore: store, secrets: InMemorySecretStore(), clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+
+        await store.holdNextSave()
+        let delete = Task { try await state.deletePlan(plan.id) }
+        await store.waitUntilHeld()
+        // deletePlan is suspended in the config save, with the plan still in memory.
+        await #expect {
+            try await state.beginRun(planID: plan.id)
+        } throws: { Self.message($0) == "Home is being deleted" }
+        await #expect {
+            try await state.deletePlan(plan.id)
+        } throws: { Self.message($0) == "Home is being deleted" }
+        await store.release()
+        _ = try await delete.value
+        await #expect {
+            try await state.beginRun(planID: plan.id)
+        } throws: { Self.message($0) == "There's no plan with that ID" }
+        #expect(await state.status().plans.isEmpty)
     }
 
     // MARK: Status, pause and resume
@@ -405,8 +527,21 @@ struct AgentStateTests {
         let configBefore = try Data(contentsOf: dir.config)
 
         let state = await Self.makeState(dir, clock: clock)
-        #expect(await state.status().configError?.contains("state.json") == true)
-        await #expect(throws: AgentError.self) { try await state.pause(plan.id) }
+        let status = await state.status()
+        #expect(status.configError?.contains("state.json") == true)
+        // The plans are still listed, each stopped with the reason.
+        #expect(status.plans.map(\.plan) == [plan])
+        guard case .stopped(let reason)? = status.plans.first?.phase else {
+            Issue.record("expected a stopped phase, got \(String(describing: status.plans.first?.phase))")
+            return
+        }
+        #expect(reason.contains("state.json"))
+        #expect(status.plans.first?.nextRunAt == nil)
+        let refused = "Restorey can't change its settings until the problem with them is fixed"
+        await #expect { try await state.pause(plan.id) } throws: { Self.message($0) == refused }
+        await #expect { try await state.savePlan(Self.request(plan)) } throws: { Self.message($0) == refused }
+        await #expect { try await state.deletePlan(plan.id) } throws: { Self.message($0) == refused }
+        await #expect { try await state.beginRun(planID: plan.id) } throws: { Self.message($0) == refused }
         #expect(try Data(contentsOf: dir.config) == configBefore)
         #expect(try Data(contentsOf: dir.state) == Data("{not json".utf8))
     }
@@ -463,14 +598,62 @@ struct AgentStateTests {
         await #expect { try await state.createRepository(plan.id) } throws: { Self.message($0) == refused }
         await #expect { _ = try await state.adopt(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.savePlan(Self.request(plan)) } throws: { Self.message($0) == refused }
+        await #expect { try await state.deletePlan(plan.id) } throws: { Self.message($0) == refused }
+        await #expect { try await state.confirmRecoveryKit(plan.id) } throws: { Self.message($0) == refused }
+        await #expect { try await state.resume(plan.id) } throws: { Self.message($0) == refused }
+        await #expect { try await state.beginRun(planID: plan.id) } throws: { Self.message($0) == refused }
         let other = Self.plan(now: clock.now)
         await #expect { try await state.beginRun(planID: other.id) } throws: { Self.message($0) == refused }
+        // Pause is allowed, so the user can still stop a long first backup.
+        _ = try await state.pause(plan.id)
         #expect(await events.items.isEmpty)
 
         await run.value
         await drain.value
         #expect(await events.items == ["run ended", "drained"])
         #expect(await state.isDraining)
+        #expect(await state.status().plans.first?.phase == .paused(until: clock.now.addingTimeInterval(3600)))
+        // The next agent reads the pause from disk.
+        let next = await Self.makeState(dir, clock: clock)
+        #expect(await next.status().plans.first?.phase == .paused(until: clock.now.addingTimeInterval(3600)))
+    }
+
+    @Test func drainWaitsForAnInFlightDeleteToFinish() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let secrets = InMemorySecretStore()
+        let store = ControlledStore(AgentState.configStore(in: dir.url))
+        let state = await Self.makeState(dir, configStore: store, secrets: secrets, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        _ = try await state.pause(plan.id)   // gives the plan a history entry
+        let ini = try CredentialsFile.write(
+            planID: plan.id, helper: URL(fileURLWithPath: "/usr/bin/true"), directory: dir.url)
+
+        await store.holdNextSave()
+        let delete = Task { try await state.deletePlan(plan.id) }
+        await store.waitUntilHeld()
+
+        struct Leftovers: Equatable { var config, secret, credentials, history: Bool }
+        let events = EventLog()
+        let drain = Task { () -> Leftovers in
+            await state.prepareForRestart()
+            await events.append("drained")
+            // What is left at the moment the drain reply would be sent.
+            return Leftovers(
+                config: (try? String(contentsOf: dir.config, encoding: .utf8))?.contains(plan.id.uuidString) ?? true,
+                secret: (try? secrets.read(.repositoryPassword(plan.id))) != nil,
+                credentials: FileManager.default.fileExists(atPath: ini.path),
+                history: (try? String(contentsOf: dir.state, encoding: .utf8))?.contains(plan.id.uuidString) ?? true)
+        }
+        try await Self.waitUntilDraining(state)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(await events.items.isEmpty)
+
+        await store.release()
+        let leftovers = await drain.value
+        #expect(leftovers == Leftovers(config: false, secret: false, credentials: false, history: false))
+        _ = try await delete.value
     }
 
     @Test func drainWithNoRunRepliesImmediately() async throws {

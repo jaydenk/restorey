@@ -8,7 +8,9 @@ import Foundation
 ///
 /// Mutating calls (`savePlan`, `deletePlan`, `pause`, `resume`, `confirmRecoveryKit`, `backUpNow`,
 /// `createRepository`) reply with the new `AgentStatus`. While a config error is reported, all of them
-/// are refused. While draining, `backUpNow`, `createRepository`, `adopt` and `savePlan` are refused.
+/// are refused. While draining, all of them and `adopt` are refused, except `pause`: the user can still
+/// pause a long first backup, the run then ends paused, the drain completes and the next agent honours
+/// `pausedUntil`.
 @objc public protocol AgentXPC {
     /// `HelloRequest` → `HelloReply`.
     func hello(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
