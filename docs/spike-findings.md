@@ -122,11 +122,28 @@ Recommendation: option 2 in v0.1, plus the README statement from option 1. Optio
 - **Background Task Management stores a SHA-256 of the agent executable** (`BTMConfigSHA256Checksum` in `backgroundtaskmanagementd` logs). Task 7 checks whether a changed binary after an update triggers re-approval.
   - **Caveat:** restic compares `os.Hostname()`, which on this Mac is the network-dependent `pepper.home.kerr.host`. After a network change, the Mac's own crashed-run locks look foreign until they are 30 minutes old.
 
-### "Switched off" versus a fault: interim rule (v0.1 Task 17, 10 Nov 2026 19:13 UTC (11 Nov 05:43))
+### "Switched off" versus a fault (v0.1 Task 17, checked 10 Nov 2026 21:41–21:45 UTC (11 Nov 08:11–08:15))
 
-**Not yet observed.** The check in spec §6.2 (read `SMAppService.status` and `launchctl print` while the agent is
-switched off in Login Items, after `kill -9`, and after a DMG copy breaks the registration) needs the owner at the
-Mac, so Task 17 shipped the conservative table (Ruling R50) and the check is still to do:
+**Verdict: the two cases are told apart by `SMAppService.status`, so an `enabled` agent that doesn't answer is
+repaired automatically (Ruling R54).** RestoreyDev 0.1.0 (1) from /Applications, macOS 27.2.
+
+- **Switched off in Login Items** (21:41:12 UTC):
+  - `smd` asked launchd to remove the job: "removing job: caller = smd", SIGTERM to the agent, "removing service".
+    `launchctl print gui/501/com.jaydenkerr.restorey.dev.agent` then reads "Could not find service".
+  - **loginwindow also force-quit the menu bar app** ("RestoreyDev [12266] force quit (caller responsible for
+    termination)"), so the app never sees the change live. It shows on the next launch.
+  - BTM keeps the item as `disposition=[enabled, disallowed, notified]`.
+  - The relaunched app read **`requiresApproval`**, with the heartbeat unreachable → "switched off"
+    (`app.log` 21:42:52).
+- **Switched back on** (21:43:22): launchd loaded the job and started the agent at once (`runs = 1`, never exited).
+  The running app read `enabled` and healthy at the next heartbeat (21:43:23).
+- **`kill -9` of the agent:** launchd's `KeepAlive` started a new one within 1 s (`runs = 2`, new pid,
+  `state = running`). `SMAppService.status` stayed `enabled`, and the app's `hello` retry covered the gap, so it
+  logged nothing.
+- **Not done here:** a copy run from an unsigned DMG breaking the registration. That falls under the Task 17 manual
+  check (d).
+
+So the table is now:
 
 | `SMAppService.status` | Heartbeat | App does |
 |---|---|---|
@@ -134,8 +151,13 @@ Mac, so Task 17 shipped the conservative table (Ruling R50) and the check is sti
 | `enabled` | agent binary outside this app's bundle, or plist hash changed | drain without exiting (`prepareForReregistration`), `unregister()`, `register()`; no unregister if the drain call fails |
 | `enabled` | agent already draining | wait, then `prepareForRestart` so it can't stay drained |
 | `enabled` | different agent version or build, or a binary replaced since the agent started | drain, launchd's `KeepAlive` starts the new binary (before any plist re-registration) |
-| `enabled` | unreachable | **no automatic repair**: "Background agent isn't running", with "Restart Agent" and "Open Login Items" |
+| `enabled` | unreachable for under 30 s | "Background agent isn't running", with "Restart Agent" and "Open Login Items" |
+| `enabled` | unreachable for 30 s or more | `unregister()`, `register()` (no drain: it can't be asked); at most once an hour, then as above |
 | `requiresApproval` | any | "Background agent is switched off", with "Open Login Items" |
+
+The 30-second grace (`AgentHealthPolicy.unreachableGrace`, three heartbeats) is there because `unregister()` kills
+a running restic. One missed heartbeat from an agent that is busy or briefly stopped, like the one at 19:54:54 UTC,
+must not cost a backup.
 
 **Found on the first real launch (fix round 3, 10 Nov 2026 19:44 UTC (11 Nov 06:14)):** an install replaced the
 bundle while an agent from an earlier install kept running (spike H6), with the same version and build (0.1.0,
@@ -145,10 +167,7 @@ fingerprint of its executable (device, inode, size, modification time) taken at 
 agent whose fingerprint differs from the file on disk, or that reports none, before anything else.
 
 Automatic repairs run at most once an hour for each kind (restart, re-register), recorded in the app's `UserDefaults` so a relaunch doesn't repair
-again (a record from another version or build is ignored). A fault that survives one shows "Restart Agent". If the check shows
-that "switched off" reads `requiresApproval`, the unreachable row can become an automatic repair by changing
-`AgentHealthPolicy.enabledButUnreachable` (`RestoreyCore/Sources/RestoreyCore/App/AgentHealth.swift`). If it
-reads `enabled`, the row must stay as it is, or the app would silently re-enable an agent the user switched off.
+again (a record from another version or build is ignored). A fault that survives one shows "Restart Agent".
 
 **Translocation detection on macOS 27.2 (26B123).** `SecTranslocateIsTranslocatedURL` is still exported by
 Security.framework, resolves through `dlsym` and returns success with `false` for non-translocated paths. A

@@ -26,22 +26,26 @@ struct AgentHealthTests {
         _ smStatus: AgentServiceStatus = .enabled,
         heartbeat: AgentHeartbeat = .ok(reply()),
         storedPlistHash: String? = "abc",
-        lastRepairs: [RepairRecord] = []
+        lastRepairs: [RepairRecord] = [],
+        unreachableFor: TimeInterval? = nil
     ) -> AgentHealthInput {
         AgentHealthInput(
             smStatus: smStatus, heartbeat: heartbeat, expectedExecutablePrefix: prefix, appVersion: "0.1.0",
             appBuild: "7", storedPlistHash: storedPlistHash, currentPlistHash: "abc",
-            executableFingerprintOnDisk: "disk", lastRepairs: lastRepairs, now: now)
+            executableFingerprintOnDisk: "disk", lastRepairs: lastRepairs,
+            unreachableSince: unreachableFor.map { now.addingTimeInterval(-$0) }, now: now)
     }
 
     private static func input(
         _ smStatus: AgentServiceStatus = .enabled,
         heartbeat: AgentHeartbeat = .ok(reply()),
         storedPlistHash: String? = "abc",
-        repairAttemptedRecently: Bool
+        repairAttemptedRecently: Bool,
+        unreachableFor: TimeInterval? = nil
     ) -> AgentHealthInput {
         input(smStatus, heartbeat: heartbeat, storedPlistHash: storedPlistHash,
-              lastRepairs: repairAttemptedRecently ? [recent(.restart), recent(.reregister)] : [])
+              lastRepairs: repairAttemptedRecently ? [recent(.restart), recent(.reregister)] : [],
+              unreachableFor: unreachableFor)
     }
 
     @Test func healthyAgentNeedsNothing() {
@@ -136,22 +140,31 @@ struct AgentHealthTests {
         #expect(plistNeedsReregistration(stored: nil, current: "abc"))
     }
 
-    /// Ruling R50: until the "switched off versus fault" check is done at the Mac, an enabled but
-    /// unreachable agent is never repaired automatically.
-    @Test func enabledUnreachableOffersRestartWithoutRepairing() {
-        #expect(AgentHealthPolicy.enabledButUnreachable == .offerRestart)
+    /// Ruling R54 (the spec §6.2 check): switched off reads `requiresApproval`, so an `enabled` agent
+    /// that doesn't answer is a fault and is repaired automatically, but only once it has been
+    /// unreachable for `unreachableGrace`: `unregister()` kills a running restic, and one missed
+    /// heartbeat (a busy or briefly stopped agent) is not a fault.
+    @Test func enabledUnreachableRepairsAfterTheGrace() {
+        #expect(AgentHealthPolicy.enabledButUnreachable == .repairAutomatically)
+        #expect(AgentHealthPolicy.unreachableGrace == 30)
         #expect(decideAgentHealth(Self.input(heartbeat: .unreachable)) == .showNotRunning(canRepair: true))
-        #expect(decideAgentHealth(Self.input(heartbeat: .unreachable, repairAttemptedRecently: true))
+        #expect(decideAgentHealth(Self.input(heartbeat: .unreachable, unreachableFor: 0))
+            == .showNotRunning(canRepair: true))
+        #expect(decideAgentHealth(Self.input(heartbeat: .unreachable, unreachableFor: 29.9))
+            == .showNotRunning(canRepair: true))
+        #expect(decideAgentHealth(Self.input(heartbeat: .unreachable, unreachableFor: 30)) == .reregisterAfterDrain)
+        #expect(decideAgentHealth(Self.input(heartbeat: .unreachable, unreachableFor: 600)) == .reregisterAfterDrain)
+    }
+
+    /// A fault that survives one repair waits for the user ("Restart Agent").
+    @Test func enabledUnreachableRepairsAtMostHourly() {
+        #expect(decideAgentHealth(Self.input(heartbeat: .unreachable, repairAttemptedRecently: true, unreachableFor: 600))
             == .showNotRunning(canRepair: true))
     }
 
-    /// The row as the brief first wrote it, ready for when the check shows "switched off" reads
-    /// `requiresApproval`: flipping `AgentHealthPolicy.enabledButUnreachable` turns it on.
-    @Test func enabledUnreachableRepairsWhenPolicyAllows() {
-        #expect(decideAgentHealth(Self.input(heartbeat: .unreachable), enabledButUnreachable: .repairAutomatically)
-            == .reregisterAfterDrain)
-        #expect(decideAgentHealth(
-            Self.input(heartbeat: .unreachable, repairAttemptedRecently: true), enabledButUnreachable: .repairAutomatically)
+    /// The conservative row is still there if a later macOS changes what "switched off" reads.
+    @Test func enabledUnreachableOffersRestartWhenPolicyIsConservative() {
+        #expect(decideAgentHealth(Self.input(heartbeat: .unreachable, unreachableFor: 600), enabledButUnreachable: .offerRestart)
             == .showNotRunning(canRepair: true))
     }
 

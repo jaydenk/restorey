@@ -32,6 +32,9 @@ final class AgentSupervisor {
     @ObservationIgnored private var lastAction: AgentHealthAction?
     /// After a drain call fails, re-registration waits until then (10 s doubling to 10 min).
     @ObservationIgnored private var drainRetryAfter: Date?
+    /// The start of the current run of failed heartbeats from an `enabled` agent (see
+    /// `AgentHealthPolicy.unreachableGrace`).
+    @ObservationIgnored private var unreachableSince: Date?
     @ObservationIgnored private var drainRetryDelay: TimeInterval = AgentHealthPolicy.heartbeatInterval
 
     init(installed: InstalledCopy, identity: Identity, log: AppLog, defaults: UserDefaults = .standard) {
@@ -99,13 +102,18 @@ final class AgentSupervisor {
         let beat = smStatus == .enabled ? await helloWithRetry() : .unreachable
         guard !busy else { return }
         if case .ok(let reply) = beat { lastHello = reply } else { lastHello = nil }
+        if smStatus == .enabled, beat == .unreachable {
+            if unreachableSince == nil { unreachableSince = Date() }
+        } else {
+            unreachableSince = nil
+        }
 
         let input = AgentHealthInput(
             smStatus: smStatus, heartbeat: beat, expectedExecutablePrefix: installed.helpersPrefix,
             appVersion: request.appVersion, appBuild: request.appBuild,
             storedPlistHash: registration.storedPlistHash, currentPlistHash: plistHash,
             executableFingerprintOnDisk: lastHello.flatMap(Self.fingerprintOnDisk),
-            lastRepairs: lastRepairs, now: Date())
+            lastRepairs: lastRepairs, unreachableSince: unreachableSince, now: Date())
         let action = decideAgentHealth(input)
         if action != lastAction {
             log.info("Agent health: \(describe(input)) → \(action)")

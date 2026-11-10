@@ -75,10 +75,11 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
   updating the agent" meanwhile, or "Updating the background agent…" when it finds the agent already draining
 - the app's own bundle is missing the agent's plist: "Restorey's installation is damaged — reinstall it from the
   download", with no repair offered
-- switched off in Login Items: "Background agent is switched off", with "Open Login Items"
+- switched off in Login Items: "Background agent is switched off", with "Open Login Items". Never switched
+  back on by Restorey. (macOS also quits Restorey when you switch the agent off, so this shows on the next launch.)
 - registered but not answering: "Background agent isn't running", with "Restart Agent" and "Open Login
-  Items". It doesn't repair this on its own yet, because "switched off" and "broken" can't be told apart
-  until the check in `docs/spike-findings.md` is done
+  Items". After 30 seconds without an answer it unregisters and registers the agent again on its own. A
+  switched-off agent reads differently (see `docs/spike-findings.md`), so this never overrides your choice
 
 A stale agent is restarted before any re-registration, since an older agent may not know the newer
 `prepareForReregistration` call. Automatic repairs happen at most once an hour for each kind (restart,

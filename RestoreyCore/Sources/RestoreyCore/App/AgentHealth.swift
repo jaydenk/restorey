@@ -62,12 +62,15 @@ public struct AgentHealthInput: Sendable, Equatable {
     public var executableFingerprintOnDisk: String?
     /// The last repair of each kind (at most one per kind).
     public var lastRepairs: [RepairRecord]
+    /// When an `enabled` agent's heartbeat first failed in the current run of failures; `nil` while it
+    /// answers.
+    public var unreachableSince: Date?
     public var now: Date
 
     public init(
         smStatus: AgentServiceStatus, heartbeat: AgentHeartbeat, expectedExecutablePrefix: String,
         appVersion: String, appBuild: String, storedPlistHash: String?, currentPlistHash: String,
-        executableFingerprintOnDisk: String?, lastRepairs: [RepairRecord], now: Date
+        executableFingerprintOnDisk: String?, lastRepairs: [RepairRecord], unreachableSince: Date? = nil, now: Date
     ) {
         self.smStatus = smStatus
         self.heartbeat = heartbeat
@@ -78,6 +81,7 @@ public struct AgentHealthInput: Sendable, Equatable {
         self.currentPlistHash = currentPlistHash
         self.executableFingerprintOnDisk = executableFingerprintOnDisk
         self.lastRepairs = lastRepairs
+        self.unreachableSince = unreachableSince
         self.now = now
     }
 
@@ -108,17 +112,22 @@ public enum AgentHealthAction: Sendable, Equatable {
 }
 
 public enum AgentHealthPolicy: Sendable, Equatable {
-    /// Re-register an `enabled` agent that doesn't answer, at most once per `repairInterval`.
+    /// Re-register an `enabled` agent that hasn't answered for `unreachableGrace`, at most once per
+    /// `repairInterval`.
     case repairAutomatically
     /// Show "Background agent isn't running" with "Restart agent" and "Open Login Items", and leave the
     /// choice to the user.
     case offerRestart
 
-    /// What an `enabled` but unreachable agent gets. Ruling R50: `.offerRestart` until the spec §6.2
-    /// check shows whether "switched off in Login Items" reads `requiresApproval` (then it can be
-    /// `.repairAutomatically`) or `enabled` (then it must stay as it is, or the app would re-enable an
-    /// agent the user switched off).
-    public static let enabledButUnreachable: AgentHealthPolicy = .offerRestart
+    /// What an `enabled` but unreachable agent gets. The spec §6.2 check (11 Nov 2026) showed that
+    /// switching the agent off in Login Items reads `requiresApproval` and removes the job, so an
+    /// `enabled` agent that doesn't answer is a fault and is repaired (Ruling R54).
+    public static let enabledButUnreachable: AgentHealthPolicy = .repairAutomatically
+
+    /// How long an `enabled` agent must stay unreachable before an automatic repair. `unregister()`
+    /// kills a running restic, so one missed heartbeat (a busy or briefly stopped agent) must not
+    /// trigger it: three heartbeats.
+    public static let unreachableGrace: TimeInterval = 30
 
     /// At most one automatic repair of each kind an hour.
     public static let repairInterval: TimeInterval = 3600
@@ -144,7 +153,12 @@ public func decideAgentHealth(
     case .enabled:
         guard case .ok(let reply) = input.heartbeat else {
             switch enabledButUnreachable {
-            case .repairAutomatically: return repair(.reregisterAfterDrain)
+            case .repairAutomatically:
+                let since = input.unreachableSince ?? input.now
+                guard input.now.timeIntervalSince(since) >= AgentHealthPolicy.unreachableGrace else {
+                    return .showNotRunning(canRepair: true)
+                }
+                return repair(.reregisterAfterDrain)
             case .offerRestart: return .showNotRunning(canRepair: true)
             }
         }
