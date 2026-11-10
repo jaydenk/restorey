@@ -112,7 +112,29 @@ interrupted backup sends its `/fail` ping) and runs a plain `restic unlock` (nev
 repository, before it accepts any run. Before exiting for an update, the agent finishes the run in progress and
 then waits up to 3 minutes for queued check-in pings.
 
-Until the check-in service is built, check-in pings are written to the agent's log instead of being sent.
+## Alerts
+
+**Check-in pings.** If a plan has a check-in URL (a Healthchecks-style dead-man's switch, kept in the
+Keychain), the agent POSTs `/start` when a backup starts, then the URL itself on success or `/fail` on failure.
+The `/fail` body is plain text: restic's exit code and the last 20 lines of the run's error output, with
+secrets removed. A network error or a 5xx is retried after 5 s, 30 s and 120 s; a 4xx is not. Each request
+times out after 30 s without data or 60 s in all, and one ping never takes more than 170 s, so it fits the
+3 minutes the agent waits for pings before exiting. A ping that fails is written to the agent's log as
+"check-in ping <kind> for <plan ID>: <outcome>", never with the URL, and never fails the backup. Set the
+check's period and grace on the service to the plan's "no successful backup" threshold (3 days by default),
+not to its hourly schedule.
+
+**Notifications.** The agent posts a macOS notification when a backup or a repository check fails, when a plan
+stops (a wrong password, say), when Full Disk Access is missing and when a plan has had no successful backup
+for 3 days. It re-notifies while the problem lasts: at once, then after 1 hour, 6 hours, and every 24 hours,
+and starts again at once if the problem clears and comes back. A re-notification replaces the earlier banner.
+The agent checks this every minute and whenever a plan's status changes, and keeps the bookkeeping in
+`state.json` (`activeAlerts`).
+
+The agent needs its own notification permission, separate from the app's, and macOS reports a notification
+from an agent without one as posted while showing nothing. So the agent checks its permission before posting.
+Without it, it posts nothing, raises "notifications off" for the menu bar to show, and holds the alerts back
+until permission is granted.
 
 ## When backups run
 

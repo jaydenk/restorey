@@ -1,7 +1,6 @@
 import AgentCore
 import Foundation
 import RestoreyCore
-import UserNotifications
 
 /// The thin `@objc` adapter from XPC to `AgentState`: it decodes each request, calls the state, and
 /// replies with JSON or an Australian English error. All logic lives in `AgentState` (AgentCore),
@@ -9,17 +8,19 @@ import UserNotifications
 final class AgentService: NSObject, AgentXPC, Sendable {
     private let state: AgentState
     private let log: AppLog
+    private let notifier: Notifier
     /// Called once a drain has been replied to, to exit so launchd starts the new binary.
     private let afterDrain: @Sendable () -> Void
     /// Called after a change that can make a plan due now: a save, a recovery kit confirmation, a resume.
     private let plansChanged: @Sendable () -> Void
 
     init(
-        state: AgentState, log: AppLog, plansChanged: @escaping @Sendable () -> Void,
+        state: AgentState, log: AppLog, notifier: Notifier, plansChanged: @escaping @Sendable () -> Void,
         afterDrain: @escaping @Sendable () -> Void
     ) {
         self.state = state
         self.log = log
+        self.notifier = notifier
         self.plansChanged = plansChanged
         self.afterDrain = afterDrain
     }
@@ -28,7 +29,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
 
     func hello(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
         // Not logged: the app's heartbeat sends one every 10 s.
-        respond(reply) { [state] in
+        respond(reply) { [state, notifier] in
             _ = try Self.decode(HelloRequest.self, from: request)
             let info = Bundle.main.infoDictionary ?? [:]
             return HelloReply(
@@ -36,7 +37,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
                 agentBuild: info["CFBundleVersion"] as? String ?? "unknown",
                 executablePath: Bundle.main.executableURL?.path ?? "unknown",
                 draining: await state.isDraining,
-                notificationsAuthorised: await Self.notificationsAuthorised())
+                notificationsAuthorised: await notifier.authorisationStatus())
         }
     }
 
@@ -114,10 +115,11 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func requestNotificationPermission(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [log] in
-            let granted = try await UNUserNotificationCenter.current()
-                .requestAuthorization(options: [.alert, .sound, .badge])
+        respond(reply) { [state, log, notifier] in
+            let granted = try await notifier.requestPermission()
             log.info("Notification permission \(granted ? "granted" : "not granted")")
+            // Clears or raises `notificationsOff`, and posts any alert that was waiting for permission.
+            await state.deliverAlerts()
             return NotificationPermissionReply(granted: granted)
         }
     }
@@ -184,15 +186,5 @@ final class AgentService: NSObject, AgentXPC, Sendable {
             }
         return path.isEmpty ? "the top level" : path.map { $0.intValue.map(String.init) ?? $0.stringValue }
             .joined(separator: ".")
-    }
-
-    /// Nil until the user has been asked.
-    private static func notificationsAuthorised() async -> Bool? {
-        switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
-        case .authorized, .provisional: true
-        case .denied: false
-        case .notDetermined: nil
-        @unknown default: nil
-        }
     }
 }

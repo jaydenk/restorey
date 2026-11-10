@@ -30,7 +30,7 @@ public actor AgentState {
     private let stateStore: any PayloadStore<RunState>
     private let secrets: any SecretStore
     private let credentialsDirectory: URL
-    private let now: @Sendable () -> Date
+    let now: @Sendable () -> Date
 
     private(set) var config: ConfigFile
     private(set) var runState: RunState
@@ -55,6 +55,13 @@ public actor AgentState {
     weak var runner: PlanRunner?
     /// The latest Full Disk Access probe, as the runner last saw it; nil until it has run.
     var fdaMissing: Bool?
+
+    /// Posts the alerts (`attach(notifier:log:)`); without one, no alert is delivered.
+    var notifier: (any AlertNotifying)?
+    var alertLog: @Sendable (String) -> Void = { _ in }
+    /// The alert delivery in progress (AgentState+Alerts.swift), and whether another was asked for meanwhile.
+    var alertDelivery: Task<Void, Never>?
+    var alertDeliveryAgain = false
 
     private var observer: (@Sendable (AgentStatus) -> Void)?
     private var lastProgressPush: Date?
@@ -216,11 +223,14 @@ public actor AgentState {
             nextRunAt: next == .distantFuture ? nil : next, alerts: alerts)
     }
 
+    /// Pushes the status and, unless `deliveringAlerts` is false, has the alerts delivered for it: every
+    /// status change can raise or clear one. Progress pushes and the delivery's own push pass false.
     @discardableResult
-    func pushStatus() -> AgentStatus {
+    func pushStatus(deliveringAlerts: Bool = true) -> AgentStatus {
         let status = status()
         lastPushed = Self.pushed(status)
         observer?(status)
+        if deliveringAlerts { scheduleAlertDelivery() }
         return status
     }
 
@@ -406,7 +416,7 @@ public actor AgentState {
             return
         }
         lastProgressPush = now
-        pushStatus()
+        pushStatus(deliveringAlerts: false)
     }
 
     public func endRun(planID: UUID) {
@@ -509,7 +519,7 @@ public actor AgentState {
         config = updated
     }
 
-    private func saveState(_ updated: RunState) async throws {
+    func saveState(_ updated: RunState) async throws {
         do {
             try await stateStore.save(updated)
         } catch {
@@ -521,7 +531,7 @@ public actor AgentState {
     /// Runs `body` with no other write in progress. Without this, two writes could each read `config`,
     /// suspend on the store, and the second would overwrite the first. The gate is handed directly to the
     /// next waiter, so it is never seen idle between two queued writes.
-    private func serialisedWrite<T>(_ body: () async throws -> T) async throws -> T {
+    func serialisedWrite<T>(_ body: () async throws -> T) async throws -> T {
         if writeInFlight {
             await withCheckedContinuation { writeWaiters.append($0) }
         } else {

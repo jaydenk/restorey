@@ -41,8 +41,10 @@ do {
             if let configError = await state.status().configError {
                 log.error("Not running any plan until the settings are fixed: \(configError)")
             }
+            let notifier = Notifier()
+            await state.attach(notifier: notifier, log: { log.info($0) })
             let service = AgentService(
-                state: state, log: log, plansChanged: { scheduler.nudge(.configChanged) }
+                state: state, log: log, notifier: notifier, plansChanged: { scheduler.nudge(.configChanged) }
             ) {
                 // Give the reply time to leave before exiting; launchd's KeepAlive starts the new binary.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { exit(0) }
@@ -67,7 +69,10 @@ do {
             }
             let runner = PlanRunner(dependencies: RunnerDependencies(
                 state: state, secrets: secrets, queues: RepositoryQueues(), supervisor: .shared,
-                logStore: RunLogStore(identity: identity), checkIn: InterimCheckInSender(log: log),
+                logStore: RunLogStore(identity: identity),
+                checkIn: CheckInService(
+                    secrets: secrets, session: CheckInService.makeSession(),
+                    log: { line, level in level == .error ? log.error(line) : log.info(line) }),
                 // <app>/Contents/Helpers/restic, beside this agent's own bundle.
                 resticExecutable: Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("restic"),
                 helperExecutable: executable,

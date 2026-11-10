@@ -20,7 +20,8 @@ public protocol SchedulerRunner: Sendable {
     func scheduleEntries() async -> [(plan: Plan, history: PlanRunHistory)]
     /// Runs one backup. Throws only when the run can't be registered (draining, already running…).
     func runBackup(planID: UUID, trigger: RunTrigger) async throws -> RunRecord
-    /// Pushes the status to the app if time alone has changed a plan's phase.
+    /// Pushes the status to the app if time alone has changed a plan's phase, and delivers the alerts
+    /// that have fallen due. Called at the start of every tick.
     func refreshStatus() async
 }
 
@@ -293,5 +294,7 @@ extension PlanRunner: SchedulerRunner {
 
     public func refreshStatus() async {
         await deps.state.pushStatusIfChanged()
+        // Time alone can make an alert due again, or raise `noRecentSuccess`.
+        await deps.state.deliverAlerts()
     }
 }
