@@ -90,20 +90,21 @@ The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`) runs
    A failure found in steps 1 to 3 (an invalid plan, a missing source, Full Disk Access missing) sends the
    check-in `/fail` ping with the reason, and no `/start`. A plan whose recovery kit isn't confirmed yet
    sends nothing.
-4. Sends the check-in `/start` ping, runs `restic backup` through the repository's queue, and classifies the
-   result.
+4. Sends the check-in `/start` ping, runs `restic backup` through the repository's queue, classifies the
+   result, records it, and sends the success or `/fail` ping straight away, so maintenance never delays it.
 5. After a successful backup, in the same turn of the queue: `forget` (after every backup that made a
    snapshot, or daily for an adopted repository), `prune` weekly when it is switched on, and a plain
    `unlock` followed by `check` weekly. Each is its own run with its own log; a failed `check` raises its own
    alert and never turns the backup into a failure.
-6. Records everything in `state.json` and raises or clears the alerts, then sends the success or `/fail` ping.
+6. Records every step in `state.json` as it ends and raises or clears the alerts.
 
 A wrong repository password, a missing repository or unreadable backup keys (including a password the helper
 couldn't read from the Keychain) stop the plan until its repository or secrets are changed, or a later backup
 succeeds. Pause stops a run in progress (SIGINT, then SIGKILL after 10 s) and resumes after an hour. Restorey
 never runs `restic init` except from the explicit "Create new repository" action. That action first runs
 `restic cat config`: if a repository is already there it refuses ("A repository already exists there"), and it
-initialises only when restic reports nothing at the address. Adopting a repository only lists its snapshots.
+initialises only when restic reports nothing at the address. Restorey never creates an S3 or B2 bucket: create
+it in your provider's console first. Adopting a repository only lists its snapshots.
 
 Every restic run has its own log in `~/Library/Logs/Restorey/runs/<plan ID>/` (`Restorey-Dev` for Debug builds),
 with secrets redacted. If the agent stops mid-run, its next start records that run as interrupted (an

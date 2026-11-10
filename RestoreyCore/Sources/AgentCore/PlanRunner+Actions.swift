@@ -42,14 +42,34 @@ extension PlanRunner {
         case .success: return .failure(.repositoryAlreadyExists)
         case .repositoryMissing: break
         case let outcome:
-            return .failure(.operationFailed(
-                "Restorey couldn't check the repository address: \(Self.explain(outcome, stoppedReason: probe.stoppedReason))"))
+            return .failure(.operationFailed(Self.probeFailureMessage(
+                repository: session.plan.repository, outcome: outcome, stoppedReason: probe.stoppedReason,
+                stderr: probe.tail)))
         }
         guard let created else { return .failure(.unknownPlan) }
         if case .success = created.record.outcome { return .success(()) }
         return .failure(.operationFailed(
             "Restorey couldn't create the repository: \(Self.explain(created.record.outcome, stoppedReason: created.stoppedReason))"))
     }
+
+    /// What the app shows when `cat config` failed with something other than "nothing there". Init never
+    /// runs after such a failure, whatever the text says; the text only chooses the explanation. An S3
+    /// bucket that is missing (or that the key can't see) gets its own sentence, because Restorey never
+    /// creates buckets: scoped keys can't, and spec §5.4 forbids creating storage the user didn't ask for.
+    static func probeFailureMessage(
+        repository: Repository, outcome: RunOutcome, stoppedReason: String?, stderr: [String]
+    ) -> String {
+        if case .s3(let location) = repository {
+            let text = (stderr + [explain(outcome, stoppedReason: stoppedReason)]).joined(separator: "\n")
+            if missingBucketMarkers.contains(where: { text.localizedCaseInsensitiveContains($0) }) {
+                return "The bucket \(location.bucket) doesn't exist or this key can't see it. Create it in your provider's console first"
+            }
+        }
+        return "Restorey couldn't check the repository address: \(explain(outcome, stoppedReason: stoppedReason))"
+    }
+
+    /// minio-go's text for S3's `NoSuchBucket` ("The specified bucket does not exist.") and the code itself.
+    static let missingBucketMarkers = ["NoSuchBucket", "specified bucket does not exist"]
 
     private func listForAdoption(planID: UUID, handle: RunHandle) async -> Result<AdoptReport, AgentError> {
         let collector = LineCollector(matching: SnapshotListing.isListing)

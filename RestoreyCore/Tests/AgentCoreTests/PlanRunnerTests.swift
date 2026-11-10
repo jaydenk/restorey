@@ -224,6 +224,53 @@ struct PlanRunnerTests {
         #expect(await f.status().alerts == [.checkFailed])
     }
 
+    /// Ruling R37: the end ping reports the backup alone, so it goes out before maintenance starts and a
+    /// slow maintenance step can't hold it up. Here `forget` waits for a file the test only writes after
+    /// the success ping has arrived.
+    @Test func endPingIsSentBeforeMaintenance() async throws {
+        let restic = try ResticBinary.require()
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restorey-slowforget-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let release = dir.appendingPathComponent("release")
+        let started = dir.appendingPathComponent("forget-started")
+        let wrapper = dir.appendingPathComponent("restic.sh")
+        try """
+            #!/bin/sh
+            if [ "$1" = forget ]; then
+              : > '\(started.path)'
+              while [ ! -f '\(release.path)' ]; do /bin/sleep 0.1; done
+            fi
+            exec '\(restic.path)' "$@"
+
+            """.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+
+        let f = try await RunnerFixture.make(executable: wrapper)
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+
+        // forget has started and is held; the success ping must already be out.
+        let deadline = ContinuousClock.now + .seconds(60)
+        while !FileManager.default.fileExists(atPath: started.path), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(FileManager.default.fileExists(atPath: started.path))
+        await f.runner.pingsFlushed()
+        #expect(await f.checkIn.pings == [.start, .success])
+        #expect(await f.history().runningRecord?.operation == .forget(dryRun: false))
+
+        try "".write(to: release, atomically: true, encoding: .utf8)
+        guard case .success = try await run.value.outcome else {
+            Issue.record("expected a success")
+            return
+        }
+        #expect(await f.pings() == [.start, .success]) // maintenance added nothing
+        #expect(await f.operations().suffix(4) == [.backup, .forget(dryRun: false), .unlock, .check])
+    }
+
     // MARK: Refusals before restic
 
     @Test func fdaMissingSkipsResticAndRaisesCondition() async throws {
@@ -664,7 +711,7 @@ struct PlanRunnerTests {
     // MARK: Draining (Ruling R35)
 
     @Test func drainWaitsForQueuedPings() async throws {
-        let f = try await RunnerFixture.make(pingDelay: .seconds(1))
+        let f = try await RunnerFixture.make(pingDelay: .seconds(4))
         defer { f.remove() }
         try f.write("a.txt", "one")
         _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
@@ -802,6 +849,71 @@ struct PlanRunnerTests {
             ($0 as? AgentError)?.message == "Restorey couldn't check the repository address: The repository password is wrong"
         }
         #expect(await f.operations() == [.catConfig, .initRepository, .catConfig])
+    }
+
+    /// Real stderr from restic 0.19.1 is not available for a missing AWS bucket here (see the round-2
+    /// report: B2 answers a missing bucket with NoSuchKey, exit 10). The text is minio-go's message for
+    /// S3's `NoSuchBucket`.
+    @Test func probeFailureNamesAMissingBucketForS3Only() throws {
+        let s3 = Repository.s3(S3Location(
+            provider: .s3, endpoint: try #require(URL(string: "https://s3.eu-west-2.amazonaws.com")),
+            bucket: "my-backups", prefix: "mac"))
+        let stderr = [#"{"message_type":"exit_error","code":1,"message":"Fatal: unable to open config file: Stat: The specified bucket does not exist."}"#]
+        let outcome = RunOutcome.failed(exitCode: 1, reason: "Fatal: unable to open config file: Stat: The specified bucket does not exist.")
+        #expect(PlanRunner.probeFailureMessage(repository: s3, outcome: outcome, stoppedReason: nil, stderr: stderr)
+            == "The bucket my-backups doesn't exist or this key can't see it. Create it in your provider's console first")
+        #expect(PlanRunner.probeFailureMessage(
+            repository: s3, outcome: .failed(exitCode: 1, reason: "NoSuchBucket"), stoppedReason: nil, stderr: [])
+            .hasPrefix("The bucket my-backups doesn't exist"))
+
+        // Any other failure, or a non-S3 repository, keeps restic's own reason.
+        #expect(PlanRunner.probeFailureMessage(
+            repository: s3, outcome: .failed(exitCode: 1, reason: "Fatal: connection refused"), stoppedReason: nil,
+            stderr: []) == "Restorey couldn't check the repository address: Fatal: connection refused")
+        #expect(PlanRunner.probeFailureMessage(
+            repository: .raw(repository: "/r", environmentNames: []), outcome: outcome, stoppedReason: nil,
+            stderr: stderr).hasPrefix("Restorey couldn't check the repository address: "))
+    }
+
+    static let b2Endpoint = ProcessInfo.processInfo.environment["RESTOREY_B2_TEST_ENDPOINT"]
+    static let b2Bucket = ProcessInfo.processInfo.environment["RESTOREY_B2_TEST_BUCKET"]
+    static let b2KeyID = ProcessInfo.processInfo.environment["RESTOREY_B2_TEST_KEY_ID"]
+    static let b2Key = ProcessInfo.processInfo.environment["RESTOREY_B2_TEST_APP_KEY"]
+    static let b2Configured = [b2Endpoint, b2Bucket, b2KeyID, b2Key].allSatisfy { !($0 ?? "").isEmpty }
+
+    /// The create probe against a real B2 bucket: an empty prefix is "nothing there" (exit 10), so the
+    /// action would go on to init. Read-only: it never runs init.
+    @Test(.enabled(if: b2Configured,
+                   "set RESTOREY_B2_TEST_ENDPOINT, RESTOREY_B2_TEST_BUCKET, RESTOREY_B2_TEST_KEY_ID and RESTOREY_B2_TEST_APP_KEY"))
+    func b2ProbeOfAnEmptyPrefixIsRepositoryMissing() async throws {
+        let f = try await RunnerFixture.make(createRepository: false)
+        defer { f.remove() }
+        var plan = await f.plan()
+        plan.repository = .s3(S3Location(
+            provider: .b2, endpoint: try #require(URL(string: Self.b2Endpoint ?? "")),
+            bucket: Self.b2Bucket ?? "", prefix: "task14-probe-\(UUID().uuidString.prefix(8).lowercased())"))
+
+        // A stand-in for the agent's s3-credentials helper. The keys come from the environment and live
+        // only in this 0700 script inside the fixture, which is removed with it.
+        let helper = f.root.appendingPathComponent("s3-helper.sh")
+        let expiry = ISO8601DateFormatter().string(from: Date().addingTimeInterval(3600))
+        try """
+            #!/bin/sh
+            echo '{"Version":1,"AccessKeyId":"\(Self.b2KeyID ?? "")","SecretAccessKey":"\(Self.b2Key ?? "")","Expiration":"\(expiry)"}'
+
+            """.write(to: helper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+        let credentials = try CredentialsFile.write(planID: plan.id, helper: helper, directory: f.support)
+
+        var context = f.context()
+        context.credentialsFile = credentials
+        let invocation = makeInvocation(.catConfig, plan: plan, context: context)
+        let termination = try await ResticProcess(
+            executable: f.restic, invocation: invocation, planID: plan.id, supervisor: SupervisedProcesses(),
+            homeDirectory: f.home
+        ).run { _ in }
+        #expect(termination.exitCode == 10, "\(termination.stderrTail)")
+        #expect(termination.exitErrorMessage?.contains("The specified key does not exist") == true)
     }
 
     @Test func noRunEverInitialisesTheRepository() async throws {

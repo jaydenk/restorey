@@ -67,10 +67,10 @@ public struct RunnerDependencies: Sendable {
 /// 3. the Full Disk Access probe (missing: a failure and the `fullDiskAccessMissing` alert, no restic);
 /// 4. the check-in `/start` ping;
 /// 5. the backup, through the repository's queue, then classified;
-/// 6. in the same queue slot, after a successful backup: `forget`, `prune` and a plain `unlock`
-///    followed by `check`, when each is due (`maintenance`);
-/// 7. history and alerts (written after every step, so an agent that dies mid-run loses nothing);
-/// 8. the check-in end ping.
+/// 6. history and alerts (written after every step, so an agent that dies mid-run loses nothing);
+/// 7. the check-in end ping, as soon as the backup's record is committed (Ruling R37);
+/// 8. in the same queue slot, after a successful backup: `forget`, `prune` and a plain `unlock`
+///    followed by `check`, when each is due (`maintenance`).
 ///
 /// A failure found before `/start` (an invalid plan, a missing source, Full Disk Access missing) sends
 /// `/fail` with the reason and no `/start` (Ruling R33). A skip, a pause, and a plan whose recovery kit
@@ -312,30 +312,31 @@ public actor PlanRunner {
 
         for ping in pingsAtStart(trigger: trigger) { queuePing(ping, planID: planID) }
 
-        let result: StepResult
-        let endRedactor: Redactor
         switch prepare(plan) {
-        case .failed(let outcome, let reason, let partialRedactor):
-            endRedactor = partialRedactor
+        case .failed(let outcome, let reason, let redactor):
             let record = RunRecord(
                 id: UUID(), planID: planID, operation: .backup, trigger: trigger, startedAt: startedAt,
                 endedAt: deps.now(), outcome: outcome, summary: nil, logFile: "")
             await commit(record, plan: plan, fda: fda, stoppedReason: reason)
-            result = StepResult(record: record, stoppedReason: reason, tail: [reason])
+            queueEndPing(StepResult(record: record, stoppedReason: reason, tail: [reason]), redactor: redactor)
+            return record
         case .ready(let session):
-            endRedactor = session.redactor
-            result = await deps.queues.run(repository: session.key) { [self] in
+            return await deps.queues.run(repository: session.key) { [self] in
                 await backupSlot(session: session, trigger: trigger, handle: handle, fda: fda)
-            }
+            }.record
         }
-
-        if let ping = pingAtEnd(outcome: result.record.outcome, logTail: result.tail, redactor: endRedactor) {
-            queuePing(ping, planID: planID)
-        }
-        return result.record
     }
 
-    /// The backup and its maintenance, in one turn of the repository's queue.
+    /// The backup's success or `/fail` ping (none for a pause, cancel or lock).
+    private func queueEndPing(_ result: StepResult, redactor: Redactor) {
+        if let ping = pingAtEnd(outcome: result.record.outcome, logTail: result.tail, redactor: redactor) {
+            queuePing(ping, planID: result.record.planID)
+        }
+    }
+
+    /// The backup and its maintenance, in one turn of the repository's queue. The backup's end ping is
+    /// queued as soon as its record is committed, before any maintenance (Ruling R37): it reports the
+    /// backup, and a slow or failing check must neither delay nor change it.
     private func backupSlot(
         session: RunSession, trigger: RunTrigger, handle: RunHandle, fda: FDAProbeResult
     ) async -> StepResult {
@@ -347,6 +348,7 @@ public actor PlanRunner {
 
         let backup = await runStep(.backup, trigger: trigger, session: session, handle: handle, progress: true)
         await commit(backup.record, plan: plan, fda: fda, stoppedReason: backup.stoppedReason)
+        queueEndPing(backup, redactor: session.redactor)
 
         guard handle.intent == nil, let history = try? await deps.state.runInputs(plan.id).history else {
             return backup
