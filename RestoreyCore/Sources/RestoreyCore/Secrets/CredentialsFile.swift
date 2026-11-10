@@ -7,6 +7,8 @@ public enum CredentialsFile {
     public enum Error: Swift.Error, Equatable {
         /// minio-go splits `credential_process` on `strings.Fields`, which splits on any Unicode whitespace.
         case pathContainsWhitespace(String)
+        /// `#` and `;` can start a comment in an INI parser, which would truncate the command.
+        case pathContainsCommentCharacter(String)
         case unexpectedMode(path: String, mode: Int)
         case posix(operation: String, code: Int32)
     }
@@ -19,6 +21,9 @@ public enum CredentialsFile {
         let helperPath = helper.path
         if helperPath.unicodeScalars.contains(where: { $0.properties.isWhitespace }) {
             throw Error.pathContainsWhitespace(helperPath)
+        }
+        if helperPath.contains(where: { $0 == "#" || $0 == ";" }) {
+            throw Error.pathContainsCommentCharacter(helperPath)
         }
         let id = planID.uuidString
         let contents = "[restorey-\(id)]\ncredential_process = \(helperPath) s3-credentials --plan \(id)\n"
@@ -34,7 +39,9 @@ public enum CredentialsFile {
         let temporary = folder.appendingPathComponent(".\(id).\(UUID().uuidString).tmp")
         let fd = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
         try posix("open", fd)
+        // The descriptor is closed exactly once, before the rename; the catch only unlinks.
         do {
+            defer { _ = close(fd) }
             // The umask can only remove bits from 0600, so set it explicitly as well.
             try posix("fchmod", fchmod(fd, 0o600))
             var remaining = Array(contents.utf8)[...]
@@ -44,13 +51,17 @@ public enum CredentialsFile {
                 remaining = remaining.dropFirst(written)
             }
             try posix("fsync", fsync(fd))
-            try posix("close", close(fd))
-            try posix("rename", rename(temporary.path, destination.path))
         } catch {
-            _ = close(fd)
             unlink(temporary.path)
             throw error
         }
+        do {
+            try posix("rename", rename(temporary.path, destination.path))
+        } catch {
+            unlink(temporary.path)
+            throw error
+        }
+        try requireMode(folder, 0o700)
         try requireMode(destination, 0o600)
         return destination
     }

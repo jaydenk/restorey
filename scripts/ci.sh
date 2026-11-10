@@ -55,9 +55,17 @@ if [[ -f Config/Local.xcconfig ]]; then
     exit 1
   fi
   grep -E "^.{1,3} Test .* (passed|failed)|TEST SUCCEEDED" "$hosted_log"
+  # TEST SUCCEEDED alone is also what a run that executed nothing reports.
+  if ! grep -E "Test run with [1-9][0-9]* tests?" "$hosted_log"; then
+    echo "error: the hosted run executed no tests, see $hosted_log" >&2
+    exit 1
+  fi
 else
   step "Skipping signed build: Config/Local.xcconfig not found"
   echo "hosted keychain tests skipped: no signing (Config/Local.xcconfig not found)"
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "::warning::hosted keychain tests skipped: no signing"
+  fi
 fi
 
 step "All CI checks passed"

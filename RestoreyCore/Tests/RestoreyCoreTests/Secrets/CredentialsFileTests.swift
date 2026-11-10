@@ -64,4 +64,28 @@ import Testing
         let names = try FileManager.default.contentsOfDirectory(atPath: first.deletingLastPathComponent().path)
         #expect(names == ["\(plan.uuidString).ini"])
     }
+
+    @Test(arguments: ["/tmp/a#b/agent", "/tmp/a;b/agent"])
+    func refusesCommentCharacters(path: String) {
+        let dir = Self.tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(throws: CredentialsFile.Error.pathContainsCommentCharacter(path)) {
+            try CredentialsFile.write(planID: UUID(), helper: URL(fileURLWithPath: path), directory: dir)
+        }
+    }
+
+    @Test func failedRenameThrowsAndRemovesTemporaryFile() throws {
+        let dir = Self.tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plan = UUID()
+        // A non-empty directory where the file should go makes rename(2) fail.
+        let blocker = dir.appendingPathComponent("s3/\(plan.uuidString).ini", isDirectory: true)
+        try FileManager.default.createDirectory(at: blocker, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: blocker.appendingPathComponent("keep"))
+        #expect(throws: CredentialsFile.Error.self) {
+            try CredentialsFile.write(planID: plan, helper: Self.helper, directory: dir)
+        }
+        let names = try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("s3").path)
+        #expect(names == ["\(plan.uuidString).ini"])
+    }
 }
