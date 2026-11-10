@@ -1,0 +1,195 @@
+import Foundation
+
+/// A backup plan: what to back up, where to, when, and how long to keep it. Persisted in
+/// `config.json` through `VersionedStore`. Secrets never live here (global constraints): the S3
+/// keys, repository password, raw environment values and check-in URL are all in the keychain.
+public struct Plan: Codable, Sendable, Identifiable, Equatable {
+    public var id: UUID
+    public var name: String
+    public var repository: Repository
+    public var origin: RepositoryOrigin
+    /// Passed as `--host` to `backup`, `forget` and `snapshots`.
+    public var hostLabel: String
+    /// Absolute paths.
+    public var sources: [String]
+    public var exclusions: [String]
+    public var schedule: Schedule
+    public var conditions: Conditions
+    public var retention: Retention
+    public var pruneEnabled: Bool
+    public var forgetCadence: ForgetCadence
+    public var uploadLimitKiB: Int?
+    public var packSizeMiB: Int?
+    public var noSuccessAlertDays: Int
+    /// Whether a check-in URL exists in the keychain. The URL itself is a secret and is not stored here.
+    public var hasCheckInURL: Bool
+    public var recoveryKitConfirmedAt: Date?
+    public var createdAt: Date
+
+    public init(
+        id: UUID,
+        name: String,
+        repository: Repository,
+        origin: RepositoryOrigin,
+        hostLabel: String,
+        sources: [String],
+        exclusions: [String],
+        schedule: Schedule,
+        conditions: Conditions,
+        retention: Retention,
+        pruneEnabled: Bool,
+        forgetCadence: ForgetCadence,
+        uploadLimitKiB: Int?,
+        packSizeMiB: Int?,
+        noSuccessAlertDays: Int,
+        hasCheckInURL: Bool,
+        recoveryKitConfirmedAt: Date?,
+        createdAt: Date
+    ) {
+        self.id = id
+        self.name = name
+        self.repository = repository
+        self.origin = origin
+        self.hostLabel = hostLabel
+        self.sources = sources
+        self.exclusions = exclusions
+        self.schedule = schedule
+        self.conditions = conditions
+        self.retention = retention
+        self.pruneEnabled = pruneEnabled
+        self.forgetCadence = forgetCadence
+        self.uploadLimitKiB = uploadLimitKiB
+        self.packSizeMiB = packSizeMiB
+        self.noSuccessAlertDays = noSuccessAlertDays
+        self.hasCheckInURL = hasCheckInURL
+        self.recoveryKitConfirmedAt = recoveryKitConfirmedAt
+        self.createdAt = createdAt
+    }
+
+    /// A new plan with every spec default applied. Callers pass the exclusion list
+    /// (`DefaultExclusions.paths(home:)`) so this type stays independent of it.
+    public static func newHotPlan(
+        name: String,
+        repository: Repository,
+        origin: RepositoryOrigin,
+        hostLabel: String,
+        sources: [String],
+        exclusions: [String],
+        now: Date
+    ) -> Plan {
+        let created = origin == .created
+        return Plan(
+            id: UUID(),
+            name: name,
+            repository: repository,
+            origin: origin,
+            hostLabel: hostLabel,
+            sources: sources,
+            exclusions: exclusions,
+            schedule: .interval(seconds: 3600),
+            conditions: Conditions(battery: .minimumPercent(20), skipOnConstrainedNetwork: true),
+            retention: Retention(),
+            // An adopted repository is someone else's: never prune it, and forget daily rather
+            // than after every backup.
+            pruneEnabled: created,
+            forgetCadence: created ? .afterEachBackup : .daily,
+            uploadLimitKiB: nil,
+            packSizeMiB: created && repository.isS3 ? 64 : nil,
+            noSuccessAlertDays: 3,
+            hasCheckInURL: false,
+            recoveryKitConfirmedAt: nil,
+            createdAt: now
+        )
+    }
+}
+
+public enum RepositoryOrigin: String, Codable, Sendable, Equatable {
+    /// Restorey ran `restic init`.
+    case created
+    /// The repository already existed.
+    case adopted
+}
+
+public enum Schedule: Codable, Sendable, Equatable {
+    case interval(seconds: Int)
+}
+
+public enum BatteryRule: Codable, Sendable, Equatable {
+    case minimumPercent(Int)
+    case neverOnBattery
+}
+
+public struct Conditions: Codable, Sendable, Equatable {
+    public var battery: BatteryRule
+    public var skipOnConstrainedNetwork: Bool
+
+    public init(battery: BatteryRule = .minimumPercent(20), skipOnConstrainedNetwork: Bool = true) {
+        self.battery = battery
+        self.skipOnConstrainedNetwork = skipOnConstrainedNetwork
+    }
+}
+
+public enum ForgetCadence: String, Codable, Sendable, Equatable {
+    case afterEachBackup
+    case daily
+}
+
+public struct Retention: Codable, Sendable, Equatable {
+    public var hourly: Int
+    public var daily: Int
+    public var weekly: Int
+    public var monthly: Int
+
+    public init(hourly: Int = 24, daily: Int = 30, weekly: Int = 52, monthly: Int = 120) {
+        self.hourly = hourly
+        self.daily = daily
+        self.weekly = weekly
+        self.monthly = monthly
+    }
+}
+
+public enum Repository: Codable, Sendable, Equatable {
+    case s3(S3Location)
+    /// A restic repository string restic understands directly, with the names (not values) of the
+    /// environment variables it needs. The values are in the keychain.
+    case raw(repository: String, environmentNames: [String])
+
+    var isS3: Bool {
+        if case .s3 = self { return true }
+        return false
+    }
+}
+
+public struct S3Location: Codable, Sendable, Equatable {
+    public enum Provider: String, Codable, Sendable, Equatable {
+        case b2
+        case s3
+    }
+
+    public var provider: Provider
+    public var endpoint: URL
+    public var bucket: String
+    public var prefix: String
+
+    public init(provider: Provider, endpoint: URL, bucket: String, prefix: String) {
+        self.provider = provider
+        self.endpoint = endpoint
+        self.bucket = bucket
+        self.prefix = prefix
+    }
+
+    /// `s3:<endpoint>/<bucket>/<prefix>`, with no trailing slash.
+    public var resticRepository: String {
+        let parts = [endpoint.absoluteString, bucket, prefix].map { $0.trimmingSlashes() }
+        return "s3:" + parts.filter { !$0.isEmpty }.joined(separator: "/")
+    }
+}
+
+private extension String {
+    func trimmingSlashes() -> String {
+        var s = Substring(self)
+        while s.first == "/" { s = s.dropFirst() }
+        while s.last == "/" { s = s.dropLast() }
+        return String(s)
+    }
+}
