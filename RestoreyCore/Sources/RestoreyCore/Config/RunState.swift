@@ -1,0 +1,116 @@
+import Foundation
+
+/// Which alerts are currently raised for a plan. Task 9 decides when each is raised and cleared.
+/// Raw values are the JSON keys of `PlanRunHistory.activeAlerts`.
+public enum AlertCondition: String, Codable, Sendable, Hashable, CaseIterable {
+    case backupFailed
+    case checkFailed
+    case configurationError
+    case fullDiskAccessMissing
+    case noRecentSuccess
+    case notificationsOff
+}
+
+/// A string-keyed dictionary needs `CodingKeyRepresentable`, otherwise `[AlertCondition: …]` would
+/// encode as a flat array of alternating keys and values.
+extension AlertCondition: CodingKeyRepresentable {
+    public var codingKey: any CodingKey { AlertKey(stringValue: rawValue) }
+
+    public init?<T: CodingKey>(codingKey: T) {
+        self.init(rawValue: codingKey.stringValue)
+    }
+
+    private struct AlertKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+}
+
+/// Notification bookkeeping for one raised alert.
+public struct AlertNotificationState: Codable, Sendable, Equatable {
+    public var raisedAt: Date
+    public var lastNotifiedAt: Date?
+    public var count: Int
+
+    public init(raisedAt: Date, lastNotifiedAt: Date?, count: Int) {
+        self.raisedAt = raisedAt
+        self.lastNotifiedAt = lastNotifiedAt
+        self.count = count
+    }
+}
+
+/// What the agent remembers about one plan between launches.
+public struct PlanRunHistory: Codable, Sendable, Equatable {
+    public var lastSuccessAt: Date?
+    public var lastAttemptAt: Date?
+    public var lastSnapshotAt: Date?
+    public var lastForgetAt: Date?
+    public var lastPruneAt: Date?
+    public var lastCheckAt: Date?
+    /// A record that was started but not finished; recovered as `.interrupted` on launch.
+    public var runningRecordID: UUID?
+    /// Newest first or last is the plan runner's choice; the cap is 50 (Task 14 enforces it).
+    public var recent: [RunRecord]
+    public var activeAlerts: [AlertCondition: AlertNotificationState]
+    public var stoppedReason: String?
+    public var pausedUntil: Date?
+
+    public init() {
+        recent = []
+        activeAlerts = [:]
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case lastSuccessAt, lastAttemptAt, lastSnapshotAt, lastForgetAt, lastPruneAt, lastCheckAt
+        case runningRecordID, recent, activeAlerts, stoppedReason, pausedUntil
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        lastSuccessAt = try c.decodeIfPresent(Date.self, forKey: .lastSuccessAt)
+        lastAttemptAt = try c.decodeIfPresent(Date.self, forKey: .lastAttemptAt)
+        lastSnapshotAt = try c.decodeIfPresent(Date.self, forKey: .lastSnapshotAt)
+        lastForgetAt = try c.decodeIfPresent(Date.self, forKey: .lastForgetAt)
+        lastPruneAt = try c.decodeIfPresent(Date.self, forKey: .lastPruneAt)
+        lastCheckAt = try c.decodeIfPresent(Date.self, forKey: .lastCheckAt)
+        runningRecordID = try c.decodeIfPresent(UUID.self, forKey: .runningRecordID)
+        recent = try c.decodeIfPresent([RunRecord].self, forKey: .recent) ?? []
+        activeAlerts = try c.decodeIfPresent([AlertCondition: AlertNotificationState].self, forKey: .activeAlerts) ?? [:]
+        stoppedReason = try c.decodeIfPresent(String.self, forKey: .stoppedReason)
+        pausedUntil = try c.decodeIfPresent(Date.self, forKey: .pausedUntil)
+    }
+}
+
+/// The payload of `state.json` (schema version 1), stored through `VersionedStore`.
+/// JSON: `{"plans":{"<plan UUID>":{…}}}`. The plan IDs are explicit string keys: `[UUID: …]` would
+/// otherwise encode as an array.
+public struct RunState: Codable, Sendable, Equatable {
+    public var plans: [UUID: PlanRunHistory]
+
+    public init(plans: [UUID: PlanRunHistory] = [:]) {
+        self.plans = plans
+    }
+
+    private enum CodingKeys: String, CodingKey { case plans }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let raw = try c.decodeIfPresent([String: PlanRunHistory].self, forKey: .plans) ?? [:]
+        var plans: [UUID: PlanRunHistory] = [:]
+        for (key, history) in raw {
+            guard let id = UUID(uuidString: key) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .plans, in: c, debugDescription: "Plan key \(key) is not a UUID")
+            }
+            plans[id] = history
+        }
+        self.plans = plans
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(Dictionary(uniqueKeysWithValues: plans.map { ($0.key.uuidString, $0.value) }), forKey: .plans)
+    }
+}

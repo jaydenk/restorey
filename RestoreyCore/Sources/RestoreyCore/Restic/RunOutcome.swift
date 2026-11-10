@@ -1,0 +1,199 @@
+import Foundation
+
+/// Why a run did not start. Produced by the conditions gate (Task 8).
+/// JSON: `{"type":"onBattery"}`, `{"type":"batteryBelow","percent":20}`,
+/// `{"type":"volumeNotMounted","volume":"Backup"}`.
+public enum SkipReason: Codable, Sendable, Equatable {
+    case onBattery
+    case batteryBelow(Int)
+    case constrainedNetwork
+    case noNetwork
+    case volumeNotMounted(String)
+
+    private enum CodingKeys: String, CodingKey { case type, percent, volume }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.decode(String.self, forKey: .type) {
+        case "onBattery": self = .onBattery
+        case "batteryBelow": self = .batteryBelow(try c.decode(Int.self, forKey: .percent))
+        case "constrainedNetwork": self = .constrainedNetwork
+        case "noNetwork": self = .noNetwork
+        case "volumeNotMounted": self = .volumeNotMounted(try c.decode(String.self, forKey: .volume))
+        case let other: throw DecodingError.dataCorruptedError(
+            forKey: .type, in: c, debugDescription: "Unknown skip reason \(other)")
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .onBattery: try c.encode("onBattery", forKey: .type)
+        case .batteryBelow(let percent):
+            try c.encode("batteryBelow", forKey: .type)
+            try c.encode(percent, forKey: .percent)
+        case .constrainedNetwork: try c.encode("constrainedNetwork", forKey: .type)
+        case .noNetwork: try c.encode("noNetwork", forKey: .type)
+        case .volumeNotMounted(let volume):
+            try c.encode("volumeNotMounted", forKey: .type)
+            try c.encode(volume, forKey: .volume)
+        }
+    }
+}
+
+/// How a run ended. Drives alerts and the status UI, and is persisted in run records.
+/// JSON: `{"type":"success","snapshotID":"…"}` (key omitted when nil), `{"type":"warning","unreadable":3}`,
+/// `{"type":"skipped","reason":{…}}`, `{"type":"failed","exitCode":2,"reason":"…"}`, and
+/// `{"type":"<case>"}` for the rest.
+public enum RunOutcome: Codable, Sendable, Equatable {
+    case success(snapshotID: String?)
+    /// Backup finished and `--skip-if-unchanged` made no snapshot.
+    case unchanged
+    /// Backup finished and made a snapshot, but some files could not be read (restic exit 3).
+    case warning(unreadable: Int)
+    case paused
+    case cancelled
+    case repositoryMissing
+    case wrongPassword
+    case credentialsUnavailable
+    case locked
+    /// The agent died or was killed mid-run. Set on recovery (Task 14), never by `classify`.
+    case interrupted
+    case skipped(SkipReason)
+    case failed(exitCode: Int32, reason: String)
+
+    private enum CodingKeys: String, CodingKey { case type, snapshotID, unreadable, reason, exitCode }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.decode(String.self, forKey: .type) {
+        case "success": self = .success(snapshotID: try c.decodeIfPresent(String.self, forKey: .snapshotID))
+        case "unchanged": self = .unchanged
+        case "warning": self = .warning(unreadable: try c.decode(Int.self, forKey: .unreadable))
+        case "paused": self = .paused
+        case "cancelled": self = .cancelled
+        case "repositoryMissing": self = .repositoryMissing
+        case "wrongPassword": self = .wrongPassword
+        case "credentialsUnavailable": self = .credentialsUnavailable
+        case "locked": self = .locked
+        case "interrupted": self = .interrupted
+        case "skipped": self = .skipped(try c.decode(SkipReason.self, forKey: .reason))
+        case "failed":
+            self = .failed(
+                exitCode: try c.decode(Int32.self, forKey: .exitCode),
+                reason: try c.decode(String.self, forKey: .reason))
+        case let other: throw DecodingError.dataCorruptedError(
+            forKey: .type, in: c, debugDescription: "Unknown run outcome \(other)")
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .success(let snapshotID):
+            try c.encode("success", forKey: .type)
+            try c.encodeIfPresent(snapshotID, forKey: .snapshotID)
+        case .unchanged: try c.encode("unchanged", forKey: .type)
+        case .warning(let unreadable):
+            try c.encode("warning", forKey: .type)
+            try c.encode(unreadable, forKey: .unreadable)
+        case .paused: try c.encode("paused", forKey: .type)
+        case .cancelled: try c.encode("cancelled", forKey: .type)
+        case .repositoryMissing: try c.encode("repositoryMissing", forKey: .type)
+        case .wrongPassword: try c.encode("wrongPassword", forKey: .type)
+        case .credentialsUnavailable: try c.encode("credentialsUnavailable", forKey: .type)
+        case .locked: try c.encode("locked", forKey: .type)
+        case .interrupted: try c.encode("interrupted", forKey: .type)
+        case .skipped(let reason):
+            try c.encode("skipped", forKey: .type)
+            try c.encode(reason, forKey: .reason)
+        case .failed(let exitCode, let reason):
+            try c.encode("failed", forKey: .type)
+            try c.encode(exitCode, forKey: .exitCode)
+            try c.encode(reason, forKey: .reason)
+        }
+    }
+}
+
+/// What we asked restic to do when we sent it SIGINT.
+public enum InterruptIntent: Sendable, Equatable {
+    case pause
+    case cancel
+}
+
+/// What started a run.
+public enum RunTrigger: String, Codable, Sendable, Equatable {
+    case scheduled
+    case catchUp
+    case manual
+    case retry
+}
+
+/// One finished run, kept in `PlanRunHistory.recent`.
+public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
+    public var id: UUID
+    public var planID: UUID
+    public var operation: ResticOperation
+    public var trigger: RunTrigger
+    public var startedAt: Date
+    public var endedAt: Date
+    public var outcome: RunOutcome
+    public var summary: BackupSummary?
+    /// Path of the run's log file, relative to the log directory.
+    public var logFile: String
+
+    public init(
+        id: UUID, planID: UUID, operation: ResticOperation, trigger: RunTrigger,
+        startedAt: Date, endedAt: Date, outcome: RunOutcome, summary: BackupSummary?, logFile: String
+    ) {
+        self.id = id
+        self.planID = planID
+        self.operation = operation
+        self.trigger = trigger
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.outcome = outcome
+        self.summary = summary
+        self.logFile = logFile
+    }
+}
+
+/// The message restic prints when the `credential_process` helper fails (Task 1 finding).
+private let missingCredentialsMessage = "s3.getCredentials: no credentials found"
+
+/// Maps a finished restic process to an outcome. Exit codes are restic's documented ones:
+/// 0 success, 3 backup finished with unreadable files, 10 repository missing, 11 lock failure,
+/// 12 wrong password, 130 interrupted (SIGINT). `exitErrorMessage` is the `exit_error` text.
+///
+/// Exit 0 with no summary is `.unchanged`, so callers that need a snapshot (backup) must not treat a
+/// missing summary on a run they expected to produce one as healthy without checking the log.
+public func classify(
+    exitCode: Int32,
+    interruptedByUs: InterruptIntent?,
+    summary: BackupSummary?,
+    errors: [ResticItemError],
+    exitErrorMessage: String?
+) -> RunOutcome {
+    switch exitCode {
+    case 0:
+        if let snapshotID = summary?.snapshotID { return .success(snapshotID: snapshotID) }
+        return .unchanged
+    case 3:
+        return .warning(unreadable: errors.count)
+    case 10: return .repositoryMissing
+    case 11: return .locked
+    case 12: return .wrongPassword
+    case 130:
+        switch interruptedByUs {
+        case .pause?: return .paused
+        case .cancel?: return .cancelled
+        case nil: break
+        }
+    case 1:
+        if exitErrorMessage?.contains(missingCredentialsMessage) == true { return .credentialsUnavailable }
+    default:
+        break
+    }
+    let reason = exitErrorMessage ?? errors.first?.message ?? "restic exited with status \(exitCode)."
+    return .failed(exitCode: exitCode, reason: reason)
+}

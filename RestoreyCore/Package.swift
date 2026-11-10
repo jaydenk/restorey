@@ -15,6 +15,7 @@ let package = Package(
         .testTarget(
             name: "RestoreyCoreTests",
             dependencies: ["RestoreyCore"],
+            exclude: ["Fixtures"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]
