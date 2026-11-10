@@ -51,11 +51,19 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
     public var lastCheckAt: Date?
     /// A record that was started but not finished; recovered as `.interrupted` on launch.
     public var runningRecordID: UUID?
-    /// Newest first or last is the plan runner's choice; the cap is 50 (Task 14 enforces it).
+    /// Newest first, at most `recentLimit` records. Add with `record(_:)`.
     public var recent: [RunRecord]
     public var activeAlerts: [AlertCondition: AlertNotificationState]
     public var stoppedReason: String?
     public var pausedUntil: Date?
+
+    public static let recentLimit = 50
+
+    /// Puts `record` at the front of `recent` and drops the oldest beyond `recentLimit`.
+    public mutating func record(_ record: RunRecord) {
+        recent.insert(record, at: 0)
+        if recent.count > Self.recentLimit { recent.removeLast(recent.count - Self.recentLimit) }
+    }
 
     public init() {
         recent = []

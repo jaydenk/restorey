@@ -58,8 +58,19 @@ struct ResticMessageTests {
             return
         }
         #expect(s.snapshotID == nil)
-        #expect(s.filesUnmodified == 1)
+        #expect(s.filesUnmodified == 4)
         #expect(s.dataAdded == 0)
+    }
+
+    @Test func unchangedDirectorySourceFixtureHasNoSnapshotAndNoChangedDirs() throws {
+        let text = try Fixtures.text("backup-unchanged.ndjson")
+        #expect(text.contains("\"dirs_unmodified\":12"))
+        #expect(text.contains("\"dirs_changed\":0"))
+        #expect(!text.contains("snapshot_id"))
+        let single = try messages("backup-unchanged-file.ndjson")
+        guard case .summary(let s)? = single.first else { Issue.record("not a summary"); return }
+        #expect(s.snapshotID == nil)
+        #expect(s.filesUnmodified == 1)
     }
 
     @Test func parsesStderrItemError() throws {
@@ -117,6 +128,40 @@ struct ResticMessageTests {
         if case .checkSummary = ResticMessageParser.parse(#"{"message_type":"summary","num_errors":2}"#) {} else {
             Issue.record("a check summary was not parsed as one")
         }
+    }
+
+    @Test func backupMarkersWinOverNumErrors() {
+        let both = ResticMessageParser.parse(#"{"message_type":"summary","num_errors":0,"files_new":3,"snapshot_id":"x"}"#)
+        guard case .summary(let s) = both else { Issue.record("not a backup summary: \(both)"); return }
+        #expect(s.snapshotID == "x")
+        #expect(s.filesNew == 3)
+    }
+
+    @Test func badNumErrorsWithoutBackupMarkersIsUnparseable() {
+        for line in [
+            #"{"message_type":"summary","num_errors":null}"#,
+            #"{"message_type":"summary","num_errors":"2"}"#,
+            #"{"message_type":"summary"}"#,
+            #"{"message_type":"summary","num_errors":null,"broken_packs":null}"#,
+        ] {
+            #expect(ResticMessageParser.parse(line) == .unparseable(line), "\(line)")
+        }
+    }
+
+    @Test func aBadDateKeepsTheSnapshotID() {
+        let line = #"{"message_type":"summary","files_new":2,"backup_start":"not-a-date","backup_end":5,"snapshot_id":"abc"}"#
+        guard case .summary(let s) = ResticMessageParser.parse(line) else { Issue.record("discarded"); return }
+        #expect(s.snapshotID == "abc")
+        #expect(s.filesNew == 2)
+        #expect(s.backupStart == nil)
+        #expect(s.backupEnd == nil)
+    }
+
+    @Test func negativeOffsetWithoutFractionParses() {
+        let line = #"{"message_type":"summary","files_new":1,"backup_start":"2026-11-10T07:00:00-05:00","snapshot_id":"x"}"#
+        guard case .summary(let s) = ResticMessageParser.parse(line) else { Issue.record("not parsed"); return }
+        // 07:00 at UTC-5 is 12:00 UTC.
+        #expect(s.backupStart == Date(timeIntervalSince1970: utc(2026, 11, 10, 12, 0, 0)))
     }
 
     @Test func checkErrorsUseAFlatMessageField() throws {

@@ -109,8 +109,9 @@ public struct BackupSummary: Codable, Sendable, Equatable {
         totalFilesProcessed = try c.decodeIfPresent(Int.self, forKey: .totalFilesProcessed) ?? 0
         totalBytesProcessed = try c.decodeIfPresent(Int.self, forKey: .totalBytesProcessed) ?? 0
         totalDuration = try c.decodeIfPresent(Double.self, forKey: .totalDuration) ?? 0
-        backupStart = try c.decodeIfPresent(Date.self, forKey: .backupStart)
-        backupEnd = try c.decodeIfPresent(Date.self, forKey: .backupEnd)
+        // A malformed timestamp must not discard the counts and snapshot ID.
+        backupStart = try? c.decodeIfPresent(Date.self, forKey: .backupStart)
+        backupEnd = try? c.decodeIfPresent(Date.self, forKey: .backupEnd)
         snapshotID = try c.decodeIfPresent(String.self, forKey: .snapshotID)
     }
 }
@@ -150,9 +151,11 @@ public enum ResticMessageParser {
     /// Parses one line. Never throws or traps: anything that is not a recognisable message is
     /// returned as `.unparseable` or `.unknown`.
     ///
-    /// Telling the two `summary` messages apart: restic's check summary always has `num_errors` and
-    /// the backup summary never does (it has `files_new` and friends), so the presence of the
-    /// `num_errors` key selects `.checkSummary`; every other `summary` is a backup summary.
+    /// Telling the two `summary` messages apart: a summary carrying any backup marker (`files_new`,
+    /// `snapshot_id`, `total_files_processed`, `data_added`) is a backup summary, even if `num_errors`
+    /// is also present. Only a summary with `num_errors` and no backup marker is a check summary.
+    /// A summary with neither, or with a `num_errors` that is not an integer and no backup marker,
+    /// is `.unparseable`: it is never turned into an all-zero backup summary.
     public static func parse(_ line: String) -> ResticMessage {
         let data = Data(line.utf8)
         guard let probe = try? decoder.decode(Probe.self, from: data) else { return .unparseable(line) }
@@ -161,10 +164,13 @@ public enum ResticMessageParser {
             case "status":
                 return .status(try decoder.decode(StatusWire.self, from: data).value)
             case "summary":
-                if probe.numErrors != nil {
+                if probe.hasBackupMarker {
+                    return .summary(try decoder.decode(BackupSummary.self, from: data))
+                }
+                if probe.hasNumErrors {
                     return .checkSummary(try decoder.decode(CheckSummaryWire.self, from: data).value)
                 }
-                return .summary(try decoder.decode(BackupSummary.self, from: data))
+                return .unparseable(line)
             case "error":
                 return .error(try decoder.decode(ErrorWire.self, from: data).value)
             case "exit_error":
@@ -184,8 +190,21 @@ public enum ResticMessageParser {
 
     private struct Probe: Decodable {
         let messageType: String
-        let numErrors: Int?
-        private enum CodingKeys: String, CodingKey { case messageType = "message_type", numErrors = "num_errors" }
+        let hasBackupMarker: Bool
+        /// The key is present with a non-null value (its type is checked when the check summary decodes).
+        let hasNumErrors: Bool
+        private enum CodingKeys: String, CodingKey {
+            case messageType = "message_type", numErrors = "num_errors"
+            case filesNew = "files_new", snapshotID = "snapshot_id"
+            case totalFilesProcessed = "total_files_processed", dataAdded = "data_added"
+        }
+        init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            messageType = try c.decode(String.self, forKey: .messageType)
+            func has(_ key: CodingKeys) -> Bool { c.contains(key) && ((try? c.decodeNil(forKey: key)) == false) }
+            hasBackupMarker = has(.filesNew) || has(.snapshotID) || has(.totalFilesProcessed) || has(.dataAdded)
+            hasNumErrors = has(.numErrors)
+        }
     }
 
     private struct StatusWire: Decodable {

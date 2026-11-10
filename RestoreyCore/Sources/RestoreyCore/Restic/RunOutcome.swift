@@ -165,9 +165,11 @@ private let missingCredentialsMessage = "s3.getCredentials: no credentials found
 /// 0 success, 3 backup finished with unreadable files, 10 repository missing, 11 lock failure,
 /// 12 wrong password, 130 interrupted (SIGINT). `exitErrorMessage` is the `exit_error` text.
 ///
-/// Exit 0 with no summary is `.unchanged`, so callers that need a snapshot (backup) must not treat a
-/// missing summary on a run they expected to produce one as healthy without checking the log.
+/// Exit 0 depends on the operation: a backup must have reported a summary (with a snapshot ID it is a
+/// success, without one it is unchanged, and with no summary at all it failed, because a backup that
+/// exits 0 without saying what it did cannot be trusted). Every other operation is a plain success.
 public func classify(
+    operation: ResticOperation,
     exitCode: Int32,
     interruptedByUs: InterruptIntent?,
     summary: BackupSummary?,
@@ -176,7 +178,11 @@ public func classify(
 ) -> RunOutcome {
     switch exitCode {
     case 0:
-        if let snapshotID = summary?.snapshotID { return .success(snapshotID: snapshotID) }
+        guard case .backup = operation else { return .success(snapshotID: nil) }
+        guard let summary else {
+            return .failed(exitCode: 0, reason: "restic finished without reporting a backup summary")
+        }
+        if let snapshotID = summary.snapshotID { return .success(snapshotID: snapshotID) }
         return .unchanged
     case 3:
         return .warning(unreadable: errors.count)

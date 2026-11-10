@@ -132,4 +132,20 @@ struct RunStateTests {
         #expect(String(decoding: try encoder.encode(s), as: UTF8.self) ==
             #"{"backup_start":1000,"data_added":0,"data_added_packed":0,"files_changed":0,"files_new":1,"files_unmodified":0,"snapshot_id":"x","total_bytes_processed":0,"total_duration":2,"total_files_processed":0}"#)
     }
+
+    @Test func recordPutsNewestFirstAndCapsAtFifty() {
+        var history = PlanRunHistory()
+        var ids: [UUID] = []
+        for i in 0..<60 {
+            var r = makeRecord()
+            r.id = UUID()
+            r.startedAt = date(Double(i))
+            ids.append(r.id)
+            history.record(r)
+        }
+        #expect(PlanRunHistory.recentLimit == 50)
+        #expect(history.recent.count == 50)
+        #expect(history.recent.first?.id == ids[59])
+        #expect(history.recent.last?.id == ids[10])
+    }
 }

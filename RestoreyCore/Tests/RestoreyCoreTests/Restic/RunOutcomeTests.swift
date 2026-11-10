@@ -13,12 +13,13 @@ struct RunOutcomeTests {
 
     private func outcome(
         _ code: Int32,
+        op: ResticOperation = .backup,
         intent: InterruptIntent? = nil,
         summary: BackupSummary? = nil,
         errors: [ResticItemError] = [],
         message: String? = nil
     ) -> RunOutcome {
-        classify(exitCode: code, interruptedByUs: intent, summary: summary, errors: errors, exitErrorMessage: message)
+        classify(operation: op, exitCode: code, interruptedByUs: intent, summary: summary, errors: errors, exitErrorMessage: message)
     }
 
     @Test func exitZeroWithASnapshotIsSuccess() {
@@ -27,7 +28,19 @@ struct RunOutcomeTests {
 
     @Test func exitZeroWithoutASnapshotIsUnchanged() {
         #expect(outcome(0, summary: summary(snapshotID: nil)) == .unchanged)
-        #expect(outcome(0, summary: nil) == .unchanged)
+    }
+
+    @Test func backupExitZeroWithoutASummaryFails() {
+        #expect(outcome(0, summary: nil)
+            == .failed(exitCode: 0, reason: "restic finished without reporting a backup summary"))
+    }
+
+    @Test(arguments: [
+        ResticOperation.initRepository, .forget(dryRun: false), .forget(dryRun: true), .prune, .check,
+        .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock,
+    ])
+    func nonBackupExitZeroIsSuccess(op: ResticOperation) {
+        #expect(outcome(0, op: op) == .success(snapshotID: nil))
     }
 
     @Test func exitThreeIsAWarningCountingUnreadableItems() {
