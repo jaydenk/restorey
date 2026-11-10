@@ -17,7 +17,7 @@ Answers the open questions in spec §12.1. Times are UTC, with Adelaide local ti
 | Not in §12.1 | A plist change in an update is ignored until re-registration | Re-register when the embedded plist's hash changes |
 | Not in §12.1 | A crashed run leaves a stale lock that blocks `check` (exit 11) | Plain `restic unlock` (never `--remove-all`) before maintenance and after an agent restart |
 
-**Still open:** SIGINT lock removal during a real backup, whole-home EPERM paths under FDA, telling "user switched the agent off" apart from a fault, the self-move quarantine strip, the Homebrew and Sparkle install paths (the agent starts at login and runs a keychain-backed backup 60 s later; the owner will do it later), the end-to-end `credential_process` run against B2's S3 endpoint, and a measurement of restic's CPU use during a real first backup under `Standard`.
+**Still open:** SIGINT lock removal during a real backup, whole-home EPERM paths under FDA, telling "user switched the agent off" apart from a fault, the self-move quarantine strip, the Homebrew and Sparkle install paths, the end-to-end `credential_process` run against B2's S3 endpoint, and a measurement of restic's CPU use during a real first backup under `Standard`.
 
 ## Environment
 
