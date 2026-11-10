@@ -27,6 +27,8 @@ public struct RunnerDependencies: Sendable {
     public var now: @Sendable () -> Date
     /// How long restic gets to honour SIGINT before SIGKILL (global constraints: 10 s).
     public var interruptGracePeriod: Duration
+    /// Writes a line to the agent's own log (`agent.log`), for problems the user may need to find.
+    public var agentLog: @Sendable (String) -> Void
 
     public init(
         state: AgentState, secrets: any SecretStore, queues: RepositoryQueues, supervisor: SupervisedProcesses,
@@ -35,7 +37,8 @@ public struct RunnerDependencies: Sendable {
         fdaProbe: @escaping @Sendable () -> FDAProbeResult,
         preflightEnvironment: @escaping @Sendable () async -> PreflightEnvironment,
         now: @escaping @Sendable () -> Date,
-        interruptGracePeriod: Duration = .seconds(10)
+        interruptGracePeriod: Duration = .seconds(10),
+        agentLog: @escaping @Sendable (String) -> Void = { _ in }
     ) {
         self.state = state
         self.secrets = secrets
@@ -53,13 +56,14 @@ public struct RunnerDependencies: Sendable {
         self.preflightEnvironment = preflightEnvironment
         self.now = now
         self.interruptGracePeriod = interruptGracePeriod
+        self.agentLog = agentLog
     }
 }
 
 /// Runs a plan end to end. A backup goes:
 ///
 /// 1. refusals that need no restic: an invalid plan (Ruling R7) or an unconfirmed recovery kit;
-/// 2. `preflight` (a skip or a failure here sends no ping, spec §6.2);
+/// 2. `preflight`;
 /// 3. the Full Disk Access probe (missing: a failure and the `fullDiskAccessMissing` alert, no restic);
 /// 4. the check-in `/start` ping;
 /// 5. the backup, through the repository's queue, then classified;
@@ -68,20 +72,29 @@ public struct RunnerDependencies: Sendable {
 /// 7. history and alerts (written after every step, so an agent that dies mid-run loses nothing);
 /// 8. the check-in end ping.
 ///
+/// A failure found before `/start` (an invalid plan, a missing source, Full Disk Access missing) sends
+/// `/fail` with the reason and no `/start` (Ruling R33). A skip, a pause, and a plan whose recovery kit
+/// isn't confirmed yet send nothing.
+///
 /// Every restic step has its own `RunRecord` and run log. A maintenance failure is its own record and
 /// alert and never turns the backup's record into a failure. Wrong password, missing repository and
-/// unreadable credentials stop the plan (`stoppedReason`) until a later backup succeeds.
+/// unreadable credentials stop the plan (`stoppedReason`) until a later backup succeeds or the plan's
+/// repository or secrets are changed.
 ///
 /// Pings go out in order per plan but without holding up the run, because the sender retries for
-/// minutes when the check-in service is down.
+/// minutes when the check-in service is down; `pingsFlushed()` waits for them.
+///
+/// Runs asked for while `recoverAfterStart()` is in progress wait for it to finish.
 public actor PlanRunner {
     static let fullDiskAccessMissing = "Full Disk Access is missing"
     static let keychainUnreadable = "Couldn't read the backup keys from the Keychain"
+    /// The exit code of a run that restic never ran for (refused, or restic couldn't start).
+    static let startFailureExitCode: Int32 = -1
     static let day: TimeInterval = 86_400
     static let week: TimeInterval = 7 * 86_400
 
-    private let deps: RunnerDependencies
-    private let logger: Logger
+    let deps: RunnerDependencies
+    let logger: Logger
     /// Runs in flight, by plan.
     private var handles: [UUID: RunHandle] = [:]
     /// The latest background run `backUpNow` started, by plan.
@@ -92,6 +105,8 @@ public actor PlanRunner {
     /// behind: the next run there starts with a plain `unlock`. An honoured SIGINT removes restic's own
     /// lock (docs/spike-findings.md), so a clean pause doesn't land here.
     private var needsUnlock: Set<String> = []
+    /// `recoverAfterStart`, while it runs and after: runs wait for it.
+    private var recovery: Task<Void, Never>?
 
     public init(dependencies: RunnerDependencies) {
         deps = dependencies
@@ -127,38 +142,29 @@ public actor PlanRunner {
         return await deps.state.status()
     }
 
-    /// Pauses for an hour and interrupts a run in progress, which then ends `.paused`. Allowed while
-    /// draining (Ruling R27).
-    public func pause(planID: UUID) async throws -> AgentStatus {
-        let status = try await deps.state.pause(planID)
-        await interrupt(planID: planID, intent: .pause)
-        return status
-    }
-
-    /// Runs `restic init`. Never called on its own: only this explicit action creates a repository.
-    public func createRepository(planID: UUID) async throws -> AgentStatus {
-        let handle = try await begin(planID)
-        let result = await initialise(planID: planID, handle: handle)
-        await end(planID, handle)
-        try result.get()
-        return await deps.state.status()
-    }
-
-    /// Lists the repository's snapshots for every host. Never forgets or changes anything.
-    public func adopt(planID: UUID) async throws -> AdoptReport {
-        let handle = try await begin(planID)
-        let result = await listForAdoption(planID: planID, handle: handle)
-        await end(planID, handle)
-        return try result.get()
-    }
-
-    /// On agent start: turns every run still marked in progress into an `.interrupted` record, then runs
-    /// a plain `unlock` once per repository, through its queue (Review Focus 3).
+    /// On agent start, before the runner is attached to the state: turns every run still marked in
+    /// progress into an `.interrupted` record (an interrupted backup also sends its `/fail` ping), then
+    /// runs a plain `unlock` once per repository, through its queue (Review Focus 3). Calling it again
+    /// waits for the first call.
     ///
     /// Repositories of plans that may run (valid, recovery kit confirmed) and of any plan that had an
     /// interrupted run are unlocked. A plain unlock removes only stale locks, never another client's
-    /// live one.
+    /// live one. An unlock that can't run is logged in the agent log.
     public func recoverAfterStart() async {
+        if let recovery { return await recovery.value }
+        let task = Task { await recover() }
+        recovery = task
+        await task.value
+    }
+
+    /// Waits until every ping queued so far, for every plan, has been handed to the sender.
+    public func pingsFlushed() async {
+        for tail in pingTails.values { await tail.value }
+    }
+
+    // MARK: Recovery
+
+    private func recover() async {
         let entries = await deps.state.allRunInputs()
         let now = deps.now()
         var interrupted: Set<UUID> = []
@@ -171,27 +177,48 @@ public actor PlanRunner {
             record.outcome = .interrupted
             await commit(record, plan: plan)
             interrupted.insert(plan.id)
+            if record.operation == .backup,
+                let ping = pingAtEnd(outcome: .interrupted, logTail: [], redactor: redactor(for: plan))
+            {
+                queuePing(ping, planID: plan.id)
+            }
         }
 
         var unlocked: Set<String> = []
         for (plan, _) in entries
         where plan.validationErrors().isEmpty && (plan.recoveryKitConfirmedAt != nil || interrupted.contains(plan.id)) {
             let key = RepositoryQueues.key(for: plan.repository)
-            guard !unlocked.contains(key), let handle = try? await begin(plan.id) else { continue }
-            unlocked.insert(key)
-            if case .ready(let session) = prepare(plan) {
+            guard !unlocked.contains(key) else { continue }
+            let handle: RunHandle
+            do {
+                handle = try await begin(plan.id, waitForRecovery: false)
+            } catch {
+                skippedUnlock(plan, reason: (error as? AgentError)?.message ?? "\(error)")
+                continue
+            }
+            switch prepare(plan) {
+            case .ready(let session):
+                unlocked.insert(key)
                 let step = await deps.queues.run(repository: key) { [self] in
                     await runStep(.unlock, trigger: .scheduled, session: session, handle: handle)
                 }
                 await commit(step.record, plan: plan)
+            case .failed(_, let reason, _):
+                skippedUnlock(plan, reason: reason)
             }
             await end(plan.id, handle)
         }
     }
 
+    private func skippedUnlock(_ plan: Plan, reason: String) {
+        deps.agentLog(
+            "Recovery skipped the unlock for plan \(plan.id.uuidString), so a stale lock may remain until its next backup: \(reason)")
+    }
+
     // MARK: Interrupts and background runs
 
-    /// Asks the plan's run in progress, if any, to stop. A request repeated while it is pending is ignored.
+    /// Asks the plan's run in progress, if any, to stop. A request repeated while it is pending is
+    /// ignored. `AgentState.pause` is the one way in.
     func interrupt(planID: UUID, intent: InterruptIntent) async {
         guard let process = handles[planID]?.request(intent) else { return }
         await process.interrupt(intent, killAfter: deps.interruptGracePeriod)
@@ -200,11 +227,6 @@ public actor PlanRunner {
     /// Waits for the latest run `backUpNow` started for the plan and returns its record.
     func waitForBackgroundRun(planID: UUID) async -> RunRecord? {
         await background[planID]?.value
-    }
-
-    /// Waits until every ping queued so far for the plan has been handed to the sender.
-    func pingsDelivered(planID: UUID) async {
-        await pingTails[planID]?.value
     }
 
     private func startInBackground(_ planID: UUID) async throws {
@@ -216,9 +238,11 @@ public actor PlanRunner {
         }
     }
 
-    /// Registers the run with `AgentState` (which refuses while draining, for an unknown plan, a plan
-    /// being deleted or already running) and gives it a handle `pause` can reach from that moment on.
-    private func begin(_ planID: UUID) async throws -> RunHandle {
+    /// Waits for recovery (unless this is recovery), then registers the run with `AgentState` (which
+    /// refuses while draining, for an unknown plan, a plan being deleted or already running) and gives it
+    /// a handle `pause` can reach from that moment on.
+    func begin(_ planID: UUID, waitForRecovery: Bool = true) async throws -> RunHandle {
+        if waitForRecovery { await recovery?.value }
         try await deps.state.requireRunnable(planID)
         if handles[planID] != nil {
             let name = (try? await deps.state.runInputs(planID).plan.name) ?? "This plan"
@@ -235,7 +259,7 @@ public actor PlanRunner {
         return handle
     }
 
-    private func end(_ planID: UUID, _ handle: RunHandle) async {
+    func end(_ planID: UUID, _ handle: RunHandle) async {
         if handles[planID] === handle { handles[planID] = nil }
         await deps.state.endRun(planID: planID)
     }
@@ -248,51 +272,64 @@ public actor PlanRunner {
             // Unreachable: a plan can't be deleted while it runs. Not recorded: there is no history.
             return RunRecord(
                 id: UUID(), planID: planID, operation: .backup, trigger: trigger, startedAt: startedAt,
-                endedAt: startedAt, outcome: .failed(exitCode: -1, reason: AgentError.unknownPlan.message),
+                endedAt: startedAt,
+                outcome: .failed(exitCode: Self.startFailureExitCode, reason: AgentError.unknownPlan.message),
                 summary: nil, logFile: "")
         }
-        func refuse(_ outcome: RunOutcome, fda: FDAProbeResult? = nil) async -> RunRecord {
+        /// Records a run that never reached restic. A failure (`failPing`) sends `/fail` with its reason.
+        func refuse(_ outcome: RunOutcome, fda: FDAProbeResult? = nil, failPing: Bool = false) async -> RunRecord {
             let record = RunRecord(
                 id: UUID(), planID: planID, operation: .backup, trigger: trigger, startedAt: startedAt,
                 endedAt: deps.now(), outcome: outcome, summary: nil, logFile: "")
             await commit(record, plan: plan, fda: fda)
+            if failPing, case .failed(_, let reason) = outcome,
+                let ping = pingAtEnd(outcome: outcome, logTail: [reason], redactor: redactor(for: plan))
+            {
+                queuePing(ping, planID: planID)
+            }
             return record
         }
+        func failed(_ reason: String) -> RunOutcome { .failed(exitCode: Self.startFailureExitCode, reason: reason) }
 
-        // Before restic, and before any ping.
-        if let refusal = Self.refusal(plan) { return await refuse(.failed(exitCode: -1, reason: refusal.message)) }
+        switch Self.refusal(plan) {
+        case .invalidPlan(let errors)?:
+            return await refuse(failed(AgentError.invalidPlan(errors).message), failPing: true)
+        case let refusal?:
+            // No recovery kit yet: the plan isn't set up, so the check-in isn't told anything.
+            return await refuse(failed(refusal.message))
+        case nil:
+            break
+        }
         switch preflight(plan: plan, env: await deps.preflightEnvironment()) {
         case .skip(let reason): return await refuse(.skipped(reason))
-        case .fail(let message): return await refuse(.failed(exitCode: -1, reason: message))
+        case .fail(let message): return await refuse(failed(message), failPing: true)
         case .run: break
         }
         let fda = deps.fdaProbe()
         await deps.state.noteFullDiskAccess(fda)
-        if fda == .missing {
-            return await refuse(.failed(exitCode: -1, reason: Self.fullDiskAccessMissing), fda: fda)
-        }
+        if fda == .missing { return await refuse(failed(Self.fullDiskAccessMissing), fda: fda, failPing: true) }
         if let intent = handle.intent { return await refuse(intent == .pause ? .paused : .cancelled, fda: fda) }
 
         for ping in pingsAtStart(trigger: trigger) { queuePing(ping, planID: planID) }
 
         let result: StepResult
-        let redactor: Redactor
+        let endRedactor: Redactor
         switch prepare(plan) {
         case .failed(let outcome, let reason, let partialRedactor):
-            redactor = partialRedactor
+            endRedactor = partialRedactor
             let record = RunRecord(
                 id: UUID(), planID: planID, operation: .backup, trigger: trigger, startedAt: startedAt,
                 endedAt: deps.now(), outcome: outcome, summary: nil, logFile: "")
             await commit(record, plan: plan, fda: fda, stoppedReason: reason)
             result = StepResult(record: record, stoppedReason: reason, tail: [reason])
         case .ready(let session):
-            redactor = session.redactor
+            endRedactor = session.redactor
             result = await deps.queues.run(repository: session.key) { [self] in
                 await backupSlot(session: session, trigger: trigger, handle: handle, fda: fda)
             }
         }
 
-        if let ping = pingAtEnd(outcome: result.record.outcome, logTail: result.tail, redactor: redactor) {
+        if let ping = pingAtEnd(outcome: result.record.outcome, logTail: result.tail, redactor: endRedactor) {
             queuePing(ping, planID: planID)
         }
         return result.record
@@ -329,78 +366,7 @@ public actor PlanRunner {
         return backup
     }
 
-    // MARK: Create and adopt
-
-    private func initialise(planID: UUID, handle: RunHandle) async -> Result<Void, AgentError> {
-        let step: StepResult
-        switch await actionStep(.initRepository, planID: planID, handle: handle) {
-        case .failure(let error): return .failure(error)
-        case .success(let result): step = result
-        }
-        switch step.record.outcome {
-        case .success:
-            return .success(())
-        case .failed(_, let reason) where reason.localizedCaseInsensitiveContains("already exists"):
-            return .failure(.repositoryAlreadyExists)
-        case let outcome:
-            return .failure(.operationFailed(
-                "Restorey couldn't create the repository: \(Self.explain(outcome, stoppedReason: step.stoppedReason))"))
-        }
-    }
-
-    private func listForAdoption(planID: UUID, handle: RunHandle) async -> Result<AdoptReport, AgentError> {
-        let collector = LineCollector(matching: SnapshotListing.isListing)
-        let step: StepResult
-        switch await actionStep(.snapshots(allHosts: true), planID: planID, handle: handle, collector: collector) {
-        case .failure(let error): return .failure(error)
-        case .success(let result): step = result
-        }
-        guard case .success = step.record.outcome else {
-            return .failure(.operationFailed(Self.explain(step.record.outcome, stoppedReason: step.stoppedReason)))
-        }
-        let plan = (try? await deps.state.runInputs(planID).plan)
-        do {
-            return .success(try SnapshotListing.report(from: collector.last ?? "[]", hostLabel: plan?.hostLabel ?? ""))
-        } catch {
-            return .failure(.operationFailed("Restorey couldn't read restic's list of snapshots"))
-        }
-    }
-
-    /// One restic step the app asked for (init, adopt): no preflight, no probe, no pings, no maintenance.
-    private func actionStep(
-        _ op: ResticOperation, planID: UUID, handle: RunHandle, collector: LineCollector? = nil
-    ) async -> Result<StepResult, AgentError> {
-        guard let plan = try? await deps.state.runInputs(planID).plan else { return .failure(.unknownPlan) }
-        let errors = plan.validationErrors()
-        guard errors.isEmpty else { return .failure(.invalidPlan(errors)) }
-        let session: RunSession
-        switch prepare(plan) {
-        case .ready(let ready): session = ready
-        case .failed(_, let reason, _): return .failure(.operationFailed(reason))
-        }
-        let step = await deps.queues.run(repository: session.key) { [self] in
-            await runStep(op, trigger: .manual, session: session, handle: handle, collector: collector)
-        }
-        await commit(step.record, plan: plan)
-        return .success(step)
-    }
-
     // MARK: Steps
-
-    /// What a step needs that comes from the plan and the keychain.
-    struct RunSession: Sendable {
-        let plan: Plan
-        let context: ResticContext
-        let redactor: Redactor
-        /// `RepositoryQueues.key(for:)` of the plan's repository.
-        let key: String
-    }
-
-    enum Preparation: Sendable {
-        case ready(RunSession)
-        /// Restic can't be run. `redactor` holds whatever secrets could be read, for the ping.
-        case failed(RunOutcome, reason: String, redactor: Redactor)
-    }
 
     struct StepResult: Sendable {
         var record: RunRecord
@@ -410,58 +376,9 @@ public actor PlanRunner {
         var tail: [String]
     }
 
-    /// Reads the plan's secrets for the redactor (and a raw plan's environment), and writes an S3 plan's
-    /// credentials file with the agent as the helper. Only the raw environment is required here: the
-    /// password and S3 keys are fetched by restic through the helper, which reports its own failures.
-    private func prepare(_ plan: Plan) -> Preparation {
-        var known: [String] = []
-        for key in [SecretKey.repositoryPassword(plan.id), .s3AccessKeyID(plan.id), .s3SecretAccessKey(plan.id)] {
-            if let value = try? deps.secrets.read(key) { known.append(value) }
-        }
-        let checkInURL = (try? deps.secrets.read(.checkInURL(plan.id))) ?? nil
-
-        var environment: [String: String] = [:]
-        var problems: [String] = []
-        if case .raw(_, let names) = plan.repository {
-            for name in names {
-                do {
-                    if let value = try deps.secrets.read(.environment(plan.id, name: name)) {
-                        environment[name] = value
-                        known.append(value)
-                    } else {
-                        problems.append("The environment value \(name) isn't in the Keychain")
-                    }
-                } catch {
-                    problems.append("Restorey couldn't read the environment value \(name): \(error)")
-                }
-            }
-        }
-        let redactor = Redactor(secrets: known, checkInURLs: checkInURL.map { [$0] } ?? [])
-        if !problems.isEmpty {
-            let reason = ([Self.keychainUnreadable] + problems).joined(separator: ". ")
-            return .failed(.credentialsUnavailable, reason: reason, redactor: redactor)
-        }
-
-        var credentialsFile: URL?
-        if case .s3 = plan.repository {
-            do {
-                credentialsFile = try CredentialsFile.write(
-                    planID: plan.id, helper: deps.helperExecutable, directory: deps.credentialsDirectory)
-            } catch {
-                let reason = "Restorey couldn't write the S3 credentials file: \(error)"
-                return .failed(.failed(exitCode: -1, reason: reason), reason: reason, redactor: redactor)
-            }
-        }
-        let context = ResticContext(
-            cacheDirectory: deps.cacheDirectory, helperExecutable: deps.helperExecutable,
-            credentialsFile: credentialsFile, rawEnvironment: environment, homeDirectory: deps.homeDirectory)
-        return .ready(RunSession(
-            plan: plan, context: context, redactor: redactor, key: RepositoryQueues.key(for: plan.repository)))
-    }
-
     /// Runs one restic command with its own log and record. While it runs, history marks it in progress
     /// (`runningRecord`), so an agent that dies mid-step leaves an `.interrupted` record on recovery.
-    private func runStep(
+    func runStep(
         _ op: ResticOperation, trigger: RunTrigger, session: RunSession, handle: RunHandle?,
         progress: Bool = false, collector: LineCollector? = nil
     ) async -> StepResult {
@@ -513,16 +430,20 @@ public actor PlanRunner {
                 summary: finished.summary, errors: finished.messages, exitErrorMessage: finished.exitErrorMessage)
             if finished.terminatedBySignal != nil { needsUnlock.insert(session.key) }
         } catch {
-            outcome = .failed(exitCode: -1, reason: "Restorey couldn't start restic: \(error.localizedDescription)")
+            outcome = .failed(
+                exitCode: Self.startFailureExitCode, reason: "Restorey couldn't start restic: \(error.localizedDescription)")
         }
         handle?.detach()
         await feed?.finish()
         if op == .unlock, outcome == .success(snapshotID: nil) { needsUnlock.remove(session.key) }
 
-        // The helper's own reason for a keychain failure: restic only says "no credentials found".
+        // The helper's own reason for a keychain failure: restic only says "no credentials found", or
+        // fails some other way (an empty password). Either way the backup keys couldn't be read, which
+        // won't fix itself in an hour: it is the credentials stop.
         let helperFailure = await deps.state.takeHelperFailure(planID: plan.id)
+        if helperFailure != nil, case .failed = outcome { outcome = .credentialsUnavailable }
         if case .failed(let code, let reason) = outcome {
-            outcome = .failed(exitCode: code, reason: session.redactor.redact(Self.joined(reason, helperFailure)))
+            outcome = .failed(exitCode: code, reason: session.redactor.redact(reason))
         }
         let stoppedReason = Self.stoppedReason(for: outcome, helperFailure: helperFailure)
         log.line("Finished: \(Self.explain(outcome, stoppedReason: stoppedReason))")
@@ -539,17 +460,19 @@ public actor PlanRunner {
 
     // MARK: History and alerts
 
-    /// Adds `record` to the plan's history with everything it implies, and refreshes the alerts.
+    /// Adds `record` to the plan's history with everything it implies, and refreshes the alerts. The
+    /// in-progress marker is cleared only when it is this record's, so recovery's `.interrupted` record
+    /// for an old run can never wipe the marker of a run that has started since.
     /// - Parameters:
     ///   - fda: the probe result this run saw, which raises or clears `fullDiskAccessMissing`.
     ///   - stoppedReason: set for a backup that stops the plan.
-    private func commit(
+    func commit(
         _ record: RunRecord, plan: Plan, fda: FDAProbeResult? = nil, stoppedReason: String? = nil
     ) async {
         let now = deps.now()
         await write(plan.id) { history in
-            if history.runningRecordID == record.id || history.runningRecord?.id == record.id
-                || record.outcome == .interrupted
+            if history.runningRecord?.id == record.id
+                || (history.runningRecord == nil && history.runningRecordID == record.id)
             {
                 history.runningRecordID = nil
                 history.runningRecord = nil
@@ -573,8 +496,10 @@ public actor PlanRunner {
         do {
             try await deps.state.updateHistory(planID, change)
         } catch {
-            // The run itself is unaffected; its record is lost, so say so where it can be found.
-            logger.error("Couldn't save the run history: \((error as? AgentError)?.message ?? "\(error)", privacy: .public)")
+            // The run itself is unaffected, but its record is lost: say so where it can be found.
+            let message = (error as? AgentError)?.message ?? "\(error)"
+            logger.error("Couldn't save the run history: \(message, privacy: .public)")
+            deps.agentLog("Couldn't save the run history for plan \(planID.uuidString): \(message)")
         }
     }
 

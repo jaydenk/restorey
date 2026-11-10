@@ -546,6 +546,53 @@ struct AgentStateTests {
         #expect(try Data(contentsOf: dir.state) == Data("{not json".utf8))
     }
 
+    // MARK: Stops (Ruling R34)
+
+    private static func stop(_ state: AgentState, _ id: UUID) async throws {
+        try await state.updateHistory(id) { history in
+            history.stoppedReason = "The repository password is wrong"
+            history.activeAlerts[.configurationError] = AlertNotificationState(
+                raisedAt: Date(timeIntervalSince1970: 1_800_000_000), lastNotifiedAt: nil, count: 0)
+        }
+    }
+
+    @Test func changingThePasswordClearsAStop() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        try await Self.stop(state, plan.id)
+
+        let status = try await state.savePlan(Self.request(plan, password: "the right one"))
+        let entry = try #require(status.plans.first)
+        #expect(entry.phase == .idle)
+        #expect(!entry.alerts.contains(.configurationError))
+        let history = try await state.runInputs(plan.id).history
+        #expect(history.stoppedReason == nil)
+        #expect(history.activeAlerts[.configurationError] == nil)
+
+        // And it is saved: a restarted agent sees the plan unstopped.
+        let reloaded = await Self.makeState(dir, clock: clock)
+        #expect(try await reloaded.runInputs(plan.id).history.stoppedReason == nil)
+    }
+
+    @Test func anUnchangedResaveOrResumeKeepsTheStop() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        var plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        try await Self.stop(state, plan.id)
+
+        plan.name = "Renamed"
+        _ = try await state.savePlan(Self.request(plan))
+        _ = try await state.resume(plan.id)
+        let history = try await state.runInputs(plan.id).history
+        #expect(history.stoppedReason == "The repository password is wrong")
+        #expect(history.activeAlerts[.configurationError] != nil)
+    }
+
     // MARK: Runs need the runner
 
     /// Runs are the plan runner's (PlanRunnerTests); with none attached they are refused, not dropped.

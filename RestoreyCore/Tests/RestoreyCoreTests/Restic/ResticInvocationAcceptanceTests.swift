@@ -84,6 +84,7 @@ struct ResticInvocationAcceptanceTests {
 
         let sequence: [(String, ResticOperation)] = [
             ("init", .initRepository),
+            ("cat-config", .catConfig),
             ("backup", .backup),
             ("snapshots", .snapshots(allHosts: false)),
             ("snapshots-all", .snapshots(allHosts: true)),

@@ -81,11 +81,15 @@ diagnostics go to `diagnostics/` beside it.
 The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`) runs each backup in this order:
 
 1. Refuses a plan that is invalid or whose recovery kit hasn't been confirmed, without running restic.
-2. Checks the plan's conditions (network, battery, mounted volumes, sources that exist). A skipped run is
-   recorded but sends no check-in ping, and neither does a missing source, which is a failure.
+2. Checks the plan's conditions (network, battery, mounted volumes, sources that exist). A skipped run (on
+   battery, no network, an unmounted volume) is recorded but sends no check-in ping.
 3. Checks Full Disk Access by listing a protected folder (`~/Library/Safari`, `Mail` or `Messages`, never a
    file's contents). Without it the run fails with "Full Disk Access is missing" and restic doesn't run,
    because restic would otherwise save a snapshot of empty folders.
+
+   A failure found in steps 1 to 3 (an invalid plan, a missing source, Full Disk Access missing) sends the
+   check-in `/fail` ping with the reason, and no `/start`. A plan whose recovery kit isn't confirmed yet
+   sends nothing.
 4. Sends the check-in `/start` ping, runs `restic backup` through the repository's queue, and classifies the
    result.
 5. After a successful backup, in the same turn of the queue: `forget` (after every backup that made a
@@ -94,14 +98,18 @@ The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`) runs
    alert and never turns the backup into a failure.
 6. Records everything in `state.json` and raises or clears the alerts, then sends the success or `/fail` ping.
 
-A wrong repository password, a missing repository or unreadable backup keys stop the plan until a later backup
+A wrong repository password, a missing repository or unreadable backup keys (including a password the helper
+couldn't read from the Keychain) stop the plan until its repository or secrets are changed, or a later backup
 succeeds. Pause stops a run in progress (SIGINT, then SIGKILL after 10 s) and resumes after an hour. Restorey
-never runs `restic init` except from the explicit "Create new repository" action, which refuses an address that
-already holds a repository, and adopting a repository only lists its snapshots.
+never runs `restic init` except from the explicit "Create new repository" action. That action first runs
+`restic cat config`: if a repository is already there it refuses ("A repository already exists there"), and it
+initialises only when restic reports nothing at the address. Adopting a repository only lists its snapshots.
 
 Every restic run has its own log in `~/Library/Logs/Restorey/runs/<plan ID>/` (`Restorey-Dev` for Debug builds),
-with secrets redacted. If the agent stops mid-run, its next start records that run as interrupted and runs a
-plain `restic unlock` (never `--remove-all`) once per repository.
+with secrets redacted. If the agent stops mid-run, its next start records that run as interrupted (an
+interrupted backup sends its `/fail` ping) and runs a plain `restic unlock` (never `--remove-all`) once per
+repository, before it accepts any run. Before exiting for an update, the agent finishes the run in progress and
+then waits up to 3 minutes for queued check-in pings.
 
 Until the scheduler and the check-in service are built, only "Back up now" starts a backup, the battery and
 network conditions always pass, and check-in pings are written to the agent's log instead of being sent.

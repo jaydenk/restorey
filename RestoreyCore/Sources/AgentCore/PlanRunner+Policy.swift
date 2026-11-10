@@ -60,7 +60,10 @@ extension PlanRunner {
             if case .success = record.outcome { history.lastPruneAt = ended }
         case .check:
             switch record.outcome {
-            case .paused, .cancelled, .locked, .skipped: break // no verdict: check again next time
+            // No verdict, or the check never really ran (the agent died, restic didn't start): check
+            // again at the next backup rather than a week later.
+            case .paused, .cancelled, .locked, .skipped, .interrupted: break
+            case .failed(let exitCode, _) where exitCode == startFailureExitCode: break
             default: history.lastCheckAt = ended
             }
         default:

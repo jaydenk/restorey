@@ -41,7 +41,7 @@ struct RunOutcomeTests {
 
     @Test(arguments: [
         ResticOperation.initRepository, .forget(dryRun: false), .forget(dryRun: true), .prune, .check,
-        .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock,
+        .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig,
     ])
     func nonBackupExitZeroIsSuccess(op: ResticOperation) {
         #expect(outcome(0, op: op) == .success(snapshotID: nil))

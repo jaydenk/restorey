@@ -44,10 +44,15 @@ final class FixtureClock: Sendable {
     func advance(_ seconds: TimeInterval) { value.withLock { $0 += seconds } }
 }
 
-/// Records every ping, in order.
+/// Records every ping, in order, optionally taking `delay` over each like a slow check-in service.
 actor RecordingCheckIn: CheckInSending {
     private(set) var pings: [CheckInPing] = []
-    func send(_ ping: CheckInPing, planID: UUID) async { pings.append(ping) }
+    private let delay: Duration
+    init(delay: Duration = .zero) { self.delay = delay }
+    func send(_ ping: CheckInPing, planID: UUID) async {
+        if delay > .zero { try? await Task.sleep(for: delay) }
+        pings.append(ping)
+    }
 }
 
 /// One snapshot as `restic snapshots --json` lists it.
@@ -86,12 +91,15 @@ final class RunnerFixture: Sendable {
     let state: AgentState
     let runner: PlanRunner
     let dependencies: RunnerDependencies
+    /// Lines the runner wrote to the agent log.
+    let agentLog: Locked<[String]>
     let planID: UUID
 
     private init(
         root: URL, restic: URL, clock: FixtureClock, secrets: InMemorySecretStore, checkIn: RecordingCheckIn,
         fda: Locked<FDAProbeResult>, power: Locked<PowerState>, supervisor: SupervisedProcesses,
-        state: AgentState, runner: PlanRunner, dependencies: RunnerDependencies, planID: UUID
+        state: AgentState, runner: PlanRunner, dependencies: RunnerDependencies, agentLog: Locked<[String]>,
+        planID: UUID
     ) {
         self.root = root
         source = root.appendingPathComponent("source")
@@ -112,6 +120,7 @@ final class RunnerFixture: Sendable {
         self.state = state
         self.runner = runner
         self.dependencies = dependencies
+        self.agentLog = agentLog
         self.planID = planID
     }
 
@@ -128,6 +137,7 @@ final class RunnerFixture: Sendable {
         confirmKit: Bool = true,
         gracePeriod: Duration = .seconds(10),
         stableAncestors: Bool = false,
+        pingDelay: Duration = .zero,
         change: (inout Plan) -> Void = { _ in }
     ) async throws -> RunnerFixture {
         let fm = FileManager.default
@@ -136,7 +146,7 @@ final class RunnerFixture: Sendable {
         do {
             return try await make(
                 root: root, origin: origin, executable: executable, createRepository: createRepository,
-                confirmKit: confirmKit, gracePeriod: gracePeriod, change: change)
+                confirmKit: confirmKit, gracePeriod: gracePeriod, pingDelay: pingDelay, change: change)
         } catch {
             // The caller's `defer { remove() }` isn't in place yet.
             try? fm.removeItem(at: root)
@@ -146,7 +156,7 @@ final class RunnerFixture: Sendable {
 
     private static func make(
         root: URL, origin: RepositoryOrigin, executable: URL?, createRepository: Bool, confirmKit: Bool,
-        gracePeriod: Duration, change: (inout Plan) -> Void
+        gracePeriod: Duration, pingDelay: Duration, change: (inout Plan) -> Void
     ) async throws -> RunnerFixture {
         let fm = FileManager.default
         for name in ["source", "cache", "home", "logs", "support"] {
@@ -162,7 +172,8 @@ final class RunnerFixture: Sendable {
 
         let clock = FixtureClock()
         let secrets = InMemorySecretStore()
-        let checkIn = RecordingCheckIn()
+        let checkIn = RecordingCheckIn(delay: pingDelay)
+        let agentLog = Locked<[String]>([])
         let fda = Locked<FDAProbeResult>(.granted)
         let power = Locked(PowerState(onBattery: false, percent: 100))
         let supervisor = SupervisedProcesses()
@@ -193,14 +204,16 @@ final class RunnerFixture: Sendable {
                     fileExists: { FileManager.default.fileExists(atPath: $0) })
             },
             now: { clock.now },
-            interruptGracePeriod: gracePeriod)
+            interruptGracePeriod: gracePeriod,
+            agentLog: { line in agentLog.mutate { $0.append(line) } })
         let runner = PlanRunner(dependencies: dependencies)
+        await runner.recoverAfterStart()
         await state.attach(runner: runner)
 
         let fixture = RunnerFixture(
             root: root, restic: restic, clock: clock, secrets: secrets, checkIn: checkIn, fda: fda,
             power: power, supervisor: supervisor, state: state, runner: runner, dependencies: dependencies,
-            planID: plan.id)
+            agentLog: agentLog, planID: plan.id)
         if createRepository { _ = try await runner.createRepository(planID: plan.id) }
         if confirmKit { _ = try await state.confirmRecoveryKit(plan.id) }
         return fixture
@@ -237,7 +250,7 @@ final class RunnerFixture: Sendable {
 
     /// Every ping sent so far, once the runner has handed over all it queued.
     func pings() async -> [CheckInPing] {
-        await runner.pingsDelivered(planID: planID)
+        await runner.pingsFlushed()
         return await checkIn.pings
     }
 

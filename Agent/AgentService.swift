@@ -116,7 +116,9 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     func prepareForRestart(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
         Task { [state, log, afterDrain] in
             log.info("Asked to restart: finishing any run in progress first")
-            await state.prepareForRestart()
+            if !(await state.prepareForRestart()) {
+                log.error("Gave up waiting for check-in pings after 3 minutes; some may not have been sent")
+            }
             log.info("No run in progress; exiting so launchd starts the agent again")
             do {
                 reply(try XPCCoding.encode(DrainReply(drained: true)), nil)

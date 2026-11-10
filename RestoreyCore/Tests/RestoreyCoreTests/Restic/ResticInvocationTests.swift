@@ -140,7 +140,7 @@ struct ResticInvocationTests {
     }
 
     @Test func retryLockOnlyOnMaintenanceCommands() {
-        for op in [ResticOperation.backup, .initRepository, .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock] {
+        for op in [ResticOperation.backup, .initRepository, .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig] {
             #expect(!inv(op).arguments.contains("--retry-lock"), "\(op)")
         }
     }
@@ -148,7 +148,7 @@ struct ResticInvocationTests {
     @Test func everyOperationPassesJSONAndCacheDirectory() {
         let ops: [ResticOperation] = [
             .initRepository, .backup, .forget(dryRun: false), .forget(dryRun: true), .prune, .check,
-            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock,
+            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig,
         ]
         for op in ops {
             let args = inv(op).arguments
@@ -169,6 +169,7 @@ struct ResticInvocationTests {
 
     @Test func initIsPlain() {
         #expect(inv(.initRepository).arguments == ["init", "--json", "--cache-dir", Self.cache])
+        #expect(inv(.catConfig).arguments == ["cat", "config", "--json", "--cache-dir", Self.cache])
     }
 
     @Test func unlockNeverRemovesAll() {
@@ -260,12 +261,13 @@ struct ResticInvocationTests {
         #expect(try json(.check) == #"{"type":"check"}"#)
         #expect(try json(.snapshots(allHosts: false)) == #"{"allHosts":false,"type":"snapshots"}"#)
         #expect(try json(.unlock) == #"{"type":"unlock"}"#)
+        #expect(try json(.catConfig) == #"{"type":"catConfig"}"#)
     }
 
     @Test func operationRoundTripsAndRejectsUnknown() throws {
         let ops: [ResticOperation] = [
             .initRepository, .backup, .forget(dryRun: false), .forget(dryRun: true), .prune, .check,
-            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock,
+            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig,
         ]
         for op in ops {
             let data = try JSONEncoder().encode(op)

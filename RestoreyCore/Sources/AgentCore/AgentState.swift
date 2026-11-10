@@ -1,5 +1,6 @@
 import Foundation
 import RestoreyCore
+import Synchronization
 
 /// The testable heart of the agent: it owns `config.json`, `state.json` and the plans' keychain
 /// secrets (the agent is their only writer), tracks in-flight runs, and builds `AgentStatus`.
@@ -215,6 +216,10 @@ public actor AgentState {
     /// `recoveryKitConfirmedAt` is agent-owned. A new plan starts unconfirmed. An existing plan keeps its
     /// confirmation only if the repository is the same and every submitted secret equals the keychain's
     /// current value; otherwise the recovery details the user saved no longer match, so it is cleared.
+    ///
+    /// The same change also clears a stop (`stoppedReason`, e.g. after a wrong password) and refreshes the
+    /// plan's alerts: the user has changed what restic opens the repository with, so the next run tries it
+    /// (Ruling R34). An unchanged resave keeps the stop.
     public func savePlan(_ request: SavePlanRequest) async throws -> AgentStatus {
         try requireMutable()
         let errors = request.plan.validationErrors()
@@ -226,9 +231,11 @@ public actor AgentState {
             let planSecrets = try PlanSecrets(store: secrets, entries: request.secrets)
             var plan = request.plan
             var updated = config
+            var credentialsChanged = false
             if let index = updated.plans.firstIndex(where: { $0.id == plan.id }) {
                 let stored = updated.plans[index]
                 let unchanged = stored.repository == plan.repository && !planSecrets.changesAnyValue
+                credentialsChanged = !unchanged
                 plan.recoveryKitConfirmedAt = unchanged ? stored.recoveryKitConfirmedAt : nil
                 updated.plans[index] = plan
             } else {
@@ -242,6 +249,17 @@ public actor AgentState {
             } catch {
                 let message = (error as? AgentError)?.message ?? "\(error)"
                 throw AgentError.storage(message + PlanSecrets.describe(planSecrets.restore()))
+            }
+            if credentialsChanged, runState.plans[plan.id]?.stoppedReason != nil {
+                var state = runState
+                state.plans[plan.id]?.stoppedReason = nil
+                PlanRunner.refreshAlerts(&state.plans[plan.id, default: PlanRunHistory()], plan: plan, now: now())
+                do {
+                    try await saveState(state)
+                } catch {
+                    let detail = (error as? AgentError)?.message ?? "\(error)"
+                    throw AgentError.storage("\(plan.name) was saved, but Restorey couldn't clear its stop: \(detail)")
+                }
             }
             return pushStatus()
         }
@@ -370,12 +388,41 @@ public actor AgentState {
     }
 
     /// Stops new runs and most writes, and returns once no run is in flight and no write is running or
-    /// queued. There is deliberately no timeout: a long first backup is waited for (spec §8). Draining
-    /// is never undone; the agent exits afterwards.
-    public func prepareForRestart() async {
+    /// queued. There is deliberately no timeout for that: a long first backup is waited for (spec §8).
+    /// Then it waits for the runner's queued check-in pings, for at most `pingBudget` (about the check-in
+    /// sender's retry budget), so an exit doesn't drop a `/fail`. Draining is never undone; the agent exits
+    /// afterwards.
+    /// - Returns: false when the pings were given up on.
+    @discardableResult
+    public func prepareForRestart(pingBudget: Duration = .seconds(180)) async -> Bool {
         isDraining = true
         while !isIdle {
             await withCheckedContinuation { drainWaiters.append($0) }
+        }
+        guard let runner else { return true }
+        return await Self.race(pingBudget) { await runner.pingsFlushed() }
+    }
+
+    /// True if `work` finishes within `budget`. The work is not cancelled when it doesn't.
+    private static func race(_ budget: Duration, _ work: @escaping @Sendable () async -> Void) async -> Bool {
+        let settled = Mutex(false)
+        let timer = Mutex<Task<Void, Never>?>(nil)
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            func settle(_ value: Bool) {
+                guard settled.withLock({ let was = $0; $0 = true; return !was }) else { return }
+                continuation.resume(returning: value)
+            }
+            timer.withLock {
+                $0 = Task {
+                    try? await Task.sleep(for: budget)
+                    settle(false)
+                }
+            }
+            Task {
+                await work()
+                settle(true)
+                timer.withLock { $0?.cancel() }
+            }
         }
     }
 

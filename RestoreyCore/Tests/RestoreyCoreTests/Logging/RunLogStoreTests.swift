@@ -57,7 +57,7 @@ import Testing
             (.initRepository, "init"), (.backup, "backup"), (.forget(dryRun: false), "forget"),
             (.forget(dryRun: true), "forget-dry-run"), (.prune, "prune"), (.check, "check"),
             (.snapshots(allHosts: false), "snapshots"),
-            (.snapshots(allHosts: true), "snapshots-all-hosts"), (.unlock, "unlock"),
+            (.snapshots(allHosts: true), "snapshots-all-hosts"), (.unlock, "unlock"), (.catConfig, "cat-config"),
         ]
         for (operation, slug) in slugs { #expect(operation.logSlug == slug) }
         #expect(Set(slugs.map(\.1)).count == slugs.count)

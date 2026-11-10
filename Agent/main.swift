@@ -71,11 +71,15 @@ do {
                 logSubsystem: identity.rootID,
                 fdaProbe: { FullDiskAccessProbe.probe() },
                 preflightEnvironment: { InterimPreflight.environment() },
-                now: { Date() }))
+                now: { Date() },
+                agentLog: { log.error($0) }))
             keptAlive.append(runner)
-            await state.attach(runner: runner)
-            // After the helper listener is up: the unlock asks it for the repository password.
+            // Recovery runs to completion before the runner is attached, so a run action that arrives
+            // meanwhile is refused as "still starting up" rather than racing recovery. It runs after the
+            // helper listener is up, because the unlock asks it for the repository password.
             await runner.recoverAfterStart()
+            await state.attach(runner: runner)
+            log.info("Recovery finished; the runner is accepting runs")
         }
     } else {
         // Exiting would make launchd's KeepAlive respawn the agent in a loop. Stay up, unreachable,

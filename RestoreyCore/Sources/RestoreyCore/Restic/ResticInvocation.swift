@@ -51,6 +51,9 @@ public enum ResticOperation: Codable, Sendable, Equatable {
     /// `allHosts: true` lists every host's snapshots (adopting a repository) and omits `--host`.
     case snapshots(allHosts: Bool)
     case unlock
+    /// `cat config`: reads the repository's config, which exists only once a repository has been
+    /// initialised. `createRepository` uses it to tell "exists" (0) from "nothing there" (10).
+    case catConfig
 
     /// A short, stable, file-name-safe name for this operation, used in run log file names.
     /// Never change an existing value: it would orphan the names of logs already on disk.
@@ -63,6 +66,7 @@ public enum ResticOperation: Codable, Sendable, Equatable {
         case .check: "check"
         case .snapshots(let allHosts): allHosts ? "snapshots-all-hosts" : "snapshots"
         case .unlock: "unlock"
+        case .catConfig: "cat-config"
         }
     }
 
@@ -78,6 +82,7 @@ public enum ResticOperation: Codable, Sendable, Equatable {
         case "check": self = .check
         case "snapshots": self = .snapshots(allHosts: try c.decode(Bool.self, forKey: .allHosts))
         case "unlock": self = .unlock
+        case "catConfig": self = .catConfig
         case let other: throw DecodingError.dataCorruptedError(
             forKey: .type, in: c, debugDescription: "Unknown restic operation \(other)")
         }
@@ -97,6 +102,7 @@ public enum ResticOperation: Codable, Sendable, Equatable {
             try c.encode("snapshots", forKey: .type)
             try c.encode(allHosts, forKey: .allHosts)
         case .unlock: try c.encode("unlock", forKey: .type)
+        case .catConfig: try c.encode("catConfig", forKey: .type)
         }
     }
 }
@@ -149,6 +155,8 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
         if !allHosts { args.append("--host=\(plan.hostLabel)") }
     case .unlock:
         args = ["unlock"] + common(context)
+    case .catConfig:
+        args = ["cat", "config"] + common(context)
     }
 
     return ResticInvocation(arguments: args, environment: environment(plan: plan, context: context))
