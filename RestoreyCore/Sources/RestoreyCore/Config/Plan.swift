@@ -67,7 +67,7 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
     }
 
     /// A new plan with every spec default applied. Callers pass the exclusion list
-    /// (`DefaultExclusions.paths(home:)`) so this type stays independent of it.
+    /// (`DefaultExclusions.paths(home:identity:)`) so this type stays independent of it.
     public static func newHotPlan(
         name: String,
         repository: Repository,

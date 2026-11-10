@@ -8,8 +8,9 @@ public enum DefaultExclusions {
         fileURLWithPath: "/System/Library/CoreServices/backupd.bundle/Contents/Resources/StdExclusions.plist")
 
     /// Only `StdExclusions.plist` is read from the real system; everything else is computed from
-    /// `home`, so tests can pass a fake home.
-    public static func paths(home: URL) -> [String] {
+    /// `home`, so tests can pass a fake home. Internal on purpose: production callers must use
+    /// `paths(home:identity:)` so Restorey's own folders cannot be forgotten.
+    static func paths(home: URL) -> [String] {
         paths(home: home, standardExclusionsPlist: systemStandardExclusionsPlist)
     }
 
