@@ -230,6 +230,14 @@ public enum Repository: Codable, Sendable, Equatable {
         }
     }
 
+    /// The value for `RESTIC_REPOSITORY`.
+    public var resticRepository: String {
+        switch self {
+        case .s3(let location): location.resticRepository
+        case .raw(let repository, _): repository
+        }
+    }
+
     var isS3: Bool {
         if case .s3 = self { return true }
         return false
