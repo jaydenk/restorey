@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import RestoreyCore
@@ -48,5 +49,51 @@ struct RedactorTests {
     @Test func secretsWithRegexCharactersAreLiteral() {
         let r = Redactor(secrets: ["a.b*c$1"])
         #expect(r.redact("x a.b*c$1 y aXb c") == "x [redacted] y aXb c")
+    }
+
+    @Test func redactsTrimmedFormOfPaddedSecret() {
+        let r = Redactor(secrets: ["  hunter2\n"])
+        #expect(r.redact("pw=hunter2 end") == "pw=[redacted] end")
+        #expect(r.redact("url ?k=hunter2") == "url ?k=[redacted]")
+    }
+
+    @Test func redactsLowercasePercentAndFormEncoding() {
+        let r = Redactor(secrets: ["p@ss/w rd"])
+        #expect(r.redact("k=p%40ss%2fw%20rd") == "k=[redacted]")
+        #expect(r.redact("k=p%40ss%2Fw+rd") == "k=[redacted]")
+    }
+
+    @Test func redactsBase64Forms() {
+        let secret = "a>>>b???c"
+        let std = Data(secret.utf8).base64EncodedString()
+        let url = std.replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+        #expect(std != url)
+        let r = Redactor(secrets: [secret])
+        #expect(r.redact("Authorization: Basic \(std)") == "Authorization: Basic [redacted]")
+        #expect(r.redact("token \(url)") == "token [redacted]")
+    }
+
+    @Test func userinfoConsumesToLastAtBeforeHost() {
+        let r = Redactor(secrets: [])
+        #expect(r.redact("https://u:p@ss@host/x") == "https://[redacted]@host/x")
+    }
+
+    @Test func checkInPathStopsAtJSONDelimiters() {
+        let r = Redactor(secrets: [])
+        #expect(
+            r.redact(#"{"url":"https://hc-ping.com/abc-123","x":1}"#)
+                == #"{"url":"https://hc-ping.com/[redacted]","x":1}"#)
+        #expect(r.redact("(https://hc-ping.com/abc-123), then") == "(https://hc-ping.com/[redacted]), then")
+    }
+
+    @Test func checkInPassRunsBeforeUserinfoPass() {
+        let r = Redactor(secrets: [])
+        #expect(r.redact("https://x@hc-ping.com/abc-123/fail") == "https://[redacted]@hc-ping.com/[redacted]")
+    }
+
+    @Test func replacementIsSinglePass() {
+        let r = Redactor(secrets: ["act"])
+        #expect(r.redact("act act") == "[redacted] [redacted]")
+        #expect(Redactor(secrets: ["d"]).redact("d red") == "[redacted] re[redacted]")
     }
 }

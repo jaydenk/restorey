@@ -49,4 +49,13 @@ struct CheckInTests {
         let ping = pingAtEnd(outcome: .wrongPassword, logTail: ["a", "b"], redactor: redactor)
         #expect(ping == .fail(body: "restic exit code 12\na\nb"))
     }
+
+    @Test func multiLineSecretIsRedactedAcrossTailLines() {
+        let pem = "-----BEGIN KEY-----\nabcDEF123\n-----END KEY-----"
+        let r = Redactor(secrets: [pem])
+        let ping = pingAtEnd(
+            outcome: .failed(exitCode: 1, reason: "x"),
+            logTail: ["before", "-----BEGIN KEY-----", "abcDEF123", "-----END KEY-----", "after"], redactor: r)
+        #expect(ping == .fail(body: "restic exit code 1\nbefore\n[redacted]\nafter"))
+    }
 }

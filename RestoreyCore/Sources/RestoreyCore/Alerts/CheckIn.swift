@@ -40,6 +40,8 @@ public func pingAtEnd(outcome: RunOutcome, logTail: [String], redactor: Redactor
     case .credentialsUnavailable: heading = "restic exit code 1"
     case .interrupted: heading = "interrupted"
     }
-    let tail = logTail.suffix(20).map { redactor.redact($0) }
+    // Redact the whole tail before cutting it, so a secret that spans lines (a PEM key, JSON) matches.
+    let redacted = redactor.redact(logTail.joined(separator: "\n"))
+    let tail = redacted.split(separator: "\n", omittingEmptySubsequences: false).suffix(20)
     return .fail(body: heading + "\n" + tail.joined(separator: "\n"))
 }

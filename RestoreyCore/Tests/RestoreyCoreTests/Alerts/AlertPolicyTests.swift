@@ -111,6 +111,52 @@ struct AlertPolicyTests {
         #expect(!active.contains(.notificationsOff))
     }
 
+    // MARK: verdicts
+
+    private func backupState(_ outcomesNewestFirst: [RunOutcome], operation: ResticOperation = .backup) -> Set<AlertCondition> {
+        let records = outcomesNewestFirst.enumerated().map { record($1, operation: operation, ago: Double($0) * 60) }
+        return activeConditions(history: history(successDaysAgo: 0.5, recent: records), plan: plan(), now: Self.now)
+    }
+
+    @Test func failSkipFailStaysActiveThroughout() {
+        let fail = RunOutcome.failed(exitCode: 1, reason: "x")
+        #expect(backupState([fail]) == [.backupFailed])
+        #expect(backupState([.skipped(.onBattery), fail]) == [.backupFailed])
+        #expect(backupState([fail, .skipped(.onBattery), fail]) == [.backupFailed])
+    }
+
+    @Test func failThenNonVerdictsStaysActive() {
+        let fail = RunOutcome.failed(exitCode: 1, reason: "x")
+        for nonVerdict in [RunOutcome.paused, .cancelled, .locked, .skipped(.noNetwork)] {
+            #expect(backupState([nonVerdict, fail]) == [.backupFailed])
+        }
+    }
+
+    @Test func failThenVerdictSuccessClears() {
+        let fail = RunOutcome.failed(exitCode: 1, reason: "x")
+        for ok in [RunOutcome.success(snapshotID: "a"), .unchanged, .warning(unreadable: 1)] {
+            #expect(backupState([ok, fail]).isEmpty)
+        }
+    }
+
+    @Test func repositoryAndCredentialFailuresRaiseBackupFailed() {
+        for outcome in [RunOutcome.wrongPassword, .repositoryMissing, .credentialsUnavailable] {
+            #expect(backupState([outcome]) == [.backupFailed])
+        }
+    }
+
+    @Test func checkFailureFollowedByLockedCheckStaysActive() {
+        let fail = RunOutcome.failed(exitCode: 1, reason: "x")
+        #expect(backupState([.locked, fail], operation: .check) == [.checkFailed])
+        #expect(backupState([.interrupted], operation: .check) == [.checkFailed])
+        #expect(backupState([.success(snapshotID: nil), fail], operation: .check).isEmpty)
+    }
+
+    @Test func clockGoingBackwardsIsDue() {
+        let s = state(notifiedAt: 10 * Self.hour, count: 3)
+        #expect(shouldNotify(s, now: Self.now))
+    }
+
     // MARK: back-off
 
     private func state(notifiedAt: TimeInterval?, count: Int) -> AlertNotificationState {
