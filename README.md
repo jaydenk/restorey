@@ -88,7 +88,7 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
 
 When an update lands while a backup runs, the old agent finishes only the restic step in progress and starts no
 new one, since restic would run the new helper, which the old agent refuses. A backup still waiting its turn shows
-"Skipped while Restorey was updating" and the new agent runs it at once. The agent also notices on its own (within
+"Skipped: Restorey was updating" and the new agent runs it at once. The agent also notices on its own (within
 a minute, or before its next restic step) that its executable was replaced, and restarts itself, even if the app
 isn't running.
 
