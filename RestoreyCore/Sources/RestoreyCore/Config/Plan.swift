@@ -110,13 +110,58 @@ public enum RepositoryOrigin: String, Codable, Sendable, Equatable {
     case adopted
 }
 
+/// `{"type":"interval","seconds":3600}`
 public enum Schedule: Codable, Sendable, Equatable {
     case interval(seconds: Int)
+
+    private enum CodingKeys: String, CodingKey { case type, seconds }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.decode(String.self, forKey: .type) {
+        case "interval": self = .interval(seconds: try c.decode(Int.self, forKey: .seconds))
+        case let other: throw DecodingError.dataCorruptedError(
+            forKey: .type, in: c, debugDescription: "Unknown schedule type \(other)")
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .interval(let seconds):
+            try c.encode("interval", forKey: .type)
+            try c.encode(seconds, forKey: .seconds)
+        }
+    }
 }
 
+/// `{"type":"minimumPercent","percent":20}` or `{"type":"neverOnBattery"}`
 public enum BatteryRule: Codable, Sendable, Equatable {
     case minimumPercent(Int)
     case neverOnBattery
+
+    private enum CodingKeys: String, CodingKey { case type, percent }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.decode(String.self, forKey: .type) {
+        case "minimumPercent": self = .minimumPercent(try c.decode(Int.self, forKey: .percent))
+        case "neverOnBattery": self = .neverOnBattery
+        case let other: throw DecodingError.dataCorruptedError(
+            forKey: .type, in: c, debugDescription: "Unknown battery rule type \(other)")
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .minimumPercent(let percent):
+            try c.encode("minimumPercent", forKey: .type)
+            try c.encode(percent, forKey: .percent)
+        case .neverOnBattery:
+            try c.encode("neverOnBattery", forKey: .type)
+        }
+    }
 }
 
 public struct Conditions: Codable, Sendable, Equatable {
@@ -148,11 +193,42 @@ public struct Retention: Codable, Sendable, Equatable {
     }
 }
 
+/// `{"type":"s3","location":{...}}` or `{"type":"raw","repository":...,"environmentNames":[...]}`
 public enum Repository: Codable, Sendable, Equatable {
     case s3(S3Location)
     /// A restic repository string restic understands directly, with the names (not values) of the
     /// environment variables it needs. The values are in the keychain.
     case raw(repository: String, environmentNames: [String])
+
+    private enum CodingKeys: String, CodingKey { case type, location, repository, environmentNames }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.decode(String.self, forKey: .type) {
+        case "s3":
+            self = .s3(try c.decode(S3Location.self, forKey: .location))
+        case "raw":
+            self = .raw(
+                repository: try c.decode(String.self, forKey: .repository),
+                environmentNames: try c.decode([String].self, forKey: .environmentNames)
+            )
+        case let other: throw DecodingError.dataCorruptedError(
+            forKey: .type, in: c, debugDescription: "Unknown repository type \(other)")
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .s3(let location):
+            try c.encode("s3", forKey: .type)
+            try c.encode(location, forKey: .location)
+        case .raw(let repository, let environmentNames):
+            try c.encode("raw", forKey: .type)
+            try c.encode(repository, forKey: .repository)
+            try c.encode(environmentNames, forKey: .environmentNames)
+        }
+    }
 
     var isS3: Bool {
         if case .s3 = self { return true }

@@ -43,7 +43,7 @@ struct VersionedStoreTests {
             with: Data(contentsOf: dir.appendingPathComponent("config.json"))
         ) as? [String: Any]
         #expect(raw?["schemaVersion"] as? Int == 1)
-        #expect((raw?["payload"] as? [String: Any])?["when"] as? String == "2027-01-15T08:00:00Z")
+        #expect((raw?["payload"] as? [String: Any])?["when"] as? String == "2027-01-15T08:00:00.000Z")
     }
 
     @Test func newerSchemaIsRefusedAndFileUntouched() async throws {
@@ -140,6 +140,55 @@ struct VersionedStoreTests {
         await #expect(throws: VersionedStoreError.missingMigration(from: 1)) {
             try await store(dir, version: 2).load()
         }
+    }
+
+    @Test func newerSchemaWithDifferentEnvelopeShapeIsStillNewer() async throws {
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data(#"{"schemaVersion": 99, "payload": [1, 2]}"#.utf8).write(to: dir.appendingPathComponent("config.json"))
+        await #expect(throws: VersionedStoreError.newerSchema(found: 99, supported: 1)) {
+            try await store(dir).load()
+        }
+    }
+
+    @Test func saveNeverOverwritesARefusedFile() async throws {
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("config.json")
+        let doc = Doc(name: "new", count: 1, when: Self.when)
+
+        let newer = Data(#"{"schemaVersion": 99, "payload": {}}"#.utf8)
+        try newer.write(to: file)
+        await #expect(throws: VersionedStoreError.newerSchema(found: 99, supported: 1)) {
+            try await store(dir).save(doc)
+        }
+        #expect(try Data(contentsOf: file) == newer)
+
+        let corrupt = Data("not json".utf8)
+        try corrupt.write(to: file)
+        do {
+            try await store(dir).save(doc)
+            Issue.record("Expected a corrupt error")
+        } catch let error as VersionedStoreError {
+            guard case .corrupt = error else { Issue.record("Expected corrupt, got \(error)"); return }
+        }
+        #expect(try Data(contentsOf: file) == corrupt)
+
+        let old = Data(#"{"schemaVersion": 1, "payload": {}}"#.utf8)
+        try old.write(to: file)
+        await #expect(throws: VersionedStoreError.missingMigration(from: 1)) {
+            try await store(dir, version: 2).save(doc)
+        }
+        #expect(try Data(contentsOf: file) == old)
+    }
+
+    @Test func saveOverwritesAValidCurrentFile() async throws {
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let s = store(dir)
+        try await s.save(Doc(name: "a", count: 1, when: Self.when))
+        try await s.save(Doc(name: "b", count: 2, when: Self.when))
+        #expect(try await s.load()?.name == "b")
     }
 
     /// The failure is injected by making the directory read-only after the first save, so the
