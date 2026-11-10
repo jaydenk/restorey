@@ -72,3 +72,41 @@ import Testing
         }
     }
 }
+
+@Suite struct OwnLogExclusionTests {
+    private static let home = URL(fileURLWithPath: "/Users/test")
+
+    private static func identity(root: String, logs: String) throws -> Identity {
+        try Identity(infoDictionary: [
+            "RestoreyRootID": root, "RestoreyAgentLabel": root + ".agent",
+            "RestoreyKeychainGroup": "ABCDE12345." + root, "RestoreyLogsName": logs,
+        ])
+    }
+
+    @Test func devIdentityExcludesItsOwnLogsAndSupportFolders() throws {
+        let dev = try Self.identity(root: "com.jaydenkerr.restorey.dev", logs: "Restorey-Dev")
+        let base = DefaultExclusions.paths(home: Self.home, standardExclusionsPlist: nil)
+        let paths = DefaultExclusions.paths(home: Self.home, identity: dev, standardExclusionsPlist: nil)
+        #expect(Array(paths.prefix(base.count)) == base)
+        #expect(Array(paths.dropFirst(base.count)) == [
+            "/Users/test/Library/Logs/Restorey-Dev",
+            "/Users/test/Library/Application Support/com.jaydenkerr.restorey.dev",
+        ])
+    }
+
+    @Test func releaseIdentityExcludesItsOwnLogsAndSupportFolders() throws {
+        let release = try Self.identity(root: "com.jaydenkerr.restorey", logs: "Restorey")
+        let paths = DefaultExclusions.paths(home: Self.home, identity: release, standardExclusionsPlist: nil)
+        #expect(paths.contains("/Users/test/Library/Logs/Restorey"))
+        #expect(paths.contains("/Users/test/Library/Application Support/com.jaydenkerr.restorey"))
+        #expect(!paths.contains("/Users/test/Library/Logs/Restorey-Dev"))
+    }
+
+    @Test func publicOverloadAddsTheSamePaths() throws {
+        let dev = try Self.identity(root: "com.jaydenkerr.restorey.dev", logs: "Restorey-Dev")
+        let paths = DefaultExclusions.paths(home: Self.home, identity: dev)
+        #expect(paths.contains("/Users/test/Library/Logs/Restorey-Dev"))
+        #expect(paths.contains("/Users/test/Library/Application Support/com.jaydenkerr.restorey.dev"))
+        #expect(DefaultExclusions.paths(home: Self.home).count < paths.count)
+    }
+}

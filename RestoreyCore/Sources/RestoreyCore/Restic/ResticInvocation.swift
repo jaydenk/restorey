@@ -52,6 +52,20 @@ public enum ResticOperation: Codable, Sendable, Equatable {
     case snapshots(allHosts: Bool)
     case unlock
 
+    /// A short, stable, file-name-safe name for this operation, used in run log file names.
+    /// Never change an existing value: it would orphan the names of logs already on disk.
+    public var logSlug: String {
+        switch self {
+        case .initRepository: "init"
+        case .backup: "backup"
+        case .forget(let dryRun): dryRun ? "forget-dry-run" : "forget"
+        case .prune: "prune"
+        case .check: "check"
+        case .snapshots(let allHosts): allHosts ? "snapshots-all-hosts" : "snapshots"
+        case .unlock: "unlock"
+        }
+    }
+
     private enum CodingKeys: String, CodingKey { case type, dryRun, allHosts }
 
     public init(from decoder: any Decoder) throws {

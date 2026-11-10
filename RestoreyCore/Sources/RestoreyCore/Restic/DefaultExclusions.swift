@@ -13,6 +13,25 @@ public enum DefaultExclusions {
         paths(home: home, standardExclusionsPlist: systemStandardExclusionsPlist)
     }
 
+    /// `paths(home:)` plus Restorey's own logs and Application Support folders for `identity`.
+    ///
+    /// Restorey writes to these on every run. Left in a home-folder source they would change each
+    /// hour and defeat `--skip-if-unchanged`, giving a new snapshot every run. The caches folder is
+    /// already covered by `~/Library/Caches`.
+    public static func paths(home: URL, identity: Identity) -> [String] {
+        paths(home: home, identity: identity, standardExclusionsPlist: systemStandardExclusionsPlist)
+    }
+
+    static func paths(home: URL, identity: Identity, standardExclusionsPlist: URL?) -> [String] {
+        var result = paths(home: home, standardExclusionsPlist: standardExclusionsPlist)
+        let h = home.path
+        for own in [
+            "\(h)/Library/Logs/\(identity.logsDirectoryName)",
+            "\(h)/Library/Application Support/\(identity.rootID)",
+        ] where !result.contains(own) { result.append(own) }
+        return result
+    }
+
     static func paths(home: URL, standardExclusionsPlist: URL?) -> [String] {
         let h = home.path
         var result = [
