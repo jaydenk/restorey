@@ -85,6 +85,8 @@ public struct RunnerDependencies: Sendable {
 /// replaced), because restic would run the replaced helper, which this agent refuses (Ruling R55). The
 /// step in flight finishes. A backup that hadn't started is recorded `.skipped(.agentUpdating)` with no
 /// ping, and the next agent runs it at once; maintenance not yet started waits for the next backup.
+/// The check is a best-effort guard: a drain or replacement that lands between the check and restic's
+/// launch still lets that one step start.
 ///
 /// A failure found before `/start` (an invalid plan, a missing source, Full Disk Access missing) sends
 /// `/fail` with the reason and no `/start` (Ruling R33). A skip, a pause, and a plan whose recovery kit

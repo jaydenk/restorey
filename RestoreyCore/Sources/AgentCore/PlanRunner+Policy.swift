@@ -123,7 +123,7 @@ extension PlanRunner {
         case .cancelled: return "Cancelled"
         case .locked: return "Another restic holds the repository's lock"
         case .interrupted: return "Interrupted"
-        case .skipped(let reason): return "Skipped (\(reason))"
+        case .skipped(let reason): return reason.summary
         case .failed(_, let reason): return reason
         case .repositoryMissing, .wrongPassword, .credentialsUnavailable:
             return Self.stoppedReason(for: outcome, helperFailure: nil) ?? "Failed"

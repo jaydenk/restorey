@@ -14,6 +14,18 @@ public enum SkipReason: Codable, Sendable, Equatable {
     /// restic step. The next agent runs the backup at once (`nextRunDate`).
     case agentUpdating
 
+    /// The sentence shown for a skipped run, in the menu, run logs and alerts.
+    public var summary: String {
+        switch self {
+        case .onBattery: "Skipped while on battery"
+        case .batteryBelow(let percent): "Skipped: battery below \(percent) %"
+        case .constrainedNetwork: "Skipped on a low data network"
+        case .noNetwork: "Skipped: no network"
+        case .volumeNotMounted(let volume): "Skipped: \(volume) isn't connected"
+        case .agentUpdating: "Skipped: Restorey was updating"
+        }
+    }
+
     private enum CodingKeys: String, CodingKey { case type, percent, volume }
 
     public init(from decoder: any Decoder) throws {

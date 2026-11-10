@@ -143,6 +143,7 @@ struct AgentReplacementTests {
         #expect(skipped.outcome == .skipped(.agentUpdating))
         #expect(skipped.operation == .backup)
         #expect(skipped.logFile == "")
+        #expect(PlanRunner.explain(skipped.outcome, stoppedReason: nil) == "Skipped: Restorey was updating")
         #expect(await drain.value)
 
         // No restic for it, no ping, no alert.

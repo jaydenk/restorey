@@ -157,7 +157,15 @@ final class AgentService: NSObject, AgentXPC, Sendable {
             if purpose == .restart {
                 await state.restart(reply: answer)
             } else {
-                answer(await state.prepareForReregistration())
+                do {
+                    answer(try await state.prepareForReregistration())
+                } catch {
+                    // A restart drain is under way: the agent exits on its own, so the app must not
+                    // unregister it. The app tries again later and finds the new agent.
+                    let message = (error as? AgentError)?.message ?? "\(error)"
+                    log.info("Refused to drain for re-registration: \(message)")
+                    reply(nil, message)
+                }
             }
         }
     }

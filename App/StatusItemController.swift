@@ -154,14 +154,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         case .stopped(let reason):
             return "Stopped: \(reason)"
         case .skipped(let reason):
-            switch reason {
-            case .onBattery: return "Skipped while on battery"
-            case .batteryBelow(let percent): return "Skipped: battery below \(percent) %"
-            case .constrainedNetwork: return "Skipped on a low data network"
-            case .noNetwork: return "Skipped: no network"
-            case .volumeNotMounted(let volume): return "Skipped: \(volume) isn't connected"
-            case .agentUpdating: return "Skipped while Restorey was updating"
-            }
+            return reason.summary
         }
     }
 

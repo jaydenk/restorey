@@ -6,6 +6,9 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
     case configUnavailable
     /// `prepareForRestart` was called; the agent is waiting to exit.
     case draining
+    /// A re-registration drain was asked for while a restart drain is under way: the agent is about to
+    /// exit on its own, so the app must not unregister the agent launchd starts next.
+    case restarting
     case invalidPlan([PlanValidationError])
     case unknownPlan
     case planRunning(name: String)
@@ -31,6 +34,7 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
         switch self {
         case .configUnavailable: "Restorey can't change its settings until the problem with them is fixed"
         case .draining: "Restorey is finishing the current backup before updating the agent"
+        case .restarting: "Restorey's agent is restarting to finish an update. Try again in a moment"
         case .invalidPlan(let errors):
             errors.map(Self.message(for:)).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
                 .joined(separator: ". ")

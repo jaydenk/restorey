@@ -795,7 +795,7 @@ extension AgentStateTests {
         let run = try await Self.fakeRun(state, planID: plan.id, seconds: 2, events: events)
 
         let drain = Task {
-            await state.prepareForReregistration()
+            _ = try? await state.prepareForReregistration()
             await events.append("drained")
         }
         try await Self.waitUntilDraining(state)
@@ -809,13 +809,51 @@ extension AgentStateTests {
     @Test func reregistrationDrainDoesNotExit() async throws {
         let dir = try TempDirectory()
         let state = await Self.makeState(dir)
-        await state.prepareForReregistration()
+        try await state.prepareForReregistration()
         #expect(await state.drainPurpose == .reregistration)
         #expect(!DrainPurpose.reregistration.exitsAfterwards)
         #expect(DrainPurpose.restart.exitsAfterwards)
         // A later restart drain (an app that finds the agent stuck drained) does exit.
         await state.prepareForRestart()
         #expect(await state.drainPurpose == .restart)
+    }
+
+    /// While a restart drain is under way the agent will exit on its own, so a re-registration drain is
+    /// refused rather than answered "drained": the app's `unregister()` would otherwise meet the fresh
+    /// agent launchd starts (fix round 1 of Ruling R55). One asked for before the restart began is
+    /// refused once its wait ends. The agent still exits exactly once.
+    @Test func reregistrationIsRefusedDuringASelfStartedRestartDrain() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        let exits = Locked(0)
+        await state.attach(restartExit: { exits.mutate { $0 += 1 } }, log: { _ in })
+        let events = EventLog()
+        let run = try await Self.fakeRun(state, planID: plan.id, seconds: 1, events: events)
+
+        let early = Task { () -> AgentError? in
+            do { try await state.prepareForReregistration(); return nil } catch { return error as? AgentError }
+        }
+        try await Self.waitUntilDraining(state)
+        await state.restartForReplacedBinary()
+        await #expect(throws: AgentError.restarting) { try await state.prepareForReregistration() }
+
+        await run.value
+        #expect(await early.value == .restarting)
+        #expect(await state.drainPurpose == .restart)
+        while exits.value == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(exits.value == 1)
+        #expect(AgentError.restarting.message == "Restorey's agent is restarting to finish an update. Try again in a moment")
+    }
+
+    @Test func reregistrationIsRefusedDuringTheAppsRestartDrain() async throws {
+        let dir = try TempDirectory()
+        let state = await Self.makeState(dir)
+        await state.prepareForRestart()
+        await #expect(throws: AgentError.restarting) { try await state.prepareForReregistration() }
     }
 
     @Test func mutatingCallsAreRefusedAfterReregistrationDrainUntilRestart() async throws {
@@ -825,7 +863,7 @@ extension AgentStateTests {
         let state = await Self.makeState(dir, secrets: secrets, clock: clock)
         let plan = Self.plan(now: clock.now)
         _ = try await state.savePlan(Self.request(plan))
-        await state.prepareForReregistration()
+        try await state.prepareForReregistration()
 
         #expect(await state.isDraining)
         await #expect(throws: AgentError.draining) { try await state.savePlan(Self.request(plan)) }

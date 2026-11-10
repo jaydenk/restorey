@@ -536,9 +536,16 @@ public actor AgentState {
     /// The same drain, for the app's `unregister()` then `register()`: the agent stays up, drained and
     /// refusing every mutating call but `pause`, until `unregister()` stops it. Exiting instead would let
     /// launchd's `KeepAlive` start a fresh agent that `unregister()` could then kill mid-run.
+    ///
+    /// Refused with `restarting` while a restart drain is under way (the app's, or the agent's own for a
+    /// replaced executable), also when one began during this wait: the agent will exit on its own, and the
+    /// app's `unregister()` would then meet the fresh agent launchd starts, perhaps mid-backup.
     @discardableResult
-    public func prepareForReregistration(pingBudget: Duration = .seconds(180)) async -> Bool {
-        await drain(.reregistration, pingBudget: pingBudget)
+    public func prepareForReregistration(pingBudget: Duration = .seconds(180)) async throws -> Bool {
+        guard drainPurpose != .restart else { throw AgentError.restarting }
+        let flushed = await drain(.reregistration, pingBudget: pingBudget)
+        guard drainPurpose != .restart else { throw AgentError.restarting }
+        return flushed
     }
 
     private func drain(_ purpose: DrainPurpose, pingBudget: Duration) async -> Bool {

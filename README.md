@@ -71,7 +71,8 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
 - not registered yet (`notFound` on a first launch): it registers
 - the agent's binary isn't inside this app's bundle, or the embedded launchd plist changed since the last
   registration: it asks the agent to finish any run in progress and stay up (`prepareForReregistration`), then
-  unregisters and registers again. If the agent can't be asked, it doesn't unregister, and tries again later
+  unregisters and registers again. If the agent can't be asked, or refuses because it is already restarting for an
+  update, it doesn't unregister, and tries again later
 - the agent runs a different version or build, or still runs a binary that an install has since replaced (it
   reports a fingerprint of its executable taken at launch, so a reinstall with the same build number is caught
   too): it asks the agent to finish any run in progress and exit
