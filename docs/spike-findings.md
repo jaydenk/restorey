@@ -10,14 +10,14 @@ Answers the open questions in spec §12.1. Times are UTC, with Adelaide local ti
 | **H1** One FDA grant covers the agent and restic | **Confirmed**, under both Apple Development and Developer ID, and it survives a Developer ID N→N+1 update | One grant to Restorey.app. No two-item fallback is needed. Treat "operation not permitted" on sources as *FDA missing* (an error), not a warning |
 | **H2** Keychain password helper from launchd, no prompt | **Confirmed**: also while the screen is locked, and across a signing change | The helper is the agent app's own executable, which must embed a provisioning profile. **Confused deputy:** the owner chose to verify the parent chain plus a README statement |
 | **H3** Agent process shape | **Helper app (LSUIElement) confirmed.** Notifications need the *agent's* own permission, and fail silently without it | Request notification permission from the agent only. Warn when it's not authorised |
-| **H4** Backend credentials | **Environment variables are readable by same-user processes.** S3 `credential_process` is supported (from source; not run end to end) | The owner chose restic's S3 backend for S3 and B2, with `credential_process` and no `AWS_*` variables. Test against real B2 first |
+| **H4** Backend credentials | **Environment variables are readable by same-user processes.** S3 `credential_process` **works end to end against B2's S3 endpoint** (v0.1 Task 1): one helper call per restic command | The owner chose restic's S3 backend for S3 and B2, with `credential_process` and no `AWS_*` variables. `Expiration` is required. A failing helper costs about 31 s and surfaces only as exit 1 "no credentials found" |
 | **H6** Manual N→N+1 update | **Confirmed**: the handshake drains the running backup, launchd relaunches the new agent, and no grants are lost | Ship the handshake. **Gate it on running from /Applications** |
 | Not in §12.1 | `ProcessType=Adaptive` throttles self-scheduled runs to priority 4 (954 s versus 69 s) | The owner chose `ProcessType=Standard` |
 | Not in §12.1 | A copy run from a DMG re-points the registration. The agent is then killed by a launch-constraint violation and launchd **removes the job**, while `SMAppService.status` still says `enabled` | Heartbeat-driven self-repair: unregister then register. No agent-affecting actions from a translocated or non-/Applications copy |
 | Not in §12.1 | A plist change in an update is ignored until re-registration | Re-register when the embedded plist's hash changes |
 | Not in §12.1 | A crashed run leaves a stale lock that blocks `check` (exit 11) | Plain `restic unlock` (never `--remove-all`) before maintenance and after an agent restart |
 
-**Still open:** SIGINT lock removal during a real backup, whole-home EPERM paths under FDA, telling "user switched the agent off" apart from a fault, the self-move quarantine strip, the Homebrew and Sparkle install paths, the end-to-end `credential_process` run against B2's S3 endpoint, and a measurement of restic's CPU use during a real first backup under `Standard`.
+**Still open:** SIGINT lock removal during a real backup, whole-home EPERM paths under FDA, telling "user switched the agent off" apart from a fault, the self-move quarantine strip, the Homebrew and Sparkle install paths, and a measurement of restic's CPU use during a real first backup under `Standard`.
 
 ## Environment
 
@@ -164,7 +164,43 @@ The bundled, hardened-runtime restic was started with `SPIKE_FAKE_SECRET=…` in
 - **Other backends** (raw repository string plus variables, spec §5.3): child environment only, and the README says plainly that the environment is readable by other processes running as the user while a run is in progress.
 - README wording (spec §7): "Repository passwords, and keys for S3 (including Backblaze B2 through its S3 endpoint), are read from your Keychain by Restorey's background agent and handed to restic through a pipe. They are never written to disk or put in environment variables. Credentials for other backends, including repositories that use restic's native `b2:` backend, are passed to restic as environment variables while it runs. Other programs running as you can read those."
 
-### Not done
+### H4 addendum: `credential_process` against B2, 10 Nov 2026 07:29–07:33 UTC (17:59–18:03)
+
+**Verdict: confirmed.** restic 0.19.1 (upstream darwin_arm64, SHA-256 checked) reaches a real B2 bucket through its S3 endpoint with keys from `credential_process` only.
+
+- **Setup.**
+  - Bucket `restorey-test`, endpoint `https://s3.us-west-001.backblazeb2.com`, with an application key scoped to that bucket (`b2_authorize_account` reports the `bucketId` restriction).
+  - Repository `s3:https://s3.us-west-001.backblazeb2.com/restorey-test/cp-test`.
+  - Every run used `env -i HOME=… PATH=/usr/bin:/bin` plus only `AWS_SHARED_CREDENTIALS_FILE`, `AWS_PROFILE=restorey-test`, `RESTIC_PASSWORD_FILE`, `RESTIC_REPOSITORY` and `RESTIC_CACHE_DIR`. There were no `AWS_*` key variables and no `~/.mc/config.json`. The shared-credentials file held only `[restorey-test]` and `credential_process = <scratch path, no spaces>/helper.sh s3-credentials --plan test`.
+  - The helper is a shell script that logs each call and prints `{"Version":1,"AccessKeyId","SecretAccessKey","Expiration":<now+12 h>}`.
+- **Positive control:**
+
+  | Command | Exit | Helper calls |
+  |---|---|---|
+  | `init` | 0 | 1 |
+  | `backup` (202 files, 50 MB, 17 s) | 0 | 1 |
+  | second `backup` (no changes) | 0 | 1 |
+  | `snapshots --json` (2) | 0 | 1 |
+  | `check` | 0 | 1 |
+
+  So Restorey's helper runs **once per restic process**. The per-run log count to expect in v0.1 is 1 per command.
+- **Negative controls.**
+  - A profile pointing at a helper that exits 1 with no output makes `snapshots` fail: **exit 1** after **31 s**, with `exit_error` "s3.getCredentials: no credentials found". The failing helper was called once.
+  - A profile name with no matching section fails the same way, also after 31 s.
+
+  So nothing else on this Mac answered the chain (`~/.aws/credentials` exists but is bypassed by `AWS_SHARED_CREDENTIALS_FILE`). The 31 s delay is consistent with minio-go's IAM provider waiting on the EC2 metadata endpoint, which is not verified.
+- **Expiration control.**
+  - A backup adding 20 MB with `Expiration` **omitted**: exit 0, but **16 helper calls**.
+  - The same size backup with `Expiration`: **1 call**.
+
+  This confirms the reading of minio-go's source: without `Expiration`, the credentials count as always expired.
+- **Consequences for v0.1:**
+  - The helper must always print `Expiration`. A test pins it (plan 1, Task 13).
+  - A helper failure looks like a generic exit 1 to restic. The agent must record its own helper failures (os_log plus a per-plan flag). It should report "Couldn't read the backup keys from the Keychain" rather than restic's "no credentials found", and treat the message `s3.getCredentials: no credentials found` as a credentials error that stops the plan and alerts at once (like exit 12), not as an hourly-retry failure.
+  - Expect about 31 s of latency before that failure. It's harmless, but timeouts in tests must allow for it.
+- The test repository `cp-test` was left in the bucket for later v0.1 tasks. The owner will delete the bucket and key when v0.1 testing is done.
+
+### Not done (as of the spike; the B2 run above has since been done)
 
 The end-to-end `credential_process` run against a local S3 server. MinIO's community images are no longer published, and auto mode blocked running `moto` from PyPI. **To do in v0.1** (corrected after review) — test against the owner's real B2 bucket through its S3 endpoint, with three checks:
 - a **positive control**: the helper logs each call, and the count per run is recorded
