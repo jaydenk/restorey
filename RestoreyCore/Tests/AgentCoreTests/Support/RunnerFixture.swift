@@ -133,6 +133,22 @@ final class RunnerFixture: Sendable {
         let fm = FileManager.default
         let base = stableAncestors ? URL(fileURLWithPath: "/Users/Shared", isDirectory: true) : fm.temporaryDirectory
         let root = base.appendingPathComponent("restorey-runner-\(UUID().uuidString)", isDirectory: true)
+        do {
+            return try await make(
+                root: root, origin: origin, executable: executable, createRepository: createRepository,
+                confirmKit: confirmKit, gracePeriod: gracePeriod, change: change)
+        } catch {
+            // The caller's `defer { remove() }` isn't in place yet.
+            try? fm.removeItem(at: root)
+            throw error
+        }
+    }
+
+    private static func make(
+        root: URL, origin: RepositoryOrigin, executable: URL?, createRepository: Bool, confirmKit: Bool,
+        gracePeriod: Duration, change: (inout Plan) -> Void
+    ) async throws -> RunnerFixture {
+        let fm = FileManager.default
         for name in ["source", "cache", "home", "logs", "support"] {
             try fm.createDirectory(
                 at: root.appendingPathComponent(name), withIntermediateDirectories: true)
