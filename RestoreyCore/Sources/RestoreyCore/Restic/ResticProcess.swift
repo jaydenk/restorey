@@ -8,6 +8,12 @@ public struct ResticTermination: Sendable, Equatable {
     /// Set when the process died from a signal rather than exiting, for example SIGKILL after an
     /// interrupt that restic did not honour in time.
     public var terminatedBySignal: Int32?
+    /// True when `ResticProcess` itself sent the SIGKILL, because restic ignored our SIGINT for the
+    /// whole grace period. Only that kind of signal death counts as the pause or cancel we asked for.
+    public var killedByUs: Bool
+    /// True when an interrupt arrived before the process was spawned, so restic never ran. Then
+    /// `exitCode` is 130, `pid` is 0 and `interruptIntent` is the intent that was given.
+    public var neverStarted: Bool
     /// What we asked for with `interrupt`, if we did. The last request wins.
     public var interruptIntent: InterruptIntent?
     /// The text of the last `exit_error` message restic printed.
@@ -20,12 +26,15 @@ public struct ResticTermination: Sendable, Equatable {
     public var pid: pid_t
 
     public init(
-        exitCode: Int32, terminatedBySignal: Int32? = nil, interruptIntent: InterruptIntent? = nil,
+        exitCode: Int32, terminatedBySignal: Int32? = nil, killedByUs: Bool = false,
+        neverStarted: Bool = false, interruptIntent: InterruptIntent? = nil,
         exitErrorMessage: String? = nil, stderrTail: [String] = [], messages: [ResticItemError] = [],
         summary: BackupSummary? = nil, pid: pid_t
     ) {
         self.exitCode = exitCode
         self.terminatedBySignal = terminatedBySignal
+        self.killedByUs = killedByUs
+        self.neverStarted = neverStarted
         self.interruptIntent = interruptIntent
         self.exitErrorMessage = exitErrorMessage
         self.stderrTail = stderrTail
@@ -48,8 +57,11 @@ public enum ResticProcessError: Error, Equatable {
 /// - stdout and stderr are drained concurrently, off the actor, until both reach end of file. `run`
 ///   returns only after the process has exited and both streams are fully read, so a trailing
 ///   summary line is never lost.
+/// - Cancelling the task that awaits `run` means `interrupt(.cancel)`: `run` still waits for the real
+///   exit and returns a termination with `interruptIntent == .cancel`.
 /// - `onMessage` is called from the two reader tasks, in order within a stream but with no ordering
-///   between the streams, and may be called concurrently.
+///   between the streams, and may be called concurrently. It runs synchronously on a drain thread, so
+///   it must be cheap and must never block: a slow callback stalls that stream, and restic with it.
 public actor ResticProcess {
     private let executable: URL
     private let invocation: ResticInvocation
@@ -60,6 +72,7 @@ public actor ResticProcess {
     private var process: Process?
     private var started = false
     private var exited = false
+    private var killed = false
     private var intent: InterruptIntent?
 
     /// - Parameters:
@@ -77,9 +90,29 @@ public actor ResticProcess {
         self.homeDirectory = homeDirectory
     }
 
+    /// Runs restic to completion. `onMessage` runs synchronously on a drain thread (one per stream);
+    /// keep it cheap and never block in it.
     public func run(onMessage: @escaping @Sendable (ResticMessage) -> Void) async throws -> ResticTermination {
+        try await withTaskCancellationHandler {
+            try await runToCompletion(onMessage: onMessage)
+        } onCancel: {
+            Task { await self.interrupt(.cancel) }
+        }
+    }
+
+    private struct ExitInfo: Sendable {
+        var signalled: Bool
+        var status: Int32
+    }
+
+    private func runToCompletion(onMessage: @escaping @Sendable (ResticMessage) -> Void) async throws -> ResticTermination {
         guard !started else { throw ResticProcessError.alreadyStarted }
         started = true
+
+        // An interrupt that arrived first wins: restic is not started at all.
+        if let pending = intent {
+            return ResticTermination(exitCode: 130, neverStarted: true, interruptIntent: pending, pid: 0)
+        }
 
         let process = Process()
         process.executableURL = executable
@@ -95,10 +128,12 @@ public actor ResticProcess {
         process.standardOutput = stdout
         process.standardError = stderr
 
-        // Set before `run()`, so an immediate exit is still seen.
-        let (exitEvents, exitSignal) = AsyncStream<Void>.makeStream()
-        process.terminationHandler = { _ in
-            exitSignal.yield()
+        // Set before `run()`, so an immediate exit is still seen. The handler reads the status itself:
+        // `terminationReason` must not be read before the process has terminated.
+        let (exitEvents, exitSignal) = AsyncStream<ExitInfo>.makeStream()
+        process.terminationHandler = { finished in
+            exitSignal.yield(ExitInfo(signalled: finished.terminationReason == .uncaughtSignal,
+                                      status: finished.terminationStatus))
             exitSignal.finish()
         }
 
@@ -112,18 +147,25 @@ public actor ResticProcess {
 
         async let out = Self.drain(stdout.fileHandleForReading, onMessage: onMessage)
         async let err = Self.drain(stderr.fileHandleForReading, onMessage: onMessage)
-        for await _ in exitEvents {}
+        // Wait in an unstructured task, which cancellation of this task does not reach, so we always
+        // wait for the real exit.
+        let exit = await Task {
+            var info: ExitInfo?
+            for await value in exitEvents { info = value }
+            return info
+        }.value
         let stdoutResult = await out
         let stderrResult = await err
 
         exited = true
         await supervisor.remove(pid: pid)
 
-        let signalled = process.terminationReason == .uncaughtSignal
-        let status = process.terminationStatus
+        let signalled = exit?.signalled ?? false
+        let status = exit?.status ?? -1
         return ResticTermination(
             exitCode: signalled ? 128 + status : status,
             terminatedBySignal: signalled ? status : nil,
+            killedByUs: killed && signalled && status == SIGKILL,
             interruptIntent: intent,
             exitErrorMessage: stderrResult.exitErrorMessage ?? stdoutResult.exitErrorMessage,
             stderrTail: stderrResult.tail,
@@ -134,11 +176,13 @@ public actor ResticProcess {
     }
 
     /// Asks restic to stop with SIGINT, and kills it with SIGKILL if it is still running after
-    /// `killAfter`. Returns at once; the kill is sent later from a background task. A call before the
-    /// process has started, or after it has exited, does nothing. The last intent given is reported.
+    /// `killAfter`. Returns at once; the kill is sent later from a background task. The last intent
+    /// given is reported. Before the process is spawned the intent is kept, and `run` then does not
+    /// start restic (`neverStarted`). After exit it does nothing.
     public func interrupt(_ intent: InterruptIntent, killAfter: Duration = .seconds(10)) {
-        guard let process, !exited, process.isRunning else { return }
+        guard !exited else { return }
         self.intent = intent
+        guard let process, process.isRunning else { return }
         kill(process.processIdentifier, SIGINT)
         Task { [weak self] in
             try? await Task.sleep(for: killAfter)
@@ -148,6 +192,7 @@ public actor ResticProcess {
 
     private func killIfStillRunning() {
         guard let process, !exited, process.isRunning else { return }
+        killed = true
         kill(process.processIdentifier, SIGKILL)
     }
 

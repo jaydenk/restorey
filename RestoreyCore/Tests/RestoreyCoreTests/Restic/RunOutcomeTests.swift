@@ -18,10 +18,11 @@ struct RunOutcomeTests {
         summary: BackupSummary? = nil,
         errors: [ResticItemError] = [],
         message: String? = nil,
-        signal: Int32? = nil
+        signal: Int32? = nil,
+        killedByUs: Bool = false
     ) -> RunOutcome {
         classify(
-            operation: op, exitCode: code, interruptedByUs: intent, terminatedBySignal: signal,
+            operation: op, exitCode: code, interruptedByUs: intent, terminatedBySignal: signal, killedByUs: killedByUs,
             summary: summary, errors: errors, exitErrorMessage: message)
     }
 
@@ -67,12 +68,25 @@ struct RunOutcomeTests {
         #expect(code == 130)
     }
 
-    /// Ruling R12: restic ignored our SIGINT, was killed with SIGKILL (exit code 128 + 9), and the run
-    /// is still the pause or cancel we asked for.
+    /// Rulings R12 and R15: restic ignored our SIGINT and `ResticProcess` sent SIGKILL (exit 128 + 9).
     @Test func aProcessWeInterruptedThenKilledStillPausesOrCancels() {
-        #expect(outcome(137, intent: .pause, signal: SIGKILL) == .paused)
-        #expect(outcome(137, intent: .cancel, signal: SIGKILL) == .cancelled)
+        #expect(outcome(137, intent: .pause, signal: SIGKILL, killedByUs: true) == .paused)
+        #expect(outcome(137, intent: .cancel, signal: SIGKILL, killedByUs: true) == .cancelled)
         #expect(outcome(130, intent: .pause, signal: SIGINT) == .paused)
+    }
+
+    @Test func otherSignalDeathsAreFailuresEvenAfterOurInterrupt() {
+        for (code, signal, ours) in [(Int32(134), SIGABRT, false), (139, SIGSEGV, false), (137, SIGKILL, false)] {
+            guard case .failed(let reported, _) = outcome(code, intent: .pause, signal: signal, killedByUs: ours) else {
+                Issue.record("signal \(signal) after our interrupt must be a failure")
+                continue
+            }
+            #expect(reported == code)
+        }
+        // We never send SIGABRT, so the flag cannot excuse it.
+        if case .failed = outcome(134, intent: .pause, signal: SIGABRT, killedByUs: true) {} else {
+            Issue.record("only our SIGKILL is excused")
+        }
     }
 
     @Test func aSignalDeathWeDidNotAskForIsAFailure() {

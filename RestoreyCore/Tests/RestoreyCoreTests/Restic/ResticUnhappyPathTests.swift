@@ -38,7 +38,7 @@ struct ResticUnhappyPathTests {
 
     // MARK: Repository and credentials
 
-    @Test func wrongPasswordIs12() async throws {
+    @Test(.timeLimit(.minutes(1))) func wrongPasswordIs12() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         try await repo.initialise()
@@ -48,7 +48,7 @@ struct ResticUnhappyPathTests {
         #expect(run.outcome == .wrongPassword)
     }
 
-    @Test func missingRepositoryIs10() async throws {
+    @Test(.timeLimit(.minutes(1))) func missingRepositoryIs10() async throws {
         let repo = try TempRepository() // never initialised
         defer { repo.remove() }
 
@@ -59,7 +59,7 @@ struct ResticUnhappyPathTests {
 
     // MARK: Locks
 
-    @Test func staleLockBlocksCheckThenPlainUnlockClears() async throws {
+    @Test(.timeLimit(.minutes(1))) func staleLockBlocksCheckThenPlainUnlockClears() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         try repo.writeRandomFiles(count: 6, megabytes: 20)
@@ -93,7 +93,7 @@ struct ResticUnhappyPathTests {
 
     /// Records what restic does with its lock when it is sent SIGINT during a real backup (the open
     /// item in docs/spike-findings.md). The assertions below are the observed behaviour.
-    @Test func sigintDuringRealBackupLock() async throws {
+    @Test(.timeLimit(.minutes(1))) func sigintDuringRealBackupLock() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         try repo.writeRandomFiles(count: 10, megabytes: 30) // 300 MB of random data
@@ -123,7 +123,7 @@ struct ResticUnhappyPathTests {
     /// restic retries a refused connection with growing delays for up to 15 minutes before it gives
     /// up, so this test does not wait for `.failed`. It shows that restic is retrying and says so on
     /// stderr, and that stopping the run then is a cancel, not a failure.
-    @Test func unreachableRestServerRetriesAndReportsOnStderr() async throws {
+    @Test(.timeLimit(.minutes(1))) func unreachableRestServerRetriesAndReportsOnStderr() async throws {
         let port = try freeLocalPort() // nothing listens on it
         let repo = try TempRepository(repository: .raw(repository: "rest:http://127.0.0.1:\(port)/", environmentNames: []))
         defer { repo.remove() }
@@ -136,7 +136,7 @@ struct ResticUnhappyPathTests {
     }
 
     /// An answer that is not a retryable error is a prompt `.failed`: here the server refuses access.
-    @Test func restServerThatRefusesAccessFails() async throws {
+    @Test(.timeLimit(.minutes(1))) func restServerThatRefusesAccessFails() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-rs-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         // An empty .htpasswd turns authentication on and lets nobody in.
@@ -159,7 +159,7 @@ struct ResticUnhappyPathTests {
     /// Kills rest-server after the first status. restic retries each failed request for up to 15
     /// minutes, so the run neither succeeds nor fails promptly. This test shows that it does not
     /// complete as a success or unchanged run while the server is gone, and that restic says why.
-    @Test func restServerDiesMidBackupIsNeverSuccess() async throws {
+    @Test(.timeLimit(.minutes(1))) func restServerDiesMidBackupIsNeverSuccess() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-rs-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         let server = try RestServer(directory: directory)
@@ -179,13 +179,15 @@ struct ResticUnhappyPathTests {
         #expect(run.termination.summary == nil)
         #expect(run.outcome != .unchanged)
         if case .success = run.outcome { Issue.record("a backup that lost its server reported success") }
-        #expect(run.termination.stderrTail.contains { $0.contains("retrying") }, "\(run.termination.stderrTail)")
+        let tail = run.termination.stderrTail.joined(separator: "\n")
+        #expect(["connection refused", "connection reset", "EOF", "broken pipe"].contains { tail.contains($0) },
+                "no cause on stderr: \(tail)")
         #expect(run.outcome == .cancelled)
     }
 
     // MARK: Disk and files
 
-    @Test func fullDiskFails() async throws {
+    @Test(.timeLimit(.minutes(3))) func fullDiskFails() async throws {
         let disk = try RamDisk(megabytes: 64)
         defer { disk.detach() }
         let repo = try TempRepository(
@@ -203,7 +205,7 @@ struct ResticUnhappyPathTests {
                 "\(run.termination.stderrTail)")
     }
 
-    @Test func unreadableFileIsWarning() async throws {
+    @Test(.timeLimit(.minutes(1))) func unreadableFileIsWarning() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         try repo.writeRandomFiles(count: 3, megabytes: 1)

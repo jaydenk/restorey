@@ -27,7 +27,7 @@ struct ResticProcessTests {
         return url
     }
 
-    @Test func initBackupSnapshotsRoundTrip() async throws {
+    @Test(.timeLimit(.minutes(1))) func initBackupSnapshotsRoundTrip() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         try repo.writeRandomFiles(count: 5, megabytes: 1)
@@ -48,7 +48,7 @@ struct ResticProcessTests {
         #expect(listed.first?.tags == [repo.snapshotTag])
     }
 
-    @Test func progressMessagesStream() async throws {
+    @Test(.timeLimit(.minutes(1))) func progressMessagesStream() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         // Throttled, so the backup lasts long enough for restic to report progress before it finishes.
@@ -57,7 +57,7 @@ struct ResticProcessTests {
         try await repo.initialise()
 
         let backup = try await repo.run(.backup)
-        #expect(backup.outcome != .failed(exitCode: 1, reason: ""))
+        #expect(backup.termination.exitCode == 0, "\(backup.termination.stderrTail)")
         let statusIndex = backup.messages.firstIndex { if case .status = $0 { true } else { false } }
         let summaryIndex = backup.messages.firstIndex { if case .summary = $0 { true } else { false } }
         let status = try #require(statusIndex, "no status message in \(backup.messages.count) messages")
@@ -65,7 +65,7 @@ struct ResticProcessTests {
         #expect(status < summary)
     }
 
-    @Test func environmentIsNotInherited() async throws {
+    @Test(.timeLimit(.minutes(1))) func environmentIsNotInherited() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         setenv("RESTOREY_LEAK", "1", 1)
@@ -90,7 +90,7 @@ struct ResticProcessTests {
         #expect(Set(seen.keys).subtracting(allowed).isEmpty, "unexpected: \(Set(seen.keys).subtracting(allowed))")
     }
 
-    @Test func interruptSendsSIGINTThenSIGKILL() async throws {
+    @Test(.timeLimit(.minutes(1))) func interruptSendsSIGINTThenSIGKILL() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         // Ignores SIGINT, so only SIGKILL stops it. perl sets the disposition itself, so this holds
@@ -119,15 +119,17 @@ struct ResticProcessTests {
         #expect(elapsed < .seconds(10.5), "took \(elapsed) to kill")
         #expect(termination.interruptIntent == .pause)
         #expect(termination.terminatedBySignal == SIGKILL)
+        #expect(termination.killedByUs)
         #expect(termination.exitCode == 128 + SIGKILL)
         // Ruling R12: still a pause, not a failure.
         let outcome = classify(
             operation: .backup, exitCode: termination.exitCode, interruptedByUs: termination.interruptIntent,
-            terminatedBySignal: termination.terminatedBySignal, summary: nil, errors: [], exitErrorMessage: nil)
+            terminatedBySignal: termination.terminatedBySignal, killedByUs: termination.killedByUs,
+            summary: nil, errors: [], exitErrorMessage: nil)
         #expect(outcome == .paused)
     }
 
-    @Test func interruptHonouredBeforeTheGracePeriodIsNotKilled() async throws {
+    @Test(.timeLimit(.minutes(1))) func interruptHonouredBeforeTheGracePeriodIsNotKilled() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         let polite = try script(
@@ -148,7 +150,7 @@ struct ResticProcessTests {
         #expect(termination.interruptIntent == .cancel)
     }
 
-    @Test func pidIsSupervisedOnlyWhileRunning() async throws {
+    @Test(.timeLimit(.minutes(1))) func pidIsSupervisedOnlyWhileRunning() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         let sleeper = try script("echo ready\nexec /bin/sleep 1000", in: repo)
@@ -174,7 +176,7 @@ struct ResticProcessTests {
         #expect(await repo.supervisor.all().isEmpty)
     }
 
-    @Test func aProcessRunsOnlyOnce() async throws {
+    @Test(.timeLimit(.minutes(1))) func aProcessRunsOnlyOnce() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         let quick = try script("exit 0", in: repo)
@@ -183,19 +185,65 @@ struct ResticProcessTests {
         await #expect(throws: ResticProcessError.alreadyStarted) { try await process.run { _ in } }
     }
 
-    @Test func trailingOutputIsNotLostWhenTheProcessExits() async throws {
+    @Test(.timeLimit(.minutes(1))) func trailingOutputIsNotLostWhenTheProcessExits() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         // Writes a lot to both streams and exits at once; every line must still arrive.
         let chatty = try script(
-            "i=0\nwhile [ $i -lt 5000 ]; do echo \"out $i\"; echo \"err $i\" >&2; i=$((i+1)); done\n"
+            "/usr/bin/head -c 262144 /dev/zero | /usr/bin/tr '\\0' 'o'; echo\n"
+                + "/usr/bin/head -c 262144 /dev/zero | /usr/bin/tr '\\0' 'e' >&2; echo >&2\n"
+                + "i=0\nwhile [ $i -lt 5000 ]; do echo \"out $i\"; echo \"err $i\" >&2; i=$((i+1)); done\n"
                 + "echo '{\"message_type\":\"exit_error\",\"code\":1,\"message\":\"last words\"}' >&2\nexit 1",
             in: repo)
         let run = try await repo.finish(
             repo.process(try repo.invocation(.check), executable: chatty), op: .check, log: MessageLog())
-        #expect(run.messages.count == 10_001)
+        #expect(run.messages.count == 10_003)
         #expect(run.termination.exitErrorMessage == "last words")
         #expect(run.termination.stderrTail.count == 20)
         #expect(run.termination.stderrTail.last?.contains("last words") == true)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func cancellingTheAwaitingTaskInterruptsAndWaitsForExit() async throws {
+        let repo = try TempRepository()
+        defer { repo.remove() }
+        let slow = try script(
+            "$| = 1; $SIG{INT} = sub { exit 130 }; print \"ready\\n\"; sleep 1000;", in: repo, interpreter: "/usr/bin/perl")
+        let process = repo.process(try repo.invocation(.backup), executable: slow)
+
+        let (ready, readyContinuation) = AsyncStream<Void>.makeStream()
+        let running = Task { try await process.run { _ in readyContinuation.yield() } }
+        var readyIterator = ready.makeAsyncIterator()
+        await readyIterator.next()
+        let pids = await repo.supervisor.all()
+        let pid = try #require(pids.first)
+
+        running.cancel()
+        let termination = try await running.value // must return, not crash
+        #expect(termination.interruptIntent == .cancel)
+        #expect(termination.exitCode == 130)
+        #expect(kill(pid, 0) != 0, "the process should be gone")
+        #expect(await repo.supervisor.all().isEmpty)
+        let outcome = classify(
+            operation: .backup, exitCode: termination.exitCode, interruptedByUs: termination.interruptIntent,
+            terminatedBySignal: termination.terminatedBySignal, killedByUs: termination.killedByUs,
+            summary: nil, errors: [], exitErrorMessage: nil)
+        #expect(outcome == .cancelled)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func anInterruptBeforeRunMeansResticNeverStarts() async throws {
+        let repo = try TempRepository()
+        defer { repo.remove() }
+        let process = repo.process(try repo.invocation(.backup))
+        await process.interrupt(.pause)
+
+        let started = ContinuousClock.now
+        let termination = try await process.run { _ in }
+        #expect(ContinuousClock.now - started < .seconds(1))
+        #expect(termination.neverStarted)
+        #expect(termination.interruptIntent == .pause)
+        #expect(termination.exitCode == 130)
+        #expect(termination.pid == 0)
+        #expect(await repo.supervisor.all().isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: repo.repositoryDirectory.path))
     }
 }
