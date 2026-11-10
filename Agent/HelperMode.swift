@@ -12,9 +12,10 @@ import Synchronization
 /// (`HelperResponder`). Run by hand, it gets nothing.
 ///
 /// Exit codes: 0 with the payload on stdout; 1 with nothing on stdout for any failure or refusal;
-/// 2 when the executable's own path can't appear on a `credential_process` line. Every failure goes to
-/// os_log (category `helper`), never stderr: minio-go's `cmd.Output()` discards stderr. Nothing logged
-/// names the plan or a secret.
+/// 2 when the executable's own path is unknown or can't appear on a `credential_process` line. Every
+/// failure goes to os_log (category `helper`), never stderr: minio-go's `cmd.Output()` discards stderr.
+/// Nothing logged names the plan or a secret: the agent's refusal reasons name the kind of key, never the
+/// keychain account (which embeds the plan ID).
 ///
 /// Helper mode never starts `NSApplication` and never creates the agent's listeners.
 enum HelperMode {
@@ -32,7 +33,11 @@ enum HelperMode {
         let logger = Logger(
             subsystem: identity?.rootID ?? Bundle.main.bundleIdentifier ?? "Restorey", category: "helper")
 
-        let path = Bundle.main.executablePath ?? arguments[0]
+        // No fallback to argv[0], which the caller chooses: without our own path we can't vouch for it.
+        guard let path = Bundle.main.executablePath else {
+            logger.error("Refusing to run: the helper can't find its own executable path")
+            return 2
+        }
         do {
             try CredentialsFile.validateHelperPath(path)
         } catch {

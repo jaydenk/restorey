@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import RestoreyCore
 
@@ -166,14 +167,45 @@ struct ResticProcessTests {
         let pids = await repo.supervisor.all()
         #expect(pids.count == 1)
         let pid = try #require(pids.first)
-        #expect(await repo.supervisor.isSupervised(pid: pid, planID: repo.planID))
-        #expect(await !repo.supervisor.isSupervised(pid: pid, planID: UUID()))
+        let start = try #require(processInfo(pid: pid)).startTime
+        #expect(await repo.supervisor.isSupervised(pid: pid, planID: repo.planID, startTime: start))
+        #expect(await !repo.supervisor.isSupervised(pid: pid, planID: UUID(), startTime: start))
 
         await process.interrupt(.cancel)
         let termination = try await running.value
         #expect(termination.pid == pid)
-        #expect(await !repo.supervisor.isSupervised(pid: pid, planID: repo.planID))
+        #expect(await !repo.supervisor.isSupervised(pid: pid, planID: repo.planID, startTime: start))
         #expect(await repo.supervisor.all().isEmpty)
+    }
+
+    /// A grandchild that inherited restic's stdout keeps the pipe open after restic exits. The pid must
+    /// stop being trusted when restic exits, not when the drains finish, or a process that reuses the
+    /// pid in between could be taken for it.
+    @Test(.timeLimit(.minutes(1))) func pidIsDroppedAtExitEvenWhileAChildHoldsStdoutOpen() async throws {
+        let repo = try TempRepository()
+        defer { repo.remove() }
+        let exitsEarly = try script("echo ready\n/bin/sleep 5 &\n/bin/sleep 0.5\nexit 0", in: repo)
+        let process = repo.process(try repo.invocation(.backup), executable: exitsEarly)
+
+        let (ready, readyContinuation) = AsyncStream<Void>.makeStream()
+        let finished = Atomic<Bool>(false)
+        let running = Task {
+            defer { finished.store(true, ordering: .sequentiallyConsistent) }
+            return try await process.run { _ in readyContinuation.yield() }
+        }
+        var readyIterator = ready.makeAsyncIterator()
+        await readyIterator.next()
+        let pid = try #require(await repo.supervisor.all().first)
+
+        let deadline = ContinuousClock.now + .seconds(3)
+        while await !repo.supervisor.all().isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(await repo.supervisor.all().isEmpty, "pid \(pid) is still supervised after restic exited")
+        let returnedEarly = finished.load(ordering: .sequentiallyConsistent)
+        #expect(!returnedEarly,
+                "run returned early, so the sleep didn't hold stdout and the test proves nothing")
+        _ = try await running.value
     }
 
     @Test(.timeLimit(.minutes(1))) func aProcessRunsOnlyOnce() async throws {

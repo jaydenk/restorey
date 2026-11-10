@@ -9,17 +9,28 @@ struct HelperResponderTests {
     private static let caller: pid_t = 4242
     private static let restic: pid_t = 4243
     private static let fixedNow = Date(timeIntervalSince1970: 1_800_000_000)
+    private static let resticStart = KernelProcessInfo.StartTime(seconds: 1_799_999_000, microseconds: 7)
+
+    /// The caller's parent is the restic; the restic started at `resticStart`.
+    @Sendable private static func lookup(_ pid: pid_t) -> KernelProcessInfo? {
+        switch pid {
+        case caller: KernelProcessInfo(parentPID: restic, startTime: .init(seconds: 1_799_999_100, microseconds: 0))
+        case restic: KernelProcessInfo(parentPID: 1, startTime: resticStart)
+        default: nil
+        }
+    }
 
     /// Counts reads, so a test can show a refused request never touched the keychain.
     final class CountingSecretStore: SecretStore {
-        struct Failure: Error, CustomStringConvertible { var description: String { "keychain error -25308" } }
         let inner = InMemorySecretStore()
         let reads = Mutex(0)
         let failReads = Mutex(false)
 
         func read(_ key: SecretKey) throws -> String? {
             reads.withLock { $0 += 1 }
-            if failReads.withLock({ $0 }) { throw Failure() }
+            if failReads.withLock({ $0 }) {
+                throw SecretStoreError.keychain(status: -25308, message: "User interaction is not allowed.")
+            }
             return try inner.read(key)
         }
         func write(_ value: String, for key: SecretKey) throws { try inner.write(value, for: key) }
@@ -60,12 +71,13 @@ struct HelperResponderTests {
         var responder: HelperResponder {
             HelperResponder(
                 state: state, secrets: secrets, supervised: supervised,
-                parentOf: { $0 == HelperResponderTests.caller ? HelperResponderTests.restic : nil },
+                lookup: HelperResponderTests.lookup,
                 now: { HelperResponderTests.fixedNow })
         }
 
         func superviseRestic(for plan: UUID? = nil) async {
-            await supervised.insert(pid: HelperResponderTests.restic, planID: plan ?? planID)
+            await supervised.insert(
+                pid: HelperResponderTests.restic, planID: plan ?? planID, startTime: HelperResponderTests.resticStart)
         }
 
         func request(_ kind: HelperRequest.Kind, planID: String? = nil) throws -> Data {
@@ -151,7 +163,8 @@ struct HelperResponderTests {
             Issue.record("expected secretUnavailable, got \(result)")
             return
         }
-        #expect(reason.contains("repository-password"))
+        #expect(reason == "The repository password isn't in the Keychain")
+        #expect(!reason.contains(f.planID.uuidString))
         #expect(await f.state.takeHelperFailure(planID: f.planID) == reason)
     }
 
@@ -164,8 +177,8 @@ struct HelperResponderTests {
             Issue.record("expected secretUnavailable, got \(result)")
             return
         }
-        #expect(reason.contains("s3-secret-access-key"))
-        #expect(!reason.contains("key-id\""))
+        #expect(reason == "The S3 secret access key isn't in the Keychain")
+        #expect(!reason.contains(f.planID.uuidString))
         #expect(await f.state.takeHelperFailure(planID: f.planID) == reason)
     }
 
@@ -178,7 +191,8 @@ struct HelperResponderTests {
             Issue.record("expected secretUnavailable, got \(result)")
             return
         }
-        #expect(reason.contains("-25308"))
+        #expect(reason == "Restorey couldn't read the repository password from the Keychain: keychain error -25308 (User interaction is not allowed.)")
+        #expect(!reason.contains(f.planID.uuidString))
         #expect(await f.state.takeHelperFailure(planID: f.planID) == reason)
         #expect(await f.state.takeHelperFailure(planID: f.planID) == nil)
     }

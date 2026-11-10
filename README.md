@@ -89,8 +89,8 @@ How it works (design spec §7; [spike findings](docs/spike-findings.md) H2 and H
 - restic runs the agent's own executable as `RESTIC_PASSWORD_COMMAND`
   (`RestoreyAgent print-password --plan <id>`) and, for S3 and B2, as the `credential_process` in a per-plan
   shared-credentials file (`RestoreyAgent s3-credentials --plan <id>`). That file holds only the command line,
-  never a key. This has been confirmed end to end against a real B2 bucket through its S3 endpoint: restic
-  runs the helper once per command.
+  never a key. The route itself was verified against a real B2 bucket through its S3 endpoint with a test
+  helper: restic ran it once per command. Restorey's own helper is checked end to end in the v0.1 alpha.
 - The helper holds no secrets. It asks the running agent over XPC. The agent accepts the connection only
   from its own executable, signed by the same team (checked against the caller's audit token). It then
   checks that the caller's parent process is a restic that the agent itself started and is still
@@ -99,7 +99,10 @@ How it works (design spec §7; [spike findings](docs/spike-findings.md) H2 and H
 - For S3 the helper prints `Version`, both keys and an `Expiration` 12 hours ahead, so restic asks once per
   run rather than once per request. The helper refuses to run (exit 2) if its own path contains a space,
   because the `credential_process` line can't be quoted. Its errors go to the unified log (subsystem
-  `com.jaydenkerr.restorey`, or `com.jaydenkerr.restorey.dev` for Debug builds, category `helper`), not stderr, which restic's S3 library discards.
+  `com.jaydenkerr.restorey`, or `com.jaydenkerr.restorey.dev` for Debug builds, category `helper`), not
+  stderr, which restic's S3 library discards.
+- The agent trusts a restic by its process ID and start time together, and stops trusting it the moment it
+  exits, so a later process that reuses the same ID is never mistaken for it.
 
 What this doesn't protect against: an attacker who can hijack a restic process Restorey is supervising could
 obtain that plan's secrets; any program running as you can already do a great deal.

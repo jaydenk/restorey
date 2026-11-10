@@ -76,7 +76,7 @@ public actor ResticProcess {
     private var intent: InterruptIntent?
 
     /// - Parameters:
-    ///   - planID: the plan this run belongs to, recorded in `supervisor` while the process lives.
+    ///   - planID: the plan this run belongs to, recorded in `supervisor` from spawn until restic exits.
     ///   - homeDirectory: becomes the child's `HOME`.
     public init(
         executable: URL, invocation: ResticInvocation, planID: UUID,
@@ -143,7 +143,12 @@ public actor ResticProcess {
         try? stderr.fileHandleForWriting.close()
         let pid = process.processIdentifier
         self.process = process
-        await supervisor.insert(pid: pid, planID: planID)
+        // Bind the pid to its start time, and only once the kernel confirms it is still our own child:
+        // if restic has already exited and been reaped, the pid may already be someone else's, so it is
+        // not recorded at all (a helper call from it is then refused, never granted).
+        if let info = processInfo(pid: pid), info.parentPID == getpid() {
+            await supervisor.insert(pid: pid, planID: planID, startTime: info.startTime)
+        }
 
         async let out = Self.drain(stdout.fileHandleForReading, onMessage: onMessage)
         async let err = Self.drain(stderr.fileHandleForReading, onMessage: onMessage)
@@ -154,11 +159,13 @@ public actor ResticProcess {
             for await value in exitEvents { info = value }
             return info
         }.value
+        // restic has been reaped, so its pid is free for reuse: stop trusting it now, not after the
+        // drains, which a grandchild holding stdout or stderr open can keep going much longer.
+        await supervisor.remove(pid: pid)
         let stdoutResult = await out
         let stderrResult = await err
 
         exited = true
-        await supervisor.remove(pid: pid)
 
         let signalled = exit?.signalled ?? false
         let status = exit?.status ?? -1

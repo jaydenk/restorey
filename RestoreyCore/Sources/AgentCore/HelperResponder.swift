@@ -16,7 +16,8 @@ public struct HelperResponder: Sendable {
         /// The caller's parent is not a restic the agent is supervising for that plan.
         case notSupervised
         case unknownPlan
-        /// The keychain read failed or found nothing. The reason names the account, never a value.
+        /// The keychain read failed or found nothing. The reason names the kind of key and the error,
+        /// never a value, and not the plan (the keychain account embeds the plan ID).
         case secretUnavailable(String)
 
         public var description: String {
@@ -33,18 +34,18 @@ public struct HelperResponder: Sendable {
     private let state: AgentState
     private let secrets: any SecretStore
     private let supervised: SupervisedProcesses
-    private let parentOf: @Sendable (pid_t) -> pid_t?
+    private let lookup: @Sendable (pid_t) -> KernelProcessInfo?
     private let now: @Sendable () -> Date
 
     public init(
         state: AgentState, secrets: any SecretStore, supervised: SupervisedProcesses,
-        parentOf: @escaping @Sendable (pid_t) -> pid_t? = parentPID(of:),
+        lookup: @escaping @Sendable (pid_t) -> KernelProcessInfo? = { processInfo(pid: $0) },
         now: @escaping @Sendable () -> Date
     ) {
         self.state = state
         self.secrets = secrets
         self.supervised = supervised
-        self.parentOf = parentOf
+        self.lookup = lookup
         self.now = now
     }
 
@@ -54,7 +55,7 @@ public struct HelperResponder: Sendable {
             return .failure(.malformedRequest)
         }
         guard let planID = UUID(uuidString: request.planID) else { return .failure(.invalidPlanID) }
-        guard await authoriseHelper(callerPID: callerPID, planID: planID, parentOf: parentOf, supervised: supervised)
+        guard await authoriseHelper(callerPID: callerPID, planID: planID, lookup: lookup, supervised: supervised)
         else { return .failure(.notSupervised) }
         guard await state.isConfiguredPlan(planID) else { return .failure(.unknownPlan) }
 
@@ -83,9 +84,29 @@ public struct HelperResponder: Sendable {
         do {
             value = try secrets.read(key)
         } catch {
-            throw .secretUnavailable("Restorey couldn't read \(key.account) from the Keychain: \(error)")
+            throw .secretUnavailable(
+                "Restorey couldn't read the \(Self.name(of: key)) from the Keychain: \(Self.describe(error))")
         }
-        guard let value else { throw .secretUnavailable("\(key.account) isn't in the Keychain") }
+        guard let value else { throw .secretUnavailable("The \(Self.name(of: key)) isn't in the Keychain") }
         return value
+    }
+
+    private static func name(of key: SecretKey) -> String {
+        switch key {
+        case .repositoryPassword: "repository password"
+        case .s3AccessKeyID: "S3 access key ID"
+        case .s3SecretAccessKey: "S3 secret access key"
+        case .environment: "environment value"
+        case .checkInURL: "check-in URL"
+        }
+    }
+
+    /// The error without anything that names the account.
+    private static func describe(_ error: any Error) -> String {
+        switch error as? SecretStoreError {
+        case .keychain(let status, let message)?: "keychain error \(status) (\(message))"
+        case .undecodableValue?: "the stored value isn't valid UTF-8"
+        case nil: String(describing: type(of: error))
+        }
     }
 }

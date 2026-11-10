@@ -14,35 +14,29 @@ import RestoreyCore
 /// this check itself: a child can't get its parent's audit token, and a pid-and-path check is fooled by
 /// fork-then-exec of the signed binary.
 ///
-/// **Fail-closed timing.** `ResticProcess` inserts restic's pid into `SupervisedProcesses` one actor
-/// hop after `process.run()`. A helper call that restic makes before that insertion lands is refused,
-/// never granted: the window can only cost a failed run (restic reports it and the agent retries), it
-/// can never hand a secret to an unsupervised process. restic runs its password command and the S3
-/// chain after start-up, so in practice the insertion wins.
+/// **Fail-closed timing.** `ResticProcess` records restic in `SupervisedProcesses` one actor hop after
+/// `process.run()`. A helper call that restic makes before that insertion lands is refused, never
+/// granted: the window can only cost a failed run (restic reports it and the agent retries), it can
+/// never hand a secret to an unsupervised process. restic runs its password command and the S3 chain
+/// after start-up, so in practice the insertion wins.
+///
+/// **Recycled pids.** The parent is matched by pid *and* kernel start time, so a process that reuses a
+/// supervised restic's pid after it exits never matches. `ResticProcess` also drops restic as soon as
+/// its termination arrives.
 ///
 /// Residual risk, stated in the README: code that can hijack a restic Restorey is supervising can
 /// obtain that plan's secrets.
 ///
 /// - Parameters:
-///   - parentOf: the caller's parent pid, or nil if it can't be read. `parentPID(of:)` in the agent.
-/// - Returns: true only when the caller's parent is supervised for exactly `planID`.
+///   - lookup: the kernel's view of a pid (parent and start time), or nil if it has none.
+///     `processInfo(pid:)` in the agent.
+/// - Returns: true only when the caller's parent is, right now, the same restic supervised for
+///   exactly `planID`.
 public func authoriseHelper(
-    callerPID: pid_t, planID: UUID, parentOf: (pid_t) -> pid_t?, supervised: SupervisedProcesses
+    callerPID: pid_t, planID: UUID, lookup: (pid_t) -> KernelProcessInfo?, supervised: SupervisedProcesses
 ) async -> Bool {
-    guard let parent = parentOf(callerPID), parent > 0 else { return false }
-    return await supervised.isSupervised(pid: parent, planID: planID)
-}
-
-/// The parent pid of `pid` from `sysctl(CTL_KERN, KERN_PROC, KERN_PROC_PID)`'s `kp_eproc.e_ppid`,
-/// or nil when no such process exists or the call fails.
-public func parentPID(of pid: pid_t) -> pid_t? {
-    var info = kinfo_proc()
-    var size = MemoryLayout<kinfo_proc>.stride
-    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
-    let result = mib.withUnsafeMutableBufferPointer { mib in
-        sysctl(mib.baseAddress, u_int(mib.count), &info, &size, nil, 0)
-    }
-    // A pid with no process succeeds with size 0.
-    guard result == 0, size == MemoryLayout<kinfo_proc>.stride, info.kp_proc.p_pid == pid else { return nil }
-    return info.kp_eproc.e_ppid
+    guard let caller = lookup(callerPID), caller.parentPID > 0,
+          let parent = lookup(caller.parentPID)
+    else { return false }
+    return await supervised.isSupervised(pid: caller.parentPID, planID: planID, startTime: parent.startTime)
 }

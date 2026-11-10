@@ -27,8 +27,10 @@ import RestoreyCore
         let process = Process()
         process.executableURL = installedHelper
         process.arguments = arguments
-        // A plain environment, as restic gives it. The test host's own (DYLD_* paths into DerivedData)
-        // would load the test build's frameworks into the installed binary.
+        // Only HOME and PATH, which is what the helper inherits from restic (ResticProcess builds restic's
+        // environment from scratch). Xcode gives the test host OS_ACTIVITY_DT_MODE=YES, which makes
+        // os_log mirror every log line to stderr; inheriting it would put the helper's own os_log lines
+        // (and Security's "logging-persist" lines) on stderr, which never happens under restic.
         process.environment = ["HOME": NSHomeDirectory(), "PATH": "/usr/bin:/bin"]
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
@@ -47,6 +49,19 @@ import RestoreyCore
             stderr: err.fileHandleForReading.readDataToEndOfFile())
     }
 
+    static func size(of file: URL) -> UInt64 {
+        ((try? FileManager.default.attributesOfItem(atPath: file.path)[.size]) as? NSNumber)?.uint64Value ?? 0
+    }
+
+    /// The file's text from `offset` on. A rotated (smaller) file is read from the start.
+    static func text(of file: URL, from offset: UInt64) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return "" }
+        defer { try? handle.close() }
+        let start = size(of: file) >= offset ? offset : 0
+        guard (try? handle.seek(toOffset: start)) != nil, let data = try? handle.readToEnd() else { return "" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
     @Test func helperRunByHandIsRefused() throws {
         try #require(
             FileManager.default.isExecutableFile(atPath: Self.installedHelper.path),
@@ -55,6 +70,8 @@ import RestoreyCore
         let agentLog = identity.logsDirectory().appendingPathComponent("agent.log")
 
         for command in ["print-password", "s3-credentials"] {
+            // Only what the agent appends from here on counts.
+            let offset = Self.size(of: agentLog)
             let run = try Self.runHelper([command, "--plan", UUID().uuidString])
             #expect(run.status == 1, "\(command) exited \(run.status)")
             #expect(run.stdout.isEmpty, "\(command) wrote \(run.stdout.count) bytes to stdout")
@@ -65,8 +82,7 @@ import RestoreyCore
             let expected = "Refused a helper request from pid \(run.pid): the caller wasn't started by a restic run"
             var found = false
             for _ in 0..<40 where !found {
-                let text = (try? String(contentsOf: agentLog, encoding: .utf8)) ?? ""
-                found = text.contains(expected)
+                found = Self.text(of: agentLog, from: offset).contains(expected)
                 if !found { usleep(50_000) }
             }
             #expect(found, """
