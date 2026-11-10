@@ -1,113 +1,57 @@
 import AppKit
+import OSLog
 import RestoreyCore
-import SwiftUI
-#if DEBUG
-import ServiceManagement
-#endif
 
+/// The app is UI only (spec §8): a status item, plus a Debug-only developer window. Its engine job is to
+/// keep the agent installed, current and alive, and only when this copy is the installed one.
 @main
-struct RestoreyApp: App {
-    init() {
-        #if DEBUG
-        TemporaryDebugArguments.handle(CommandLine.arguments)
-        #endif
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusItem: StatusItemController?
+    private var supervisor: AgentSupervisor?
+    #if DEBUG
+    private var developerWindow: DeveloperWindowController?
+    #endif
+
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)
+        withExtendedLifetime(delegate) { app.run() }
     }
 
-    var body: some Scene {
-        MenuBarExtra("Restorey", systemImage: "externaldrive.badge.timemachine") {
-            Text("Restorey")
-            Divider()
-            Button("Quit Restorey") { NSApplication.shared.terminate(nil) }
-                .keyboardShortcut("q")
-        }
-    }
-}
-
-#if DEBUG
-/// Temporary Debug-only launch arguments for checking the agent by hand before the app shell exists
-/// (Ruling R3). Task 17 replaces them with real registration and the heartbeat, and removes this.
-///
-/// - `--register`: registers the embedded agent with `SMAppService`, prints the result and exits.
-/// - `--hello`: sends one `hello` and one `status` to the agent over XPC, prints the replies and exits.
-enum TemporaryDebugArguments {
-    static func handle(_ arguments: [String]) {
-        let wantsRegister = arguments.contains("--register")
-        let wantsHello = arguments.contains("--hello")
-        guard wantsRegister || wantsHello else { return }
+    func applicationDidFinishLaunching(_ notification: Notification) {
         let identity: Identity
         do {
             identity = try Identity.fromBundle(.main)
         } catch {
-            print("Can't read the identity from Info.plist: \(error)")
-            exit(1)
-        }
-        if wantsRegister { register(identity) }
-        if wantsHello { hello(identity) }
-        exit(0)
-    }
-
-    private static func register(_ identity: Identity) {
-        let service = SMAppService.agent(plistName: "\(identity.agentLabel).plist")
-        do {
-            try service.register()
-            print("register() succeeded")
-        } catch {
-            print("register() failed: \(error)")
-        }
-        print("SMAppService status: \(describe(service.status))")
-    }
-
-    private static func describe(_ status: SMAppService.Status) -> String {
-        switch status {
-        case .notRegistered: "notRegistered"
-        case .enabled: "enabled"
-        case .requiresApproval: "requiresApproval"
-        case .notFound: "notFound"
-        @unknown default: "unknown (\(status.rawValue))"
-        }
-    }
-
-    private static func hello(_ identity: Identity) {
-        let connection = NSXPCConnection(machServiceName: identity.agentLabel, options: [])
-        connection.remoteObjectInterface = NSXPCInterface(with: AgentXPC.self)
-        connection.resume()
-        defer { connection.invalidate() }
-
-        let info = Bundle.main.infoDictionary ?? [:]
-        let request = HelloRequest(
-            appVersion: info["CFBundleShortVersionString"] as? String ?? "unknown",
-            appBuild: info["CFBundleVersion"] as? String ?? "unknown")
-        guard let requestData = try? XPCCoding.encode(request) else {
-            print("Couldn't encode the hello request")
+            Logger(subsystem: Bundle.main.bundleIdentifier ?? "Restorey", category: "app")
+                .fault("Can't read the identity from Info.plist: \(String(describing: error), privacy: .public)")
+            statusItem = StatusItemController(broken: "This copy of Restorey is damaged. Reinstall it.")
             return
         }
-        call("hello", connection) { agent, reply in agent.hello(requestData, withReply: reply) }
-        call("status", connection) { agent, reply in agent.status(withReply: reply) }
+        let log = AppLog(identity: identity, kind: .app)
+
+        // The gate: a copy outside /Applications, or translocated, touches nothing of the agent's.
+        switch InstallLocation.check() {
+        case .refused(let verdict):
+            log.info("Not touching the agent: this copy at \(Bundle.main.bundlePath) is \(verdict)")
+            statusItem = StatusItemController(refused: verdict)
+        case .installed(let copy):
+            let supervisor = AgentSupervisor(installed: copy, identity: identity, log: log)
+            self.supervisor = supervisor
+            let statusItem = StatusItemController(supervisor: supervisor)
+            #if DEBUG
+            let developer = DeveloperWindowController(supervisor: supervisor, identity: identity)
+            developerWindow = developer
+            statusItem.setDeveloperAction { developer.show() }
+            #endif
+            self.statusItem = statusItem
+            supervisor.start()
+        }
     }
 
-    /// Makes one call and waits up to 10 s for its reply or an XPC error.
-    private static func call(
-        _ name: String, _ connection: NSXPCConnection,
-        _ send: (AgentXPC, @escaping @Sendable (Data?, String?) -> Void) -> Void
-    ) {
-        let done = DispatchSemaphore(value: 0)
-        let proxy = connection.remoteObjectProxyWithErrorHandler { error in
-            print("\(name): XPC error: \(error)")
-            done.signal()
-        }
-        guard let agent = proxy as? AgentXPC else {
-            print("\(name): no proxy")
-            return
-        }
-        send(agent) { data, error in
-            if let data {
-                print("\(name): \(String(decoding: data, as: UTF8.self))")
-            } else {
-                print("\(name): error: \(error ?? "none")")
-            }
-            done.signal()
-        }
-        if done.wait(timeout: .now() + 10) == .timedOut { print("\(name): timed out after 10 s") }
-    }
+    /// A status item app: closing the developer window doesn't quit.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
-#endif

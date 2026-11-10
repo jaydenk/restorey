@@ -59,13 +59,30 @@ Debug builds use a separate identity (`com.jaydenkerr.restorey.dev`, `RestoreyDe
 Release install without sharing a launchd label, keychain group or on-disk state. GitHub Actions runs the
 unsigned path of `scripts/ci.sh` on every push and pull request.
 
-### Checking the agent by hand (Debug only, temporary)
+### What the app does with the agent
 
-Until the app shell can register and talk to the agent itself, a Debug build takes two launch arguments:
+The app is a menu bar item. When it runs from `/Applications` (any subfolder is fine) and isn't translocated,
+it registers the embedded agent with `SMAppService`, says `hello` every 10 seconds and repairs what it can:
+
+- not registered yet (`notFound` on a first launch): it registers
+- the agent's binary isn't inside this app's bundle, or the embedded launchd plist changed since the last
+  registration: it asks the agent to finish any run in progress, then unregisters and registers again
+- the agent runs a different build: it asks the agent to finish any run in progress and exit, and launchd
+  starts the new one. The menu says "Finishing the current backup before updating the agent" meanwhile
+- switched off in Login Items: "Background agent is switched off", with "Open Login Items"
+- registered but not answering: "Background agent isn't running", with "Restart Agent" and "Open Login
+  Items". It doesn't repair this on its own yet, because "switched off" and "broken" can't be told apart
+  until the check in `docs/spike-findings.md` is done
+
+Automatic repairs happen at most once an hour. **A copy anywhere else does nothing to the agent**: no XPC, no
+registration and not even a status read, which on its own can re-point the registration at the copy. It only
+shows "Move Restorey to Applications". The app's log is `~/Library/Logs/Restorey-Dev/app.log`.
+
+A Debug build adds a "Developer…" menu item. Its window saves plans (S3, B2 or a raw local repository path such
+as `/tmp/restorey-dev-repo`), creates or adopts repositories, confirms the recovery details, backs up, pauses,
+resumes, asks for notification permission, and shows the agent's live status as JSON.
 
 ```sh
-/Applications/RestoreyDev.app/Contents/MacOS/RestoreyDev --register   # SMAppService register(), prints the status
-/Applications/RestoreyDev.app/Contents/MacOS/RestoreyDev --hello      # one hello and one status over XPC
 launchctl print gui/$(id -u)/com.jaydenkerr.restorey.dev.agent        # spawn type = daemon (3), both Mach services
 ```
 
@@ -213,9 +230,9 @@ They live in the `AgentHostedTests` bundle, which runs inside the signed Debug a
 `Config/Local.xcconfig` exists. On GitHub Actions it doesn't, and the script prints
 `hosted keychain tests skipped: no signing` instead. The bundle also runs the installed helper by hand
 and checks the agent refuses it (`HelperEndToEndTests`), so it needs `RestoreyDev.app` installed with
-`scripts/install-dev.sh`, registered with `--register`, and the agent restarted after each install
-(`launchctl kickstart -k gui/$(id -u)/com.jaydenkerr.restorey.dev.agent`). Without that it fails rather than
-skips. The tests use a random plan ID each and delete what they
+`scripts/install-dev.sh` and opened once so it registers its agent, and the agent restarted after each later
+install (`launchctl kickstart -k gui/$(id -u)/com.jaydenkerr.restorey.dev.agent`): the app restarts it on its
+own only when the build number differs. Without that it fails rather than skips. The tests use a random plan ID each and delete what they
 create, so they never touch real Restorey items. The hosted build goes in `~/Library/Caches/restorey-ci`
 (override with `RESTOREY_HOSTED_DERIVED_DATA`), not `build/`, because macOS blocks launching an app from
 `~/Documents` on a privacy prompt that nobody is there to answer.

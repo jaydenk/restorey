@@ -17,7 +17,7 @@ Answers the open questions in spec §12.1. Times are UTC, with Adelaide local ti
 | Not in §12.1 | A plist change in an update is ignored until re-registration | Re-register when the embedded plist's hash changes |
 | Not in §12.1 | A crashed run leaves a stale lock that blocks `check` (exit 11) | Plain `restic unlock` (never `--remove-all`) before maintenance and after an agent restart |
 
-**Still open:** whole-home EPERM paths under FDA, telling "user switched the agent off" apart from a fault, the self-move quarantine strip, the Homebrew and Sparkle install paths, and a measurement of restic's CPU use during a real first backup under `Standard`.
+**Still open:** whole-home EPERM paths under FDA, telling "user switched the agent off" apart from a fault (interim rule in H3a below), the self-move quarantine strip, the Homebrew and Sparkle install paths, and a measurement of restic's CPU use during a real first backup under `Standard`.
 
 ### Two restic 0.19.1 behaviours that shape the plan runner (v0.1 Task 14, 10 Nov 2026 17:15 UTC (03:45))
 
@@ -121,6 +121,31 @@ Recommendation: option 2 in v0.1, plus the README statement from option 1. Optio
 - **The user switches the agent off in Login Items (review focus 4)**, 22:37:41–22:38:05 UTC. The owner reports the entry shows as "RestoreySpike" with its icon. Switching it off made launchd **remove the job and stop the agent** ("service inactive … removing service"). The app's heartbeat then failed ("Could not find job with label …"). Switching it on re-submitted the job ("Setting service … to enabled (initiated by smd)") and launchd started a new agent within 0.2 s. **Consequence:** the menu bar app's heartbeat is what catches this (spec §6.2), because nothing else does. Not captured: the exact `SMAppService.Status` value while it was off. `sfltool dumpbtm` hung, and polling it from a script is not usable.
 - **Background Task Management stores a SHA-256 of the agent executable** (`BTMConfigSHA256Checksum` in `backgroundtaskmanagementd` logs). Task 7 checks whether a changed binary after an update triggers re-approval.
   - **Caveat:** restic compares `os.Hostname()`, which on this Mac is the network-dependent `pepper.home.kerr.host`. After a network change, the Mac's own crashed-run locks look foreign until they are 30 minutes old.
+
+### "Switched off" versus a fault: interim rule (v0.1 Task 17, 10 Nov 2026 19:13 UTC (11 Nov 05:43))
+
+**Not yet observed.** The check in spec §6.2 (read `SMAppService.status` and `launchctl print` while the agent is
+switched off in Login Items, after `kill -9`, and after a DMG copy breaks the registration) needs the owner at the
+Mac, so Task 17 shipped the conservative table (Ruling R50) and the check is still to do:
+
+| `SMAppService.status` | Heartbeat | App does |
+|---|---|---|
+| `notFound`, `notRegistered` | any | `register()` |
+| `enabled` | agent binary outside this app's bundle, or plist hash changed | drain, `unregister()`, `register()` |
+| `enabled` | different agent build | drain, launchd's `KeepAlive` starts the new binary |
+| `enabled` | unreachable | **no automatic repair**: "Background agent isn't running", with "Restart Agent" and "Open Login Items" |
+| `requiresApproval` | any | "Background agent is switched off", with "Open Login Items" |
+
+Automatic repairs run at most once an hour; a fault that survives one shows "Restart Agent". If the check shows
+that "switched off" reads `requiresApproval`, the unreachable row can become an automatic repair by changing
+`AgentHealthPolicy.enabledButUnreachable` (`RestoreyCore/Sources/RestoreyCore/App/AgentHealth.swift`). If it
+reads `enabled`, the row must stay as it is, or the app would silently re-enable an agent the user switched off.
+
+**Translocation detection on macOS 27.2 (26B123).** `SecTranslocateIsTranslocatedURL` is still exported by
+Security.framework, resolves through `dlsym` and returns success with `false` for non-translocated paths. A
+translocated path could not be made from a command-line process (`SecTranslocateCreateSecureDirectoryForURL`
+fails with EPERM), so the positive case is unverified. The app therefore also refuses any bundle path with an
+`AppTranslocation` component, the check the spike used successfully in phase B.
 
 ### H3b — Notifications from the agent (Task 5), 9 Nov 2026 22:58–23:01 UTC (10 Nov 09:28–09:31)
 
