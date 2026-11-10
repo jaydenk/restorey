@@ -108,16 +108,25 @@ public enum PlanValidationError: Error, Equatable, Sendable {
     case noSources
     /// A source that does not start with `/`.
     case relativeSource(String)
+    /// A schedule interval under `Plan.minimumIntervalSeconds` (includes zero and negative values),
+    /// which would leave the plan perpetually due.
+    case intervalTooShort(seconds: Int)
 }
 
 extension Plan {
     /// Problems that make a plan unsafe to run. The agent and the plan runner refuse an invalid
     /// plan before building restic invocations.
+    public static let minimumIntervalSeconds = 300
+
     public func validationErrors() -> [PlanValidationError] {
         var errors: [PlanValidationError] = []
         if hostLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { errors.append(.emptyHostLabel) }
         if sources.isEmpty { errors.append(.noSources) }
         for source in sources where !source.hasPrefix("/") { errors.append(.relativeSource(source)) }
+        switch schedule {
+        case .interval(let seconds):
+            if seconds < Self.minimumIntervalSeconds { errors.append(.intervalTooShort(seconds: seconds)) }
+        }
         return errors
     }
 }

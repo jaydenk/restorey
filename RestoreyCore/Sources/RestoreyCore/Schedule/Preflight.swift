@@ -2,7 +2,8 @@ import Foundation
 
 public struct PowerState: Sendable, Equatable {
     public var onBattery: Bool
-    /// Nil when the charge cannot be read.
+    /// Nil when the charge cannot be read. An unknown percentage on battery with `.minimumPercent` runs
+    /// rather than skips: skipping on a permanently unreadable reading would stop backups silently.
     public var percent: Int?
 
     public init(onBattery: Bool, percent: Int?) {
@@ -49,11 +50,13 @@ public enum PreflightResult: Equatable, Sendable {
 /// wins: network, then battery, then volumes and sources. So no network on a low battery is
 /// `.noNetwork`.
 ///
-/// A source that is missing because its external volume is not mounted is a skip, never a failure
-/// and never a backup: backing up with the drive unplugged would write a snapshot without that
-/// source's files and fork the snapshot group. It is checked across every source before any other
-/// missing source is reported, because the drive's absence explains the rest. A source on `/Volumes`
-/// counts as unmounted when it is missing and `/Volumes/<name>` is not a mount point.
+/// Every source on `/Volumes/<name>` (the path itself or anything below it) requires `/Volumes/<name>`
+/// to be a mount point, whether or not the path exists. When the drive is unplugged, macOS can leave
+/// a stale directory at `/Volumes/<name>` (or something can recreate one), so the path may exist
+/// while the drive does not; backing up then would make restic back up the wrong tree and fork the
+/// snapshot group. An unmounted volume is therefore always a skip, checked across every source before
+/// any other missing source is reported (the drive's absence explains the rest). Only after all volume
+/// checks pass does a missing source fail.
 public func preflight(plan: Plan, env: PreflightEnvironment) -> PreflightResult {
     switch env.network {
     case .unsatisfied:
@@ -73,13 +76,14 @@ public func preflight(plan: Plan, env: PreflightEnvironment) -> PreflightResult 
         }
     }
 
-    let missing = plan.sources.filter { !env.fileExists($0) }
-    for source in missing {
+    for source in plan.sources {
         if let volume = volumeName(of: source), !env.isMountPoint("/Volumes/\(volume)") {
             return .skip(.volumeNotMounted(volume))
         }
     }
-    if let first = missing.first { return .fail("\(first) doesn't exist") }
+    if let missing = plan.sources.first(where: { !env.fileExists($0) }) {
+        return .fail("\(missing) doesn't exist")
+    }
     return .run
 }
 

@@ -99,6 +99,19 @@ struct PreflightTests {
         #expect(preflight(plan: p, env: e) == .fail("/Volumes/Media/Photos doesn't exist"))
     }
 
+    @Test func staleDirectoryOnUnmountedVolumeSkips() {
+        // The path exists (a leftover directory) but the drive is not mounted.
+        let p = plan(sources: ["/Volumes/Media/Photos"])
+        let e = env(mounted: [], existing: ["/Volumes/Media/Photos"])
+        #expect(preflight(plan: p, env: e) == .skip(.volumeNotMounted("Media")))
+    }
+
+    @Test func mixedMountedAndUnmountedVolumesSkipsWithTheUnmountedName() {
+        let p = plan(sources: ["/Volumes/Mounted/a", "/Volumes/Gone/b"])
+        let e = env(mounted: ["/Volumes/Mounted"], existing: ["/Volumes/Mounted/a", "/Volumes/Gone/b"])
+        #expect(preflight(plan: p, env: e) == .skip(.volumeNotMounted("Gone")))
+    }
+
     @Test func presentVolumeSourceRuns() {
         let p = plan(sources: ["/Volumes/Media/Photos"])
         let e = env(mounted: ["/Volumes/Media"], existing: ["/Volumes/Media/Photos"])

@@ -49,6 +49,16 @@ struct PlanCodingTests {
         #expect(raw.packSizeMiB == nil)
     }
 
+    @Test func intervalsUnderFiveMinutesAreInvalid() {
+        var p = plan(.s3(Self.s3), .created)
+        for seconds in [0, -60, 299] {
+            p.schedule = .interval(seconds: seconds)
+            #expect(p.validationErrors() == [.intervalTooShort(seconds: seconds)])
+        }
+        p.schedule = .interval(seconds: 300)
+        #expect(p.validationErrors().isEmpty)
+    }
+
     @Test func newHotPlansGetDistinctIDs() {
         #expect(plan(.s3(Self.s3), .created).id != plan(.s3(Self.s3), .created).id)
     }

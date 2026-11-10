@@ -3,7 +3,8 @@ import Testing
 
 @testable import RestoreyCore
 
-// Serialised because `timeZoneChangeDoesNotShift` swaps the process-wide default time zone.
+// Serialised only so `timeZoneChangeDoesNotShift`'s swap of the process-wide default time zone cannot
+// overlap other tests in this suite; it does not guard against tests in other suites.
 @Suite(.serialized)
 struct ScheduleTests {
     private static let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -169,5 +170,9 @@ struct ScheduleTests {
         let last = Self.now.addingTimeInterval(24 * Self.hour)
         let next = nextRunDate(plan: plan(), history: history(lastAttempt: last, latest: .locked), now: Self.now)
         #expect(next <= Self.now.addingTimeInterval(15 * 60))
+    }
+
+    @Test func zeroIntervalPlanNeverRuns() {
+        #expect(nextRunDate(plan: plan(interval: 0), history: PlanRunHistory(), now: Self.now) == .distantFuture)
     }
 }
