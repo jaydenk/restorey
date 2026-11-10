@@ -112,8 +112,27 @@ interrupted backup sends its `/fail` ping) and runs a plain `restic unlock` (nev
 repository, before it accepts any run. Before exiting for an update, the agent finishes the run in progress and
 then waits up to 3 minutes for queued check-in pings.
 
-Until the scheduler and the check-in service are built, only "Back up now" starts a backup, the battery and
-network conditions always pass, and check-in pings are written to the agent's log instead of being sent.
+Until the check-in service is built, check-in pings are written to the agent's log instead of being sent.
+
+## When backups run
+
+The agent's scheduler (`RestoreyCore/Sources/AgentCore/SchedulerCore.swift`, wired up in
+`Agent/Scheduler.swift`) checks every minute, after recovery has finished, for plans that are due. A plan is
+due an interval (an hour for hot plans) after its last attempt, counted in elapsed time, so a time zone or
+daylight saving change never moves a run. It also looks again straight away:
+
+- **after waking from sleep**, once the network is back (it waits at most 2 minutes, then goes ahead), so a run
+  missed while the Mac slept catches up without failing on a network that isn't up yet;
+- **when a volume mounts**, running any plan that was skipped because that drive wasn't plugged in;
+- when a plan is saved, its recovery kit is confirmed, or it is resumed.
+
+A skipped run (on battery below the plan's threshold, a constrained or expensive network such as a phone
+hotspot or Low Data Mode, no network, an unmounted volume) is recorded and tried again at the next interval. A
+run after a lock is retried after 15 minutes; a paused plan runs as soon as its hour is up. One plan never runs
+twice at once; different plans can, and plans that share a repository take turns. While restic runs, the agent
+holds a power assertion that stops the Mac idle-sleeping ("Restorey backup" in `pmset -g assertions`); the
+display can still sleep, and closing the lid still sleeps the Mac. When the agent is finishing up for a
+restart, the scheduler stops.
 
 ## How secrets reach restic
 

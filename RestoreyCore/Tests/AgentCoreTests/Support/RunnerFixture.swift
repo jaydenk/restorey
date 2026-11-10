@@ -93,13 +93,16 @@ final class RunnerFixture: Sendable {
     let dependencies: RunnerDependencies
     /// Lines the runner wrote to the agent log.
     let agentLog: Locked<[String]>
+    /// "create" and "release" for each idle-sleep assertion the runner's `SleepPrevention` took.
+    let sleepAssertions: Locked<[String]>
+    let sleepPrevention: SleepPrevention
     let planID: UUID
 
     private init(
         root: URL, restic: URL, clock: FixtureClock, secrets: InMemorySecretStore, checkIn: RecordingCheckIn,
         fda: Locked<FDAProbeResult>, power: Locked<PowerState>, supervisor: SupervisedProcesses,
         state: AgentState, runner: PlanRunner, dependencies: RunnerDependencies, agentLog: Locked<[String]>,
-        planID: UUID
+        sleepAssertions: Locked<[String]>, sleepPrevention: SleepPrevention, planID: UUID
     ) {
         self.root = root
         source = root.appendingPathComponent("source")
@@ -121,6 +124,8 @@ final class RunnerFixture: Sendable {
         self.runner = runner
         self.dependencies = dependencies
         self.agentLog = agentLog
+        self.sleepAssertions = sleepAssertions
+        self.sleepPrevention = sleepPrevention
         self.planID = planID
     }
 
@@ -177,6 +182,10 @@ final class RunnerFixture: Sendable {
         let fda = Locked<FDAProbeResult>(.granted)
         let power = Locked(PowerState(onBattery: false, percent: 100))
         let supervisor = SupervisedProcesses()
+        let sleepAssertions = Locked<[String]>([])
+        let sleepPrevention = SleepPrevention(api: SleepPrevention.AssertionAPI(
+            create: { _ in sleepAssertions.mutate { $0.append("create") }; return 1 },
+            release: { _ in sleepAssertions.mutate { $0.append("release") } }))
         let support = root.appendingPathComponent("support")
         let state = await AgentState(directory: support, secrets: secrets, now: { clock.now })
 
@@ -205,6 +214,7 @@ final class RunnerFixture: Sendable {
             },
             now: { clock.now },
             interruptGracePeriod: gracePeriod,
+            sleepPrevention: sleepPrevention,
             agentLog: { line in agentLog.mutate { $0.append(line) } })
         let runner = PlanRunner(dependencies: dependencies)
         await runner.recoverAfterStart()
@@ -213,7 +223,8 @@ final class RunnerFixture: Sendable {
         let fixture = RunnerFixture(
             root: root, restic: restic, clock: clock, secrets: secrets, checkIn: checkIn, fda: fda,
             power: power, supervisor: supervisor, state: state, runner: runner, dependencies: dependencies,
-            agentLog: agentLog, planID: plan.id)
+            agentLog: agentLog, sleepAssertions: sleepAssertions, sleepPrevention: sleepPrevention,
+            planID: plan.id)
         if createRepository { _ = try await runner.createRepository(planID: plan.id) }
         if confirmKit { _ = try await state.confirmRecoveryKit(plan.id) }
         return fixture

@@ -53,6 +53,28 @@ struct PlanRunnerTests {
         #expect(!log.contains(RunnerFixture.password))
     }
 
+    /// Spec §8: idle sleep is held off while restic runs, and only then.
+    @Test func resticStepsHoldTheSleepAssertionAndASkipTakesNone() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        try f.write("a.txt", "hello")
+        f.sleepAssertions.set([])
+
+        f.power.set(PowerState(onBattery: true, percent: 5))
+        let skipped = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        #expect(skipped.outcome == .skipped(.batteryBelow(20)))
+        #expect(f.sleepAssertions.value.isEmpty)
+
+        f.power.set(PowerState(onBattery: false, percent: 100))
+        _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        let events = f.sleepAssertions.value
+        // The backup and each maintenance step take one and give it back.
+        #expect(events.count >= 2)
+        #expect(events.filter { $0 == "create" }.count == events.filter { $0 == "release" }.count)
+        #expect(events.first == "create")
+        #expect(!f.sleepPrevention.isHeld)
+    }
+
     // MARK: Unchanged runs
 
     /// `--skip-if-unchanged` compares whole trees, including the metadata of every folder above the

@@ -475,6 +475,33 @@ struct AgentStateTests {
         ])
     }
 
+    @Test func timeBasedChangesArePushedWhenTheSchedulerRefreshes() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        _ = try await state.confirmRecoveryKit(plan.id)
+        _ = try await state.pause(plan.id)
+        let pushes = Mutex<[AgentStatus]>([])
+        await state.setStatusObserver { status in pushes.withLock { $0.append(status) } }
+
+        // Nothing has changed since the last push.
+        await state.pushStatusIfChanged()
+        clock.advance(60)
+        await state.pushStatusIfChanged()
+        #expect(pushes.withLock { $0 }.isEmpty)
+
+        // The pause runs out with no call at all: the next refresh pushes the plan idle and due.
+        clock.advance(3600)
+        await state.pushStatusIfChanged()
+        await state.pushStatusIfChanged()
+        let pushed = pushes.withLock { $0 }
+        #expect(pushed.count == 1)
+        #expect(pushed.first?.plans.first?.phase == .idle)
+        #expect(pushed.first?.plans.first?.nextRunAt == clock.now)
+    }
+
     // MARK: Config errors (Review Focus 2)
 
     @Test func configErrorBlocksEverything() async throws {

@@ -11,10 +11,16 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     private let log: AppLog
     /// Called once a drain has been replied to, to exit so launchd starts the new binary.
     private let afterDrain: @Sendable () -> Void
+    /// Called after a change that can make a plan due now: a save, a recovery kit confirmation, a resume.
+    private let plansChanged: @Sendable () -> Void
 
-    init(state: AgentState, log: AppLog, afterDrain: @escaping @Sendable () -> Void) {
+    init(
+        state: AgentState, log: AppLog, plansChanged: @escaping @Sendable () -> Void,
+        afterDrain: @escaping @Sendable () -> Void
+    ) {
         self.state = state
         self.log = log
+        self.plansChanged = plansChanged
         self.afterDrain = afterDrain
     }
 
@@ -39,11 +45,12 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func savePlan(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state, log] in
+        respond(reply) { [state, log, plansChanged] in
             let save = try Self.decode(SavePlanRequest.self, from: request)
             let status = try await state.savePlan(save)
             // The request's description names the secrets' keys, never their values.
             log.info("Saved \(save)")
+            plansChanged()
             return status
         }
     }
@@ -73,9 +80,10 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func resume(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state, log] in
+        respond(reply) { [state, log, plansChanged] in
             let status = try await state.resume(try Self.planID(planID))
             log.info("Resumed plan \(planID)")
+            plansChanged()
             return status
         }
     }
@@ -97,9 +105,10 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func confirmRecoveryKit(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state, log] in
+        respond(reply) { [state, log, plansChanged] in
             let status = try await state.confirmRecoveryKit(try Self.planID(planID))
             log.info("Recovery details confirmed for plan \(planID)")
+            plansChanged()
             return status
         }
     }

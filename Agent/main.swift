@@ -30,6 +30,10 @@ do {
     keptAlive.append(diagnostics)
 
     if let team = AgentListener.teamID(in: .main) {
+        // Started now, so the network path is known by the first run.
+        let observers = SystemObservers()
+        keptAlive.append(observers)
+        let scheduler = Scheduler(log: log)
         Task { @MainActor in
             let secrets = KeychainSecretStore(service: identity.rootID, accessGroup: identity.keychainAccessGroup)
             let state = await AgentState(
@@ -37,7 +41,9 @@ do {
             if let configError = await state.status().configError {
                 log.error("Not running any plan until the settings are fixed: \(configError)")
             }
-            let service = AgentService(state: state, log: log) {
+            let service = AgentService(
+                state: state, log: log, plansChanged: { scheduler.nudge(.configChanged) }
+            ) {
                 // Give the reply time to leave before exiting; launchd's KeepAlive starts the new binary.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { exit(0) }
             }
@@ -70,8 +76,9 @@ do {
                 homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
                 logSubsystem: identity.rootID,
                 fdaProbe: { FullDiskAccessProbe.probe() },
-                preflightEnvironment: { InterimPreflight.environment() },
+                preflightEnvironment: { observers.preflightEnvironment() },
                 now: { Date() },
+                sleepPrevention: SleepPrevention(api: SystemObservers.sleepAssertions) { log.error($0) },
                 agentLog: { log.error($0) }))
             keptAlive.append(runner)
             // Recovery runs to completion before the runner is attached, so a run action that arrives
@@ -80,6 +87,19 @@ do {
             await runner.recoverAfterStart()
             await state.attach(runner: runner)
             log.info("Recovery finished; the runner is accepting runs")
+
+            // Only now, so no scheduled run races recovery (the scheduler's own recoverAfterStart() call
+            // returns at once). A drain asked for during recovery means the agent is about to exit.
+            guard !(await state.isDraining) else {
+                log.info("Not starting the scheduler: the agent is finishing up before a restart")
+                return
+            }
+            scheduler.start(runner: runner, observers: observers)
+            let workspace = WorkspaceObserver()
+            workspace.start(
+                onWake: { scheduler.nudge(.wake) },
+                onMount: { scheduler.nudge(.volumeMounted($0)) })
+            keptAlive.append(workspace)
         }
     } else {
         // Exiting would make launchd's KeepAlive respawn the agent in a loop. Stay up, unreachable,

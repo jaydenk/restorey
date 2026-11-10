@@ -58,6 +58,21 @@ public actor AgentState {
 
     private var observer: (@Sendable (AgentStatus) -> Void)?
     private var lastProgressPush: Date?
+    /// What each plan looked like in the last push, for `pushStatusIfChanged`.
+    private var lastPushed: [UUID: PushedPlan] = [:]
+
+    /// The parts of a plan's status that can change with time alone.
+    private struct PushedPlan: Equatable {
+        var phase: PlanPhase
+        var alerts: [AlertCondition]
+        var due: Bool
+
+        init(_ status: PlanStatus, now: Date) {
+            phase = status.phase
+            alerts = status.alerts
+            due = status.nextRunAt.map { $0 <= now } ?? false
+        }
+    }
 
     /// Loads both stores. A load failure is kept as the config error rather than thrown.
     /// - Parameters:
@@ -204,8 +219,21 @@ public actor AgentState {
     @discardableResult
     func pushStatus() -> AgentStatus {
         let status = status()
+        lastPushed = Self.pushed(status)
         observer?(status)
         return status
+    }
+
+    /// Pushes the status if a plan's phase, alerts or being due has changed since the last push with
+    /// nothing having called for one: a pause running out, a plan falling due, an overdue alert. The
+    /// scheduler calls this on every tick.
+    public func pushStatusIfChanged() {
+        guard Self.pushed(status()) != lastPushed else { return }
+        pushStatus()
+    }
+
+    private static func pushed(_ status: AgentStatus) -> [UUID: PushedPlan] {
+        Dictionary(status.plans.map { ($0.plan.id, PushedPlan($0, now: status.generatedAt)) }) { first, _ in first }
     }
 
     // MARK: Plans

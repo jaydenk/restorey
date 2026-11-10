@@ -27,6 +27,8 @@ public struct RunnerDependencies: Sendable {
     public var now: @Sendable () -> Date
     /// How long restic gets to honour SIGINT before SIGKILL (global constraints: 10 s).
     public var interruptGracePeriod: Duration
+    /// Held while each restic step runs, so the Mac doesn't idle-sleep mid-run (spec §8). Nil: none.
+    public var sleepPrevention: SleepPrevention?
     /// Writes a line to the agent's own log (`agent.log`), for problems the user may need to find.
     public var agentLog: @Sendable (String) -> Void
 
@@ -38,6 +40,7 @@ public struct RunnerDependencies: Sendable {
         preflightEnvironment: @escaping @Sendable () async -> PreflightEnvironment,
         now: @escaping @Sendable () -> Date,
         interruptGracePeriod: Duration = .seconds(10),
+        sleepPrevention: SleepPrevention? = nil,
         agentLog: @escaping @Sendable (String) -> Void = { _ in }
     ) {
         self.state = state
@@ -56,6 +59,7 @@ public struct RunnerDependencies: Sendable {
         self.preflightEnvironment = preflightEnvironment
         self.now = now
         self.interruptGracePeriod = interruptGracePeriod
+        self.sleepPrevention = sleepPrevention
         self.agentLog = agentLog
     }
 }
@@ -419,7 +423,9 @@ public actor PlanRunner {
 
         var outcome: RunOutcome
         var termination: ResticTermination?
+        deps.sleepPrevention?.begin()
         do {
+            defer { deps.sleepPrevention?.end() }
             let finished = try await process.run { message in
                 if let text = StepLog.text(for: message) { log.line(text) }
                 feed?.send(message)
