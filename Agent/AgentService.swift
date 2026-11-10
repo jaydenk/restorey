@@ -119,7 +119,8 @@ final class AgentService: NSObject, AgentXPC, Sendable {
             let granted = try await notifier.requestPermission()
             log.info("Notification permission \(granted ? "granted" : "not granted")")
             // Clears or raises `notificationsOff`, and posts any alert that was waiting for permission.
-            await state.deliverAlerts()
+            // Bounded, so a notification centre that doesn't answer can't hold up the reply.
+            await state.deliverAlerts(waitingAtMost: .seconds(15))
             return NotificationPermissionReply(granted: granted)
         }
     }

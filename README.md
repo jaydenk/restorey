@@ -118,18 +118,24 @@ then waits up to 3 minutes for queued check-in pings.
 Keychain), the agent POSTs `/start` when a backup starts, then the URL itself on success or `/fail` on failure.
 The `/fail` body is plain text: restic's exit code and the last 20 lines of the run's error output, with
 secrets removed. A network error or a 5xx is retried after 5 s, 30 s and 120 s; a 4xx is not. Each request
-times out after 30 s without data or 60 s in all, and one ping never takes more than 170 s, so it fits the
-3 minutes the agent waits for pings before exiting. A ping that fails is written to the agent's log as
-"check-in ping <kind> for <plan ID>: <outcome>", never with the URL, and never fails the backup. Set the
+times out after 30 s without data or 60 s in all, and one send, retries included, is bounded at 170 s. A
+queued `/start` followed by its end ping can take longer than the 3 minutes the agent waits for pings before
+exiting for an update; the agent then exits anyway and logs it. A ping that fails is written to the agent's
+log as "check-in ping <kind> for <plan ID>: <outcome>", never with the URL, and never fails the backup. If
+the service answers a ping with a 4xx, the plan shows "Check-in URL rejected" and the agent notifies, because
+the service won't alert anyone if backups stop; the next successful ping clears it. Set the
 check's period and grace on the service to the plan's "no successful backup" threshold (3 days by default),
 not to its hourly schedule.
 
 **Notifications.** The agent posts a macOS notification when a backup or a repository check fails, when a plan
 stops (a wrong password, say), when Full Disk Access is missing and when a plan has had no successful backup
-for 3 days. It re-notifies while the problem lasts: at once, then after 1 hour, 6 hours, and every 24 hours,
-and starts again at once if the problem clears and comes back. A re-notification replaces the earlier banner.
-The agent checks this every minute and whenever a plan's status changes, and keeps the bookkeeping in
-`state.json` (`activeAlerts`).
+for 3 days, and when a check-in URL is rejected. It re-notifies while the problem lasts: at once, then after 1 hour, 6 hours, and every 24 hours,
+and starts again at once if the problem clears and comes back. A re-notification replaces the earlier banner,
+and Full Disk Access has one banner however many plans need it. The agent checks this every minute and whenever
+a plan's status changes, and keeps the bookkeeping in `state.json` (`activeAlerts`), so a restart doesn't
+repeat a recent notification. Each call to the notification centre gets 10 s; one that doesn't answer counts
+as not delivered and never holds up a backup. If `config.json` or `state.json` can't be read, the agent posts
+one notification, "Restorey has stopped — its settings can't be read", on the same schedule.
 
 The agent needs its own notification permission, separate from the app's, and macOS reports a notification
 from an agent without one as posted while showing nothing. So the agent checks its permission before posting.

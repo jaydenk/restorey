@@ -62,6 +62,12 @@ public actor AgentState {
     /// The alert delivery in progress (AgentState+Alerts.swift), and whether another was asked for meanwhile.
     var alertDelivery: Task<Void, Never>?
     var alertDeliveryAgain = false
+    /// How long each notifier call may take before it counts as failed.
+    var alertCallTimeout: Duration = .seconds(10)
+    /// The agent-wide load-error alert. In memory only: `state.json` can't be trusted in that state.
+    var loadErrorAlert: AlertNotificationState?
+    /// The status that raised each plan's `checkInRejected`, for the notification's text.
+    var checkInRejectedStatus: [UUID: Int] = [:]
 
     private var observer: (@Sendable (AgentStatus) -> Void)?
     private var lastProgressPush: Date?
@@ -438,27 +444,28 @@ public actor AgentState {
             await withCheckedContinuation { drainWaiters.append($0) }
         }
         guard let runner else { return true }
-        return await Self.race(pingBudget) { await runner.pingsFlushed() }
+        return await Self.bounded(pingBudget) { await runner.pingsFlushed() } != nil
     }
 
-    /// True if `work` finishes within `budget`. The work is not cancelled when it doesn't.
-    private static func race(_ budget: Duration, _ work: @escaping @Sendable () async -> Void) async -> Bool {
+    /// `work`'s result if it finishes within `budget`, otherwise nil. The work is not cancelled when it
+    /// doesn't: it may be stuck in a call that can't be cancelled (another process's IPC, say).
+    static func bounded<T: Sendable>(_ budget: Duration, _ work: @escaping @Sendable () async -> T) async -> T? {
         let settled = Mutex(false)
         let timer = Mutex<Task<Void, Never>?>(nil)
-        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-            func settle(_ value: Bool) {
+        return await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
+            func settle(_ value: T?) {
                 guard settled.withLock({ let was = $0; $0 = true; return !was }) else { return }
                 continuation.resume(returning: value)
             }
             timer.withLock {
                 $0 = Task {
                     try? await Task.sleep(for: budget)
-                    settle(false)
+                    settle(nil)
                 }
             }
             Task {
-                await work()
-                settle(true)
+                let value = await work()
+                settle(value)
                 timer.withLock { $0?.cancel() }
             }
         }
@@ -517,6 +524,18 @@ public actor AgentState {
             throw AgentError.storage("Restorey couldn't save config.json: \(error)")
         }
         config = updated
+    }
+
+    /// Saves `state.json`; if the save fails, adopts `updated` in memory anyway and rethrows. For the alert
+    /// bookkeeping only: a notification already posted must be remembered as posted, or it would be
+    /// posted again on every round while the disk is failing.
+    func saveStateKeepingInMemory(_ updated: RunState) async throws {
+        do {
+            try await saveState(updated)
+        } catch {
+            runState = updated
+            throw error
+        }
     }
 
     func saveState(_ updated: RunState) async throws {

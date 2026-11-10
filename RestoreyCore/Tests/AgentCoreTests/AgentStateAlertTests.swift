@@ -37,18 +37,69 @@ struct AgentStateAlertTests {
         let notifier: FakeNotifier
     }
 
-    private func world(authorised: Bool? = true) async throws -> World {
+    /// Calls that don't return until `answer()`, like a notification centre that has stopped answering.
+    /// A post that was hanging fails when answered: its caller gave up on it long ago.
+    actor HangingNotifier: AlertNotifying {
+        struct Abandoned: Error {}
+        private var hangAuthorisation: Bool
+        private var hangPosts: Bool
+        private var waiting: [CheckedContinuation<Void, Never>] = []
+        private(set) var posted: [AlertContent] = []
+
+        init(hangAuthorisation: Bool, hangPosts: Bool) {
+            self.hangAuthorisation = hangAuthorisation
+            self.hangPosts = hangPosts
+        }
+
+        func authorisationStatus() async -> Bool? {
+            if hangAuthorisation { await withCheckedContinuation { waiting.append($0) } }
+            return true
+        }
+
+        func post(_ alert: AlertContent) async throws {
+            if hangPosts {
+                await withCheckedContinuation { waiting.append($0) }
+                throw Abandoned()
+            }
+            posted.append(alert)
+        }
+
+        var hangingCalls: Int { waiting.count }
+
+        func answer() {
+            hangAuthorisation = false
+            hangPosts = false
+            waiting.forEach { $0.resume() }
+            waiting.removeAll()
+        }
+    }
+
+    private func world(
+        authorised: Bool? = true, stateStore: AgentStateTests.ControlledStore<RunState>? = nil
+    ) async throws -> World {
         let dir = try TempDirectory()
         let clock = TestClock()
-        let state = await AgentState(directory: dir.url, secrets: InMemorySecretStore(), now: clock.function)
+        let state: AgentState
+        if let stateStore {
+            state = await AgentState(
+                configStore: AgentState.configStore(in: dir.url), stateStore: stateStore,
+                secrets: InMemorySecretStore(), credentialsDirectory: dir.url, now: clock.function)
+        } else {
+            state = await AgentState(directory: dir.url, secrets: InMemorySecretStore(), now: clock.function)
+        }
+        let plan = try await addPlan("Home", to: state, clock: clock)
+        return World(dir: dir, clock: clock, state: state, plan: plan, notifier: FakeNotifier(authorised: authorised))
+    }
+
+    private func addPlan(_ name: String, to state: AgentState, clock: TestClock) async throws -> Plan {
         let plan = Plan.newHotPlan(
-            name: "Home", repository: .raw(repository: "/Volumes/Backup/restic", environmentNames: []),
+            name: name, repository: .raw(repository: "/Volumes/Backup/restic", environmentNames: []),
             origin: .created, hostLabel: "mac", sources: ["/Users/me/Documents"], exclusions: [], now: clock.now)
         _ = try await state.savePlan(SavePlanRequest(
             plan: plan, secrets: [SecretEntry(key: .repositoryPassword(plan.id), value: "pw")]))
         // A recent success, so `noRecentSuccess` stays out of the way.
         try await state.updateHistory(plan.id) { $0.lastSuccessAt = clock.now }
-        return World(dir: dir, clock: clock, state: state, plan: plan, notifier: FakeNotifier(authorised: authorised))
+        return plan
     }
 
     private func recordBackup(_ outcome: RunOutcome, in world: World) async throws {
@@ -63,9 +114,9 @@ struct AgentStateAlertTests {
     }
 
     /// The alerts saved in `state.json`, read back from disk.
-    private func savedAlerts(_ world: World) async throws -> [AlertCondition: AlertNotificationState] {
+    private func savedAlerts(_ world: World, plan: UUID? = nil) async throws -> [AlertCondition: AlertNotificationState] {
         let stored = try await AgentState.stateStore(in: world.dir.url).load()
-        return stored?.plans[world.plan.id]?.activeAlerts ?? [:]
+        return stored?.plans[plan ?? world.plan.id]?.activeAlerts ?? [:]
     }
 
     @Test func aRaisedAlertIsPostedAtOnceThenBacksOff() async throws {
@@ -178,9 +229,178 @@ struct AgentStateAlertTests {
 
         fixture.clock.advance(30 * 60)
         await fixture.runner.refreshStatus()
+        await fixture.state.alertsDelivered()
         #expect(await notifier.posted.count == 2)
         fixture.clock.advance(30 * 60)
         await fixture.runner.refreshStatus()
+        await fixture.state.alertsDelivered()
         #expect(await notifier.posted.count == 4)
+    }
+
+    // MARK: A notification centre that doesn't answer (Ruling R44)
+
+    /// The notifier hangs on every call. Saves, runs and the scheduler's tick carry on regardless, and
+    /// delivery finishes once it answers.
+    @Test(.timeLimit(.minutes(1)))
+    func aHungNotifierHoldsNothingUp() async throws {
+        let fixture = try await RunnerFixture.make()
+        defer { fixture.remove() }
+        let notifier = HangingNotifier(hangAuthorisation: true, hangPosts: true)
+        await fixture.state.attach(notifier: notifier, log: { _ in }, callTimeout: .seconds(3600))
+        while await notifier.hangingCalls == 0 { try await Task.sleep(for: .milliseconds(10)) }
+
+        var renamed = await fixture.plan()
+        renamed.name = "Renamed"
+        let saved = try await fixture.state.savePlan(SavePlanRequest(plan: renamed, secrets: []))
+        #expect(saved.plans.first?.plan.name == "Renamed")
+
+        let core = SchedulerCore(
+            clock: ContinuousClock(), now: { fixture.clock.now }, runner: fixture.runner, waitForNetwork: {})
+        await core.tick()
+        await core.runsFinished()
+        // The backup, and the maintenance that followed it in the same run.
+        let latest = try #require(await fixture.history().recent.first { $0.operation == .backup })
+        guard case .success = latest.outcome else {
+            Issue.record("expected the tick's backup to succeed, got \(latest.outcome)")
+            return
+        }
+
+        await notifier.answer()
+        #expect(await fixture.state.deliverAlerts(waitingAtMost: .seconds(10)))
+    }
+
+    @Test func aTimedOutPostIsNotCountedAndRecovers() async throws {
+        let world = try await world()
+        let notifier = HangingNotifier(hangAuthorisation: false, hangPosts: true)
+        await world.state.attach(notifier: notifier, log: { _ in }, callTimeout: .milliseconds(200))
+        try await recordBackup(.failed(exitCode: 1, reason: "x"), in: world)
+        await world.state.deliverAlerts()
+        #expect(try await savedAlerts(world)[.backupFailed]?.count == 0)
+
+        await notifier.answer()
+        world.clock.advance(60)
+        await world.state.deliverAlerts()
+        #expect(await notifier.posted.map(\.title) == ["Backup failed — Home"])
+        #expect(try await savedAlerts(world)[.backupFailed]?.count == 1)
+    }
+
+    // MARK: Unreadable settings (Ruling R45)
+
+    @Test func unreadableSettingsPostOneAgentAlertOnTheBackOff() async throws {
+        let dir = try TempDirectory()
+        try Data("not json".utf8).write(to: dir.config)
+        let clock = TestClock()
+        let state = await AgentState(directory: dir.url, secrets: InMemorySecretStore(), now: clock.function)
+        let notifier = FakeNotifier(authorised: true)
+        await state.attach(notifier: notifier, log: { _ in })
+        await state.deliverAlerts()
+        let posted = await notifier.posted
+        #expect(posted.map(\.title) == ["Restorey has stopped — its settings can't be read"])
+        #expect(posted.first?.identifier == "alert.agent.loadError")
+        #expect(posted.first?.body.hasPrefix("config.json can't be read") == true)
+
+        clock.advance(59 * 60)
+        await state.deliverAlerts()
+        #expect(await notifier.posted.count == 1)
+        clock.advance(60)
+        await state.deliverAlerts()
+        #expect(await notifier.posted.count == 2)
+        // Nothing was written: state.json can't be trusted.
+        #expect(!FileManager.default.fileExists(atPath: dir.state.path))
+    }
+
+    /// With only state.json unreadable the plans are listed, stopped, but none of their alerts is posted.
+    @Test func unreadableStatePostsNoPlanAlerts() async throws {
+        let world = try await world()
+        try await recordBackup(.failed(exitCode: 1, reason: "x"), in: world)
+        try Data("not json".utf8).write(to: world.dir.state)
+        let state = await AgentState(directory: world.dir.url, secrets: InMemorySecretStore(), now: world.clock.function)
+        #expect(await state.status().plans.first?.alerts == [.configurationError])
+        await state.attach(notifier: world.notifier, log: { _ in })
+        await state.deliverAlerts()
+        #expect(await world.notifier.titles == ["Restorey has stopped — its settings can't be read"])
+    }
+
+    // MARK: Check-in results (Ruling R46)
+
+    @Test func aRejectedCheckInIsRaisedAndClearedByTheNextSuccess() async throws {
+        let world = try await world()
+        await world.state.attach(notifier: world.notifier, log: { _ in })
+        await world.state.checkInResult(planID: world.plan.id, status: 503)
+        #expect(await world.state.status().plans.first?.alerts == [])
+
+        await world.state.checkInResult(planID: world.plan.id, status: 404)
+        #expect(await world.state.status().plans.first?.alerts == [.checkInRejected])
+        await world.state.deliverAlerts()
+        let posted = await world.notifier.posted
+        #expect(posted.map(\.title) == ["Check-in URL rejected — Home"])
+        #expect(posted.first?.body.contains("HTTP 404") == true)
+        // A 5xx says nothing about the URL: the alert stands.
+        await world.state.checkInResult(planID: world.plan.id, status: 502)
+        #expect(try await savedAlerts(world)[.checkInRejected] != nil)
+
+        await world.state.checkInResult(planID: world.plan.id, status: 200)
+        await world.state.deliverAlerts()
+        #expect(await world.state.status().plans.first?.alerts == [])
+        #expect(try await savedAlerts(world)[.checkInRejected] == nil)
+    }
+
+    // MARK: Saving fails (Ruling R47)
+
+    @Test func aFailedSaveStillRemembersWhatWasPosted() async throws {
+        let dir = try TempDirectory()
+        let store = AgentStateTests.ControlledStore(AgentState.stateStore(in: dir.url))
+        let world = try await world(stateStore: store)
+        try await recordBackup(.failed(exitCode: 1, reason: "x"), in: world)
+        await store.failEverySave()
+        let lines = Locked<[String]>([])
+        await world.state.attach(notifier: world.notifier, log: { line in lines.mutate { $0.append(line) } })
+        await world.state.deliverAlerts()
+        #expect(await world.notifier.posted.count == 1)
+        #expect(lines.value.contains { $0.hasPrefix("Couldn't save") })
+
+        world.clock.advance(60)
+        await world.state.deliverAlerts()
+        world.clock.advance(60)
+        await world.state.deliverAlerts()
+        #expect(await world.notifier.posted.count == 1)
+    }
+
+    // MARK: Restarts and shared banners
+
+    /// A new agent reads the notification state from state.json: an alert notified 10 minutes ago waits
+    /// out the rest of its hour.
+    @Test func aRestartMidConditionDoesNotRepostAtOnce() async throws {
+        let world = try await world()
+        await world.state.attach(notifier: world.notifier, log: { _ in })
+        try await recordBackup(.failed(exitCode: 1, reason: "x"), in: world)
+        await world.state.deliverAlerts()
+        #expect(await world.notifier.posted.count == 1)
+
+        world.clock.advance(10 * 60)
+        let restarted = await AgentState(directory: world.dir.url, secrets: InMemorySecretStore(), now: world.clock.function)
+        let notifier = FakeNotifier(authorised: true)
+        await restarted.attach(notifier: notifier, log: { _ in })
+        await restarted.deliverAlerts()
+        #expect(await notifier.posted.isEmpty)
+        world.clock.advance(50 * 60)
+        await restarted.deliverAlerts()
+        #expect(await notifier.posted.count == 1)
+    }
+
+    @Test func fullDiskAccessIsOneBannerForEveryPlan() async throws {
+        let world = try await world()
+        let second = try await addPlan("Work", to: world.state, clock: world.clock)
+        let now = world.clock.now
+        for id in [world.plan.id, second.id] {
+            try await world.state.updateHistory(id) {
+                $0.activeAlerts[.fullDiskAccessMissing] = AlertNotificationState(raisedAt: now, lastNotifiedAt: nil, count: 0)
+            }
+        }
+        await world.state.attach(notifier: world.notifier, log: { _ in })
+        await world.state.deliverAlerts()
+        #expect(await world.notifier.posted.map(\.identifier) == ["alert.agent.fullDiskAccessMissing"])
+        #expect(try await savedAlerts(world)[.fullDiskAccessMissing]?.count == 1)
+        #expect(try await savedAlerts(world, plan: second.id)[.fullDiskAccessMissing]?.count == 1)
     }
 }

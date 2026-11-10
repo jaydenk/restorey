@@ -22,12 +22,23 @@ struct CheckInServiceTests {
     private func service(
         _ server: StubHTTPServer?, path: String = "/abc", session: URLSession = CheckInService.makeSession(),
         retryDelays: [Duration] = [.zero, .zero, .zero], budget: Duration = CheckInService.sendBudget,
-        log: LogLines = LogLines()
+        log: LogLines = LogLines(), results: Results = Results(), baseURL: String? = nil
     ) throws -> CheckInService {
         let secrets = InMemorySecretStore()
-        if let server { try secrets.write(server.baseURL + path, for: .checkInURL(planID)) }
+        if let base = baseURL ?? server?.baseURL { try secrets.write(base + path, for: .checkInURL(planID)) }
         return CheckInService(
-            secrets: secrets, session: session, retryDelays: retryDelays, budget: budget, log: log.function)
+            secrets: secrets, session: session, retryDelays: retryDelays, budget: budget, log: log.function,
+            onResult: results.function)
+    }
+
+    /// Every `(plan, HTTP status)` the service reported.
+    final class Results: Sendable {
+        private let items = Mutex<[(UUID, Int)]>([])
+        var statuses: [Int] { items.withLock { $0.map(\.1) } }
+        var plans: [UUID] { items.withLock { $0.map(\.0) } }
+        var function: @Sendable (UUID, Int) async -> Void {
+            { id, status in self.items.withLock { $0.append((id, status)) } }
+        }
     }
 
     @Test func startSuccessFailPaths() async throws {
@@ -97,14 +108,27 @@ struct CheckInServiceTests {
     }
 
     @Test func transportErrorsAreRetried() async throws {
-        // Nothing listens on a stopped server's port: every attempt is refused.
-        let server = try StubHTTPServer()
-        server.stop()
+        // A port that was bound and released, so nothing listens on it: every attempt is refused.
+        let port = try freeLocalPort()
         let log = LogLines()
-        let checkIn = try service(server, log: log)
+        let results = Results()
+        let checkIn = try service(nil, log: log, results: results, baseURL: "http://127.0.0.1:\(port)")
         await checkIn.send(.start, planID: planID)
         let line = try #require(log.all.first?.text)
         #expect(line.hasPrefix("check-in ping start for \(planID.uuidString): failed after 4 attempts ("))
+        #expect(results.statuses.isEmpty)
+    }
+
+    @Test func theResultIsReportedFor2xxAnd4xxOnly() async throws {
+        let server = try StubHTTPServer(script: [.status(404), .status(200)] + Array(repeating: .status(503), count: 4))
+        defer { server.stop() }
+        let results = Results()
+        let checkIn = try service(server, results: results)
+        await checkIn.send(.start, planID: planID)
+        await checkIn.send(.success, planID: planID)
+        await checkIn.send(.start, planID: planID)
+        #expect(results.statuses == [404, 200])
+        #expect(results.plans == [planID, planID])
     }
 
     /// The server takes every request and never replies: each attempt ends at the session's resource

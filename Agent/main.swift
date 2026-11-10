@@ -72,7 +72,8 @@ do {
                 logStore: RunLogStore(identity: identity),
                 checkIn: CheckInService(
                     secrets: secrets, session: CheckInService.makeSession(),
-                    log: { line, level in level == .error ? log.error(line) : log.info(line) }),
+                    log: { line, level in level == .error ? log.error(line) : log.info(line) },
+                    onResult: { planID, status in await state.checkInResult(planID: planID, status: status) }),
                 // <app>/Contents/Helpers/restic, beside this agent's own bundle.
                 resticExecutable: Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("restic"),
                 helperExecutable: executable,

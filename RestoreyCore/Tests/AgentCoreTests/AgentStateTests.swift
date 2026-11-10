@@ -47,6 +47,7 @@ struct AgentStateTests {
         private let inner: VersionedStore<Payload>
         private var holdNext = false
         private var failNext = false
+        private var failAll = false
         private var held: CheckedContinuation<Void, Never>?
         private var heldWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -55,6 +56,7 @@ struct AgentStateTests {
         func load() async throws -> Payload? { try await inner.load() }
 
         func save(_ payload: Payload) async throws {
+            if failAll { throw Failure() }
             if failNext { failNext = false; throw Failure() }
             if holdNext {
                 holdNext = false
@@ -69,6 +71,7 @@ struct AgentStateTests {
 
         func holdNextSave() { holdNext = true }
         func failNextSave() { failNext = true }
+        func failEverySave() { failAll = true }
         func waitUntilHeld() async {
             if held != nil { return }
             await withCheckedContinuation { heldWaiters.append($0) }

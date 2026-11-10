@@ -5,6 +5,9 @@ import Foundation
 public enum AlertCondition: String, Codable, Sendable, Hashable, CaseIterable {
     case backupFailed
     case checkFailed
+    /// The check-in service answered a ping with a 4xx, so it won't alert anyone if backups stop.
+    /// Cleared by the plan's next 2xx.
+    case checkInRejected
     case configurationError
     case fullDiskAccessMissing
     case noRecentSuccess

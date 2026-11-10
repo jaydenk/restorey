@@ -56,10 +56,32 @@ struct AlertContentTests {
         #expect(!alert.body.isEmpty)
     }
 
+    /// One banner for the whole agent, however many plans are missing it.
     @Test func fullDiskAccessMissing() throws {
         let alert = try #require(content(.fullDiskAccessMissing, plan: plan()))
         #expect(alert.title == "Full Disk Access is missing — Restorey can't read your files")
-        #expect(alert.body.contains("Home"))
+        #expect(alert.identifier == "alert.agent.fullDiskAccessMissing")
+        #expect(alert.threadIdentifier == "agent")
+        #expect(try #require(content(.fullDiskAccessMissing, plan: plan())).identifier == alert.identifier)
+        #expect(!alert.body.isEmpty)
+    }
+
+    @Test func checkInRejected() throws {
+        let alert = try #require(AlertContent(
+            condition: .checkInRejected, plan: plan(), history: PlanRunHistory(), now: now, checkInStatus: 404))
+        #expect(alert.title == "Check-in URL rejected — Home")
+        #expect(alert.body
+            == "The monitoring service returned HTTP 404, so it won't alert you if backups stop. Check the URL in this plan's settings.")
+        // After a restart the status isn't known.
+        let unknown = try #require(content(.checkInRejected, plan: plan()))
+        #expect(!unknown.body.contains("HTTP"))
+    }
+
+    @Test func loadError() {
+        let alert = AlertContent.loadError("config.json can't be read: bad JSON. The file has been left as it is.")
+        #expect(alert.title == "Restorey has stopped — its settings can't be read")
+        #expect(alert.identifier == "alert.agent.loadError")
+        #expect(alert.body == "config.json can't be read: bad JSON. The file has been left as it is.")
     }
 
     @Test func noRecentSuccessCountsTheDays() throws {

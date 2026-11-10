@@ -8,7 +8,10 @@ import Foundation
 /// plan with no URL sends nothing and logs nothing.
 ///
 /// A transport error or a 5xx is retried up to 3 times, after 5 s, 30 s and 120 s; a 4xx (or any other
-/// non-2xx) is not. A ping that fails is logged and never fails the run. The log names the ping and the
+/// non-2xx) is not. A ping that fails is logged and never fails the run. The final HTTP status of a ping
+/// that got a 2xx or a non-retried answer is reported to `onResult`, so the agent can raise
+/// `checkInRejected` on a 4xx and clear it on the next 2xx. A 5xx or a transport error isn't reported:
+/// it says nothing about the URL itself. The log names the ping and the
 /// plan, never the URL, which is a secret: "check-in ping <kind> for <plan id>: <outcome>".
 ///
 /// **Worst case.** Each attempt is bounded by the session's resource timeout (60 s), so four attempts
@@ -33,21 +36,25 @@ public actor CheckInService: CheckInSending {
     private let retryDelays: [Duration]
     private let budget: Duration
     private let log: @Sendable (String, LogLevel) -> Void
+    private let onResult: @Sendable (UUID, Int) async -> Void
 
     /// - Parameters:
     ///   - session: `makeSession()` in the agent. Never `URLSession.shared`, whose resource timeout is 7 days.
     ///   - retryDelays, budget: injectable so tests need not wait minutes.
     ///   - log: one line per ping, for the agent's log.
+    ///   - onResult: the plan and the HTTP status of a 2xx or a non-retried answer (a 4xx, say).
     public init(
         secrets: any SecretStore, session: URLSession, retryDelays: [Duration] = CheckInService.retryDelays,
         budget: Duration = CheckInService.sendBudget,
-        log: @escaping @Sendable (String, LogLevel) -> Void = { _, _ in }
+        log: @escaping @Sendable (String, LogLevel) -> Void = { _, _ in },
+        onResult: @escaping @Sendable (UUID, Int) async -> Void = { _, _ in }
     ) {
         self.secrets = secrets
         self.session = session
         self.retryDelays = retryDelays
         self.budget = budget
         self.log = log
+        self.onResult = onResult
     }
 
     /// An ephemeral session (no cookies, cache or credentials kept) with a 30 s request timeout and a
@@ -104,9 +111,11 @@ public actor CheckInService: CheckInSending {
             switch result {
             case .delivered(let status):
                 note("sent (HTTP \(status))", .info)
+                await onResult(planID, status)
                 return
             case .rejected(let status):
                 note("failed (HTTP \(status)), not retried")
+                await onResult(planID, status)
                 return
             case .retryable(let reason):
                 guard attempts <= retryDelays.count else {
