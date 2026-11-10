@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Build the signed Debug app, quit any running copy, and install RestoreyDev.app in /Applications.
+# BUILD_NUMBER=n overrides CFBundleVersion (project.yml's CURRENT_PROJECT_VERSION), so an install looks like an
+# update to the running agent: the app then restarts the agent even within the hourly repair limit.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -14,7 +16,8 @@ scripts/fetch-binaries.sh >/dev/null
 xcodegen generate --quiet
 mkdir -p build
 if ! xcodebuild -project Restorey.xcodeproj -scheme Restorey -configuration Debug \
-    -destination 'platform=macOS' -derivedDataPath "$DERIVED" -allowProvisioningUpdates build >build/install-dev.log 2>&1; then
+    -destination 'platform=macOS' -derivedDataPath "$DERIVED" -allowProvisioningUpdates \
+    ${BUILD_NUMBER:+CURRENT_PROJECT_VERSION="$BUILD_NUMBER"} build >build/install-dev.log 2>&1; then
   tail -40 build/install-dev.log >&2
   echo "error: build failed, full log in build/install-dev.log" >&2
   exit 1

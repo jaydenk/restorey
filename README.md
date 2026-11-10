@@ -55,6 +55,10 @@ Prerequisites: macOS 27, Xcode 27 and [XcodeGen](https://github.com/yonaskolb/Xc
    scripts/install-dev.sh
    ```
 
+   `BUILD_NUMBER=2 scripts/install-dev.sh` installs it with a different build number, so the running agent sees
+   an update and is restarted. Reinstalling the same build within an hour of a repair leaves the old agent
+   running until you choose "Restart Agent".
+
 Debug builds use a separate identity (`com.jaydenkerr.restorey.dev`, `RestoreyDev`), so they can sit beside a
 Release install without sharing a launchd label, keychain group or on-disk state. GitHub Actions runs the
 unsigned path of `scripts/ci.sh` on every push and pull request.
