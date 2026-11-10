@@ -89,9 +89,11 @@ struct RunStateTests {
     }
 
     @Test func everyAlertConditionKeyRoundTrips() throws {
-        let all: [AlertCondition] = [
-            .backupFailed, .checkFailed, .configurationError, .fullDiskAccessMissing, .noRecentSuccess, .notificationsOff,
-        ]
+        let all = AlertCondition.allCases
+        #expect(all.map(\.rawValue) == [
+            "backupFailed", "checkFailed", "checkInRejected", "configurationError", "fullDiskAccessMissing",
+            "noRecentSuccess", "notificationsOff",
+        ])
         var history = PlanRunHistory()
         for c in all { history.activeAlerts[c] = AlertNotificationState(raisedAt: Date(timeIntervalSince1970: 0), lastNotifiedAt: nil, count: 1) }
         let data = try JSONEncoder().encode(history)
@@ -100,9 +102,43 @@ struct RunStateTests {
         #expect(try JSONDecoder().decode(PlanRunHistory.self, from: data) == history)
     }
 
-    @Test func unknownAlertKeysAreRefused() {
-        let text = #"{"activeAlerts":{"bogus":{"count":1,"raisedAt":1}},"recent":[]}"#
-        #expect(throws: DecodingError.self) { try JSONDecoder().decode(PlanRunHistory.self, from: Data(text.utf8)) }
+    /// A condition from a newer build is dropped, not fatal: after a downgrade the rest of the history
+    /// still loads (Ruling R48).
+    @Test func unknownAlertKeysAreDropped() throws {
+        let text = #"{"activeAlerts":{"bogus":{"count":1,"raisedAt":1},"backupFailed":{"count":2,"raisedAt":1}},"recent":[]}"#
+        let decoded = try JSONDecoder().decode(PlanRunHistory.self, from: Data(text.utf8))
+        #expect(decoded.activeAlerts.keys.map(\.rawValue) == ["backupFailed"])
+        #expect(decoded.activeAlerts[.backupFailed]?.count == 2)
+    }
+
+    @Test func aStateFileWithAnUnknownAlertKeyLoads() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-runstate-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("state.json")
+        let store = VersionedStore<RunState>(fileURL: url, currentVersion: 1, migrations: [:])
+        var state = RunState()
+        var history = PlanRunHistory()
+        history.activeAlerts[.checkFailed] = AlertNotificationState(raisedAt: date(1_800_000_000), lastNotifiedAt: nil, count: 1)
+        state.plans[planID] = history
+        try await store.save(state)
+        // As a newer build would write it: one more condition this build doesn't know.
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        func addingUnknownAlert(_ value: Any) -> Any {
+            guard var dictionary = value as? [String: Any] else { return value }
+            if var alerts = dictionary["activeAlerts"] as? [String: Any], let known = alerts["checkFailed"] {
+                alerts["fromTheFuture"] = known
+                dictionary["activeAlerts"] = alerts
+                return dictionary
+            }
+            return dictionary.mapValues(addingUnknownAlert)
+        }
+        let newer = try JSONSerialization.data(withJSONObject: addingUnknownAlert(object))
+        #expect(String(decoding: newer, as: UTF8.self).contains("fromTheFuture"))
+        try newer.write(to: url)
+
+        let loaded = try #require(try await store.load())
+        #expect(loaded.plans[planID]?.activeAlerts.keys.map(\.rawValue) == ["checkFailed"])
     }
 
     @Test func emptyHistoryEncodesOnlyRequiredKeys() throws {

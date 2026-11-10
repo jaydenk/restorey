@@ -9,8 +9,11 @@ import RestoreyCore
 /// 1. under the write gate, raise and clear, and work out what to post;
 /// 2. outside the gate, ask for authorisation and post, each call bounded by `alertCallTimeout` (10 s);
 /// 3. under the gate again, mark what was actually delivered, if its alert is still the one raised.
-/// A call that times out counts as failed: a timed-out authorisation as not authorised, a timed-out
-/// post as not delivered. Nobody waits for a round except `deliverAlerts`, and it waits a bounded time.
+/// A post that times out counts as not delivered. An authorisation call that times out keeps the last
+/// answer the notifier gave; with none yet, nothing is posted and `notificationsOff` is left as it was.
+/// While a call is still suspended past its timeout, no second call with the same key is made: it is
+/// treated as unanswered at once, so a hung `usernoted` can't pile up calls (Ruling R48). Nobody waits
+/// for a round except `deliverAlerts`, and it waits a bounded time.
 ///
 /// Nothing is posted while the agent isn't authorised: posting then reports success and shows nothing
 /// (docs/spike-findings.md, H3b). `notificationsOff` is raised instead, for the app to show, and the
@@ -108,7 +111,16 @@ extension AgentState {
     private func deliverOnce() async {
         guard let notifier else { return }
         let timeout = alertCallTimeout
-        let authorised = await Self.bounded(timeout) { await notifier.authorisationStatus() } ?? nil
+        // An answer that arrives after its timeout is still recorded, for the next round.
+        _ = await guardedCall("authorisation", timeout: timeout) {
+            let answer = await notifier.authorisationStatus()
+            await self.noteAuthorisation(answer)
+            return answer
+        }
+        // `.none`: the notifier has never answered. Nothing is posted, and `notificationsOff` is neither
+        // raised nor cleared.
+        let known = lastAuthorisation
+        let authorised: Bool? = known ?? nil
         if let loadError {
             await deliverLoadError(loadError, authorised: authorised, notifier: notifier)
             return
@@ -122,9 +134,10 @@ extension AgentState {
             var changed = false
             for plan in config.plans {
                 let history = state.plans[plan.id] ?? PlanRunHistory()
-                let active = alertConditions(
+                var active = alertConditions(
                     history: history, plan: plan, now: now, fullDiskAccessMissing: fdaMissing,
-                    notificationsAuthorised: authorised)
+                    notificationsAuthorised: known == nil ? true : authorised)
+                if known == nil, history.activeAlerts[.notificationsOff] != nil { active.insert(.notificationsOff) }
                 let (next, toNotify) = reconcileAlerts(previous: history.activeAlerts, active: active, now: now)
                 if authorised == true {
                     for condition in toNotify {
@@ -192,7 +205,7 @@ extension AgentState {
 
     /// Nil when posted, otherwise why not.
     private func post(_ alert: AlertContent, notifier: any AlertNotifying, timeout: Duration) async -> String? {
-        let outcome = await Self.bounded(timeout) { () -> String? in
+        let outcome = await guardedCall("post.\(alert.identifier)", timeout: timeout) { () -> String? in
             do {
                 try await notifier.post(alert)
                 return nil
@@ -201,6 +214,27 @@ extension AgentState {
             }
         }
         return outcome ?? "the notification centre didn't answer within \(timeout)"
+    }
+
+    /// `work`'s result within `timeout`, or nil. Nil at once, without calling, while the last call with
+    /// this key is still suspended.
+    private func guardedCall<T: Sendable>(
+        _ key: String, timeout: Duration, _ work: @escaping @Sendable () async -> T
+    ) async -> T? {
+        guard outstandingNotifierCalls.insert(key).inserted else { return nil }
+        return await Self.bounded(timeout) {
+            let value = await work()
+            await self.notifierCallReturned(key)
+            return value
+        }
+    }
+
+    private func noteAuthorisation(_ answer: Bool?) {
+        lastAuthorisation = .some(answer)
+    }
+
+    private func notifierCallReturned(_ key: String) {
+        outstandingNotifierCalls.remove(key)
     }
 
     /// Runs `body` under the write gate, logging a failure instead of throwing it.

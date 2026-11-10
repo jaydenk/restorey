@@ -93,7 +93,12 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
         runningRecordID = try c.decodeIfPresent(UUID.self, forKey: .runningRecordID)
         runningRecord = try c.decodeIfPresent(RunRecord.self, forKey: .runningRecord)
         recent = try c.decodeIfPresent([RunRecord].self, forKey: .recent) ?? []
-        activeAlerts = try c.decodeIfPresent([AlertCondition: AlertNotificationState].self, forKey: .activeAlerts) ?? [:]
+        // Through string keys, so a condition from a newer build is dropped rather than failing the whole
+        // file: a downgrade must not turn state.json into the load-error state (Ruling R48).
+        let alerts = try c.decodeIfPresent([String: AlertNotificationState].self, forKey: .activeAlerts) ?? [:]
+        activeAlerts = Dictionary(uniqueKeysWithValues: alerts.compactMap { key, state in
+            AlertCondition(rawValue: key).map { ($0, state) }
+        })
         stoppedReason = try c.decodeIfPresent(String.self, forKey: .stoppedReason)
         pausedUntil = try c.decodeIfPresent(Date.self, forKey: .pausedUntil)
     }

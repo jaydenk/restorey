@@ -68,6 +68,11 @@ public actor AgentState {
     var loadErrorAlert: AlertNotificationState?
     /// The status that raised each plan's `checkInRejected`, for the notification's text.
     var checkInRejectedStatus: [UUID: Int] = [:]
+    /// Notifier calls still suspended, by key (`authorisation`, or `post.<identifier>`), even past their
+    /// timeout. No second call with the same key is made until the first returns.
+    var outstandingNotifierCalls: Set<String> = []
+    /// The notifier's last answer about authorisation; `.none` until it has answered once.
+    var lastAuthorisation: Bool?? = .none
 
     private var observer: (@Sendable (AgentStatus) -> Void)?
     private var lastProgressPush: Date?
@@ -264,6 +269,9 @@ public actor AgentState {
     /// The same change also clears a stop (`stoppedReason`, e.g. after a wrong password) and refreshes the
     /// plan's alerts: the user has changed what restic opens the repository with, so the next run tries it
     /// (Ruling R34). An unchanged resave keeps the stop.
+    ///
+    /// A changed check-in URL, or none (`hasCheckInURL` false), clears `checkInRejected` (Ruling R48): that
+    /// verdict was about the old URL, and with no URL it could never clear.
     public func savePlan(_ request: SavePlanRequest) async throws -> AgentStatus {
         try requireMutable()
         let errors = request.plan.validationErrors()
@@ -276,6 +284,7 @@ public actor AgentState {
             var plan = request.plan
             var updated = config
             var credentialsChanged = false
+            let checkInChanged = !plan.hasCheckInURL || planSecrets.changesValue(of: .checkInURL(plan.id))
             if let index = updated.plans.firstIndex(where: { $0.id == plan.id }) {
                 let stored = updated.plans[index]
                 let unchanged = stored.repository == plan.repository && !planSecrets.changesAnyValue
@@ -294,15 +303,22 @@ public actor AgentState {
                 let message = (error as? AgentError)?.message ?? "\(error)"
                 throw AgentError.storage(message + PlanSecrets.describe(planSecrets.restore()))
             }
-            if credentialsChanged, runState.plans[plan.id]?.stoppedReason != nil {
+            let clearStop = credentialsChanged && runState.plans[plan.id]?.stoppedReason != nil
+            let clearCheckIn = checkInChanged && runState.plans[plan.id]?.activeAlerts[.checkInRejected] != nil
+            if checkInChanged { checkInRejectedStatus[plan.id] = nil }
+            if clearStop || clearCheckIn {
                 var state = runState
-                state.plans[plan.id]?.stoppedReason = nil
-                PlanRunner.refreshAlerts(&state.plans[plan.id, default: PlanRunHistory()], plan: plan, now: now())
+                if clearStop {
+                    state.plans[plan.id]?.stoppedReason = nil
+                    PlanRunner.refreshAlerts(&state.plans[plan.id, default: PlanRunHistory()], plan: plan, now: now())
+                }
+                if clearCheckIn { state.plans[plan.id]?.activeAlerts[.checkInRejected] = nil }
                 do {
                     try await saveState(state)
                 } catch {
                     let detail = (error as? AgentError)?.message ?? "\(error)"
-                    throw AgentError.storage("\(plan.name) was saved, but Restorey couldn't clear its stop: \(detail)")
+                    let what = clearStop ? "its stop" : "its check-in alert"
+                    throw AgentError.storage("\(plan.name) was saved, but Restorey couldn't clear \(what): \(detail)")
                 }
             }
             return pushStatus()

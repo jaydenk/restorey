@@ -123,7 +123,8 @@ queued `/start` followed by its end ping can take longer than the 3 minutes the 
 exiting for an update; the agent then exits anyway and logs it. A ping that fails is written to the agent's
 log as "check-in ping <kind> for <plan ID>: <outcome>", never with the URL, and never fails the backup. If
 the service answers a ping with a 4xx, the plan shows "Check-in URL rejected" and the agent notifies, because
-the service won't alert anyone if backups stop; the next successful ping clears it. Set the
+the service won't alert anyone if backups stop; the next successful ping, or changing or removing the URL,
+clears it. Set the
 check's period and grace on the service to the plan's "no successful backup" threshold (3 days by default),
 not to its hourly schedule.
 
@@ -134,7 +135,8 @@ and starts again at once if the problem clears and comes back. A re-notification
 and Full Disk Access has one banner however many plans need it. The agent checks this every minute and whenever
 a plan's status changes, and keeps the bookkeeping in `state.json` (`activeAlerts`), so a restart doesn't
 repeat a recent notification. Each call to the notification centre gets 10 s; one that doesn't answer counts
-as not delivered and never holds up a backup. If `config.json` or `state.json` can't be read, the agent posts
+as not delivered and never holds up a backup; while a call is still waiting for an answer, no second one is
+made, and a permission check that doesn't answer keeps the last answer it gave. If `config.json` or `state.json` can't be read, the agent posts
 one notification, "Restorey has stopped — its settings can't be read", on the same schedule.
 
 The agent needs its own notification permission, separate from the app's, and macOS reports a notification

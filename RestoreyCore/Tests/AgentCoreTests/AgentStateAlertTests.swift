@@ -45,6 +45,10 @@ struct AgentStateAlertTests {
         private var hangPosts: Bool
         private var waiting: [CheckedContinuation<Void, Never>] = []
         private(set) var posted: [AlertContent] = []
+        private(set) var authorisationCalls = 0
+        private(set) var postCalls = 0
+        /// What an authorisation call that does answer says.
+        var authorised: Bool? = true
 
         init(hangAuthorisation: Bool, hangPosts: Bool) {
             self.hangAuthorisation = hangAuthorisation
@@ -52,11 +56,16 @@ struct AgentStateAlertTests {
         }
 
         func authorisationStatus() async -> Bool? {
+            authorisationCalls += 1
             if hangAuthorisation { await withCheckedContinuation { waiting.append($0) } }
-            return true
+            return authorised
         }
 
+        func hangAuthorisationFromNow() { hangAuthorisation = true }
+        func set(authorised: Bool?) { self.authorised = authorised }
+
         func post(_ alert: AlertContent) async throws {
+            postCalls += 1
             if hangPosts {
                 await withCheckedContinuation { waiting.append($0) }
                 throw Abandoned()
@@ -91,12 +100,17 @@ struct AgentStateAlertTests {
         return World(dir: dir, clock: clock, state: state, plan: plan, notifier: FakeNotifier(authorised: authorised))
     }
 
-    private func addPlan(_ name: String, to state: AgentState, clock: TestClock) async throws -> Plan {
-        let plan = Plan.newHotPlan(
+    private func addPlan(
+        _ name: String, to state: AgentState, clock: TestClock, checkInURL: String? = nil
+    ) async throws -> Plan {
+        var plan = Plan.newHotPlan(
             name: name, repository: .raw(repository: "/Volumes/Backup/restic", environmentNames: []),
             origin: .created, hostLabel: "mac", sources: ["/Users/me/Documents"], exclusions: [], now: clock.now)
+        plan.hasCheckInURL = checkInURL != nil
         _ = try await state.savePlan(SavePlanRequest(
-            plan: plan, secrets: [SecretEntry(key: .repositoryPassword(plan.id), value: "pw")]))
+            plan: plan,
+            secrets: [SecretEntry(key: .repositoryPassword(plan.id), value: "pw")]
+                + (checkInURL.map { [SecretEntry(key: .checkInURL(plan.id), value: $0)] } ?? [])))
         // A recent success, so `noRecentSuccess` stays out of the way.
         try await state.updateHistory(plan.id) { $0.lastSuccessAt = clock.now }
         return plan
@@ -277,7 +291,9 @@ struct AgentStateAlertTests {
         await world.state.deliverAlerts()
         #expect(try await savedAlerts(world)[.backupFailed]?.count == 0)
 
+        // The hung post returns (and fails: it was given up on), so the next round may post again.
         await notifier.answer()
+        while await !world.state.outstandingNotifierCalls.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
         world.clock.advance(60)
         await world.state.deliverAlerts()
         #expect(await notifier.posted.map(\.title) == ["Backup failed — Home"])
@@ -324,7 +340,10 @@ struct AgentStateAlertTests {
     // MARK: Check-in results (Ruling R46)
 
     @Test func aRejectedCheckInIsRaisedAndClearedByTheNextSuccess() async throws {
-        let world = try await world()
+        let base = try await world()
+        let plan = try await addPlan("Home", to: base.state, clock: base.clock, checkInURL: "https://hc.example/a")
+        _ = try await base.state.deletePlan(base.plan.id)
+        let world = World(dir: base.dir, clock: base.clock, state: base.state, plan: plan, notifier: base.notifier)
         await world.state.attach(notifier: world.notifier, log: { _ in })
         await world.state.checkInResult(planID: world.plan.id, status: 503)
         #expect(await world.state.status().plans.first?.alerts == [])
@@ -402,5 +421,138 @@ struct AgentStateAlertTests {
         #expect(await world.notifier.posted.map(\.identifier) == ["alert.agent.fullDiskAccessMissing"])
         #expect(try await savedAlerts(world)[.fullDiskAccessMissing]?.count == 1)
         #expect(try await savedAlerts(world, plan: second.id)[.fullDiskAccessMissing]?.count == 1)
+    }
+
+    // MARK: Check-in URL changes (Ruling R48)
+
+    /// A world whose one plan has a check-in URL that the service has rejected.
+    private func rejectedCheckIn() async throws -> World {
+        let base = try await world()
+        let plan = try await addPlan("Home", to: base.state, clock: base.clock, checkInURL: "https://hc.example/a")
+        _ = try await base.state.deletePlan(base.plan.id)
+        let world = World(dir: base.dir, clock: base.clock, state: base.state, plan: plan, notifier: base.notifier)
+        await world.state.attach(notifier: world.notifier, log: { _ in })
+        await world.state.checkInResult(planID: plan.id, status: 404)
+        await world.state.deliverAlerts()
+        #expect(await world.state.status().plans.first?.alerts == [.checkInRejected])
+        return world
+    }
+
+    @Test func removingTheCheckInURLClearsTheRejection() async throws {
+        let world = try await rejectedCheckIn()
+        var plan = world.plan
+        plan.hasCheckInURL = false
+        _ = try await world.state.savePlan(SavePlanRequest(plan: plan, secrets: []))
+        #expect(await world.state.status().plans.first?.alerts == [])
+        #expect(try await savedAlerts(world)[.checkInRejected] == nil)
+        // A day later nothing is re-notified.
+        world.clock.advance(25 * 3_600)
+        await world.state.deliverAlerts()
+        #expect(await world.notifier.posted.count == 1)
+    }
+
+    /// With no URL configured the condition is dropped even if it is still recorded.
+    @Test func noCheckInURLDropsTheCondition() {
+        var plan = Plan.newHotPlan(
+            name: "Home", repository: .raw(repository: "/r", environmentNames: []), origin: .created,
+            hostLabel: "mac", sources: ["/s"], exclusions: [], now: Date(timeIntervalSince1970: 0))
+        var history = PlanRunHistory()
+        history.lastSuccessAt = plan.createdAt
+        history.activeAlerts[.checkInRejected] = AlertNotificationState(raisedAt: plan.createdAt, lastNotifiedAt: nil, count: 0)
+        func conditions() -> Set<AlertCondition> {
+            alertConditions(
+                history: history, plan: plan, now: plan.createdAt, fullDiskAccessMissing: nil, notificationsAuthorised: true)
+        }
+        #expect(conditions().isEmpty)
+        plan.hasCheckInURL = true
+        #expect(conditions() == [.checkInRejected])
+    }
+
+    @Test func changingTheCheckInURLClearsTheRejectionUntilTheNext4xx() async throws {
+        let world = try await rejectedCheckIn()
+        // The same URL saved again changes nothing.
+        _ = try await world.state.savePlan(SavePlanRequest(
+            plan: world.plan, secrets: [SecretEntry(key: .checkInURL(world.plan.id), value: "https://hc.example/a")]))
+        #expect(await world.state.status().plans.first?.alerts == [.checkInRejected])
+
+        _ = try await world.state.savePlan(SavePlanRequest(
+            plan: world.plan, secrets: [SecretEntry(key: .checkInURL(world.plan.id), value: "https://hc.example/b")]))
+        #expect(await world.state.status().plans.first?.alerts == [])
+        #expect(try await savedAlerts(world)[.checkInRejected] == nil)
+
+        await world.state.checkInResult(planID: world.plan.id, status: 410)
+        await world.state.deliverAlerts()
+        #expect(await world.state.status().plans.first?.alerts == [.checkInRejected])
+        let posted = await world.notifier.posted
+        #expect(posted.count == 2)
+        #expect(posted.last?.body.contains("HTTP 410") == true)
+    }
+
+    // MARK: Calls that stay suspended (Ruling R48)
+
+    /// A hung authorisation call isn't made again while it is suspended, and with no answer ever given
+    /// `notificationsOff` isn't raised and nothing is posted.
+    @Test func aHungAuthorisationIsCalledOnceAndRaisesNothing() async throws {
+        let world = try await world()
+        let notifier = HangingNotifier(hangAuthorisation: true, hangPosts: false)
+        await world.state.attach(notifier: notifier, log: { _ in }, callTimeout: .milliseconds(50))
+        try await recordBackup(.failed(exitCode: 1, reason: "x"), in: world)
+        for _ in 0..<5 {
+            world.clock.advance(60)
+            await world.state.deliverAlerts()
+        }
+        #expect(await notifier.authorisationCalls == 1)
+        #expect(await notifier.postCalls == 0)
+        #expect(await world.state.status().plans.first?.alerts == [.backupFailed])
+
+        // Once it answers, the late answer is recorded and the next round posts.
+        await notifier.answer()
+        while await !world.state.outstandingNotifierCalls.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        await world.state.deliverAlerts()
+        #expect(await notifier.posted.map(\.title) == ["Backup failed — Home"])
+        #expect(await notifier.authorisationCalls == 2)
+    }
+
+    @Test func aTimedOutAuthorisationKeepsTheLastAnswer() async throws {
+        let world = try await world()
+        let notifier = HangingNotifier(hangAuthorisation: false, hangPosts: false)
+        await world.state.attach(notifier: notifier, log: { _ in }, callTimeout: .milliseconds(50))
+        await world.state.deliverAlerts()
+        await notifier.hangAuthorisationFromNow()
+        try await recordBackup(.failed(exitCode: 1, reason: "x"), in: world)
+        await world.state.deliverAlerts()
+        #expect(await notifier.posted.count == 1)
+        #expect(await world.state.status().plans.first?.alerts == [.backupFailed])
+        await notifier.answer()
+    }
+
+    @Test func aTimedOutAuthorisationKeepsALastDenial() async throws {
+        let world = try await world()
+        let notifier = HangingNotifier(hangAuthorisation: false, hangPosts: false)
+        await notifier.set(authorised: false)
+        await world.state.attach(notifier: notifier, log: { _ in }, callTimeout: .milliseconds(50))
+        await world.state.deliverAlerts()
+        #expect(await world.state.status().plans.first?.alerts == [.notificationsOff])
+        await notifier.hangAuthorisationFromNow()
+        try await recordBackup(.failed(exitCode: 1, reason: "x"), in: world)
+        await world.state.deliverAlerts()
+        await world.state.deliverAlerts()
+        #expect(await world.state.status().plans.first?.alerts == [.backupFailed, .notificationsOff])
+        #expect(await notifier.postCalls == 0)
+        await notifier.answer()
+    }
+
+    @Test func aHungPostIsNotRepeatedWhileSuspended() async throws {
+        let world = try await world()
+        let notifier = HangingNotifier(hangAuthorisation: false, hangPosts: true)
+        await world.state.attach(notifier: notifier, log: { _ in }, callTimeout: .milliseconds(50))
+        try await recordBackup(.failed(exitCode: 1, reason: "x"), in: world)
+        for _ in 0..<4 {
+            world.clock.advance(60)
+            await world.state.deliverAlerts()
+        }
+        #expect(await notifier.postCalls == 1)
+        #expect(try await savedAlerts(world)[.backupFailed]?.count == 0)
+        await notifier.answer()
     }
 }

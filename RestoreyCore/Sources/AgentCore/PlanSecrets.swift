@@ -25,10 +25,17 @@ struct PlanSecrets {
 
     /// True when any submitted value differs from what the keychain holds (including a new key).
     var changesAnyValue: Bool {
-        entries.contains { entry in
-            let old: String? = previous[entry.key] ?? nil
-            return old != entry.value
-        }
+        entries.contains { entry in changes(entry) }
+    }
+
+    /// True when a value is submitted for `key` and differs from what the keychain holds.
+    func changesValue(of key: SecretKey) -> Bool {
+        entries.contains { $0.key == key && changes($0) }
+    }
+
+    private func changes(_ entry: SecretEntry) -> Bool {
+        let old: String? = previous[entry.key] ?? nil
+        return old != entry.value
     }
 
     /// Writes every entry. If one fails, the ones already written are restored before throwing.

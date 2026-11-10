@@ -11,7 +11,7 @@ import RestoreyCore
 ///   (`PlanRunner.commit`). It stands until a probe finds access granted (`fullDiskAccessMissing` false),
 ///   whichever plan ran it. Nil means no probe has answered since the agent started.
 /// - `checkInRejected`: raised and cleared by the check-in results (`AgentState.checkInResult`); it
-///   stands while it is in `activeAlerts`.
+///   stands while it is in `activeAlerts` and the plan has a check-in URL.
 public func alertConditions(
     history: PlanRunHistory, plan: Plan, now: Date, fullDiskAccessMissing: Bool?, notificationsAuthorised: Bool?
 ) -> Set<AlertCondition> {
@@ -20,7 +20,7 @@ public func alertConditions(
     if history.activeAlerts[.fullDiskAccessMissing] != nil, fullDiskAccessMissing != false {
         conditions.insert(.fullDiskAccessMissing)
     }
-    if history.activeAlerts[.checkInRejected] != nil { conditions.insert(.checkInRejected) }
+    if plan.hasCheckInURL, history.activeAlerts[.checkInRejected] != nil { conditions.insert(.checkInRejected) }
     return conditions
 }
 
