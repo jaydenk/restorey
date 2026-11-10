@@ -76,6 +76,34 @@ If either file is corrupt or was written by a newer Restorey, the agent reports 
 change and leaves the file as it is. Its log is `~/Library/Logs/Restorey-Dev/agent.log`, and MetricKit
 diagnostics go to `diagnostics/` beside it.
 
+## How secrets reach restic
+
+Repository passwords, and keys for S3 (including Backblaze B2 through its S3 endpoint), are read from your
+Keychain by Restorey's background agent and handed to restic through a pipe. They are never written to disk
+or put in environment variables. Credentials for other backends, including repositories that use restic's
+native `b2:` backend, are passed to restic as environment variables while it runs. Other programs running as
+you can read those.
+
+How it works (design spec §7; [spike findings](docs/spike-findings.md) H2 and H4):
+
+- restic runs the agent's own executable as `RESTIC_PASSWORD_COMMAND`
+  (`RestoreyAgent print-password --plan <id>`) and, for S3 and B2, as the `credential_process` in a per-plan
+  shared-credentials file (`RestoreyAgent s3-credentials --plan <id>`). That file holds only the command line,
+  never a key. This has been confirmed end to end against a real B2 bucket through its S3 endpoint: restic
+  runs the helper once per command.
+- The helper holds no secrets. It asks the running agent over XPC. The agent accepts the connection only
+  from its own executable, signed by the same team (checked against the caller's audit token). It then
+  checks that the caller's parent process is a restic that the agent itself started and is still
+  supervising, for the plan named in the request. Only then does it read the Keychain and reply.
+- Run by hand, from Terminal or any other program, the helper gets nothing: it exits 1 and prints nothing.
+- For S3 the helper prints `Version`, both keys and an `Expiration` 12 hours ahead, so restic asks once per
+  run rather than once per request. The helper refuses to run (exit 2) if its own path contains a space,
+  because the `credential_process` line can't be quoted. Its errors go to the unified log (subsystem
+  `com.jaydenkerr.restorey`, or `com.jaydenkerr.restorey.dev` for Debug builds, category `helper`), not stderr, which restic's S3 library discards.
+
+What this doesn't protect against: an attacker who can hijack a restic process Restorey is supervising could
+obtain that plan's secrets; any program running as you can already do a great deal.
+
 ## Why the keychain tests need a signed host
 
 Restorey keeps every repository password, backend key and check-in URL in the data protection keychain
@@ -88,7 +116,11 @@ in tests would pass but test the wrong keychain, so the keychain tests are not i
 They live in the `AgentHostedTests` bundle, which runs inside the signed Debug agent
 (`xcodebuild test -scheme AgentHostedTests -configuration Debug`). `scripts/ci.sh` runs them only when
 `Config/Local.xcconfig` exists. On GitHub Actions it doesn't, and the script prints
-`hosted keychain tests skipped: no signing` instead. The tests use a random plan ID each and delete what they
+`hosted keychain tests skipped: no signing` instead. The bundle also runs the installed helper by hand
+and checks the agent refuses it (`HelperEndToEndTests`), so it needs `RestoreyDev.app` installed with
+`scripts/install-dev.sh`, registered with `--register`, and the agent restarted after each install
+(`launchctl kickstart -k gui/$(id -u)/com.jaydenkerr.restorey.dev.agent`). Without that it fails rather than
+skips. The tests use a random plan ID each and delete what they
 create, so they never touch real Restorey items. The hosted build goes in `~/Library/Caches/restorey-ci`
 (override with `RESTOREY_HOSTED_DERIVED_DATA`), not `build/`, because macOS blocks launching an app from
 `~/Documents` on a privacy prompt that nobody is there to answer.

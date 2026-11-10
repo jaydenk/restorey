@@ -19,12 +19,7 @@ public enum CredentialsFile {
     @discardableResult
     public static func write(planID: UUID, helper: URL, directory: URL) throws -> URL {
         let helperPath = helper.path
-        if helperPath.unicodeScalars.contains(where: { $0.properties.isWhitespace }) {
-            throw Error.pathContainsWhitespace(helperPath)
-        }
-        if helperPath.contains(where: { $0 == "#" || $0 == ";" }) {
-            throw Error.pathContainsCommentCharacter(helperPath)
-        }
+        try validateHelperPath(helperPath)
         let id = planID.uuidString
         let contents = "[restorey-\(id)]\ncredential_process = \(helperPath) s3-credentials --plan \(id)\n"
 
@@ -64,6 +59,17 @@ public enum CredentialsFile {
         try requireMode(folder, 0o700)
         try requireMode(destination, 0o600)
         return destination
+    }
+
+    /// Throws if `path` can't appear unquoted on a `credential_process` line. The writer checks the
+    /// path it puts in the file, and the helper checks its own path at startup.
+    public static func validateHelperPath(_ path: String) throws {
+        if path.unicodeScalars.contains(where: { $0.properties.isWhitespace }) {
+            throw Error.pathContainsWhitespace(path)
+        }
+        if path.contains(where: { $0 == "#" || $0 == ";" }) {
+            throw Error.pathContainsCommentCharacter(path)
+        }
     }
 
     /// `<directory>/s3/<planID>.ini`.

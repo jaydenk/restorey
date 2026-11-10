@@ -8,6 +8,10 @@ import RestoreyCore
 // The agent is started by launchd from the LaunchAgent plist embedded in the app bundle.
 // A real NSApplication run loop gives it a full app identity for UserNotifications.
 
+// restic runs this same executable as its password command and S3 credential_process. That mode asks
+// the running agent over XPC and exits: it must branch before NSApplication and before any listener.
+if let code = HelperMode.exitCode(arguments: CommandLine.arguments) { exit(code) }
+
 /// Objects that must live as long as the process: the XPC listener and its delegate (the listener
 /// holds its delegate weakly), and the MetricKit subscriber.
 var keptAlive: [AnyObject] = []
@@ -41,6 +45,13 @@ do {
             await state.setStatusObserver { listener.broadcast($0) }
             keptAlive.append(listener)
             keptAlive.append(listener.listen(identity: identity, team: team))
+
+            let helper = HelperListener(
+                responder: HelperResponder(
+                    state: state, secrets: secrets, supervised: .shared, now: { Date() }),
+                log: log)
+            keptAlive.append(helper)
+            keptAlive.append(helper.listen(identity: identity, team: team))
         }
     } else {
         // Exiting would make launchd's KeepAlive respawn the agent in a loop. Stay up, unreachable,

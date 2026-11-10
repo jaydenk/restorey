@@ -47,6 +47,9 @@ public actor AgentState {
     private var writeInFlight = false
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
 
+    /// Per plan, why the last helper request failed to read the keychain (Task 14 reports it).
+    private var helperFailures: [UUID: String] = [:]
+
     private var observer: (@Sendable (AgentStatus) -> Void)?
     private var lastProgressPush: Date?
 
@@ -392,6 +395,24 @@ public actor AgentState {
         let waiters = drainWaiters
         drainWaiters.removeAll()
         for waiter in waiters { waiter.resume() }
+    }
+
+    // MARK: Password and S3 credential helper
+
+    /// True when `id` is a plan in the loaded config.
+    public func isConfiguredPlan(_ id: UUID) -> Bool {
+        config.plans.contains { $0.id == id }
+    }
+
+    /// Records that a helper request for the plan couldn't read its keys. `reason` names the keychain
+    /// account and error, never a value. A later failure replaces an earlier one.
+    public func noteHelperFailure(planID: UUID, reason: String) {
+        helperFailures[planID] = reason
+    }
+
+    /// The reason the last helper request for the plan failed, if one did since the last call; clears it.
+    public func takeHelperFailure(planID: UUID) -> String? {
+        helperFailures.removeValue(forKey: planID)
     }
 
     // MARK: Helpers

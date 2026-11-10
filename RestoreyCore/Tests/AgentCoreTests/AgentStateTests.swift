@@ -688,3 +688,17 @@ struct AgentStateTests {
         #expect(ContinuousClock.now - start >= .seconds(30))
     }
 }
+
+extension AgentStateTests {
+    /// Task 14 turns the recorded reason into "Couldn't read the backup keys from the Keychain".
+    @Test func helperFailureIsRecordedPerPlanAndTakenOnce() async throws {
+        let dir = try TempDirectory()
+        let state = await Self.makeState(dir)
+        let a = UUID(), b = UUID()
+        await state.noteHelperFailure(planID: a, reason: "first")
+        await state.noteHelperFailure(planID: a, reason: "second")
+        #expect(await state.takeHelperFailure(planID: b) == nil)
+        #expect(await state.takeHelperFailure(planID: a) == "second")
+        #expect(await state.takeHelperFailure(planID: a) == nil)
+    }
+}

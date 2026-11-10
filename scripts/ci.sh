@@ -43,7 +43,9 @@ if [[ -f Config/Local.xcconfig ]]; then
   # signed agent (README: "Why the keychain tests need a signed host"). The agent is launched, and
   # macOS blocks a launch from ~/Documents (and Desktop, Downloads, iCloud Drive) on a privacy
   # prompt, so this build lives under ~/Library/Caches instead of build/.
-  step "Hosted keychain tests (signed agent as test host)"
+  # HelperEndToEndTests also runs the installed RestoreyDev helper and needs its agent registered
+  # and running the installed build (README).
+  step "Hosted tests (signed agent as test host)"
   hosted_derived="${RESTOREY_HOSTED_DERIVED_DATA:-$HOME/Library/Caches/restorey-ci/DerivedData-hosted}"
   mkdir -p "$hosted_derived"
   hosted_log=build/xcodebuild-hosted.log
@@ -51,7 +53,7 @@ if [[ -f Config/Local.xcconfig ]]; then
       -destination 'platform=macOS' -derivedDataPath "$hosted_derived" -allowProvisioningUpdates \
       >"$hosted_log" 2>&1; then
     tail -40 "$hosted_log" >&2
-    echo "error: hosted keychain tests failed, full log in $hosted_log" >&2
+    echo "error: hosted tests failed, full log in $hosted_log" >&2
     exit 1
   fi
   grep -E "^.{1,3} Test .* (passed|failed)|TEST SUCCEEDED" "$hosted_log"
