@@ -17,7 +17,7 @@ Answers the open questions in spec §12.1. Times are UTC, with Adelaide local ti
 | Not in §12.1 | A plist change in an update is ignored until re-registration | Re-register when the embedded plist's hash changes |
 | Not in §12.1 | A crashed run leaves a stale lock that blocks `check` (exit 11) | Plain `restic unlock` (never `--remove-all`) before maintenance and after an agent restart |
 
-**Still open:** SIGINT lock removal during a real backup, whole-home EPERM paths under FDA, telling "user switched the agent off" apart from a fault, the self-move quarantine strip, the Homebrew and Sparkle install paths, the reboot test (the agent starts at login and runs a keychain-backed backup 60 s later; the owner will do it later), the end-to-end `credential_process` run against B2's S3 endpoint, and a measurement of restic's CPU use during a real first backup under `Standard`.
+**Still open:** SIGINT lock removal during a real backup, whole-home EPERM paths under FDA, telling "user switched the agent off" apart from a fault, the self-move quarantine strip, the Homebrew and Sparkle install paths (the agent starts at login and runs a keychain-backed backup 60 s later; the owner will do it later), the end-to-end `credential_process` run against B2's S3 endpoint, and a measurement of restic's CPU use during a real first backup under `Standard`.
 
 ## Environment
 
@@ -138,7 +138,7 @@ Recommendation: option 2 in v0.1, plus the README statement from option 1. Optio
 ## H2 addendum — keychain while the screen is locked (Task 4 step 4), 9 Nov 2026 23:02–23:03 UTC
 
 - The owner locked the screen (⌃⌘Q) at 23:02:06. The scheduled run fired at 23:03:39 with the screen still locked. The agent's in-process `SecItemCopyMatching` worked, restic ran `print-password` at 23:03:40, and restic **opened the repository and went on to read files**, so the password was returned while locked. This is as expected for `kSecAttrAccessibleAfterFirstUnlock`. The run, throttled as described above, was stopped with SIGINT after 954 s (exit code 130). The keychain step had already succeeded.
-- **Not done yet:** the reboot test, where the agent starts at login and runs 60 s later. The owner will do it later. The `run-at-start` flag is still set.
+- **Reboot test, 10 Nov 2026 00:45–00:49 UTC (11:15–11:19):** the owner restarted and logged in at about 11:15:46. **launchd started the agent at 11:16:10**, about 24 s after login, on Developer ID 0.1.1, at priority 20. Its self-scheduled keychain-backed run 60 s later **finished with exit code 0 and 0 permission errors in 80 s**, with keychain pre-read `0 (No error.)`. The extra time compared with 65 s comes from post-boot load: the load average was about 600 while Spotlight and friends caught up. There was no keychain or permission prompt. The only SecurityAgent activity was at 11:15:30, which is the login screen itself. **The first backup after login works without the user doing anything.**
 
 ## H4 — How backend credentials reach restic
 

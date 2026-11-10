@@ -436,7 +436,7 @@ Reviewed 9 Nov 2026 (read-only clones). Both are MIT-licensed. **Decision (decid
 
 ## 12. Risks and open technical questions (builder)
 
-1. **(spike) Answered on 10 Nov 2026; see `docs/spike-findings.md` and the "(spike)" notes in §5.7, §6.2, §7 and §8. Still open: the reboot-at-login run, B2 `credential_process` end to end, the CPU measurement, the SIGINT lock removal, and the Sparkle (v1.0) update path, which the spike tested only as a manual drag.** **FDA attribution for the bundled restic launched by a LaunchAgent.** Verify early, with a spike, that one FDA grant to Restorey covers restic spawned by the agent. Also verify it survives Sparkle updates. This is the riskiest assumption in the design.
+1. **(spike) Answered on 10 Nov 2026; see `docs/spike-findings.md` and the "(spike)" notes in §5.7, §6.2, §7 and §8. The reboot-at-login run passed on 10 Nov 2026. Still open: B2 `credential_process` end to end, the CPU measurement, the SIGINT lock removal, and the Sparkle (v1.0) update path, which the spike tested only as a manual drag.** **FDA attribution for the bundled restic launched by a LaunchAgent.** Verify early, with a spike, that one FDA grant to Restorey covers restic spawned by the agent. Also verify it survives Sparkle updates. This is the riskiest assumption in the design.
    - **Owner's rule:** make it "as robust and straightforward as possible, whatever that requires" (decided). The user-facing target is **one Full Disk Access grant, made once, that survives updates.**
    - **What that means for the build:**
      - Accept extra internal complexity (a different process structure, or a different way of launching restic) before accepting extra user steps.
