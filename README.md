@@ -117,7 +117,9 @@ Until the check-in service is built, check-in pings are written to the agent's l
 ## When backups run
 
 The agent's scheduler (`RestoreyCore/Sources/AgentCore/SchedulerCore.swift`, wired up in
-`Agent/Scheduler.swift`) checks every minute, after recovery has finished, for plans that are due. A plan is
+`Agent/Scheduler.swift`) checks every minute for plans that are due. It starts after recovery has finished,
+and its first check waits for the network as a wake does (at most 2 minutes), so a backup due at login isn't
+skipped for a network that is still coming up. A plan is
 due an interval (an hour for hot plans) after its last attempt, counted in elapsed time, so a time zone or
 daylight saving change never moves a run. It also looks again straight away:
 

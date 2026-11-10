@@ -66,12 +66,13 @@ struct PlanRunnerTests {
         #expect(f.sleepAssertions.value.isEmpty)
 
         f.power.set(PowerState(onBattery: false, percent: 100))
+        let recordsBefore = await f.history().recent.count
         _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
-        let events = f.sleepAssertions.value
-        // The backup and each maintenance step take one and give it back.
-        #expect(events.count >= 2)
-        #expect(events.filter { $0 == "create" }.count == events.filter { $0 == "release" }.count)
-        #expect(events.first == "create")
+        // The backup and each maintenance step after it (sequential, through the repository's queue)
+        // take one and give it back before the next: strictly create, release, create, release…
+        let steps = await f.history().recent.count - recordsBefore
+        #expect(steps >= 2)
+        #expect(f.sleepAssertions.value == Array(repeating: ["create", "release"], count: steps).flatMap { $0 })
         #expect(!f.sleepPrevention.isHeld)
     }
 

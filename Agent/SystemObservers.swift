@@ -4,7 +4,6 @@ import Foundation
 import IOKit.pwr_mgt
 import Network
 import RestoreyCore
-import Synchronization
 
 /// The machine as the agent sees it: the network path (a long-lived `NWPathMonitor`), the power state
 /// and mount points (read on demand), wake and mount notifications, and the idle-sleep assertion held
@@ -41,7 +40,7 @@ final class SystemObservers: Sendable {
     func preflightEnvironment() -> PreflightEnvironment {
         PreflightEnvironment(
             power: SystemConditions.currentPowerState(),
-            network: network.state,
+            network: network.forPreflight,
             isMountPoint: { SystemConditions.isMountPoint($0) },
             fileExists: { FileManager.default.fileExists(atPath: $0) })
     }
@@ -49,49 +48,6 @@ final class SystemObservers: Sendable {
     /// Returns once the network path is satisfied, at once if it already is, or when cancelled.
     func waitForNetwork() async {
         await network.waitUntilSatisfied()
-    }
-}
-
-/// The latest network path, and the waits for it to be satisfied.
-private final class NetworkPath: Sendable {
-    private struct State {
-        /// Unsatisfied until the monitor's first update, which arrives just after it starts.
-        var current: NetworkState = .unsatisfied
-        var nextID = 0
-        var waiters: [Int: CheckedContinuation<Void, Never>] = [:]
-    }
-
-    private let lock = Mutex(State())
-
-    var state: NetworkState { lock.withLock { $0.current } }
-
-    func update(_ state: NetworkState) {
-        let woken = lock.withLock { locked -> [CheckedContinuation<Void, Never>] in
-            locked.current = state
-            guard state != .unsatisfied else { return [] }
-            defer { locked.waiters.removeAll() }
-            return Array(locked.waiters.values)
-        }
-        for waiter in woken { waiter.resume() }
-    }
-
-    func waitUntilSatisfied() async {
-        let id = lock.withLock { locked in
-            locked.nextID += 1
-            return locked.nextID
-        }
-        await withTaskCancellationHandler {
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                let ready = lock.withLock { locked in
-                    if locked.current != .unsatisfied || Task.isCancelled { return true }
-                    locked.waiters[id] = continuation
-                    return false
-                }
-                if ready { continuation.resume() }
-            }
-        } onCancel: {
-            lock.withLock { $0.waiters.removeValue(forKey: id) }?.resume()
-        }
     }
 }
 

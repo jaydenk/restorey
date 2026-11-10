@@ -49,9 +49,10 @@ public actor SchedulerCore {
     private struct Requests {
         /// Every plan that runs is a catch-up (a wake).
         var catchUpAll = false
-        /// These plans run now even if not yet due, as catch-ups: skipped for a volume that has now
-        /// mounted, or for no network before a wake.
-        var forced: Set<UUID> = []
+        /// These plans run now even if not yet due, as catch-ups, provided their newest record is still
+        /// a backup skipped for this reason when the tick reads them: skipped for a volume that has now
+        /// mounted, or for no network before a wake or start-up.
+        var forced: [UUID: SkipReason] = [:]
     }
 
     /// The scheduler's runs in progress, by plan.
@@ -67,7 +68,7 @@ public actor SchedulerCore {
     private var tickInProgress = false
     private var tickAgain = false
     private var pending = Requests()
-    /// Wakes waiting for the network.
+    /// Wakes (and start-up) waiting for the network.
     private var wakesWaiting = 0
     /// The loop's sleep between ticks, so stopping can end it at once.
     private var pause: Task<Void, any Error>?
@@ -89,13 +90,22 @@ public actor SchedulerCore {
         self.log = log
     }
 
-    /// Calls `recoverAfterStart()`, then ticks every `tickInterval` until stopped or cancelled.
+    /// Calls `recoverAfterStart()`, then waits for the network as a wake does (at most
+    /// `wakeNetworkTimeout`), then ticks every `tickInterval` until stopped or cancelled. Without the
+    /// wait, the first tick after login would skip every due plan for no network while the path is
+    /// still unknown or coming up, and move its first backup an hour on.
     public func run() async {
         recovering = true
         await runner.recoverAfterStart()
         recovering = false
+        var first = true
         while !isStopped && !Task.isCancelled {
-            await tick()
+            if first {
+                first = false
+                await afterNetwork()
+            } else {
+                await tick()
+            }
             guard !isStopped else { return }
             let clock = clock
             let pause = Task { try await clock.sleep(for: Self.tickInterval) }
@@ -122,14 +132,7 @@ public actor SchedulerCore {
         guard !recovering, !isStopped else { return }
         switch reason {
         case .wake:
-            // Ticks asked for meanwhile wait for this one: a run before the network is back would be
-            // skipped for no network, which also moves the plan's next run an hour on.
-            wakesWaiting += 1
-            await networkOrTimeout()
-            wakesWaiting -= 1
-            // A tick that slipped in between waking and this nudge may have done exactly that.
-            let skipped = await plans(skippedFor: { $0 == .noNetwork })
-            await tick(Requests(catchUpAll: true, forced: skipped))
+            await afterNetwork(catchUpAll: true)
         case .volumeMounted(let path):
             let mounted = (path as NSString).standardizingPath
             let skipped = await plans(skippedFor: { reason in
@@ -141,17 +144,33 @@ public actor SchedulerCore {
         }
     }
 
-    /// The plans whose latest record is a backup skipped for a reason that `matches`.
-    private func plans(skippedFor matches: (SkipReason) -> Bool) async -> Set<UUID> {
-        var ids: Set<UUID> = []
+    /// Waits for the network (at most `wakeNetworkTimeout`), holding back other ticks meanwhile, then
+    /// ticks, also running plans last skipped for no network. Holding back matters because a run before
+    /// the network is back is skipped for no network, which also moves the plan's next run an hour on;
+    /// a tick that slipped in before this began (just after waking) may have done exactly that.
+    private func afterNetwork(catchUpAll: Bool = false) async {
+        wakesWaiting += 1
+        await networkOrTimeout()
+        wakesWaiting -= 1
+        let skipped = await plans(skippedFor: { $0 == .noNetwork })
+        await tick(Requests(catchUpAll: catchUpAll, forced: skipped))
+    }
+
+    /// The plans whose newest record is a backup skipped for a reason that `matches`, with that reason.
+    private func plans(skippedFor matches: (SkipReason) -> Bool) async -> [UUID: SkipReason] {
+        var found: [UUID: SkipReason] = [:]
         for (plan, history) in await runner.scheduleEntries() {
-            if let latest = history.recent.first, latest.operation == .backup, case .skipped(let reason) = latest.outcome,
-                matches(reason)
-            {
-                ids.insert(plan.id)
-            }
+            if let reason = Self.skipReason(history), matches(reason) { found[plan.id] = reason }
         }
-        return ids
+        return found
+    }
+
+    /// Why the newest record was skipped, if it is a skipped backup.
+    private static func skipReason(_ history: PlanRunHistory) -> SkipReason? {
+        guard let latest = history.recent.first, latest.operation == .backup,
+            case .skipped(let reason) = latest.outcome
+        else { return nil }
+        return reason
     }
 
     /// Waits for every run the scheduler has started to finish. For tests.
@@ -165,7 +184,7 @@ public actor SchedulerCore {
     private func tick(_ requests: Requests) async {
         guard !recovering, !isStopped else { return }
         pending.catchUpAll = pending.catchUpAll || requests.catchUpAll
-        pending.forced.formUnion(requests.forced)
+        pending.forced.merge(requests.forced) { _, new in new }
         // A wake is waiting for the network; its tick follows and takes these requests with it.
         guard wakesWaiting == 0 else { return }
         guard !tickInProgress else {
@@ -186,11 +205,13 @@ public actor SchedulerCore {
             let now = now()
             for (plan, history) in entries where inFlight[plan.id] == nil && !endedDuringRead.contains(plan.id) {
                 let next = nextRunDate(plan: plan, history: history, now: now)
-                // A forced plan still never runs while paused or when it may not run at all.
-                let forced = requests.forced.contains(plan.id) && next != .distantFuture
-                    && !(history.pausedUntil.map { $0 > now } ?? false)
+                // A forced plan is checked again against this read: it runs only if its newest record is
+                // still that skip (a run may have finished since the nudge looked), and never while
+                // paused or when it may not run at all.
+                let forced = requests.forced[plan.id].map { $0 == Self.skipReason(history) } == true
+                    && next != .distantFuture && !(history.pausedUntil.map { $0 > now } ?? false)
                 guard next <= now || forced else { continue }
-                let catchUp = requests.catchUpAll || requests.forced.contains(plan.id)
+                let catchUp = requests.catchUpAll || forced
                 start(plan, trigger: catchUp ? .catchUp : Self.trigger(plan: plan, history: history, now: now))
             }
         } while tickAgain && !isStopped

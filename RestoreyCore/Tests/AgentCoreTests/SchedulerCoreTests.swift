@@ -23,7 +23,15 @@ struct SchedulerCoreTests {
         private var runGate: Gate?
         private var recoverGate: Gate?
 
+        /// Reads that return these, in turn, before `entries`.
+        private var queuedReads: [[(plan: Plan, history: PlanRunHistory)]] = []
+
         func set(_ entries: [(plan: Plan, history: PlanRunHistory)]) { self.entries = entries }
+        /// The next read returns `first`; reads after it return `entries` (the plans changing between two reads).
+        func set(firstRead first: [(plan: Plan, history: PlanRunHistory)], then entries: [(plan: Plan, history: PlanRunHistory)]) {
+            queuedReads = [first]
+            self.entries = entries
+        }
         func holdRuns(_ gate: Gate?) { runGate = gate }
         func holdRecovery(_ gate: Gate?) { recoverGate = gate }
         func fail(_ planID: UUID, with error: (any Error)?) { errors[planID] = error }
@@ -36,6 +44,7 @@ struct SchedulerCoreTests {
 
         func scheduleEntries() async -> [(plan: Plan, history: PlanRunHistory)] {
             events.append("entries")
+            if !queuedReads.isEmpty { return queuedReads.removeFirst() }
             return entries
         }
 
@@ -314,6 +323,55 @@ struct SchedulerCoreTests {
         #expect(starts.first?.trigger == .catchUp)
     }
 
+    @Test func aForcedPlanIsCheckedAgainstTheTicksOwnRead() async throws {
+        let w = World()
+        let now = w.now.value
+        let photos = Self.plan("Photos", sources: ["/Volumes/Backup/Photos"], now: now)
+        let skipped = Self.history(attempted: 60, before: now, latest: .skipped(.volumeNotMounted("Backup")), planID: photos.id)
+        // Between the nudge's read and the tick's, a run of the plan finished and succeeded.
+        let succeeded = Self.history(attempted: 1, before: now, latest: .success(snapshotID: "abc"), planID: photos.id)
+        await w.runner.set(firstRead: [(photos, skipped)], then: [(photos, succeeded)])
+
+        await w.core.nudge(reason: .volumeMounted("/Volumes/Backup"))
+        await w.core.runsFinished()
+        #expect(await w.runner.runCount == 0)
+
+        // The same for a wake and a no-network skip.
+        let home = Self.plan("Home", now: now)
+        await w.runner.set(
+            firstRead: [(home, Self.history(attempted: 60, before: now, latest: .skipped(.noNetwork), planID: home.id))],
+            then: [(home, Self.history(attempted: 1, before: now, latest: .success(snapshotID: "def"), planID: home.id))])
+        w.network.open()
+        await w.core.nudge(reason: .wake)
+        await w.core.runsFinished()
+        #expect(await w.runner.runCount == 0)
+    }
+
+    @Test func nudgesNeverForceAPausedPlanOrOneThatMayNotRun() async throws {
+        let w = World()
+        let now = w.now.value
+        func entry(_ plan: Plan, _ reason: SkipReason, paused: Bool = false) -> (plan: Plan, history: PlanRunHistory) {
+            var history = Self.history(attempted: 60, before: now, latest: .skipped(reason), planID: plan.id)
+            if paused { history.pausedUntil = now.addingTimeInterval(1800) }
+            return (plan, history)
+        }
+        var invalid = Self.plan("Invalid", sources: ["/Volumes/Backup/c"], now: now)
+        invalid.sources = []
+        await w.runner.set([
+            entry(Self.plan("Paused", sources: ["/Volumes/Backup/a"], now: now), .volumeNotMounted("Backup"), paused: true),
+            entry(Self.plan("Unconfirmed", sources: ["/Volumes/Backup/b"], now: now, confirmed: false), .volumeNotMounted("Backup")),
+            entry(invalid, .volumeNotMounted("Backup")),
+            entry(Self.plan("PausedOffline", now: now), .noNetwork, paused: true),
+            entry(Self.plan("UnconfirmedOffline", now: now, confirmed: false), .noNetwork),
+        ])
+        w.network.open()
+
+        await w.core.nudge(reason: .volumeMounted("/Volumes/Backup"))
+        await w.core.nudge(reason: .wake)
+        await w.core.runsFinished()
+        #expect(await w.runner.runCount == 0)
+    }
+
     // MARK: Start-up and the loop
 
     @Test func recoverAfterStartRunsBeforeFirstTick() async throws {
@@ -322,6 +380,7 @@ struct SchedulerCoreTests {
         await w.runner.set([(plan, PlanRunHistory())])
         let recovery = Gate()
         await w.runner.holdRecovery(recovery)
+        w.network.open()
 
         let loop = Task { await w.core.run() }
         #expect(await eventually { await w.runner.events == ["recover"] })
@@ -332,24 +391,82 @@ struct SchedulerCoreTests {
         recovery.open()
         #expect(await eventually { await w.runner.runCount == 1 })
         let events = await w.runner.events
-        #expect(Array(events.prefix(3)) == ["recover", "recovered", "refresh"])
+        // Nothing is read or refreshed until recovery has finished.
+        #expect(Array(events.prefix(2)) == ["recover", "recovered"])
+        #expect(events.dropFirst(2).contains("refresh"))
         #expect(events.contains("run Home"))
+        loop.cancel()
+        await loop.value
+    }
+
+    @Test func firstTickWaitsForNetwork() async throws {
+        let w = World()
+        let plan = Self.plan("Home", now: w.now.value)
+        await w.runner.set([(plan, PlanRunHistory())])
+
+        let loop = Task { await w.core.run() }
+        // Recovered, then waiting on the network with the 120 s timeout beside it: no tick yet, and a
+        // nudge meanwhile waits too.
+        #expect(await eventually { w.network.waiterCount == 1 && w.clock.sleeperCount == 1 })
+        await w.core.nudge(reason: .configChanged)
+        #expect(await w.runner.events == ["recover", "recovered"])
+        #expect(await w.runner.runCount == 0)
+
+        w.network.open()
+        #expect(await eventually { await w.runner.runCount == 1 })
+        #expect(await w.runner.starts.first?.trigger == .scheduled)
+        loop.cancel()
+        await loop.value
+    }
+
+    @Test func firstTickRunsAfter120sWithoutNetwork() async throws {
+        let w = World()
+        let plan = Self.plan("Home", now: w.now.value)
+        await w.runner.set([(plan, PlanRunHistory())])
+
+        let loop = Task { await w.core.run() }
+        #expect(await eventually { w.network.waiterCount == 1 && w.clock.sleeperCount == 1 })
+        w.clock.advance(by: .seconds(119))
+        for _ in 0..<20 { await Task.yield() }
+        #expect(await w.runner.runCount == 0)
+
+        w.clock.advance(by: .seconds(1))
+        #expect(await eventually { await w.runner.runCount == 1 })
+        // The network wait was given up on, and the loop is now waiting for the next minute.
+        #expect(await eventually { w.network.waiterCount == 0 && w.clock.sleeperCount == 1 })
+        loop.cancel()
+        await loop.value
+    }
+
+    @Test func startUpRunsAPlanLastSkippedForNoNetwork() async throws {
+        let w = World()
+        let now = w.now.value
+        let plan = Self.plan("Home", now: now)
+        await w.runner.set([(plan, Self.history(attempted: 30, before: now, latest: .skipped(.noNetwork), planID: plan.id))])
+        w.network.open()
+
+        let loop = Task { await w.core.run() }
+        #expect(await eventually { await w.runner.runCount == 1 })
+        #expect(await w.runner.starts.first?.trigger == .catchUp)
         loop.cancel()
         await loop.value
     }
 
     @Test func runTicksEveryMinute() async throws {
         let w = World()
+        w.network.open()
         let loop = Task { await w.core.run() }
-        #expect(await eventually { w.clock.sleeperCount == 1 })
-        #expect(await w.runner.events.filter { $0 == "entries" }.count == 1)
+        // One "refresh" per tick. The first tick done, the loop sleeps for a minute (the start-up
+        // network timeout, cancelled at once, may be seen briefly first).
+        @Sendable func ticks() async -> Int { await w.runner.events.filter { $0 == "refresh" }.count }
+        #expect(await eventually { await ticks() == 1 && w.clock.sleeperCount == 1 })
 
         w.clock.advance(by: .seconds(59))
         for _ in 0..<20 { await Task.yield() }
-        #expect(await w.runner.events.filter { $0 == "entries" }.count == 1)
+        #expect(await ticks() == 1)
 
         w.clock.advance(by: .seconds(1))
-        #expect(await eventually { await w.runner.events.filter { $0 == "entries" }.count == 2 })
+        #expect(await eventually { await ticks() == 2 })
         #expect(await eventually { w.clock.sleeperCount == 1 })
         loop.cancel()
         await loop.value
@@ -369,6 +486,7 @@ struct SchedulerCoreTests {
         let plan = Self.plan("Home", now: w.now.value)
         await w.runner.set([(plan, PlanRunHistory())])
         await w.runner.fail(plan.id, with: AgentError.draining)
+        w.network.open()
 
         let loop = Task { await w.core.run() }
         await loop.value  // The loop ends by itself once the runner says it is draining.
