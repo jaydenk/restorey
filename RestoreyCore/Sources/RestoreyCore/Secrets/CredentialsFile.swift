@@ -28,14 +28,14 @@ public enum CredentialsFile {
         let id = planID.uuidString
         let contents = "[restorey-\(id)]\ncredential_process = \(helperPath) s3-credentials --plan \(id)\n"
 
-        let folder = directory.appendingPathComponent("s3", isDirectory: true)
+        let destination = url(planID: planID, directory: directory)
+        let folder = destination.deletingLastPathComponent()
         try FileManager.default.createDirectory(
             at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         // createDirectory does not touch the mode of a folder that already exists.
         try posix("chmod", chmod(folder.path, 0o700))
         try requireMode(folder, 0o700)
 
-        let destination = folder.appendingPathComponent("\(id).ini")
         let temporary = folder.appendingPathComponent(".\(id).\(UUID().uuidString).tmp")
         let fd = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
         try posix("open", fd)
@@ -64,6 +64,18 @@ public enum CredentialsFile {
         try requireMode(folder, 0o700)
         try requireMode(destination, 0o600)
         return destination
+    }
+
+    /// `<directory>/s3/<planID>.ini`.
+    public static func url(planID: UUID, directory: URL) -> URL {
+        directory.appendingPathComponent("s3", isDirectory: true)
+            .appendingPathComponent("\(planID.uuidString).ini")
+    }
+
+    /// Removes the plan's file. A file that is already gone is not an error.
+    public static func remove(planID: UUID, directory: URL) throws {
+        let path = url(planID: planID, directory: directory).path
+        if unlink(path) < 0, errno != ENOENT { throw Error.posix(operation: "unlink", code: errno) }
     }
 
     private static func posix(_ operation: String, _ result: Int32) throws {

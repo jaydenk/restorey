@@ -28,6 +28,9 @@ targets:
       - Agent
     dependencies:
       - package: RestoreyCore
+        product: RestoreyCore
+      - package: RestoreyCore
+        product: AgentCore
     settings:
       base:
         PRODUCT_NAME: $(RESTOREY_AGENT_PRODUCT_NAME)

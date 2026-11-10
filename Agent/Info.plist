@@ -34,5 +34,7 @@
     <string>$(RESTOREY_KEYCHAIN_GROUP)</string>
     <key>RestoreyLogsName</key>
     <string>$(RESTOREY_LOGS_NAME)</string>
+    <key>RestoreyTeamID</key>
+    <string>$(DEVELOPMENT_TEAM)</string>
 </dict>
 </plist>

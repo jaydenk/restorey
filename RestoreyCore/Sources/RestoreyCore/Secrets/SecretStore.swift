@@ -23,6 +23,59 @@ public enum SecretKey: Hashable, Sendable {
     }
 }
 
+/// The app names the secrets it sends in `SavePlanRequest` with this.
+/// JSON: `{"type":"repositoryPassword","planID":"…"}` (likewise `s3AccessKeyID`, `s3SecretAccessKey`,
+/// `checkInURL`) and `{"type":"environment","planID":"…","name":"RESTIC_REST_PASSWORD"}`.
+extension SecretKey: Codable {
+    private enum CodingKeys: String, CodingKey { case type, planID, name }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try c.decode(String.self, forKey: .type)
+        let id = try c.decode(UUID.self, forKey: .planID)
+        switch type {
+        case "repositoryPassword": self = .repositoryPassword(id)
+        case "s3AccessKeyID": self = .s3AccessKeyID(id)
+        case "s3SecretAccessKey": self = .s3SecretAccessKey(id)
+        case "environment": self = .environment(id, name: try c.decode(String.self, forKey: .name))
+        case "checkInURL": self = .checkInURL(id)
+        case let other: throw DecodingError.dataCorruptedError(
+            forKey: .type, in: c, debugDescription: "Unknown secret key type \(other)")
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .repositoryPassword(let id):
+            try c.encode("repositoryPassword", forKey: .type)
+            try c.encode(id, forKey: .planID)
+        case .s3AccessKeyID(let id):
+            try c.encode("s3AccessKeyID", forKey: .type)
+            try c.encode(id, forKey: .planID)
+        case .s3SecretAccessKey(let id):
+            try c.encode("s3SecretAccessKey", forKey: .type)
+            try c.encode(id, forKey: .planID)
+        case .environment(let id, let name):
+            try c.encode("environment", forKey: .type)
+            try c.encode(id, forKey: .planID)
+            try c.encode(name, forKey: .name)
+        case .checkInURL(let id):
+            try c.encode("checkInURL", forKey: .type)
+            try c.encode(id, forKey: .planID)
+        }
+    }
+
+    /// The plan the secret belongs to.
+    public var planID: UUID {
+        switch self {
+        case .repositoryPassword(let id), .s3AccessKeyID(let id), .s3SecretAccessKey(let id),
+             .environment(let id, _), .checkInURL(let id):
+            id
+        }
+    }
+}
+
 public enum SecretStoreError: Error, Equatable, CustomStringConvertible {
     /// A Security framework call failed. `message` is `SecCopyErrorMessageString`'s text.
     case keychain(status: Int32, message: String)

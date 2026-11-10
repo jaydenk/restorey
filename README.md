@@ -59,6 +59,23 @@ Debug builds use a separate identity (`com.jaydenkerr.restorey.dev`, `RestoreyDe
 Release install without sharing a launchd label, keychain group or on-disk state. GitHub Actions runs the
 unsigned path of `scripts/ci.sh` on every push and pull request.
 
+### Checking the agent by hand (Debug only, temporary)
+
+Until the app shell can register and talk to the agent itself, a Debug build takes two launch arguments:
+
+```sh
+/Applications/RestoreyDev.app/Contents/MacOS/RestoreyDev --register   # SMAppService register(), prints the status
+/Applications/RestoreyDev.app/Contents/MacOS/RestoreyDev --hello      # one hello and one status over XPC
+launchctl print gui/$(id -u)/com.jaydenkerr.restorey.dev.agent        # spawn type = daemon (3), both Mach services
+```
+
+The agent serves its XPC interface only to the signed app: the listener requires the app's bundle ID and the
+team in `Config/Local.xcconfig`, so any other process is refused. It is the only writer of `config.json`,
+`state.json` and the plans' keychain items, all under `~/Library/Application Support/<root ID>` (mode 0700).
+If either file is corrupt or was written by a newer Restorey, the agent reports it in `status`, refuses every
+change and leaves the file as it is. Its log is `~/Library/Logs/Restorey-Dev/agent.log`, and MetricKit
+diagnostics go to `diagnostics/` beside it.
+
 ## Why the keychain tests need a signed host
 
 Restorey keeps every repository password, backend key and check-in URL in the data protection keychain

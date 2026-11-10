@@ -24,7 +24,9 @@ public enum ResticMessage: Sendable, Equatable {
 
 /// Progress of a running backup (`message_type: "status"`). Restic omits fields that are zero or not
 /// yet known (for example `seconds_remaining` and `seconds_elapsed`), so only absence is tolerated.
-public struct BackupStatus: Sendable, Equatable {
+/// The parser reads restic's snake_case keys itself; the synthesised `Codable` (camelCase keys) is the
+/// agent's own wire format, used in `PlanPhase.running` over XPC.
+public struct BackupStatus: Codable, Sendable, Equatable {
     public var percentDone: Double
     public var totalFiles: Int
     public var filesDone: Int
