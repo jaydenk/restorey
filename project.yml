@@ -1,0 +1,86 @@
+name: Restorey
+options:
+  bundleIdPrefix: com.jaydenkerr
+  deploymentTarget:
+    macOS: "27.0"
+  xcodeVersion: "27.0"
+configFiles:
+  Debug: Config/Debug.xcconfig
+  Release: Config/Release.xcconfig
+settings:
+  base:
+    SWIFT_VERSION: "6.4"
+    SWIFT_STRICT_CONCURRENCY: complete
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEAD_CODE_STRIPPING: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+packages:
+  RestoreyCore:
+    path: RestoreyCore
+targets:
+  RestoreyAgent:
+    type: application
+    platform: macOS
+    sources:
+      - Agent
+    dependencies:
+      - package: RestoreyCore
+    settings:
+      base:
+        PRODUCT_NAME: $(RESTOREY_AGENT_PRODUCT_NAME)
+        PRODUCT_BUNDLE_IDENTIFIER: $(RESTOREY_AGENT_LABEL)
+        INFOPLIST_FILE: Agent/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: Agent/Agent.entitlements
+        SKIP_INSTALL: YES
+  Restorey:
+    type: application
+    platform: macOS
+    sources:
+      - App
+    dependencies:
+      - package: RestoreyCore
+      # Built first, but embedded by the "Embed agent" script below rather than by an Embed
+      # Files phase: Xcode resolves that phase's product name once (from Debug), so a
+      # configuration-specific PRODUCT_NAME (RestoreyDevAgent vs RestoreyAgent) breaks Release.
+      - target: RestoreyAgent
+        embed: false
+        link: false
+    settings:
+      base:
+        PRODUCT_NAME: $(RESTOREY_APP_PRODUCT_NAME)
+        PRODUCT_BUNDLE_IDENTIFIER: $(RESTOREY_ROOT_ID)
+        INFOPLIST_FILE: App/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: App/App.entitlements
+    postBuildScripts:
+      - name: Embed agent
+        script: |
+          set -euo pipefail
+          SRC="${BUILT_PRODUCTS_DIR}/${RESTOREY_AGENT_PRODUCT_NAME}.app"
+          DEST="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers/${RESTOREY_AGENT_PRODUCT_NAME}.app"
+          mkdir -p "$(dirname "$DEST")"
+          rm -rf "${DEST:?}"
+          # The agent target already signed itself (entitlements and profile); ditto keeps that.
+          ditto "$SRC" "$DEST"
+        basedOnDependencyAnalysis: false
+      - name: Generate agent launchd plist
+        script: |
+          set -euo pipefail
+          "${SRCROOT}/scripts/generate-agent-plist.sh"
+        basedOnDependencyAnalysis: false
+      - name: Embed and sign restic
+        script: |
+          set -euo pipefail
+          DEST="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers/restic"
+          mkdir -p "$(dirname "$DEST")"
+          cp "${SRCROOT}/vendor/restic" "$DEST"
+          if [[ "${CODE_SIGNING_ALLOWED:-YES}" != "NO" ]]; then
+            codesign --force --options runtime --timestamp=none \
+              --identifier "${RESTOREY_RESTIC_IDENTIFIER}" \
+              --sign "${EXPANDED_CODE_SIGN_IDENTITY}" "$DEST"
+          fi
+        basedOnDependencyAnalysis: false

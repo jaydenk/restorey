@@ -1,0 +1,8 @@
+// Debug builds use a separate identity (".dev") so they can sit beside a Release install:
+// distinct launchd label, Mach services, keychain group, bundle IDs and on-disk state.
+#include "Base.xcconfig"
+
+RESTOREY_ROOT_ID = com.jaydenkerr.restorey.dev
+RESTOREY_LOGS_NAME = Restorey-Dev
+RESTOREY_APP_PRODUCT_NAME = RestoreyDev
+RESTOREY_AGENT_PRODUCT_NAME = RestoreyDevAgent

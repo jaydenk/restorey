@@ -1,0 +1,6 @@
+#include "Base.xcconfig"
+
+RESTOREY_ROOT_ID = com.jaydenkerr.restorey
+RESTOREY_LOGS_NAME = Restorey
+RESTOREY_APP_PRODUCT_NAME = Restorey
+RESTOREY_AGENT_PRODUCT_NAME = RestoreyAgent

@@ -4,7 +4,7 @@ A free, open-source macOS menu bar app that puts an Arq/Backblaze-style front en
 [restic](https://restic.net).
 
 > **Status: design stage.** There is no app to download yet. The design is approved and the
-> platform spike is done ([findings](docs/spike-findings.md)); the next step is the v0.1 plan.
+> platform spike is done ([findings](docs/spike-findings.md)); v0.1 engine work has begun with the project scaffold.
 > Nothing here is ready to protect your data.
 
 ## What it will do
@@ -29,6 +29,35 @@ because the App Store sandbox rules out the Full Disk Access a backup tool needs
 - [Menu bar and restore window mockup](docs/mockups/menubar-and-restore.html)
 - [Platform spike plan](docs/superpowers/plans/2026-11-10-platform-spike.md)
 - [Platform spike findings](docs/spike-findings.md) (throwaway spike code in [`spike/`](spike/))
+
+## Building from source
+
+Prerequisites: macOS 27, Xcode 27 and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
+
+1. Fetch the pinned upstream binaries (restic 0.19.1 and rest-server 0.14.0, checked against each release's
+   `SHA256SUMS`) into the gitignored `vendor/` folder:
+
+   ```sh
+   scripts/fetch-binaries.sh
+   ```
+
+2. Run the CI checks: the `RestoreyCore` tests, an unsigned Debug build and the bundle checks. If
+   `Config/Local.xcconfig` exists, it also does a signed Debug build and the full signature checks.
+
+   ```sh
+   scripts/ci.sh
+   ```
+
+3. For a signed local install, copy `Config/Local.example.xcconfig` to `Config/Local.xcconfig` (gitignored) and
+   set `DEVELOPMENT_TEAM`. Then build, sign and install `RestoreyDev.app` into `/Applications`:
+
+   ```sh
+   scripts/install-dev.sh
+   ```
+
+Debug builds use a separate identity (`com.jaydenkerr.restorey.dev`, `RestoreyDev`), so they can sit beside a
+Release install without sharing a launchd label, keychain group or on-disk state. GitHub Actions runs the
+unsigned path of `scripts/ci.sh` on every push and pull request.
 
 ## Restoring without Restorey
 

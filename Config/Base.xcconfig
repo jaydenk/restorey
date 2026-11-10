@@ -1,0 +1,14 @@
+// Shared build settings. Local.xcconfig (gitignored) supplies DEVELOPMENT_TEAM.
+#include? "Local.xcconfig"
+
+MACOSX_DEPLOYMENT_TARGET = 27.0
+SWIFT_VERSION = 6.4
+ENABLE_HARDENED_RUNTIME = YES
+CODE_SIGN_STYLE = Automatic
+
+// Derived from the root ID. Each identity value below reaches Info.plist and the
+// entitlements by build-setting substitution, so the two never drift apart.
+RESTOREY_AGENT_LABEL = $(RESTOREY_ROOT_ID).agent
+RESTOREY_HELPER_SERVICE = $(RESTOREY_AGENT_LABEL).helper
+RESTOREY_RESTIC_IDENTIFIER = $(RESTOREY_ROOT_ID).restic
+RESTOREY_KEYCHAIN_GROUP = $(AppIdentifierPrefix)$(RESTOREY_ROOT_ID)
