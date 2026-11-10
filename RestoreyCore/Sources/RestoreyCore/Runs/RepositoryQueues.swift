@@ -7,6 +7,9 @@ import Foundation
 /// Each key has a chain of `Task`s, each awaiting its predecessor, so no lock is held across an
 /// `await`. A job that throws still completes its link, so the chain never wedges.
 ///
+/// Each job's work runs on a detached task, never on this actor, so a long synchronous job cannot
+/// block queueing or a job for another key.
+///
 /// Cancellation: a caller cancelled while waiting in line does not leave the queue. Its job still
 /// takes its turn, with cancellation delivered to the work (`Task.isCancelled` is true), and the
 /// work decides how to react; restic runs are cancellation-safe and return promptly. Skipping the
@@ -25,27 +28,55 @@ public actor RepositoryQueues {
     /// Number of keys with work queued or running. For tests.
     var pendingKeyCount: Int { tails.count }
 
-    public func run<T: Sendable, E: Error>(
+    /// A queued job. `value()` waits for it, forwarding the caller's cancellation to the work.
+    public struct Job<T: Sendable, E: Error>: Sendable {
+        fileprivate let queues: RepositoryQueues
+        fileprivate let key: String
+        fileprivate let id: UInt64
+        fileprivate let task: Task<Result<T, E>, Never>
+
+        /// Cancels the work (it still takes its turn; see the type documentation).
+        public func cancel() { task.cancel() }
+
+        public func value() async throws(E) -> T {
+            let result = await withTaskCancellationHandler {
+                await task.value
+            } onCancel: {
+                task.cancel()
+            }
+            await queues.finished(key: key, id: id)
+            return try result.get()
+        }
+    }
+
+    /// Queues `work` behind everything already queued for `key` and returns at once, so callers
+    /// can fix the enqueue order before awaiting. The work runs off this actor.
+    public func enqueue<T: Sendable, E: Error>(
         repository key: String,
         _ work: @escaping @Sendable () async throws(E) -> T
-    ) async throws(E) -> T {
+    ) -> Job<T, E> {
         let previous = tails[key]?.task
-        let job = Task<Result<T, E>, Never> {
+        let task = Task.detached { () async -> Result<T, E> in
             await previous?.value
             do throws(E) { return .success(try await work()) } catch { return .failure(error) }
         }
         nextID += 1
         let id = nextID
-        tails[key] = Tail(id: id, task: Task { _ = await job.value })
+        tails[key] = Tail(id: id, task: Task { _ = await task.value })
+        return Job(queues: self, key: key, id: id, task: task)
+    }
 
-        let result = await withTaskCancellationHandler {
-            await job.value
-        } onCancel: {
-            job.cancel()
-        }
-        // Drop the entry once nothing newer has been queued behind this job.
+    public func run<T: Sendable, E: Error>(
+        repository key: String,
+        _ work: @escaping @Sendable () async throws(E) -> T
+    ) async throws(E) -> T {
+        let job = enqueue(repository: key, work)
+        return try await job.value()
+    }
+
+    /// Drops the entry once nothing newer has been queued behind this job.
+    fileprivate func finished(key: String, id: UInt64) {
         if tails[key]?.id == id { tails[key] = nil }
-        return try result.get()
     }
 
     /// Case-normalises only the scheme and host of an S3 address (bucket and prefix are
@@ -58,12 +89,23 @@ public actor RepositoryQueues {
     private static func normalise(_ string: String) -> String {
         var s = string
         while s.count > 1, s.hasSuffix("/") { s.removeLast() }
-        // "s3:" + scheme "://" host [/ bucket / prefix]
-        guard s.hasPrefix("s3:"), let schemeEnd = s.range(of: "://") else { return s }
-        let scheme = s[s.index(s.startIndex, offsetBy: 3)..<schemeEnd.lowerBound]
-        guard !scheme.isEmpty, scheme.allSatisfy({ $0.isLetter }) else { return s }
-        let rest = s[schemeEnd.upperBound...]
+        guard s.hasPrefix("s3:") else { return s }
+        let body = s.dropFirst(3)
+        // restic defaults a scheme-less endpoint to https.
+        var scheme = "https"
+        var rest = Substring(body)
+        if let r = body.range(of: "://") {
+            let given = body[body.startIndex..<r.lowerBound]
+            guard !given.isEmpty, given.allSatisfy({ $0.isLetter }) else { return s }
+            scheme = given.lowercased()
+            rest = body[r.upperBound...]
+        }
         let hostEnd = rest.firstIndex(of: "/") ?? rest.endIndex
-        return "s3:" + scheme.lowercased() + "://" + rest[..<hostEnd].lowercased() + rest[hostEnd...]
+        var host = rest[..<hostEnd].lowercased()
+        guard !host.isEmpty else { return s }
+        for (name, port) in [("https", ":443"), ("http", ":80")] where scheme == name && host.hasSuffix(port) {
+            host.removeLast(port.count)
+        }
+        return "s3:" + scheme + "://" + host + rest[hostEnd...]
     }
 }
