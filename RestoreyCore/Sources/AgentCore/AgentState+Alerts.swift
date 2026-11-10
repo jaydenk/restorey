@@ -12,8 +12,11 @@ import RestoreyCore
 /// A post that times out counts as not delivered. An authorisation call that times out keeps the last
 /// answer the notifier gave; with none yet, nothing is posted and `notificationsOff` is left as it was.
 /// While a call is still suspended past its timeout, no second call with the same key is made: it is
-/// treated as unanswered at once, so a hung `usernoted` can't pile up calls (Ruling R48). Nobody waits
-/// for a round except `deliverAlerts`, and it waits a bounded time.
+/// treated as unanswered at once, so a hung `usernoted` can't pile up calls (Ruling R48). A call held for
+/// more than 10 minutes is abandoned and a fresh one made, so one that never returns can't freeze its
+/// key for good; an abandoned authorisation call raises `notificationsOff` until an answer comes, so the
+/// menu bar warns that notifications aren't working (Ruling R49). Nobody waits for a round except
+/// `deliverAlerts`, and it waits a bounded time.
 ///
 /// Nothing is posted while the agent isn't authorised: posting then reports success and shows nothing
 /// (docs/spike-findings.md, H3b). `notificationsOff` is raised instead, for the app to show, and the
@@ -51,6 +54,9 @@ extension AgentState {
     func alertsDelivered() async {
         while let delivery = alertDelivery { await delivery.value }
     }
+
+    /// How long a suspended notifier call holds its key before it is abandoned.
+    static let notifierCallAbandonment: TimeInterval = 600
 
     /// Starts a delivery, or asks the one in progress to run again when it ends. Never waits.
     func scheduleAlertDelivery() {
@@ -118,8 +124,9 @@ extension AgentState {
             return answer
         }
         // `.none`: the notifier has never answered. Nothing is posted, and `notificationsOff` is neither
-        // raised nor cleared.
-        let known = lastAuthorisation
+        // raised nor cleared. An abandoned call with no answer since counts as not authorised.
+        let abandoned = authorisationAbandoned
+        let known: Bool?? = abandoned ? .some(false) : lastAuthorisation
         let authorised: Bool? = known ?? nil
         if let loadError {
             await deliverLoadError(loadError, authorised: authorised, notifier: notifier)
@@ -218,23 +225,39 @@ extension AgentState {
 
     /// `work`'s result within `timeout`, or nil. Nil at once, without calling, while the last call with
     /// this key is still suspended.
-    private func guardedCall<T: Sendable>(
+    /// A call still held after `notifierCallAbandonment` is abandoned (logged once) and a fresh call made.
+    func guardedCall<T: Sendable>(
         _ key: String, timeout: Duration, _ work: @escaping @Sendable () async -> T
     ) async -> T? {
-        guard outstandingNotifierCalls.insert(key).inserted else { return nil }
+        let now = now()
+        if let held = outstandingNotifierCalls[key] {
+            guard now.timeIntervalSince(held.since) > Self.notifierCallAbandonment else { return nil }
+            alertLog("notifier call \(key) abandoned after 10 minutes")
+            if key == "authorisation" { authorisationAbandoned = true }
+        }
+        let token = UUID()
+        outstandingNotifierCalls[key] = (token, now)
         return await Self.bounded(timeout) {
             let value = await work()
-            await self.notifierCallReturned(key)
+            await self.notifierCallReturned(key, token: token)
             return value
         }
     }
 
     private func noteAuthorisation(_ answer: Bool?) {
         lastAuthorisation = .some(answer)
+        authorisationAbandoned = false
     }
 
-    private func notifierCallReturned(_ key: String) {
-        outstandingNotifierCalls.remove(key)
+    /// The token of the call holding `key`, if one is.
+    func notifierCallToken(_ key: String) -> UUID? {
+        outstandingNotifierCalls[key]?.token
+    }
+
+    /// Releases `key` only if it is still this call's: an abandoned call returning late leaves the
+    /// newer call's entry alone.
+    func notifierCallReturned(_ key: String, token: UUID) {
+        if outstandingNotifierCalls[key]?.token == token { outstandingNotifierCalls[key] = nil }
     }
 
     /// Runs `body` under the write gate, logging a failure instead of throwing it.

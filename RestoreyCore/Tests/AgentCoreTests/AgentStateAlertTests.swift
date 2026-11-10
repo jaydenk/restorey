@@ -75,6 +75,12 @@ struct AgentStateAlertTests {
 
         var hangingCalls: Int { waiting.count }
 
+        /// Lets only the oldest suspended call return, as an abandoned call answering late would.
+        func resumeOldest() {
+            guard !waiting.isEmpty else { return }
+            waiting.removeFirst().resume()
+        }
+
         func answer() {
             hangAuthorisation = false
             hangPosts = false
@@ -554,5 +560,65 @@ struct AgentStateAlertTests {
         #expect(await notifier.postCalls == 1)
         #expect(try await savedAlerts(world)[.backupFailed]?.count == 0)
         await notifier.answer()
+    }
+
+    // MARK: Calls that never return (Ruling R49)
+
+    @Test func aNeverReturningPostIsRetriedAfterTenMinutesAndNotBefore() async throws {
+        let world = try await world()
+        let notifier = HangingNotifier(hangAuthorisation: false, hangPosts: true)
+        let lines = Locked<[String]>([])
+        await world.state.attach(
+            notifier: notifier, log: { line in lines.mutate { $0.append(line) } }, callTimeout: .milliseconds(50))
+        try await recordBackup(.failed(exitCode: 1, reason: "x"), in: world)
+        await world.state.deliverAlerts()
+        #expect(await notifier.postCalls == 1)
+
+        world.clock.advance(9 * 60)
+        await world.state.deliverAlerts()
+        world.clock.advance(60)
+        await world.state.deliverAlerts()
+        #expect(await notifier.postCalls == 1)
+
+        world.clock.advance(1)
+        await world.state.deliverAlerts()
+        #expect(await notifier.postCalls == 2)
+        let key = "post.alert.\(world.plan.id.uuidString).backupFailed"
+        #expect(lines.value.filter { $0 == "notifier call \(key) abandoned after 10 minutes" }.count == 1)
+
+        // The abandoned call returns late: the newer call keeps its key.
+        let newer = try #require(await world.state.notifierCallToken(key))
+        await notifier.resumeOldest()
+        await world.state.notifierCallReturned(key, token: UUID())
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(await world.state.notifierCallToken(key) == newer)
+        await world.state.deliverAlerts()
+        #expect(await notifier.postCalls == 2)
+        await notifier.answer()
+    }
+
+    @Test func aNeverReturningAuthorisationRaisesNotificationsOffAfterTenMinutes() async throws {
+        let world = try await world()
+        let notifier = HangingNotifier(hangAuthorisation: true, hangPosts: false)
+        await world.state.attach(notifier: notifier, log: { _ in }, callTimeout: .milliseconds(50))
+        try await recordBackup(.failed(exitCode: 1, reason: "x"), in: world)
+        await world.state.deliverAlerts()
+        world.clock.advance(10 * 60)
+        await world.state.deliverAlerts()
+        #expect(await world.state.status().plans.first?.alerts == [.backupFailed])
+        #expect(await notifier.authorisationCalls == 1)
+
+        world.clock.advance(1)
+        await world.state.deliverAlerts()
+        #expect(await notifier.authorisationCalls == 2)
+        #expect(await world.state.status().plans.first?.alerts == [.backupFailed, .notificationsOff])
+        #expect(await notifier.postCalls == 0)
+
+        // A later call answers true: the warning clears and the alert goes out.
+        await notifier.answer()
+        while await !world.state.outstandingNotifierCalls.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        await world.state.deliverAlerts()
+        #expect(await world.state.status().plans.first?.alerts == [.backupFailed])
+        #expect(await notifier.posted.map(\.title) == ["Backup failed — Home"])
     }
 }

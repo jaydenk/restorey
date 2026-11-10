@@ -136,7 +136,9 @@ and Full Disk Access has one banner however many plans need it. The agent checks
 a plan's status changes, and keeps the bookkeeping in `state.json` (`activeAlerts`), so a restart doesn't
 repeat a recent notification. Each call to the notification centre gets 10 s; one that doesn't answer counts
 as not delivered and never holds up a backup; while a call is still waiting for an answer, no second one is
-made, and a permission check that doesn't answer keeps the last answer it gave. If `config.json` or `state.json` can't be read, the agent posts
+made, and a permission check that doesn't answer keeps the last answer it gave. A call still waiting after
+10 minutes is abandoned and tried afresh; an abandoned permission check shows "notifications off" until
+macOS answers again. If `config.json` or `state.json` can't be read, the agent posts
 one notification, "Restorey has stopped — its settings can't be read", on the same schedule.
 
 The agent needs its own notification permission, separate from the app's, and macOS reports a notification

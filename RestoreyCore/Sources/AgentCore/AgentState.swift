@@ -69,10 +69,13 @@ public actor AgentState {
     /// The status that raised each plan's `checkInRejected`, for the notification's text.
     var checkInRejectedStatus: [UUID: Int] = [:]
     /// Notifier calls still suspended, by key (`authorisation`, or `post.<identifier>`), even past their
-    /// timeout. No second call with the same key is made until the first returns.
-    var outstandingNotifierCalls: Set<String> = []
+    /// timeout, with the call's token and when it started. No second call with the same key is made
+    /// until the first returns, or until it has been held for `notifierCallAbandonment`.
+    var outstandingNotifierCalls: [String: (token: UUID, since: Date)] = [:]
     /// The notifier's last answer about authorisation; `.none` until it has answered once.
     var lastAuthorisation: Bool?? = .none
+    /// An authorisation call was abandoned and no answer has come since: notifications aren't working.
+    var authorisationAbandoned = false
 
     private var observer: (@Sendable (AgentStatus) -> Void)?
     private var lastProgressPush: Date?
