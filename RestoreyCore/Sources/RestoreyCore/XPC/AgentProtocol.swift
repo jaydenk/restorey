@@ -17,6 +17,8 @@ import Foundation
     /// → `AgentStatus`.
     func status(withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// `SavePlanRequest` → `AgentStatus`. The agent is the only writer of config and secrets.
+    /// `plan.hasCheckInURL == false` deletes any stored check-in URL, so callers carry it over from the
+    /// stored plan like any other field and set it false only when the user removes the URL.
     func savePlan(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// Removes the plan, its secrets, credentials file and history. Never touches the repository.
     func deletePlan(_ id: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)

@@ -84,7 +84,14 @@ struct DeveloperView: View {
                 if model.selectedPlanID == nil {
                     Toggle("Existing repository (adopt, never prune)", isOn: $model.adoptExisting)
                 }
-                SecureField("Check-in URL (optional)", text: $model.checkInURL)
+                if model.selectedPlanID != nil {
+                    LabeledContent("Check-in URL", value: model.checkInSummary)
+                }
+                SecureField(model.selectedPlan?.hasCheckInURL == true ? "New check-in URL" : "Check-in URL (optional)",
+                            text: $model.checkInURL)
+                if model.selectedPlan?.hasCheckInURL == true {
+                    Toggle("Remove check-in URL", isOn: $model.removeCheckInURL)
+                }
                 LabeledContent("Sources (one per line)") {
                     TextEditor(text: $model.sources)
                         .font(.system(.body, design: .monospaced))
@@ -92,7 +99,7 @@ struct DeveloperView: View {
                 }
             }
             if model.selectedPlanID != nil {
-                Text("Leave the password, key ID or secret empty to keep the saved one. An empty check-in URL removes it.")
+                Text("Leave a secret or the check-in URL empty to keep the saved one. Use \"Remove check-in URL\" to remove it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

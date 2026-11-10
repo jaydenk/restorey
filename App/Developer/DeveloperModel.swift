@@ -29,6 +29,8 @@ final class DeveloperModel {
     /// One absolute path per line.
     var sources = ""
     var checkInURL = ""
+    /// "Remove check-in URL": the only way to clear a saved one (Ruling R53).
+    var removeCheckInURL = false
     var hostLabel = Host.current().localizedName ?? "Mac"
     var adoptExisting = false
     /// The last action's result or error.
@@ -46,6 +48,9 @@ final class DeveloperModel {
     var plans: [Plan] { supervisor.status?.plans.map(\.plan) ?? [] }
 
     var selectedPlan: Plan? { plans.first { $0.id == selectedPlanID } }
+
+    /// The read-only "Check-in URL: saved / none" line, from the stored plan.
+    var checkInSummary: String { selectedPlan?.hasCheckInURL == true ? "saved" : "none" }
 
     /// The live status, pretty-printed. Plans hold no secrets, so it is safe to show.
     var statusJSON: String {
@@ -80,6 +85,7 @@ final class DeveloperModel {
         secret = ""
         repositoryPassword = ""
         checkInURL = ""
+        removeCheckInURL = false
     }
 
     // MARK: Actions
@@ -150,6 +156,11 @@ final class DeveloperModel {
     }
 
     func makeRequest() throws -> SavePlanRequest {
+        // The plan is chosen but the status (refetched after a reconnect) doesn't list it yet: saving now
+        // would make a duplicate new plan.
+        if selectedPlanID != nil, selectedPlan == nil {
+            throw FormError(description: "Plan details are still loading — try again in a moment")
+        }
         let repository = try makeRepository()
         let sourceList = sources.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
@@ -172,8 +183,9 @@ final class DeveloperModel {
                 hostLabel: hostLabel, sources: sourceList,
                 exclusions: DefaultExclusions.paths(home: home, identity: identity), now: Date())
         }
-        // An empty field removes the check-in URL: the agent saves `false` and deletes the secret.
-        plan.hasCheckInURL = !checkInURL.isEmpty
+        // Empty means unchanged; only "Remove check-in URL" clears it (the agent then deletes the secret).
+        let checkIn = try checkInIntent(existing: plan.hasCheckInURL, field: checkInURL, remove: removeCheckInURL)
+        plan.hasCheckInURL = checkIn.hasCheckInURL
 
         var secrets: [SecretEntry] = []
         if !repositoryPassword.isEmpty { secrets.append(SecretEntry(key: .repositoryPassword(plan.id), value: repositoryPassword)) }
@@ -181,7 +193,7 @@ final class DeveloperModel {
             if !keyID.isEmpty { secrets.append(SecretEntry(key: .s3AccessKeyID(plan.id), value: keyID)) }
             if !secret.isEmpty { secrets.append(SecretEntry(key: .s3SecretAccessKey(plan.id), value: secret)) }
         }
-        if !checkInURL.isEmpty { secrets.append(SecretEntry(key: .checkInURL(plan.id), value: checkInURL)) }
+        if let url = checkIn.secret { secrets.append(SecretEntry(key: .checkInURL(plan.id), value: url)) }
         return SavePlanRequest(plan: plan, secrets: secrets)
     }
 

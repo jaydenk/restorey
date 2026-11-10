@@ -277,6 +277,10 @@ public actor AgentState {
     ///
     /// A changed check-in URL, or none (`hasCheckInURL` false), clears `checkInRejected` (Ruling R48): that
     /// verdict was about the old URL, and with no URL it could never clear.
+    ///
+    /// `hasCheckInURL: false` deletes any stored check-in URL (and a check-in URL sent with it is refused).
+    /// Clients must carry `hasCheckInURL` over from the stored plan like any other field, since they can't
+    /// read the URL back: sending `false` for a plan that has one removes its dead-man's switch.
     public func savePlan(_ request: SavePlanRequest) async throws -> AgentStatus {
         try requireMutable()
         let errors = request.plan.validationErrors()
