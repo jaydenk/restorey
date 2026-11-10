@@ -2,7 +2,9 @@ import Foundation
 import RestoreyCore
 
 /// The app's one-off restic actions: creating a repository and listing one for adoption. No preflight,
-/// no probe, no pings and no maintenance.
+/// no probe, no pings and no maintenance. An action that would start a restic step while the agent is
+/// winding down (it waited in the repository's queue while a drain began) is refused as draining,
+/// with no record (Ruling R55).
 extension PlanRunner {
     /// Runs `restic init`. Never called on its own: only this explicit action creates a repository.
     public func createRepository(planID: UUID) async throws -> AgentStatus {
@@ -30,14 +32,17 @@ extension PlanRunner {
         case .failure(let error): return .failure(error)
         case .success(let ready): session = ready
         }
-        let (probe, created) = await deps.queues.run(repository: session.key) { [self] () async -> (StepResult, StepResult?) in
+        let steps = await deps.queues.run(repository: session.key) { [self] () async -> (StepResult, StepResult?)? in
+            guard !(await isWindingDown()) else { return nil }
             let probe = await runStep(.catConfig, trigger: .manual, session: session, handle: handle)
             await commit(probe.record, plan: session.plan)
-            guard probe.record.outcome == .repositoryMissing else { return (probe, nil) }
+            guard probe.record.outcome == .repositoryMissing, !(await isWindingDown()) else { return (probe, nil) }
             let created = await runStep(.initRepository, trigger: .manual, session: session, handle: handle)
             await commit(created.record, plan: session.plan)
             return (probe, created)
         }
+        guard let steps else { return .failure(.draining) }
+        let (probe, created) = steps
         switch probe.record.outcome {
         case .success: return .failure(.repositoryAlreadyExists)
         case .repositoryMissing: break
@@ -46,7 +51,8 @@ extension PlanRunner {
                 repository: session.plan.repository, outcome: outcome, stoppedReason: probe.stoppedReason,
                 stderr: probe.tail)))
         }
-        guard let created else { return .failure(.unknownPlan) }
+        // A missing repository and no init: the agent began winding down after the probe.
+        guard let created else { return .failure(.draining) }
         if case .success = created.record.outcome { return .success(()) }
         return .failure(.operationFailed(
             "Restorey couldn't create the repository: \(Self.explain(created.record.outcome, stoppedReason: created.stoppedReason))"))
@@ -78,9 +84,12 @@ extension PlanRunner {
         case .failure(let error): return .failure(error)
         case .success(let ready): session = ready
         }
-        let step = await deps.queues.run(repository: session.key) { [self] in
-            await runStep(.snapshots(allHosts: true), trigger: .manual, session: session, handle: handle, collector: collector)
+        let listed = await deps.queues.run(repository: session.key) { [self] () async -> StepResult? in
+            guard !(await isWindingDown()) else { return nil }
+            return await runStep(
+                .snapshots(allHosts: true), trigger: .manual, session: session, handle: handle, collector: collector)
         }
+        guard let step = listed else { return .failure(.draining) }
         await commit(step.record, plan: session.plan)
         guard case .success = step.record.outcome else {
             return .failure(.operationFailed(Self.explain(step.record.outcome, stoppedReason: step.stoppedReason)))

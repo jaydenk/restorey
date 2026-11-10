@@ -185,6 +185,7 @@ struct RunOutcomeTests {
         try roundTrip(SkipReason.constrainedNetwork, #"{"type":"constrainedNetwork"}"#)
         try roundTrip(SkipReason.noNetwork, #"{"type":"noNetwork"}"#)
         try roundTrip(SkipReason.volumeNotMounted("Backup"), #"{"type":"volumeNotMounted","volume":"Backup"}"#)
+        try roundTrip(SkipReason.agentUpdating, #"{"type":"agentUpdating"}"#)
     }
 
     @Test func triggerJSONIsAString() throws {

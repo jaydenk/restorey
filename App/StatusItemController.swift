@@ -160,6 +160,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             case .constrainedNetwork: return "Skipped on a low data network"
             case .noNetwork: return "Skipped: no network"
             case .volumeNotMounted(let volume): return "Skipped: \(volume) isn't connected"
+            case .agentUpdating: return "Skipped while Restorey was updating"
             }
         }
     }

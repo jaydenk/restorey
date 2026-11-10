@@ -13,8 +13,10 @@ import Synchronization
 /// Calls that write are serialised through a FIFO write gate, so two requests arriving together over
 /// XPC can never interleave across the stores' `await`s and lose an update.
 ///
-/// While draining (`prepareForRestart`), every mutating call except `pause` is refused. Pause stays
-/// allowed so the user can still stop a long first backup; the next agent honours `pausedUntil`.
+/// While draining (`prepareForRestart`, or `restartForReplacedBinary` when the agent finds its own
+/// executable replaced), every mutating call except `pause` is refused. Pause stays allowed so the user
+/// can still stop a long first backup; the next agent honours `pausedUntil`. The runner starts no new
+/// restic step while draining: the step in flight finishes, nothing after it (Ruling R55).
 public actor AgentState {
     public static let pauseDuration: TimeInterval = 3600
     /// Progress pushes are at most this often; phase changes are always pushed.
@@ -46,6 +48,18 @@ public actor AgentState {
     private var deleting: Set<UUID> = []
     /// `prepareForRestart` callers, woken whenever the agent may have become idle.
     private var drainWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// How the agent exits once a restart drain is over, so launchd's `KeepAlive` starts the binary on
+    /// disk, and where it says why (`attach(restartExit:log:)`).
+    private var restartExit: (@Sendable () -> Void)?
+    private var restartLog: @Sendable (String) -> Void = { _ in }
+    /// The agent found its own executable replaced and began a restart drain itself.
+    private var replacementNoticed = false
+    /// The app's restart drains (`restart(reply:)`) not yet replied to: the agent never exits before them.
+    private var restartRepliesOwed = 0
+    /// A restart drain is over, so the agent should exit once no reply is owed.
+    private var exitWanted = false
+    private var exited = false
 
     private var writeInFlight = false
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
@@ -472,6 +486,51 @@ public actor AgentState {
     @discardableResult
     public func prepareForRestart(pingBudget: Duration = .seconds(180)) async -> Bool {
         await drain(.restart, pingBudget: pingBudget)
+    }
+
+    /// The app's restart: `prepareForRestart`, then `reply` with its result, then the restart exit, once
+    /// every restart drain asked for has been replied to. An agent that began a restart drain itself
+    /// (`restartForReplacedBinary`) waits for this reply before exiting, so it is never lost.
+    public func restart(pingBudget: Duration = .seconds(180), reply: @Sendable (Bool) -> Void) async {
+        restartRepliesOwed += 1
+        let flushed = await prepareForRestart(pingBudget: pingBudget)
+        reply(flushed)
+        restartRepliesOwed -= 1
+        exitWanted = true
+        exitIfDone()
+    }
+
+    /// Called once at startup with how the agent exits for a restart and where it logs why.
+    public func attach(restartExit: @escaping @Sendable () -> Void, log: @escaping @Sendable (String) -> Void) {
+        self.restartExit = restartExit
+        restartLog = log
+    }
+
+    /// The agent's executable on disk is no longer the one it was started from (an update replaced the
+    /// bundle): drain for a restart on the agent's own initiative, then exit so launchd starts the new
+    /// binary (Ruling R55). New runs are refused from now on; the restic step in flight finishes. Only
+    /// the first call does anything.
+    public func restartForReplacedBinary(pingBudget: Duration = .seconds(180)) {
+        guard !replacementNoticed else { return }
+        replacementNoticed = true
+        drainPurpose = .restart
+        isDraining = true
+        restartLog(
+            "This agent's executable was replaced by an update: finishing the restic step in progress, then exiting so launchd starts the new one")
+        Task {
+            if !(await drain(.restart, pingBudget: pingBudget)) {
+                restartLog("Gave up waiting for check-in pings after 3 minutes; some may not have been sent")
+            }
+            exitWanted = true
+            exitIfDone()
+        }
+    }
+
+    private func exitIfDone() {
+        guard exitWanted, restartRepliesOwed == 0, !exited, let restartExit else { return }
+        exited = true
+        if replacementNoticed { restartLog("Exiting so launchd starts the agent's replaced executable") }
+        restartExit()
     }
 
     /// The same drain, for the app's `unregister()` then `register()`: the agent stays up, drained and

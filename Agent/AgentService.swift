@@ -11,21 +11,18 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     private let notifier: Notifier
     /// `ExecutableFingerprint` of the binary at launch, reported in `hello`.
     private let executableFingerprint: String?
-    /// Called once a drain has been replied to, to exit so launchd starts the new binary.
-    private let afterDrain: @Sendable () -> Void
     /// Called after a change that can make a plan due now: a save, a recovery kit confirmation, a resume.
     private let plansChanged: @Sendable () -> Void
 
     init(
         state: AgentState, log: AppLog, notifier: Notifier, executableFingerprint: String?,
-        plansChanged: @escaping @Sendable () -> Void, afterDrain: @escaping @Sendable () -> Void
+        plansChanged: @escaping @Sendable () -> Void
     ) {
         self.executableFingerprint = executableFingerprint
         self.state = state
         self.log = log
         self.notifier = notifier
         self.plansChanged = plansChanged
-        self.afterDrain = afterDrain
     }
 
     // MARK: AgentXPC
@@ -137,26 +134,31 @@ final class AgentService: NSObject, AgentXPC, Sendable {
         drain(.reregistration, reply: reply)
     }
 
-    /// Replies once no run is in flight. Only a restart drain then exits.
+    /// Replies once no run is in flight. Only a restart drain then exits, through the state's restart
+    /// exit (attached in main.swift), which also waits for any other restart reply still owed.
     private func drain(_ purpose: DrainPurpose, reply: @escaping @Sendable (Data?, String?) -> Void) {
-        Task { [state, log, afterDrain] in
+        Task { [state, log] in
             log.info(purpose.exitsAfterwards
-                ? "Asked to restart: finishing any run in progress first"
-                : "Asked to drain before re-registration: finishing any run in progress first")
-            let flushed = purpose == .restart
-                ? await state.prepareForRestart() : await state.prepareForReregistration()
-            if !flushed {
-                log.error("Gave up waiting for check-in pings after 3 minutes; some may not have been sent")
+                ? "Asked to restart: finishing the restic step in progress first"
+                : "Asked to drain before re-registration: finishing the restic step in progress first")
+            let answer: @Sendable (Bool) -> Void = { flushed in
+                if !flushed {
+                    log.error("Gave up waiting for check-in pings after 3 minutes; some may not have been sent")
+                }
+                log.info(purpose.exitsAfterwards
+                    ? "No run in progress; exiting so launchd starts the agent again"
+                    : "No run in progress; staying up, drained, until the app re-registers the agent")
+                do {
+                    reply(try XPCCoding.encode(DrainReply(drained: true)), nil)
+                } catch {
+                    reply(nil, "Restorey's agent couldn't encode its reply: \(error.localizedDescription)")
+                }
             }
-            log.info(purpose.exitsAfterwards
-                ? "No run in progress; exiting so launchd starts the agent again"
-                : "No run in progress; staying up, drained, until the app re-registers the agent")
-            do {
-                reply(try XPCCoding.encode(DrainReply(drained: true)), nil)
-            } catch {
-                reply(nil, "Restorey's agent couldn't encode its reply: \(error.localizedDescription)")
+            if purpose == .restart {
+                await state.restart(reply: answer)
+            } else {
+                answer(await state.prepareForReregistration())
             }
-            if purpose.exitsAfterwards { afterDrain() }
         }
     }
 

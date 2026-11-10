@@ -1,14 +1,18 @@
 import Foundation
 
-/// Why a run did not start. Produced by the conditions gate (Task 8).
+/// Why a run did not start. Produced by the conditions gate (Task 8), and by the runner for a backup
+/// that an agent being replaced won't start (`agentUpdating`, Ruling R55).
 /// JSON: `{"type":"onBattery"}`, `{"type":"batteryBelow","percent":20}`,
-/// `{"type":"volumeNotMounted","volume":"Backup"}`.
+/// `{"type":"volumeNotMounted","volume":"Backup"}`, `{"type":"agentUpdating"}`.
 public enum SkipReason: Codable, Sendable, Equatable {
     case onBattery
     case batteryBelow(Int)
     case constrainedNetwork
     case noNetwork
     case volumeNotMounted(String)
+    /// The agent was draining before an update (or found its binary replaced), so it started no new
+    /// restic step. The next agent runs the backup at once (`nextRunDate`).
+    case agentUpdating
 
     private enum CodingKeys: String, CodingKey { case type, percent, volume }
 
@@ -20,6 +24,7 @@ public enum SkipReason: Codable, Sendable, Equatable {
         case "constrainedNetwork": self = .constrainedNetwork
         case "noNetwork": self = .noNetwork
         case "volumeNotMounted": self = .volumeNotMounted(try c.decode(String.self, forKey: .volume))
+        case "agentUpdating": self = .agentUpdating
         case let other: throw DecodingError.dataCorruptedError(
             forKey: .type, in: c, debugDescription: "Unknown skip reason \(other)")
         }
@@ -37,6 +42,7 @@ public enum SkipReason: Codable, Sendable, Equatable {
         case .volumeNotMounted(let volume):
             try c.encode("volumeNotMounted", forKey: .type)
             try c.encode(volume, forKey: .volume)
+        case .agentUpdating: try c.encode("agentUpdating", forKey: .type)
         }
     }
 }

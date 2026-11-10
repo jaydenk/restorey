@@ -52,6 +52,8 @@ struct SchedulerCoreTests {
             events.append("refresh")
         }
 
+        func isWindingDown() async -> Bool { false }
+
         func runBackup(planID: UUID, trigger: RunTrigger) async throws -> RunRecord {
             if let error = errors[planID] { throw error }
             let name = entries.first { $0.plan.id == planID }?.plan.name ?? "?"

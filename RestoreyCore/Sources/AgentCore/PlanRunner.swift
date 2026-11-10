@@ -31,6 +31,9 @@ public struct RunnerDependencies: Sendable {
     public var sleepPrevention: SleepPrevention?
     /// Writes a line to the agent's own log (`agent.log`), for problems the user may need to find.
     public var agentLog: @Sendable (String) -> Void
+    /// True once the agent's executable on disk is no longer the one it was started from (an update
+    /// replaced the bundle). Checked before every restic step and on every scheduler tick (Ruling R55).
+    public var binaryReplaced: @Sendable () -> Bool
 
     public init(
         state: AgentState, secrets: any SecretStore, queues: RepositoryQueues, supervisor: SupervisedProcesses,
@@ -41,7 +44,8 @@ public struct RunnerDependencies: Sendable {
         now: @escaping @Sendable () -> Date,
         interruptGracePeriod: Duration = .seconds(10),
         sleepPrevention: SleepPrevention? = nil,
-        agentLog: @escaping @Sendable (String) -> Void = { _ in }
+        agentLog: @escaping @Sendable (String) -> Void = { _ in },
+        binaryReplaced: @escaping @Sendable () -> Bool = { false }
     ) {
         self.state = state
         self.secrets = secrets
@@ -61,6 +65,7 @@ public struct RunnerDependencies: Sendable {
         self.interruptGracePeriod = interruptGracePeriod
         self.sleepPrevention = sleepPrevention
         self.agentLog = agentLog
+        self.binaryReplaced = binaryReplaced
     }
 }
 
@@ -69,12 +74,17 @@ public struct RunnerDependencies: Sendable {
 /// 1. refusals that need no restic: an invalid plan (Ruling R7) or an unconfirmed recovery kit;
 /// 2. `preflight`;
 /// 3. the Full Disk Access probe (missing: a failure and the `fullDiskAccessMissing` alert, no restic);
-/// 4. the check-in `/start` ping;
-/// 5. the backup, through the repository's queue, then classified;
+/// 4. the repository's queue; in its slot, a plain `unlock` first if a restic died there by a signal;
+/// 5. the check-in `/start` ping, then the backup, classified;
 /// 6. history and alerts (written after every step, so an agent that dies mid-run loses nothing);
 /// 7. the check-in end ping, as soon as the backup's record is committed (Ruling R37);
 /// 8. in the same queue slot, after a successful backup: `forget`, `prune` and a plain `unlock`
 ///    followed by `check`, when each is due (`maintenance`).
+///
+/// No restic step starts while the agent is winding down (`isWindingDown`: draining, or its executable
+/// replaced), because restic would run the replaced helper, which this agent refuses (Ruling R55). The
+/// step in flight finishes. A backup that hadn't started is recorded `.skipped(.agentUpdating)` with no
+/// ping, and the next agent runs it at once; maintenance not yet started waits for the next backup.
 ///
 /// A failure found before `/start` (an invalid plan, a missing source, Full Disk Access missing) sends
 /// `/fail` with the reason and no `/start` (Ruling R33). A skip, a pause, and a plan whose recovery kit
@@ -203,10 +213,15 @@ public actor PlanRunner {
             switch prepare(plan) {
             case .ready(let session):
                 unlocked.insert(key)
-                let step = await deps.queues.run(repository: key) { [self] in
-                    await runStep(.unlock, trigger: .scheduled, session: session, handle: handle)
+                let step = await deps.queues.run(repository: key) { [self] () async -> StepResult? in
+                    guard !(await isWindingDown()) else { return nil }
+                    return await runStep(.unlock, trigger: .scheduled, session: session, handle: handle)
                 }
-                await commit(step.record, plan: plan)
+                if let step {
+                    await commit(step.record, plan: plan)
+                } else {
+                    skippedUnlock(plan, reason: AgentError.draining.message)
+                }
             case .failed(_, let reason, _):
                 skippedUnlock(plan, reason: reason)
             }
@@ -314,10 +329,9 @@ public actor PlanRunner {
         if fda == .missing { return await refuse(failed(Self.fullDiskAccessMissing), fda: fda, failPing: true) }
         if let intent = handle.intent { return await refuse(intent == .pause ? .paused : .cancelled, fda: fda) }
 
-        for ping in pingsAtStart(trigger: trigger) { queuePing(ping, planID: planID) }
-
         switch prepare(plan) {
         case .failed(let outcome, let reason, let redactor):
+            for ping in pingsAtStart(trigger: trigger) { queuePing(ping, planID: planID) }
             let record = RunRecord(
                 id: UUID(), planID: planID, operation: .backup, trigger: trigger, startedAt: startedAt,
                 endedAt: deps.now(), outcome: outcome, summary: nil, logFile: "")
@@ -326,7 +340,7 @@ public actor PlanRunner {
             return record
         case .ready(let session):
             return await deps.queues.run(repository: session.key) { [self] in
-                await backupSlot(session: session, trigger: trigger, handle: handle, fda: fda)
+                await backupSlot(session: session, trigger: trigger, handle: handle, fda: fda, startedAt: startedAt)
             }.record
         }
     }
@@ -340,16 +354,27 @@ public actor PlanRunner {
 
     /// The backup and its maintenance, in one turn of the repository's queue. The backup's end ping is
     /// queued as soon as its record is committed, before any maintenance (Ruling R37): it reports the
-    /// backup, and a slow or failing check must neither delay nor change it.
+    /// backup, and a slow or failing check must neither delay nor change it. Before each step, an agent
+    /// winding down stops (Ruling R55): before the backup, it records it `.skipped(.agentUpdating)`.
     private func backupSlot(
-        session: RunSession, trigger: RunTrigger, handle: RunHandle, fda: FDAProbeResult
+        session: RunSession, trigger: RunTrigger, handle: RunHandle, fda: FDAProbeResult, startedAt: Date
     ) async -> StepResult {
         let plan = session.plan
+        func skippedForUpdate() async -> StepResult {
+            let record = RunRecord(
+                id: UUID(), planID: plan.id, operation: .backup, trigger: trigger, startedAt: startedAt,
+                endedAt: deps.now(), outcome: .skipped(.agentUpdating), summary: nil, logFile: "")
+            await commit(record, plan: plan, fda: fda)
+            return StepResult(record: record, stoppedReason: nil, tail: [])
+        }
         if needsUnlock.contains(session.key) {
+            if await isWindingDown() { return await skippedForUpdate() }
             let unlock = await runStep(.unlock, trigger: trigger, session: session, handle: handle)
             await commit(unlock.record, plan: plan)
         }
 
+        if await isWindingDown() { return await skippedForUpdate() }
+        for ping in pingsAtStart(trigger: trigger) { queuePing(ping, planID: plan.id) }
         let backup = await runStep(.backup, trigger: trigger, session: session, handle: handle, progress: true)
         await commit(backup.record, plan: plan, fda: fda, stoppedReason: backup.stoppedReason)
         queueEndPing(backup, redactor: session.redactor)
@@ -358,7 +383,8 @@ public actor PlanRunner {
             return backup
         }
         for op in Self.maintenance(plan: plan, history: history, after: backup.record.outcome, now: deps.now()) {
-            guard handle.intent == nil else { break }
+            // Not started while winding down: the next agent runs it at its next backup.
+            guard handle.intent == nil, !(await isWindingDown()) else { break }
             let step = await runStep(op, trigger: trigger, session: session, handle: handle)
             await commit(step.record, plan: plan)
             switch step.record.outcome {
@@ -370,6 +396,19 @@ public actor PlanRunner {
             }
         }
         return backup
+    }
+
+    // MARK: Winding down (Ruling R55)
+
+    /// True when no new restic step may start: the agent is draining (the app asked, before an update or
+    /// a re-registration), or its executable has been replaced, which begins a restart drain now. A
+    /// restic started by a replaced agent runs the new helper, which this agent's XPC listener refuses
+    /// (its signature seals an Info.plist no longer on disk), so the step would fail at the password.
+    public func isWindingDown() async -> Bool {
+        if await deps.state.isDraining { return true }
+        guard deps.binaryReplaced() else { return false }
+        await deps.state.restartForReplacedBinary()
+        return true
     }
 
     // MARK: Steps

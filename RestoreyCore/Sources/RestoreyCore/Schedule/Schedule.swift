@@ -11,6 +11,9 @@ private let lockedRetryInterval: TimeInterval = 15 * 60
 ///   or no confirmed recovery kit.
 /// - While `pausedUntil` is in the future, that is the answer. Once it has passed, the plan is due
 ///   at once (`now`), as a catch-up, however recently it last ran.
+/// - When its newest backup record is `.skipped(.agentUpdating)`, the plan is due now: that backup never
+///   ran, because the agent was being replaced (Ruling R55). Newer records of other operations (the next
+///   agent's recovery unlock) don't change that.
 /// - With no `lastAttemptAt`, the plan is due now.
 /// - After a backup that ended `.locked` (the latest record in `recent`), the next run is
 ///   `lastAttemptAt` plus 15 minutes.
@@ -25,6 +28,7 @@ public func nextRunDate(plan: Plan, history: PlanRunHistory, now: Date) -> Date 
     if let pausedUntil = history.pausedUntil {
         return pausedUntil > now ? pausedUntil : now
     }
+    if history.recent.first(where: { $0.operation == .backup })?.outcome == .skipped(.agentUpdating) { return now }
     guard let lastAttemptAt = history.lastAttemptAt else { return now }
 
     let delay: TimeInterval

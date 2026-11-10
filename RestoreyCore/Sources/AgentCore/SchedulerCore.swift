@@ -23,6 +23,9 @@ public protocol SchedulerRunner: Sendable {
     /// Pushes the status to the app if time alone has changed a plan's phase, and starts delivering the
     /// alerts that have fallen due without waiting for it. Called at the start of every tick.
     func refreshStatus() async
+    /// True when the agent is draining or its executable has been replaced (which begins a restart
+    /// drain). Checked at the start of every tick, so an idle agent notices an update within a minute.
+    func isWindingDown() async -> Bool
 }
 
 /// Decides when each plan backs up (spec §5.5). Every minute, and on every nudge, it starts each plan
@@ -31,8 +34,9 @@ public protocol SchedulerRunner: Sendable {
 /// queue serialises those that share a repository.
 ///
 /// Missed runs, runs after a pause, and runs after waking or a volume mounting are catch-ups; a run
-/// after a lock is a retry. When the runner refuses because the agent is draining, the scheduler stops
-/// for good (the agent is about to exit). Any other refusal is logged once per plan per reason.
+/// after a lock is a retry. When the agent is winding down (a tick finds it draining or its executable
+/// replaced, or the runner refuses because it is draining), the scheduler stops for good: the agent is
+/// about to exit or be re-registered. Any other refusal is logged once per plan per reason.
 public actor SchedulerCore {
     public static let tickInterval: Duration = .seconds(60)
     /// How long a wake waits for the network before catching up anyway.
@@ -198,6 +202,10 @@ public actor SchedulerCore {
             tickAgain = false
             let requests = pending
             pending = Requests()
+            if await runner.isWindingDown() {
+                stop()
+                return
+            }
             await runner.refreshStatus()
             isReading = true
             endedDuringRead = []

@@ -47,11 +47,14 @@ final class FixtureClock: Sendable {
 /// Records every ping, in order, optionally taking `delay` over each like a slow check-in service.
 actor RecordingCheckIn: CheckInSending {
     private(set) var pings: [CheckInPing] = []
+    /// The same pings, by plan.
+    private(set) var pingsByPlan: [UUID: [CheckInPing]] = [:]
     private let delay: Duration
     init(delay: Duration = .zero) { self.delay = delay }
     func send(_ ping: CheckInPing, planID: UUID) async {
         if delay > .zero { try? await Task.sleep(for: delay) }
         pings.append(ping)
+        pingsByPlan[planID, default: []].append(ping)
     }
 }
 
@@ -96,13 +99,16 @@ final class RunnerFixture: Sendable {
     /// "create" and "release" for each idle-sleep assertion the runner's `SleepPrevention` took.
     let sleepAssertions: Locked<[String]>
     let sleepPrevention: SleepPrevention
+    /// What the runner's `binaryReplaced` returns.
+    let binaryReplaced: Locked<Bool>
     let planID: UUID
 
     private init(
         root: URL, restic: URL, clock: FixtureClock, secrets: InMemorySecretStore, checkIn: RecordingCheckIn,
         fda: Locked<FDAProbeResult>, power: Locked<PowerState>, supervisor: SupervisedProcesses,
         state: AgentState, runner: PlanRunner, dependencies: RunnerDependencies, agentLog: Locked<[String]>,
-        sleepAssertions: Locked<[String]>, sleepPrevention: SleepPrevention, planID: UUID
+        sleepAssertions: Locked<[String]>, sleepPrevention: SleepPrevention, binaryReplaced: Locked<Bool>,
+        planID: UUID
     ) {
         self.root = root
         source = root.appendingPathComponent("source")
@@ -126,6 +132,7 @@ final class RunnerFixture: Sendable {
         self.agentLog = agentLog
         self.sleepAssertions = sleepAssertions
         self.sleepPrevention = sleepPrevention
+        self.binaryReplaced = binaryReplaced
         self.planID = planID
     }
 
@@ -183,6 +190,7 @@ final class RunnerFixture: Sendable {
         let power = Locked(PowerState(onBattery: false, percent: 100))
         let supervisor = SupervisedProcesses()
         let sleepAssertions = Locked<[String]>([])
+        let binaryReplaced = Locked(false)
         let sleepPrevention = SleepPrevention(api: SleepPrevention.AssertionAPI(
             create: { _ in sleepAssertions.mutate { $0.append("create") }; return 1 },
             release: { _ in sleepAssertions.mutate { $0.append("release") } }))
@@ -215,7 +223,8 @@ final class RunnerFixture: Sendable {
             now: { clock.now },
             interruptGracePeriod: gracePeriod,
             sleepPrevention: sleepPrevention,
-            agentLog: { line in agentLog.mutate { $0.append(line) } })
+            agentLog: { line in agentLog.mutate { $0.append(line) } },
+            binaryReplaced: { binaryReplaced.value })
         let runner = PlanRunner(dependencies: dependencies)
         await runner.recoverAfterStart()
         await state.attach(runner: runner)
@@ -224,7 +233,7 @@ final class RunnerFixture: Sendable {
             root: root, restic: restic, clock: clock, secrets: secrets, checkIn: checkIn, fda: fda,
             power: power, supervisor: supervisor, state: state, runner: runner, dependencies: dependencies,
             agentLog: agentLog, sleepAssertions: sleepAssertions, sleepPrevention: sleepPrevention,
-            planID: plan.id)
+            binaryReplaced: binaryReplaced, planID: plan.id)
         if createRepository { _ = try await runner.createRepository(planID: plan.id) }
         if confirmKit { _ = try await state.confirmRecoveryKit(plan.id) }
         return fixture
@@ -271,6 +280,17 @@ final class RunnerFixture: Sendable {
         change(&plan)
         _ = try await state.savePlan(SavePlanRequest(
             plan: plan, secrets: [SecretEntry(key: .repositoryPassword(plan.id), value: Self.password)]))
+    }
+
+    /// Adds a second plan, recovery kit confirmed, backing up the same source to the same repository.
+    func addPlanOnTheSameRepository(name: String) async throws -> UUID {
+        let plan = Plan.newHotPlan(
+            name: name, repository: .raw(repository: repository.path, environmentNames: []),
+            origin: .adopted, hostLabel: "fixturehost", sources: [source.path], exclusions: [], now: clock.now)
+        _ = try await state.savePlan(SavePlanRequest(
+            plan: plan, secrets: [SecretEntry(key: .repositoryPassword(plan.id), value: Self.password)]))
+        _ = try await state.confirmRecoveryKit(plan.id)
+        return plan.id
     }
 
     /// Operations of `recent`, oldest first, which reads more naturally in assertions.

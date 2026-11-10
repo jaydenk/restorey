@@ -110,6 +110,27 @@ struct ScheduleTests {
         #expect(nextRunDate(plan: plan(), history: recovered, now: Self.now) == last.addingTimeInterval(Self.hour))
     }
 
+    /// A backup skipped because the agent was being replaced never happened: the next agent runs it at
+    /// once, even after its recovery's unlock has become the newest record (Ruling R55).
+    @Test func aBackupSkippedForAnUpdateIsDueAtOnce() {
+        let last = Self.now.addingTimeInterval(-60)
+        var h = history(lastAttempt: last, latest: .skipped(.agentUpdating))
+        #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == Self.now)
+        h.record(record(.success(snapshotID: nil), at: Self.now, operation: .unlock))
+        #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == Self.now)
+        // Other skips still wait for the interval, and a pause still wins.
+        let battery = history(lastAttempt: last, latest: .skipped(.onBattery))
+        #expect(nextRunDate(plan: plan(), history: battery, now: Self.now) == last.addingTimeInterval(Self.hour))
+        let until = Self.now.addingTimeInterval(600)
+        h.pausedUntil = until
+        #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == until)
+        // A newer backup supersedes it.
+        h.pausedUntil = nil
+        h.record(record(.success(snapshotID: "a"), at: last))
+        h.lastAttemptAt = last
+        #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == last.addingTimeInterval(Self.hour))
+    }
+
     @Test func pauseBeatsLockedRetry() {
         let last = Self.now.addingTimeInterval(-300)
         var h = history(lastAttempt: last, latest: .locked)

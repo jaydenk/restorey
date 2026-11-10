@@ -174,6 +174,21 @@ agent whose fingerprint differs from the file on disk, or that reports none, bef
 Automatic repairs run at most once an hour for each kind (restart, re-register), recorded in the app's `UserDefaults` so a relaunch doesn't repair
 again (a record from another version or build is ignored). A fault that survives one shows "Restart Agent".
 
+**Update during a run (Task 17 Step 5 (b), 10 Nov 2026 22:25 UTC (11 Nov 08:55)).** Build 3 → 4 was installed
+with `BUILD_NUMBER=4 scripts/install-dev.sh` while a backup ran. The drain was ordered correctly (the build 3 agent
+waited for restic, then exited), but the backup failed with `Fatal: Resolving password failed: exit status 1`.
+restic runs the helper from the bundle path, which now held build 4. The new helper connects to the old, still
+running agent, whose listener checks the client's code signature: the old process's signature seals an Info.plist
+no longer on disk, so validation fails (`xpc_support_check_token: status: -67030`, `errSecCSInfoPlistFailed`;
+"Received message forbidden due to code signing requirement"; the helper logged "The agent gave the helper
+nothing: XPC error: Couldn't communicate with a helper application."). Every new restic process an old agent
+starts after its bundle is replaced fails this way: the maintenance after a backup, a run waiting in the
+repository's queue, and every scheduled run of an agent nobody asked to drain. **Fix (Ruling R55):** the helper's
+requirement is unchanged. A draining agent starts no new restic step (a backup not yet started is recorded
+`skipped(agentUpdating)` with no ping, and is due at once for the next agent), and an agent checks before every
+restic step and on every scheduler tick whether the file at its executable path still matches its launch
+fingerprint. If not, it drains itself and exits 0 so launchd's `KeepAlive` starts the new binary.
+
 **Translocation detection on macOS 27.2 (26B123).** `SecTranslocateIsTranslocatedURL` is still exported by
 Security.framework, resolves through `dlsym` and returns success with `false` for non-translocated paths. A
 translocated path could not be made from a command-line process (`SecTranslocateCreateSecureDirectoryForURL`

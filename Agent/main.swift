@@ -16,6 +16,16 @@ if let code = HelperMode.exitCode(arguments: CommandLine.arguments) { exit(code)
 /// process keeps running the old one, and `hello` lets the app tell (fix round 3).
 let launchFingerprint = Bundle.main.executableURL.flatMap(ExecutableFingerprint.of)
 
+/// Whether the file at this process's executable path is no longer the binary it was started from (an
+/// update replaced the bundle), so a restic it starts would run a helper it refuses (Ruling R55). An
+/// unreadable file counts as replaced. Without a launch fingerprint nothing can be compared: false, or
+/// the agent would restart for ever.
+func executableReplaced() -> Bool {
+    guard let launchFingerprint else { return false }
+    guard let url = Bundle.main.executableURL else { return true }
+    return ExecutableFingerprint.of(url) != launchFingerprint
+}
+
 /// Objects that must live as long as the process: the XPC listener and its delegate (the listener
 /// holds its delegate weakly), and the MetricKit subscriber.
 var keptAlive: [AnyObject] = []
@@ -45,15 +55,18 @@ do {
             if let configError = await state.status().configError {
                 log.error("Not running any plan until the settings are fixed: \(configError)")
             }
+            // After a restart drain, the app's or the agent's own when it finds its executable replaced.
+            await state.attach(
+                restartExit: {
+                    // Give a reply time to leave before exiting; launchd's KeepAlive starts the new binary.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { exit(0) }
+                },
+                log: { log.info($0) })
             let notifier = Notifier()
             await state.attach(notifier: notifier, log: { log.info($0) })
             let service = AgentService(
                 state: state, log: log, notifier: notifier, executableFingerprint: launchFingerprint,
-                plansChanged: { scheduler.nudge(.configChanged) }
-            ) {
-                // Give the reply time to leave before exiting; launchd's KeepAlive starts the new binary.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { exit(0) }
-            }
+                plansChanged: { scheduler.nudge(.configChanged) })
             let listener = AgentListener(service: service, log: log)
             await state.setStatusObserver { listener.broadcast($0) }
             keptAlive.append(listener)
@@ -90,7 +103,8 @@ do {
                 preflightEnvironment: { observers.preflightEnvironment() },
                 now: { Date() },
                 sleepPrevention: SleepPrevention(api: SystemObservers.sleepAssertions) { log.error($0) },
-                agentLog: { log.error($0) }))
+                agentLog: { log.error($0) },
+                binaryReplaced: { executableReplaced() }))
             keptAlive.append(runner)
             // Recovery runs to completion before the runner is attached, so a run action that arrives
             // meanwhile is refused as "still starting up" rather than racing recovery. It runs after the
