@@ -4,7 +4,8 @@ A free, open-source macOS menu bar app that puts an Arq/Backblaze-style front en
 [restic](https://restic.net).
 
 > **Status: design stage.** There is no app to download yet. The design is approved and the
-> next step is a technical spike. Nothing here is ready to protect your data.
+> platform spike is done ([findings](docs/spike-findings.md)); the next step is the v0.1 plan.
+> Nothing here is ready to protect your data.
 
 ## What it will do
 
@@ -27,6 +28,7 @@ because the App Store sandbox rules out the Full Disk Access a backup tool needs
 - [Design](docs/superpowers/specs/2026-11-09-restorey-design.md)
 - [Menu bar and restore window mockup](docs/mockups/menubar-and-restore.html)
 - [Platform spike plan](docs/superpowers/plans/2026-11-10-platform-spike.md)
+- [Platform spike findings](docs/spike-findings.md) (throwaway spike code in [`spike/`](spike/))
 
 ## Restoring without Restorey
 

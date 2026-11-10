@@ -3,6 +3,22 @@
 Spike plan: `docs/superpowers/plans/2026-11-10-platform-spike.md`. Code: `spike/` (throwaway).
 Answers the open questions in spec §12.1. Times are UTC, with Adelaide local time in brackets.
 
+## Summary (10 Nov 2026)
+
+| Question (spec §12.1) | Verdict | Consequence for v0.1 |
+|---|---|---|
+| **H1** One FDA grant covers the agent and restic | **Confirmed**, under both Apple Development and Developer ID, and it survives a Developer ID N→N+1 update | One grant to Restorey.app. No two-item fallback is needed. Treat "operation not permitted" on sources as *FDA missing* (an error), not a warning |
+| **H2** Keychain password helper from launchd, no prompt | **Confirmed**: also while the screen is locked, and across a signing change | The helper is the agent app's own executable, which must embed a provisioning profile. **Confused deputy:** the owner chose to verify the parent chain plus a README statement |
+| **H3** Agent process shape | **Helper app (LSUIElement) confirmed.** Notifications need the *agent's* own permission, and fail silently without it | Request notification permission from the agent only. Warn when it's not authorised |
+| **H4** Backend credentials | **Environment variables are readable by same-user processes.** S3 `credential_process` is supported (from source; not run end to end) | The owner chose restic's S3 backend for S3 and B2, with `credential_process` and no `AWS_*` variables. Test against real B2 first |
+| **H6** Manual N→N+1 update | **Confirmed**: the handshake drains the running backup, launchd relaunches the new agent, and no grants are lost | Ship the handshake. **Gate it on running from /Applications** |
+| Not in §12.1 | `ProcessType=Adaptive` throttles self-scheduled runs to priority 4 (954 s versus 69 s) | The owner chose `ProcessType=Standard` |
+| Not in §12.1 | A copy run from a DMG re-points the registration. The agent is then killed by a launch-constraint violation and launchd **removes the job**, while `SMAppService.status` still says `enabled` | Heartbeat-driven self-repair: unregister then register. No agent-affecting actions from a translocated or non-/Applications copy |
+| Not in §12.1 | A plist change in an update is ignored until re-registration | Re-register when the embedded plist's hash changes |
+| Not in §12.1 | A crashed run leaves a stale lock that blocks `check` (exit 11) | Plain `restic unlock` (never `--remove-all`) before maintenance and after an agent restart |
+
+**Still open:** the reboot test (the agent starts at login and runs a keychain-backed backup 60 s later; the owner will do it later), the end-to-end `credential_process` run against B2's S3 endpoint, and a measurement of restic's CPU use during a real first backup under `Standard`.
+
 ## Environment
 
 - macOS 27.2 (Darwin 27.2.0), Xcode 27.2 (27B52), XcodeGen 2.46.0, Apple silicon.
