@@ -17,9 +17,12 @@ struct RunOutcomeTests {
         intent: InterruptIntent? = nil,
         summary: BackupSummary? = nil,
         errors: [ResticItemError] = [],
-        message: String? = nil
+        message: String? = nil,
+        signal: Int32? = nil
     ) -> RunOutcome {
-        classify(operation: op, exitCode: code, interruptedByUs: intent, summary: summary, errors: errors, exitErrorMessage: message)
+        classify(
+            operation: op, exitCode: code, interruptedByUs: intent, terminatedBySignal: signal,
+            summary: summary, errors: errors, exitErrorMessage: message)
     }
 
     @Test func exitZeroWithASnapshotIsSuccess() {
@@ -62,6 +65,22 @@ struct RunOutcomeTests {
             return
         }
         #expect(code == 130)
+    }
+
+    /// Ruling R12: restic ignored our SIGINT, was killed with SIGKILL (exit code 128 + 9), and the run
+    /// is still the pause or cancel we asked for.
+    @Test func aProcessWeInterruptedThenKilledStillPausesOrCancels() {
+        #expect(outcome(137, intent: .pause, signal: SIGKILL) == .paused)
+        #expect(outcome(137, intent: .cancel, signal: SIGKILL) == .cancelled)
+        #expect(outcome(130, intent: .pause, signal: SIGINT) == .paused)
+    }
+
+    @Test func aSignalDeathWeDidNotAskForIsAFailure() {
+        guard case .failed(let code, _) = outcome(137, intent: nil, signal: SIGKILL) else {
+            Issue.record("a process killed by a signal we did not send must be a failure")
+            return
+        }
+        #expect(code == 137)
     }
 
     @Test func ourInterruptDoesNotHideAFinishedOrFailedRun() {

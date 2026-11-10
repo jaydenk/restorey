@@ -17,7 +17,16 @@ Answers the open questions in spec §12.1. Times are UTC, with Adelaide local ti
 | Not in §12.1 | A plist change in an update is ignored until re-registration | Re-register when the embedded plist's hash changes |
 | Not in §12.1 | A crashed run leaves a stale lock that blocks `check` (exit 11) | Plain `restic unlock` (never `--remove-all`) before maintenance and after an agent restart |
 
-**Still open:** SIGINT lock removal during a real backup, whole-home EPERM paths under FDA, telling "user switched the agent off" apart from a fault, the self-move quarantine strip, the Homebrew and Sparkle install paths, and a measurement of restic's CPU use during a real first backup under `Standard`.
+**Still open:** whole-home EPERM paths under FDA, telling "user switched the agent off" apart from a fault, the self-move quarantine strip, the Homebrew and Sparkle install paths, and a measurement of restic's CPU use during a real first backup under `Standard`.
+
+### SIGINT during a real backup removes restic's lock (v0.1 Task 6, 10 Nov 2026 08:50 UTC (19:20))
+
+Closes the open item "SIGINT lock removal during a real backup". `ResticUnhappyPathTests.sigintDuringRealBackupLock` backs up 300 MB of random data (10 files of 30 MB) to a local repository, throttled to 20,000 KiB/s so the signal lands mid-backup. The repository, cache and home directory are siblings of the source tree, not inside it. restic 0.19.1 was sent SIGINT on the first `status` message.
+
+- **When the signal was sent, `locks/` held exactly one lock file** (restic's own non-exclusive backup lock).
+- **restic exited with code 130 on its own**, not killed, and printed no summary. `classify` gives `.paused`.
+- **`locks/` was empty afterwards.** restic removes its lock when it is interrupted with SIGINT.
+- **Consequence for Task 14:** a pause or cancel that restic honours needs no `unlock`. A plain `unlock` is still needed after a `kill -9` or a crash (`staleLockBlocksCheckThenPlainUnlockClears` shows `check` then exits 11 until `unlock` clears it), and after the agent has to SIGKILL restic because it ignored SIGINT for 10 s. Run `unlock` on recovery from either, never after an ordinary pause.
 
 ## Environment
 

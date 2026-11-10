@@ -165,6 +165,10 @@ private let missingCredentialsMessage = "s3.getCredentials: no credentials found
 /// 0 success, 3 backup finished with unreadable files, 10 repository missing, 11 lock failure,
 /// 12 wrong password, 130 interrupted (SIGINT). `exitErrorMessage` is the `exit_error` text.
 ///
+/// A process we interrupted is classified by what we asked for even when it did not exit with 130:
+/// if it ignored SIGINT and was then killed, `terminatedBySignal` is set and the run is still
+/// `.paused` or `.cancelled`, never `.failed`. A signal death we did not ask for is a failure.
+///
 /// Exit 0 depends on the operation: a backup must have reported a summary (with a snapshot ID it is a
 /// success, without one it is unchanged, and with no summary at all it failed, because a backup that
 /// exits 0 without saying what it did cannot be trusted). Every other operation is a plain success.
@@ -172,10 +176,14 @@ public func classify(
     operation: ResticOperation,
     exitCode: Int32,
     interruptedByUs: InterruptIntent?,
+    terminatedBySignal: Int32? = nil,
     summary: BackupSummary?,
     errors: [ResticItemError],
     exitErrorMessage: String?
 ) -> RunOutcome {
+    if let interruptedByUs, terminatedBySignal != nil {
+        return interruptedByUs == .pause ? .paused : .cancelled
+    }
     switch exitCode {
     case 0:
         guard case .backup = operation else { return .success(snapshotID: nil) }
