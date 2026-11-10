@@ -98,12 +98,14 @@ final class AgentSupervisor {
             return
         }
         let smStatus = registration.status
-        // No point asking an agent that isn't registered.
+        // No point asking an agent that isn't registered. Stamped before asking: an agent that is stopped
+        // rather than dead only fails at the call timeout, which mustn't stretch the grace.
+        let askedAt = Date()
         let beat = smStatus == .enabled ? await helloWithRetry() : .unreachable
         guard !busy else { return }
         if case .ok(let reply) = beat { lastHello = reply } else { lastHello = nil }
         if smStatus == .enabled, beat == .unreachable {
-            if unreachableSince == nil { unreachableSince = Date() }
+            if unreachableSince == nil { unreachableSince = askedAt }
         } else {
             unreachableSince = nil
         }

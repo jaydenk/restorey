@@ -159,6 +159,11 @@ The 30-second grace (`AgentHealthPolicy.unreachableGrace`, three heartbeats) is 
 a running restic. One missed heartbeat from an agent that is busy or briefly stopped, like the one at 19:54:54 UTC,
 must not cost a backup.
 
+**Checked live after the change** (21:49:31–21:50:15 UTC): the agent was frozen with `kill -STOP`. A `hello` to a
+stopped process fails only at its 5 s timeout, so the start of the run of failures is stamped when the failing
+heartbeat begins. The app re-registered it at 21:50:13, 42 s after the freeze. launchd killed the frozen process
+and started a new agent, which answered 2 s later.
+
 **Found on the first real launch (fix round 3, 10 Nov 2026 19:44 UTC (11 Nov 06:14)):** an install replaced the
 bundle while an agent from an earlier install kept running (spike H6), with the same version and build (0.1.0,
 1). It didn't know the new `prepareForReregistration` call, so NSXPC dropped the message ("Exception caught during
