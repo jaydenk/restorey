@@ -84,3 +84,30 @@ targets:
               --sign "${EXPANDED_CODE_SIGN_IDENTITY}" "$DEST"
           fi
         basedOnDependencyAnalysis: false
+  # Hosted by the agent so the tests run with its keychain-access-groups entitlement and signature.
+  # Bare `swift test` cannot do that (-34018 errSecMissingEntitlement; README, spec §10).
+  AgentHostedTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - AgentHostedTests
+    dependencies:
+      - target: RestoreyAgent
+        link: false
+      - package: RestoreyCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(RESTOREY_ROOT_ID).hostedtests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/$(RESTOREY_AGENT_PRODUCT_NAME).app/Contents/MacOS/$(RESTOREY_AGENT_PRODUCT_NAME)
+        BUNDLE_LOADER: $(TEST_HOST)
+schemes:
+  AgentHostedTests:
+    build:
+      targets:
+        RestoreyAgent: all
+        AgentHostedTests: [test]
+    test:
+      config: Debug
+      targets:
+        - AgentHostedTests

@@ -59,6 +59,23 @@ Debug builds use a separate identity (`com.jaydenkerr.restorey.dev`, `RestoreyDe
 Release install without sharing a launchd label, keychain group or on-disk state. GitHub Actions runs the
 unsigned path of `scripts/ci.sh` on every push and pull request.
 
+## Why the keychain tests need a signed host
+
+Restorey keeps every repository password, backend key and check-in URL in the data protection keychain
+(design spec §7 and §10), never the legacy file keychain that `/usr/bin/security` can read. The data
+protection keychain only works for code that carries the `keychain-access-groups` entitlement, which needs a
+signed app with a provisioning profile. Under bare `swift test` there is no such app, so `SecItemAdd` and
+`SecItemCopyMatching` fail with `-34018` (`errSecMissingEntitlement`). Dropping `kSecUseDataProtectionKeychain`
+in tests would pass but test the wrong keychain, so the keychain tests are not in `RestoreyCore`'s package suite.
+
+They live in the `AgentHostedTests` bundle, which runs inside the signed Debug agent
+(`xcodebuild test -scheme AgentHostedTests -configuration Debug`). `scripts/ci.sh` runs them only when
+`Config/Local.xcconfig` exists. On GitHub Actions it doesn't, and the script prints
+`hosted keychain tests skipped: no signing` instead. The tests use a random plan ID each and delete what they
+create, so they never touch real Restorey items. The hosted build goes in `~/Library/Caches/restorey-ci`
+(override with `RESTOREY_HOSTED_DERIVED_DATA`), not `build/`, because macOS blocks launching an app from
+`~/Documents` on a privacy prompt that nobody is there to answer.
+
 ## Restoring without Restorey
 
 Your backups will always be plain restic repositories. If Restorey ever disappears, you can restore with
