@@ -124,6 +124,28 @@ struct RunStateTests {
         #expect(text == #"{"endedAt":2000,"id":"00000000-0000-0000-0000-0000000000B2","logFile":"l.log","operation":{"dryRun":true,"type":"forget"},"outcome":{"type":"warning","unreadable":2},"planID":"00000000-0000-0000-0000-0000000000A1","startedAt":1000,"trigger":"retry"}"#)
     }
 
+    /// Older state files have no `droppedLogLines`; a record with none dropped leaves the key out.
+    @Test func droppedLogLinesDefaultsToZeroAndIsOmittedWhenZero() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        var record = makeRecord()
+        #expect(record.droppedLogLines == 0)
+        #expect(!String(decoding: try encoder.encode(record), as: UTF8.self).contains("droppedLogLines"))
+        record.droppedLogLines = 3
+        let data = try encoder.encode(record)
+        #expect(String(decoding: data, as: UTF8.self).contains(#""droppedLogLines":3"#))
+        #expect(try JSONDecoder().decode(RunRecord.self, from: data) == record)
+    }
+
+    @Test func runningRecordRoundTrips() throws {
+        var history = PlanRunHistory()
+        let record = makeRecord()
+        history.runningRecord = record
+        history.runningRecordID = record.id
+        let data = try JSONEncoder().encode(history)
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: data) == history)
+    }
+
     @Test func backupSummaryJSONUsesResticFieldNames() throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]

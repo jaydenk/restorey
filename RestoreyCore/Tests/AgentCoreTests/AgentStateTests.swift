@@ -546,17 +546,19 @@ struct AgentStateTests {
         #expect(try Data(contentsOf: dir.state) == Data("{not json".utf8))
     }
 
-    // MARK: Not yet available
+    // MARK: Runs need the runner
 
-    @Test func runActionsAreNotYetAvailable() async throws {
+    /// Runs are the plan runner's (PlanRunnerTests); with none attached they are refused, not dropped.
+    @Test func runActionsNeedTheRunner() async throws {
         let dir = try TempDirectory()
         let clock = TestClock()
         let state = await Self.makeState(dir, clock: clock)
         let plan = Self.plan(now: clock.now)
         _ = try await state.savePlan(Self.request(plan))
-        await #expect(throws: AgentError.notYetAvailable) { try await state.backUpNow(plan.id) }
-        await #expect(throws: AgentError.notYetAvailable) { try await state.createRepository(plan.id) }
-        await #expect(throws: AgentError.notYetAvailable) { _ = try await state.adopt(plan.id) }
+        await #expect(throws: AgentError.runnerUnavailable) { try await state.backUpNow(plan.id) }
+        await #expect(throws: AgentError.runnerUnavailable) { try await state.createRepository(plan.id) }
+        await #expect(throws: AgentError.runnerUnavailable) { _ = try await state.adopt(plan.id) }
+        #expect(AgentError.runnerUnavailable.message == "Restorey's agent is still starting up. Try again in a moment")
     }
 
     // MARK: Drain (Review Focus 3)

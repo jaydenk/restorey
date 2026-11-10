@@ -19,6 +19,13 @@ Answers the open questions in spec §12.1. Times are UTC, with Adelaide local ti
 
 **Still open:** whole-home EPERM paths under FDA, telling "user switched the agent off" apart from a fault, the self-move quarantine strip, the Homebrew and Sparkle install paths, and a measurement of restic's CPU use during a real first backup under `Standard`.
 
+### Two restic 0.19.1 behaviours that shape the plan runner (v0.1 Task 14, 10 Nov 2026 17:15 UTC (03:45))
+
+Found while writing `PlanRunnerTests` against real restic and local repositories.
+
+- **`--skip-if-unchanged` compares the whole snapshot tree, including the metadata of every folder above each source.** A run made a new snapshot with `0 new, 0 changed` files because a sibling had been created in an ancestor (`restic diff --metadata` showed only `/var/folders/…/T/`, then only `/private/` and `/private/tmp/`, as `U`). Task 5's capture saw the same thing from a repository placed under an ancestor. **Consequence:** a plan sees `.unchanged` only while nothing is created, removed or renamed directly in any folder above its sources. For a source like `~/Documents`, any file created or atomically saved in `~` (shell history, app dotfiles) makes the next hourly run a new, identical snapshot. Nothing is lost and retention thins them, but the "no snapshot when nothing changed" promise in spec §5.5 holds only for sources with quiet ancestors. Not yet addressed; noted for the owner.
+- **`forget` keeps a group's oldest snapshot while the group has fewer buckets than the policy asks for** (the reason column says `oldest hourly snapshot`, and so on). With the default `24 hourly, 30 daily, 52 weekly, 120 monthly`, a young repository loses nothing to `forget`. The scoping test (Ruling R9) therefore uses `--keep-hourly 1` and nothing else, so that an unscoped `forget` would visibly remove a snapshot from every foreign group.
+
 ### SIGINT during a real backup removes restic's lock (v0.1 Task 6, 10 Nov 2026 08:50 UTC (19:20))
 
 Closes the open item "SIGINT lock removal during a real backup". `ResticUnhappyPathTests.sigintDuringRealBackupLock` backs up 300 MB of random data (10 files of 30 MB) to a local repository, throttled to 20,000 KiB/s so the signal lands mid-backup. The repository, cache and home directory are siblings of the source tree, not inside it. restic 0.19.1 was sent SIGINT on the first `status` message.

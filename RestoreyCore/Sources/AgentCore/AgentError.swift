@@ -14,8 +14,14 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
     case planDeleting(name: String)
     /// A `SavePlanRequest` carried a secret keyed to another plan.
     case foreignSecret
-    /// Implemented by a later task (backups, repository creation and adoption arrive with the runner).
-    case notYetAvailable
+    /// No `PlanRunner` is attached yet (the agent is still starting), so nothing can run.
+    case runnerUnavailable
+    /// A plan never backs up before the user confirms they saved its recovery kit (spec §7).
+    case recoveryKitNotConfirmed(name: String)
+    /// `createRepository` found a repository at the address; restic init never overwrites one.
+    case repositoryAlreadyExists
+    /// A restic action asked for by the app (create, adopt) failed. The text is already redacted.
+    case operationFailed(String)
     /// Writing a store, the keychain or a file failed. The text names the step, never a secret.
     case storage(String)
     /// The XPC payload could not be decoded.
@@ -33,7 +39,11 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
         case .alreadyRunning(let name): "\(name) is already backing up"
         case .planDeleting(let name): "\(name) is being deleted"
         case .foreignSecret: "A secret in the request belongs to a different plan"
-        case .notYetAvailable: "That isn't available in this build of Restorey yet"
+        case .runnerUnavailable: "Restorey's agent is still starting up. Try again in a moment"
+        case .recoveryKitNotConfirmed(let name):
+            "Confirm you've saved the recovery kit for \(name) before its first backup"
+        case .repositoryAlreadyExists: "A repository already exists there"
+        case .operationFailed(let detail): detail
         case .storage(let detail): detail
         case .invalidRequest(let detail): "Restorey couldn't read the request: \(detail)"
         }
@@ -41,7 +51,7 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
 
     public var description: String { message }
 
-    private static func message(for error: PlanValidationError) -> String {
+    static func message(for error: PlanValidationError) -> String {
         switch error {
         case .emptyHostLabel: "The host label can't be empty"
         case .noSources: "Choose at least one source folder"

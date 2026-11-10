@@ -10,6 +10,8 @@ import Foundation
 ///   `success`, `unchanged` and `warning` clear it; `paused`, `cancelled`, `skipped` and `locked`
 ///   carry no verdict and are looked past.
 /// - `checkFailed`: the same rule applied to the newest check record.
+/// - Either stays raised while it is in `history.activeAlerts` and `recent` holds no verdict for its
+///   operation: a failure that has aged out of `recent` was never cleared.
 /// - `configurationError`: the plan has been stopped (`stoppedReason`), for example after a wrong password.
 ///
 /// `fullDiskAccessMissing` and `notificationsOff` are not computed here. The agent raises them from live
@@ -24,15 +26,14 @@ public func activeConditions(history: PlanRunHistory, plan: Plan, now: Date) -> 
 
     // `recent` is newest first. Only a record with a verdict can raise or clear an alert: a pause, a
     // cancellation, a skip or a lock says nothing about whether the last real attempt worked.
-    if let backup = history.recent.first(where: { $0.operation == .backup && $0.outcome.isVerdict }),
-        backup.outcome.isFailureVerdict
-    {
-        conditions.insert(.backupFailed)
-    }
-    if let check = history.recent.first(where: { $0.operation == .check && $0.outcome.isVerdict }),
-        check.outcome.isFailureVerdict
-    {
-        conditions.insert(.checkFailed)
+    for (operation, condition) in [(ResticOperation.backup, AlertCondition.backupFailed), (.check, .checkFailed)] {
+        if let newest = history.recent.first(where: { $0.operation == operation && $0.outcome.isVerdict }) {
+            if newest.outcome.isFailureVerdict { conditions.insert(condition) }
+        } else if history.activeAlerts[condition] != nil {
+            // The failure has aged out of `recent` (50 records: two days of hourly skips, or a weekly
+            // check behind hourly backups) with no verdict since. Nothing has cleared it.
+            conditions.insert(condition)
+        }
     }
 
     if history.stoppedReason != nil { conditions.insert(.configurationError) }

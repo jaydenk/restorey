@@ -76,6 +76,36 @@ If either file is corrupt or was written by a newer Restorey, the agent reports 
 change and leaves the file as it is. Its log is `~/Library/Logs/Restorey-Dev/agent.log`, and MetricKit
 diagnostics go to `diagnostics/` beside it.
 
+## What a backup run does
+
+The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`) runs each backup in this order:
+
+1. Refuses a plan that is invalid or whose recovery kit hasn't been confirmed, without running restic.
+2. Checks the plan's conditions (network, battery, mounted volumes, sources that exist). A skipped run is
+   recorded but sends no check-in ping, and neither does a missing source, which is a failure.
+3. Checks Full Disk Access by listing a protected folder (`~/Library/Safari`, `Mail` or `Messages`, never a
+   file's contents). Without it the run fails with "Full Disk Access is missing" and restic doesn't run,
+   because restic would otherwise save a snapshot of empty folders.
+4. Sends the check-in `/start` ping, runs `restic backup` through the repository's queue, and classifies the
+   result.
+5. After a successful backup, in the same turn of the queue: `forget` (after every backup that made a
+   snapshot, or daily for an adopted repository), `prune` weekly when it is switched on, and a plain
+   `unlock` followed by `check` weekly. Each is its own run with its own log; a failed `check` raises its own
+   alert and never turns the backup into a failure.
+6. Records everything in `state.json` and raises or clears the alerts, then sends the success or `/fail` ping.
+
+A wrong repository password, a missing repository or unreadable backup keys stop the plan until a later backup
+succeeds. Pause stops a run in progress (SIGINT, then SIGKILL after 10 s) and resumes after an hour. Restorey
+never runs `restic init` except from the explicit "Create new repository" action, which refuses an address that
+already holds a repository, and adopting a repository only lists its snapshots.
+
+Every restic run has its own log in `~/Library/Logs/Restorey/runs/<plan ID>/` (`Restorey-Dev` for Debug builds),
+with secrets redacted. If the agent stops mid-run, its next start records that run as interrupted and runs a
+plain `restic unlock` (never `--remove-all`) once per repository.
+
+Until the scheduler and the check-in service are built, only "Back up now" starts a backup, the battery and
+network conditions always pass, and check-in pings are written to the agent's log instead of being sent.
+
 ## How secrets reach restic
 
 Repository passwords, and keys for S3 (including Backblaze B2 through its S3 endpoint), are read from your

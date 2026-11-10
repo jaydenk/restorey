@@ -52,6 +52,30 @@ do {
                 log: log)
             keptAlive.append(helper)
             keptAlive.append(helper.listen(identity: identity, team: team))
+
+            // restic runs this executable for the password and S3 keys, so it must be the real path.
+            // Without one, fail closed: no runner, and the app's run actions say the agent isn't ready.
+            guard let executable = Bundle.main.executableURL?.resolvingSymlinksInPath() else {
+                log.error("The agent can't find its own executable, so it won't run any backup")
+                return
+            }
+            let runner = PlanRunner(dependencies: RunnerDependencies(
+                state: state, secrets: secrets, queues: RepositoryQueues(), supervisor: .shared,
+                logStore: RunLogStore(identity: identity), checkIn: InterimCheckInSender(log: log),
+                // <app>/Contents/Helpers/restic, beside this agent's own bundle.
+                resticExecutable: Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("restic"),
+                helperExecutable: executable,
+                cacheDirectory: identity.cachesDirectory().appendingPathComponent("restic", isDirectory: true),
+                credentialsDirectory: identity.applicationSupportDirectory(),
+                homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
+                logSubsystem: identity.rootID,
+                fdaProbe: { FullDiskAccessProbe.probe() },
+                preflightEnvironment: { InterimPreflight.environment() },
+                now: { Date() }))
+            keptAlive.append(runner)
+            await state.attach(runner: runner)
+            // After the helper listener is up: the unlock asks it for the repository password.
+            await runner.recoverAfterStart()
         }
     } else {
         // Exiting would make launchd's KeepAlive respawn the agent in a loop. Stay up, unreachable,

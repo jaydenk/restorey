@@ -139,12 +139,18 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
     public var endedAt: Date
     public var outcome: RunOutcome
     public var summary: BackupSummary?
-    /// Path of the run's log file, relative to the log directory.
+    /// Path of the run's log file, relative to the log directory. Empty when the run never reached
+    /// restic (skipped, refused before it started) or its log could not be created.
     public var logFile: String
+    /// Lines that could not be written to the run's log (`RunLogWriter.droppedLineCount`). When the log
+    /// could not be created at all, every line the run tried to write counts. Omitted from JSON when 0,
+    /// and 0 for records written before it existed.
+    public var droppedLogLines: Int
 
     public init(
         id: UUID, planID: UUID, operation: ResticOperation, trigger: RunTrigger,
-        startedAt: Date, endedAt: Date, outcome: RunOutcome, summary: BackupSummary?, logFile: String
+        startedAt: Date, endedAt: Date, outcome: RunOutcome, summary: BackupSummary?, logFile: String,
+        droppedLogLines: Int = 0
     ) {
         self.id = id
         self.planID = planID
@@ -155,6 +161,39 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
         self.outcome = outcome
         self.summary = summary
         self.logFile = logFile
+        self.droppedLogLines = droppedLogLines
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, planID, operation, trigger, startedAt, endedAt, outcome, summary, logFile, droppedLogLines
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        planID = try c.decode(UUID.self, forKey: .planID)
+        operation = try c.decode(ResticOperation.self, forKey: .operation)
+        trigger = try c.decode(RunTrigger.self, forKey: .trigger)
+        startedAt = try c.decode(Date.self, forKey: .startedAt)
+        endedAt = try c.decode(Date.self, forKey: .endedAt)
+        outcome = try c.decode(RunOutcome.self, forKey: .outcome)
+        summary = try c.decodeIfPresent(BackupSummary.self, forKey: .summary)
+        logFile = try c.decode(String.self, forKey: .logFile)
+        droppedLogLines = try c.decodeIfPresent(Int.self, forKey: .droppedLogLines) ?? 0
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(planID, forKey: .planID)
+        try c.encode(operation, forKey: .operation)
+        try c.encode(trigger, forKey: .trigger)
+        try c.encode(startedAt, forKey: .startedAt)
+        try c.encode(endedAt, forKey: .endedAt)
+        try c.encode(outcome, forKey: .outcome)
+        try c.encodeIfPresent(summary, forKey: .summary)
+        try c.encode(logFile, forKey: .logFile)
+        if droppedLogLines != 0 { try c.encode(droppedLogLines, forKey: .droppedLogLines) }
     }
 }
 

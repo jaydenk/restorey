@@ -31,9 +31,9 @@ public actor AgentState {
     private let credentialsDirectory: URL
     private let now: @Sendable () -> Date
 
-    private var config: ConfigFile
-    private var runState: RunState
-    private let loadError: String?
+    private(set) var config: ConfigFile
+    private(set) var runState: RunState
+    let loadError: String?
     /// `config.json` loaded but `state.json` did not: the plans are listed as stopped.
     private let onlyStateUnreadable: Bool
 
@@ -47,8 +47,13 @@ public actor AgentState {
     private var writeInFlight = false
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
 
-    /// Per plan, why the last helper request failed to read the keychain (Task 14 reports it).
+    /// Per plan, why the last helper request failed to read the keychain (the runner reports it).
     private var helperFailures: [UUID: String] = [:]
+
+    /// Runs backups, creates and adopts repositories (`attach(runner:)`). Weak: the runner holds this state.
+    weak var runner: PlanRunner?
+    /// The latest Full Disk Access probe, as the runner last saw it; nil until it has run.
+    var fdaMissing: Bool?
 
     private var observer: (@Sendable (AgentStatus) -> Void)?
     private var lastProgressPush: Date?
@@ -168,7 +173,7 @@ public actor AgentState {
             return AgentStatus(plans: plans, configError: loadError, fdaMissing: nil, generatedAt: now)
         }
         return AgentStatus(
-            plans: config.plans.map { planStatus($0, now: now) }, configError: nil, fdaMissing: nil,
+            plans: config.plans.map { planStatus($0, now: now) }, configError: nil, fdaMissing: fdaMissing,
             generatedAt: now)
     }
 
@@ -196,7 +201,7 @@ public actor AgentState {
     }
 
     @discardableResult
-    private func pushStatus() -> AgentStatus {
+    func pushStatus() -> AgentStatus {
         let status = status()
         observer?(status)
         return status
@@ -295,12 +300,14 @@ public actor AgentState {
         }
     }
 
-    /// Pauses for `pauseDuration`, after which the plan is due at once. Interrupting a run that is in
-    /// progress is the runner's job. Allowed while draining.
+    /// Pauses for `pauseDuration`, after which the plan is due at once, and asks the runner to stop a
+    /// run in progress (SIGINT, then SIGKILL; the run ends `.paused`). Allowed while draining.
     public func pause(_ id: UUID) async throws -> AgentStatus {
         try requireLoaded()
         let until = now().addingTimeInterval(Self.pauseDuration)
-        return try await updateHistory(id) { $0.pausedUntil = until }
+        let status = try await updateHistory(id) { $0.pausedUntil = until }
+        await runner?.interrupt(planID: id, intent: .pause)
+        return status
     }
 
     public func resume(_ id: UUID) async throws -> AgentStatus {
@@ -308,8 +315,11 @@ public actor AgentState {
         return try await updateHistory(id) { $0.pausedUntil = nil }
     }
 
-    private func updateHistory(
-        _ id: UUID, _ change: (inout PlanRunHistory) -> Void
+    /// Changes one plan's history and saves `state.json`, through the write gate. The runner records
+    /// every run through this.
+    @discardableResult
+    func updateHistory(
+        _ id: UUID, _ change: @Sendable (inout PlanRunHistory) -> Void
     ) async throws -> AgentStatus {
         _ = try requirePlan(id)
         return try await serialisedWrite {
@@ -321,27 +331,9 @@ public actor AgentState {
         }
     }
 
-    // MARK: Runs
+    // MARK: Runs (the app's run actions are in AgentState+Runs.swift)
 
-    /// Backs up one plan, or every plan when `id` is nil.
-    public func backUpNow(_ id: UUID?) async throws -> AgentStatus {
-        try requireRunnable(id)
-        throw AgentError.notYetAvailable
-    }
-
-    /// Runs `restic init` for the plan.
-    public func createRepository(_ id: UUID) async throws -> AgentStatus {
-        try requireRunnable(id)
-        throw AgentError.notYetAvailable
-    }
-
-    /// Reads an existing repository's snapshots for every host.
-    public func adopt(_ id: UUID) async throws -> AdoptReport {
-        try requireRunnable(id)
-        throw AgentError.notYetAvailable
-    }
-
-    private func requireRunnable(_ id: UUID?) throws {
+    func requireRunnable(_ id: UUID?) throws {
         try requireMutable()
         if let id { _ = try requirePlan(id) }
     }
@@ -417,17 +409,17 @@ public actor AgentState {
 
     // MARK: Helpers
 
-    private func requireLoaded() throws {
+    func requireLoaded() throws {
         if loadError != nil { throw AgentError.configUnavailable }
     }
 
     /// Loaded and not draining: the gate for every mutating call except `pause`.
-    private func requireMutable() throws {
+    func requireMutable() throws {
         try requireLoaded()
         guard !isDraining else { throw AgentError.draining }
     }
 
-    private func requirePlan(_ id: UUID) throws -> Plan {
+    func requirePlan(_ id: UUID) throws -> Plan {
         guard let plan = config.plans.first(where: { $0.id == id }) else { throw AgentError.unknownPlan }
         return plan
     }

@@ -57,7 +57,11 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func backUpNow(_ planID: String?, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state] in try await state.backUpNow(try planID.map(Self.planID)) }
+        respond(reply) { [state, log] in
+            let status = try await state.backUpNow(try planID.map(Self.planID))
+            log.info("Back up now: \(planID.map { "plan \($0)" } ?? "every plan")")
+            return status
+        }
     }
 
     func pause(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
@@ -77,11 +81,19 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func createRepository(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state] in try await state.createRepository(try Self.planID(planID)) }
+        respond(reply) { [state, log] in
+            let status = try await state.createRepository(try Self.planID(planID))
+            log.info("Created the repository for plan \(planID)")
+            return status
+        }
     }
 
     func adopt(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state] in try await state.adopt(try Self.planID(planID)) }
+        respond(reply) { [state, log] in
+            let report = try await state.adopt(try Self.planID(planID))
+            log.info("Read \(report.snapshotCount) snapshots for plan \(planID) to adopt its repository")
+            return report
+        }
     }
 
     func confirmRecoveryKit(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {

@@ -152,6 +152,22 @@ struct AlertPolicyTests {
         #expect(backupState([.success(snapshotID: nil), fail], operation: .check).isEmpty)
     }
 
+    /// `recent` keeps 50 records. A failure pushed out by skips, or by hourly backups for a weekly
+    /// check, has not been cleared by anything, so a raised alert stays raised until a verdict clears it.
+    @Test func raisedFailureOutlivesItsRecordLeavingRecent() {
+        var h = history(successDaysAgo: 0, recent: (0..<50).map { _ in record(.skipped(.onBattery)) })
+        #expect(activeConditions(history: h, plan: plan(), now: Self.now).isEmpty)
+        let raised = AlertNotificationState(raisedAt: Self.now, lastNotifiedAt: nil, count: 0)
+        h.activeAlerts[.backupFailed] = raised
+        h.activeAlerts[.checkFailed] = raised
+        #expect(activeConditions(history: h, plan: plan(), now: Self.now) == [.backupFailed, .checkFailed])
+
+        h.recent.insert(record(.success(snapshotID: nil), operation: .check), at: 0)
+        #expect(activeConditions(history: h, plan: plan(), now: Self.now) == [.backupFailed])
+        h.recent.insert(record(.unchanged), at: 0)
+        #expect(activeConditions(history: h, plan: plan(), now: Self.now).isEmpty)
+    }
+
     @Test func clockGoingBackwardsIsDue() {
         let s = state(notifiedAt: 10 * Self.hour, count: 3)
         #expect(shouldNotify(s, now: Self.now))

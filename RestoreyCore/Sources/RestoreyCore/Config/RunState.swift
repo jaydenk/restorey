@@ -51,6 +51,10 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
     public var lastCheckAt: Date?
     /// A record that was started but not finished; recovered as `.interrupted` on launch.
     public var runningRecordID: UUID?
+    /// The record `runningRecordID` names, as it should read if the agent dies before the step ends:
+    /// outcome `.interrupted`, with its real operation, start time and log file. Set and cleared with
+    /// `runningRecordID`. Nil in state written before it existed; recovery then rebuilds what it can.
+    public var runningRecord: RunRecord?
     /// Newest first, at most `recentLimit` records. Add with `record(_:)`.
     public var recent: [RunRecord]
     public var activeAlerts: [AlertCondition: AlertNotificationState]
@@ -72,7 +76,7 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case lastSuccessAt, lastAttemptAt, lastSnapshotAt, lastForgetAt, lastPruneAt, lastCheckAt
-        case runningRecordID, recent, activeAlerts, stoppedReason, pausedUntil
+        case runningRecordID, runningRecord, recent, activeAlerts, stoppedReason, pausedUntil
     }
 
     public init(from decoder: any Decoder) throws {
@@ -84,6 +88,7 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
         lastPruneAt = try c.decodeIfPresent(Date.self, forKey: .lastPruneAt)
         lastCheckAt = try c.decodeIfPresent(Date.self, forKey: .lastCheckAt)
         runningRecordID = try c.decodeIfPresent(UUID.self, forKey: .runningRecordID)
+        runningRecord = try c.decodeIfPresent(RunRecord.self, forKey: .runningRecord)
         recent = try c.decodeIfPresent([RunRecord].self, forKey: .recent) ?? []
         activeAlerts = try c.decodeIfPresent([AlertCondition: AlertNotificationState].self, forKey: .activeAlerts) ?? [:]
         stoppedReason = try c.decodeIfPresent(String.self, forKey: .stoppedReason)
