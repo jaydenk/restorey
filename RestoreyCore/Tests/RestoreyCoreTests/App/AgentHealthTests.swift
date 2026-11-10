@@ -5,23 +5,39 @@ import Testing
 struct AgentHealthTests {
     private static let prefix = "/Applications/RestoreyDev.app/Contents/Helpers/"
 
+    private static let now = Date(timeIntervalSince1970: 1_800_000_000)
+
     private static func reply(
-        build: String = "7", path: String = prefix + "RestoreyDevAgent.app/Contents/MacOS/RestoreyDevAgent"
+        version: String = "0.1.0", build: String = "7",
+        path: String = prefix + "RestoreyDevAgent.app/Contents/MacOS/RestoreyDevAgent", draining: Bool = false
     ) -> HelloReply {
-        HelloReply(agentVersion: "0.1.0", agentBuild: build, executablePath: path, draining: false,
+        HelloReply(agentVersion: version, agentBuild: build, executablePath: path, draining: draining,
                    notificationsAuthorised: true)
+    }
+
+    /// A repair 30 minutes ago by this same build.
+    private static let recentRepair = RepairRecord(at: now.addingTimeInterval(-1800), appVersion: "0.1.0", appBuild: "7")
+
+    private static func input(
+        _ smStatus: AgentServiceStatus = .enabled,
+        heartbeat: AgentHeartbeat = .ok(reply()),
+        storedPlistHash: String? = "abc",
+        lastRepair: RepairRecord? = nil
+    ) -> AgentHealthInput {
+        AgentHealthInput(
+            smStatus: smStatus, heartbeat: heartbeat, expectedExecutablePrefix: prefix, appVersion: "0.1.0",
+            appBuild: "7", storedPlistHash: storedPlistHash, currentPlistHash: "abc", lastRepair: lastRepair,
+            now: now)
     }
 
     private static func input(
         _ smStatus: AgentServiceStatus = .enabled,
         heartbeat: AgentHeartbeat = .ok(reply()),
         storedPlistHash: String? = "abc",
-        repairAttemptedRecently: Bool = false
+        repairAttemptedRecently: Bool
     ) -> AgentHealthInput {
-        AgentHealthInput(
-            smStatus: smStatus, heartbeat: heartbeat, expectedExecutablePrefix: prefix, appBuild: "7",
-            storedPlistHash: storedPlistHash, currentPlistHash: "abc",
-            repairAttemptedRecently: repairAttemptedRecently)
+        input(smStatus, heartbeat: heartbeat, storedPlistHash: storedPlistHash,
+              lastRepair: repairAttemptedRecently ? recentRepair : nil)
     }
 
     @Test func healthyAgentNeedsNothing() {
@@ -111,6 +127,54 @@ struct AgentHealthTests {
         #expect(decideAgentHealth(Self.input(heartbeat: .ok(Self.reply(build: "6")), repairAttemptedRecently: true))
             == .showNotRunning(canRepair: true))
         #expect(decideAgentHealth(Self.input(repairAttemptedRecently: true)) == .none)
+    }
+
+    /// Ruling R51: the limit survives a relaunch. The record is persisted, so a relaunch of the same
+    /// build within the hour doesn't repair again.
+    @Test func relaunchWithinTheHourDoesNotRepair() {
+        let elsewhere = Self.reply(path: "/Volumes/X/RestoreyDevAgent")
+        let input = Self.input(heartbeat: .ok(elsewhere), lastRepair: Self.recentRepair)
+        #expect(input.repairAttemptedRecently)
+        #expect(decideAgentHealth(input) == .showNotRunning(canRepair: true))
+    }
+
+    /// A new build restarts the agent at once, whatever the last build did.
+    @Test func newBuildIgnoresTheLastRepair() {
+        let other = Self.reply(build: "6")
+        for record in [
+            RepairRecord(at: Self.recentRepair.at, appVersion: "0.1.0", appBuild: "6"),
+            RepairRecord(at: Self.recentRepair.at, appVersion: "0.0.9", appBuild: "7"),
+        ] {
+            let input = Self.input(heartbeat: .ok(other), lastRepair: record)
+            #expect(!input.repairAttemptedRecently)
+            #expect(decideAgentHealth(input) == .restartAfterDrain)
+        }
+    }
+
+    @Test func repairOverAnHourAgoAllowsAnother() {
+        let old = RepairRecord(at: Self.now.addingTimeInterval(-3601), appVersion: "0.1.0", appBuild: "7")
+        #expect(decideAgentHealth(Self.input(storedPlistHash: "old", lastRepair: old)) == .reregisterAfterDrain)
+        // A clock that moved backwards doesn't block repairs for longer than an hour.
+        let future = RepairRecord(at: Self.now.addingTimeInterval(600), appVersion: "0.1.0", appBuild: "7")
+        #expect(!Self.input(lastRepair: future).repairAttemptedRecently)
+    }
+
+    @Test func repairRecordRoundTrips() throws {
+        let data = try XPCCoding.encode(Self.recentRepair)
+        #expect(try XPCCoding.decode(RepairRecord.self, from: data) == Self.recentRepair)
+    }
+
+    @Test func versionMismatchRestarts() {
+        #expect(decideAgentHealth(Self.input(heartbeat: .ok(Self.reply(version: "0.0.9")))) == .restartAfterDrain)
+    }
+
+    /// An agent already draining is about to exit (or is stuck drained): wait for it, don't start another
+    /// repair, whatever its build.
+    @Test func drainingAgentWaitsForUpdate() {
+        #expect(decideAgentHealth(Self.input(heartbeat: .ok(Self.reply(draining: true)))) == .waitForUpdate)
+        #expect(decideAgentHealth(Self.input(heartbeat: .ok(Self.reply(build: "6", draining: true)))) == .waitForUpdate)
+        #expect(decideAgentHealth(Self.input(heartbeat: .ok(Self.reply(draining: true)), repairAttemptedRecently: true))
+            == .waitForUpdate)
     }
 
     @Test func repairIntervalIsAnHour() {

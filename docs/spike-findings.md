@@ -131,12 +131,14 @@ Mac, so Task 17 shipped the conservative table (Ruling R50) and the check is sti
 | `SMAppService.status` | Heartbeat | App does |
 |---|---|---|
 | `notFound`, `notRegistered` | any | `register()` |
-| `enabled` | agent binary outside this app's bundle, or plist hash changed | drain, `unregister()`, `register()` |
-| `enabled` | different agent build | drain, launchd's `KeepAlive` starts the new binary |
+| `enabled` | agent binary outside this app's bundle, or plist hash changed | drain without exiting (`prepareForReregistration`), `unregister()`, `register()`; no unregister if the drain call fails |
+| `enabled` | agent already draining | wait, then `prepareForRestart` so it can't stay drained |
+| `enabled` | different agent version or build | drain, launchd's `KeepAlive` starts the new binary |
 | `enabled` | unreachable | **no automatic repair**: "Background agent isn't running", with "Restart Agent" and "Open Login Items" |
 | `requiresApproval` | any | "Background agent is switched off", with "Open Login Items" |
 
-Automatic repairs run at most once an hour; a fault that survives one shows "Restart Agent". If the check shows
+Automatic repairs run at most once an hour, recorded in the app's `UserDefaults` so a relaunch doesn't repair
+again (a record from another version or build is ignored). A fault that survives one shows "Restart Agent". If the check shows
 that "switched off" reads `requiresApproval`, the unreachable row can become an automatic repair by changing
 `AgentHealthPolicy.enabledButUnreachable` (`RestoreyCore/Sources/RestoreyCore/App/AgentHealth.swift`). If it
 reads `enabled`, the row must stay as it is, or the app would silently re-enable an agent the user switched off.

@@ -56,6 +56,12 @@ final class AgentConnection {
         await call(DrainReply.self, timeout: nil) { $0.prepareForRestart(withReply: $1) }
     }
 
+    /// Drains like `prepareForRestart`, but the agent stays up so `unregister()` stops this process. No
+    /// timeout, for the same reason.
+    func prepareForReregistration() async -> Result<DrainReply, AgentCallError> {
+        await call(DrainReply.self, timeout: nil) { $0.prepareForReregistration(withReply: $1) }
+    }
+
     func savePlan(_ request: SavePlanRequest) async -> Result<AgentStatus, AgentCallError> {
         guard let data = try? XPCCoding.encode(request) else { return .failure(.badReply("save request")) }
         return await statusCall(timeout: .seconds(60)) { $0.savePlan(data, withReply: $1) }
@@ -94,7 +100,11 @@ final class AgentConnection {
     }
 
     /// Drops the connection, e.g. after `unregister()`; the next call makes a new one.
+    /// The supervisor fetches `status` again once the agent is healthy (`shouldRefetchStatus`), which
+    /// resubscribes, so a pending back-off retry is no longer needed.
     func reset() {
+        resubscribe?.cancel()
+        resubscribe = nil
         connection?.invalidate()
         connection = nil
     }
@@ -178,7 +188,8 @@ final class AgentConnection {
                 if case .success = await self.status() { break }
                 delay = min(delay * 2, .seconds(60))
             }
-            self?.resubscribe = nil
+            // A cancelled task was replaced (or dropped) by reset(); don't clear its successor.
+            if !Task.isCancelled { self?.resubscribe = nil }
         }
     }
 

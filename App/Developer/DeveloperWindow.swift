@@ -5,12 +5,18 @@ import SwiftUI
 
 /// Opens the Debug-only developer window from the status item's "Developer…" item.
 @MainActor
-final class DeveloperWindowController {
+final class DeveloperWindowController: NSObject, NSWindowDelegate {
     private let model: DeveloperModel
     private var window: NSWindow?
 
     init(supervisor: AgentSupervisor, identity: Identity) {
         model = DeveloperModel(supervisor: supervisor, identity: identity)
+        super.init()
+    }
+
+    /// The form's secrets don't outlive the window.
+    func windowWillClose(_ notification: Notification) {
+        model.clearSecrets()
     }
 
     func show() {
@@ -20,6 +26,7 @@ final class DeveloperWindowController {
             made.setContentSize(NSSize(width: 980, height: 720))
             made.isReleasedWhenClosed = false
             made.isRestorable = false
+            made.delegate = self
             window = made
         }
         NSApplication.shared.activate()
@@ -70,14 +77,14 @@ struct DeveloperView: View {
                     TextField("Endpoint", text: $model.endpoint)
                     TextField("Bucket", text: $model.bucket)
                     TextField("Prefix", text: $model.prefix)
-                    TextField("Key ID", text: $model.keyID)
+                    SecureField("Key ID", text: $model.keyID)
                     SecureField("Secret", text: $model.secret)
                 }
                 SecureField("Repository password", text: $model.repositoryPassword)
                 if model.selectedPlanID == nil {
                     Toggle("Existing repository (adopt, never prune)", isOn: $model.adoptExisting)
                 }
-                TextField("Check-in URL (optional)", text: $model.checkInURL)
+                SecureField("Check-in URL (optional)", text: $model.checkInURL)
                 LabeledContent("Sources (one per line)") {
                     TextEditor(text: $model.sources)
                         .font(.system(.body, design: .monospaced))
@@ -85,7 +92,8 @@ struct DeveloperView: View {
                 }
             }
             if model.selectedPlanID != nil {
-                Text("Leave a secret empty to keep the saved one.").font(.caption).foregroundStyle(.secondary)
+                Text("Leave the password, key ID or secret empty to keep the saved one. An empty check-in URL removes it.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             VStack(alignment: .leading) {

@@ -39,6 +39,8 @@ public actor AgentState {
     private let onlyStateUnreadable: Bool
 
     public private(set) var isDraining = false
+    /// Why the agent is draining, once it is. A restart drain wins over a re-registration one.
+    public private(set) var drainPurpose: DrainPurpose?
     private var running: [UUID: RunProgress] = [:]
     /// Plans `deletePlan` has started removing. No run may begin on them.
     private var deleting: Set<UUID> = []
@@ -282,8 +284,15 @@ public actor AgentState {
         guard request.secrets.allSatisfy({ $0.key.planID == request.plan.id }) else {
             throw AgentError.foreignSecret
         }
+        let checkInKey = SecretKey.checkInURL(request.plan.id)
+        if !request.plan.hasCheckInURL, request.secrets.contains(where: { $0.key == checkInKey }) {
+            throw AgentError.invalidRequest("a check-in URL was sent for a plan saved without one")
+        }
         return try await serialisedWrite {
-            let planSecrets = try PlanSecrets(store: secrets, entries: request.secrets)
+            // A plan saved without a check-in URL loses any stored one, so it is never pinged.
+            let planSecrets = try PlanSecrets(
+                store: secrets, entries: request.secrets,
+                deletions: request.plan.hasCheckInURL ? [] : [checkInKey])
             var plan = request.plan
             var updated = config
             var credentialsChanged = false
@@ -458,6 +467,19 @@ public actor AgentState {
     /// - Returns: false when the pings were given up on.
     @discardableResult
     public func prepareForRestart(pingBudget: Duration = .seconds(180)) async -> Bool {
+        await drain(.restart, pingBudget: pingBudget)
+    }
+
+    /// The same drain, for the app's `unregister()` then `register()`: the agent stays up, drained and
+    /// refusing every mutating call but `pause`, until `unregister()` stops it. Exiting instead would let
+    /// launchd's `KeepAlive` start a fresh agent that `unregister()` could then kill mid-run.
+    @discardableResult
+    public func prepareForReregistration(pingBudget: Duration = .seconds(180)) async -> Bool {
+        await drain(.reregistration, pingBudget: pingBudget)
+    }
+
+    private func drain(_ purpose: DrainPurpose, pingBudget: Duration) async -> Bool {
+        if drainPurpose != .restart { drainPurpose = purpose }
         isDraining = true
         while !isIdle {
             await withCheckedContinuation { drainWaiters.append($0) }
@@ -585,4 +607,15 @@ public actor AgentState {
         }
         return try await body()
     }
+}
+
+/// Why the app asked the agent to drain.
+public enum DrainPurpose: Sendable, Equatable {
+    /// An update: the agent exits once drained and launchd starts the new binary.
+    case restart
+    /// The app will `unregister()` then `register()`: the agent stays up, drained, until it is stopped.
+    case reregistration
+
+    /// Whether the agent exits after replying.
+    public var exitsAfterwards: Bool { self == .restart }
 }

@@ -36,6 +36,10 @@ import Foundation
     /// → `DrainReply` once no run is in flight. No timeout: a long first backup is waited for, and no
     /// new run starts meanwhile. The agent then exits and launchd starts the new binary.
     func prepareForRestart(withReply reply: @escaping @Sendable (Data?, String?) -> Void)
+    /// → `DrainReply`, like `prepareForRestart`, but the agent does not exit: it stays up, drained and
+    /// refusing every mutating call but `pause`, so the app's `unregister()` stops this drained process
+    /// rather than a fresh one launchd's `KeepAlive` started. Used before `unregister()` then `register()`.
+    func prepareForReregistration(withReply reply: @escaping @Sendable (Data?, String?) -> Void)
 }
 
 /// What the app exports on its connection so the agent can push status. Pushed on every phase change,

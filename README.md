@@ -66,15 +66,23 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
 
 - not registered yet (`notFound` on a first launch): it registers
 - the agent's binary isn't inside this app's bundle, or the embedded launchd plist changed since the last
-  registration: it asks the agent to finish any run in progress, then unregisters and registers again
-- the agent runs a different build: it asks the agent to finish any run in progress and exit, and launchd
-  starts the new one. The menu says "Finishing the current backup before updating the agent" meanwhile
+  registration: it asks the agent to finish any run in progress and stay up (`prepareForReregistration`), then
+  unregisters and registers again. If the agent can't be asked, it doesn't unregister, and tries again later
+- the agent runs a different version or build: it asks the agent to finish any run in progress and exit
+  (`prepareForRestart`), and launchd starts the new one. The menu says "Finishing the current backup before
+  updating the agent" meanwhile, or "Updating the background agent…" when it finds the agent already draining
+- the app's own bundle is missing the agent's plist: "Restorey's installation is damaged — reinstall it from the
+  download", with no repair offered
 - switched off in Login Items: "Background agent is switched off", with "Open Login Items"
 - registered but not answering: "Background agent isn't running", with "Restart Agent" and "Open Login
   Items". It doesn't repair this on its own yet, because "switched off" and "broken" can't be told apart
   until the check in `docs/spike-findings.md` is done
 
-Automatic repairs happen at most once an hour. **A copy anywhere else does nothing to the agent**: no XPC, no
+Automatic repairs happen at most once an hour, also across relaunches (a new version or build may repair at
+once). Plan lines are shown only while the agent is healthy, and are fetched afresh each time it becomes healthy.
+The icon shows an error for a stopped plan, a settings error, a failure alert or an agent that isn't running, a
+warning for a skipped run or missing notifications, check-in or recent success, and is plain otherwise.
+**A copy anywhere else does nothing to the agent**: no XPC, no
 registration and not even a status read, which on its own can re-point the registration at the copy. It only
 shows "Move Restorey to Applications". The app's log is `~/Library/Logs/Restorey-Dev/app.log`.
 

@@ -7,20 +7,12 @@ import RestoreyCore
 @MainActor
 @Observable
 final class AgentSupervisor {
-    enum Health: Equatable {
-        case checking
-        case healthy
-        /// Waiting for `prepareForRestart`: "Finishing the current backup before updating the agent".
-        case updating
-        case switchedOff
-        /// `reachable` is true when the agent answers but a repair didn't fix it.
-        case notRunning(reachable: Bool)
-        /// Registering failed, or the embedded plist can't be read. The sentence is shown as is.
-        case failed(String)
-    }
+    /// The last automatic repair, as `RepairRecord` JSON in the app's `UserDefaults`.
+    static let repairRecordKey = "lastAgentRepair"
 
-    private(set) var health: Health = .checking
-    /// The latest status from the agent; nil until the first one arrives.
+    private(set) var health: AgentHealthState = .checking
+    /// The latest status from the agent. Cleared whenever the health leaves `.healthy`, and fetched
+    /// afresh on every return to it (`shouldRefetchStatus`).
     private(set) var status: AgentStatus?
     private(set) var lastHello: HelloReply?
 
@@ -29,25 +21,30 @@ final class AgentSupervisor {
     @ObservationIgnored private let installed: InstalledCopy
     @ObservationIgnored private let log: AppLog
     @ObservationIgnored private let request: HelloRequest
+    @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var observers: [() -> Void] = []
     @ObservationIgnored private var loop: Task<Void, Never>?
     /// True while a registration or repair is in progress: heartbeats wait for it.
     @ObservationIgnored private var busy = false
     /// True while a heartbeat runs, so the loop and `checkSoon` never decide twice at once.
     @ObservationIgnored private var checking = false
-    /// In memory only, so each launch of a new build gets its one repair straight away.
-    @ObservationIgnored private var lastRepair: Date?
+    @ObservationIgnored private var lastRepair: RepairRecord?
     @ObservationIgnored private var lastAction: AgentHealthAction?
+    /// After a drain call fails, re-registration waits until then (10 s doubling to 10 min).
+    @ObservationIgnored private var drainRetryAfter: Date?
+    @ObservationIgnored private var drainRetryDelay: TimeInterval = AgentHealthPolicy.heartbeatInterval
 
-    init(installed: InstalledCopy, identity: Identity, log: AppLog) {
+    init(installed: InstalledCopy, identity: Identity, log: AppLog, defaults: UserDefaults = .standard) {
         self.installed = installed
         self.log = log
-        registration = AgentRegistration(installed: installed, identity: identity)
+        self.defaults = defaults
+        registration = AgentRegistration(installed: installed, identity: identity, defaults: defaults)
         connection = AgentConnection(installed: installed, identity: identity)
         let info = Bundle.main.infoDictionary ?? [:]
         request = HelloRequest(
             appVersion: info["CFBundleShortVersionString"] as? String ?? "unknown",
             appBuild: info["CFBundleVersion"] as? String ?? "unknown")
+        lastRepair = loadRepairRecord()
         connection.onStatus = { [weak self] status in self?.received(status) }
     }
 
@@ -70,9 +67,10 @@ final class AgentSupervisor {
     // MARK: User actions
 
     /// "Restart agent": drain if reachable, then re-register. The user asked, so the hourly limit on
-    /// automatic repairs doesn't apply, but it counts as one.
+    /// automatic repairs doesn't apply, but it counts as one. Never offered for a damaged install, where
+    /// `unregister()` would remove a working registration that `register()` can't put back.
     func restartAgent() {
-        guard !busy else { return }
+        guard !busy, health != .damaged else { return }
         busy = true
         log.info("Restarting the agent at the user's request")
         Task { await reregister(reachable: lastHello != nil) }
@@ -92,9 +90,8 @@ final class AgentSupervisor {
         do {
             plistHash = try registration.currentPlistHash()
         } catch {
-            let failure = Health.failed("Restorey's background agent settings are missing from the app. Reinstall Restorey.")
-            if health != failure { log.error("Can't read the embedded agent plist: \(error)") }
-            set(failure)
+            if health != .damaged { log.error("Can't read the embedded agent plist: \(error)") }
+            set(.damaged)
             return
         }
         let smStatus = registration.status
@@ -105,10 +102,9 @@ final class AgentSupervisor {
 
         let input = AgentHealthInput(
             smStatus: smStatus, heartbeat: beat, expectedExecutablePrefix: installed.helpersPrefix,
-            appBuild: request.appBuild, storedPlistHash: registration.storedPlistHash,
-            currentPlistHash: plistHash,
-            repairAttemptedRecently: lastRepair.map { Date().timeIntervalSince($0) < AgentHealthPolicy.repairInterval }
-                ?? false)
+            appVersion: request.appVersion, appBuild: request.appBuild,
+            storedPlistHash: registration.storedPlistHash, currentPlistHash: plistHash,
+            lastRepair: lastRepair, now: Date())
         let action = decideAgentHealth(input)
         if action != lastAction {
             log.info("Agent health: \(describe(input)) → \(action)")
@@ -130,6 +126,7 @@ final class AgentSupervisor {
         switch action {
         case .none:
             set(.healthy)
+            // Normally fetched by the transition into .healthy; retried here if that fetch failed.
             if status == nil { _ = await connection.status() }
         case .register:
             busy = true
@@ -138,7 +135,8 @@ final class AgentSupervisor {
                 log.info("Registered the agent; status is now \(registration.status)")
                 set(.checking)
             } catch {
-                let failure = Health.failed("Restorey couldn't register its background agent: \(error.localizedDescription)")
+                let failure = AgentHealthState.failed(
+                    "Restorey couldn't register its background agent: \(error.localizedDescription)")
                 // Retried every heartbeat; logged once per distinct failure.
                 if health != failure { log.error("Couldn't register the agent: \(error)") }
                 set(failure)
@@ -146,10 +144,14 @@ final class AgentSupervisor {
             busy = false
             checkSoon()
         case .restartAfterDrain:
-            lastRepair = Date()
+            recordRepair()
             await restart()
         case .reregisterAfterDrain:
+            if let retryAfter = drainRetryAfter, Date() < retryAfter { return }
+            busy = true
             if case .ok = heartbeat { await reregister(reachable: true) } else { await reregister(reachable: false) }
+        case .waitForUpdate:
+            await waitForUpdate()
         case .showSwitchedOff:
             set(.switchedOff)
         case .showNotRunning:
@@ -157,40 +159,72 @@ final class AgentSupervisor {
         }
     }
 
-    /// Spike H6: drain, let launchd's KeepAlive start the new binary, then wait for the builds to match.
+    /// Spike H6: drain, let launchd's KeepAlive start the new binary, then wait for the version and build
+    /// to match.
     private func restart() async {
         busy = true
         defer { busy = false; checkSoon() }
-        guard await drain() else { return }
+        set(.updating)
+        log.info("Asking the agent to finish any run in progress and exit")
+        guard case .success = await logged(connection.prepareForRestart(), "prepareForRestart") else { return }
+        log.info("The agent has finished; waiting for launchd to start it again")
         for _ in 0..<30 {
             try? await Task.sleep(for: .seconds(2))
             if case .success(let reply) = await connection.hello(request) {
                 lastHello = reply
-                if reply.agentBuild == request.appBuild {
-                    log.info("The agent restarted and now runs build \(reply.agentBuild)")
+                if reply.agentBuild == request.appBuild, reply.agentVersion == request.appVersion {
+                    log.info("The agent restarted and now runs \(reply.agentVersion) (\(reply.agentBuild))")
                     return
                 }
             }
         }
-        log.error("The agent didn't come back with build \(request.appBuild) within 60 s")
+        log.error("The agent didn't come back as \(request.appVersion) (\(request.appBuild)) within 60 s")
     }
 
-    /// Spike phase B: drain if reachable, then `unregister()` then `register()`. Fixes a re-pointed
-    /// registration, a changed plist and a job launchd removed.
-    private func reregister(reachable: Bool) async {
+    /// The agent is already draining: from a drain an earlier app started, or left drained by an app that
+    /// quit half-way through a re-registration. Ask it to restart once drained (it replies at once if it
+    /// already is), so it can't stay drained and refusing everything.
+    private func waitForUpdate() async {
         busy = true
-        lastRepair = Date()
         defer { busy = false; checkSoon() }
-        // unregister() stops the agent and kills restic mid-run, so drain first whenever we can.
-        if reachable, !(await drain()) {
-            log.info("The agent stopped answering while draining; re-registering anyway")
+        set(.waitingForUpdate)
+        _ = await logged(connection.prepareForRestart(), "prepareForRestart (agent already draining)")
+    }
+
+    /// Spike phase B: drain without exiting, then `unregister()` then `register()`. Fixes a re-pointed
+    /// registration, a changed plist and a job launchd removed. The caller has set `busy`.
+    private func reregister(reachable: Bool) async {
+        defer { busy = false; checkSoon() }
+        if reachable {
+            // unregister() stops the agent and kills restic mid-run, so drain first. The agent stays up
+            // once drained: exiting would let KeepAlive start a fresh one for unregister() to kill.
+            set(.updating)
+            log.info("Asking the agent to finish any run in progress before re-registering it")
+            guard case .success = await logged(connection.prepareForReregistration(), "prepareForReregistration")
+            else {
+                // Never unregister an agent that may still be running a backup. Try again later.
+                drainRetryAfter = Date().addingTimeInterval(drainRetryDelay)
+                log.info("Not re-registering; will try again in \(Int(drainRetryDelay)) s")
+                drainRetryDelay = min(drainRetryDelay * 2, 600)
+                set(.notRunning(reachable: true))
+                return
+            }
         }
+        drainRetryAfter = nil
+        drainRetryDelay = AgentHealthPolicy.heartbeatInterval
+        recordRepair()
         set(.checking)
         do {
             try await registration.unregister()
         } catch {
-            // Already gone is fine: register() below is what matters.
-            log.info("unregister() failed, continuing to register(): \(error)")
+            log.error("unregister() failed: \(error)")
+            if reachable {
+                // The drained agent would otherwise stay up refusing everything: let it exit, and
+                // KeepAlive starts it again. The next heartbeat decides what to do.
+                _ = await logged(connection.prepareForRestart(), "prepareForRestart after a failed unregister()")
+                connection.reset()
+                return
+            }
         }
         connection.reset()
         do {
@@ -202,19 +236,9 @@ final class AgentSupervisor {
         }
     }
 
-    /// Waits, with no timeout, for the agent to finish any run in flight. False if the agent couldn't be
-    /// reached or refused.
-    private func drain() async -> Bool {
-        set(.updating)
-        log.info("Asking the agent to finish any run in progress and exit")
-        switch await connection.prepareForRestart() {
-        case .success:
-            log.info("The agent has finished; waiting for launchd to start it again")
-            return true
-        case .failure(let error):
-            log.error("prepareForRestart failed: \(error)")
-            return false
-        }
+    private func logged<T>(_ result: Result<T, AgentCallError>, _ name: String) -> Result<T, AgentCallError> {
+        if case .failure(let error) = result { log.error("\(name) failed: \(error)") }
+        return result
     }
 
     /// The next heartbeat in 2 s rather than 10, after anything that changes the agent.
@@ -225,12 +249,39 @@ final class AgentSupervisor {
         }
     }
 
+    // MARK: Repair record
+
+    /// Ruling R51: persisted, so a relaunch within the hour doesn't repair again. A record from another
+    /// version or build is cleared, so a new build restarts the agent at once.
+    private func loadRepairRecord() -> RepairRecord? {
+        guard let data = defaults.data(forKey: Self.repairRecordKey),
+              let record = try? XPCCoding.decode(RepairRecord.self, from: data)
+        else { return nil }
+        guard record.appVersion == request.appVersion, record.appBuild == request.appBuild else {
+            defaults.removeObject(forKey: Self.repairRecordKey)
+            return nil
+        }
+        return record
+    }
+
+    private func recordRepair() {
+        let record = RepairRecord(at: Date(), appVersion: request.appVersion, appBuild: request.appBuild)
+        lastRepair = record
+        if let data = try? XPCCoding.encode(record) { defaults.set(data, forKey: Self.repairRecordKey) }
+    }
+
     // MARK: State
 
-    private func set(_ health: Health) {
-        guard self.health != health else { return }
-        self.health = health
+    private func set(_ next: AgentHealthState) {
+        let previous = health
+        guard previous != next else { return }
+        health = next
+        // Whatever was shown may be from before the change: drop it, and fetch afresh on recovery.
+        if next != .healthy || shouldRefetchStatus(previous: previous, next: next) { status = nil }
         notify()
+        if shouldRefetchStatus(previous: previous, next: next) {
+            Task { [weak self] in _ = await self?.connection.status() }
+        }
     }
 
     private func received(_ status: AgentStatus) {
@@ -245,10 +296,11 @@ final class AgentSupervisor {
 
     private func describe(_ input: AgentHealthInput) -> String {
         let beat: String = switch input.heartbeat {
-        case .ok(let reply): "build \(reply.agentBuild) at \(reply.executablePath)"
+        case .ok(let reply): "\(reply.agentVersion) (\(reply.agentBuild)) at \(reply.executablePath)"
+            + (reply.draining ? ", draining" : "")
         case .unreachable: "unreachable"
         }
-        return "\(input.smStatus), \(beat), app build \(input.appBuild), plist "
+        return "\(input.smStatus), \(beat), app \(input.appVersion) (\(input.appBuild)), plist "
             + (input.storedPlistHash == input.currentPlistHash ? "unchanged" : "changed")
     }
 }

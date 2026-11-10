@@ -8,17 +8,21 @@ struct PlanSecrets {
     /// The value each submitted key had before the write; nil when the key did not exist.
     private(set) var previous: [SecretKey: String?] = [:]
     private let entries: [SecretEntry]
+    /// Keys to remove, such as the check-in URL of a plan saved without one. Not counted as a change by
+    /// `changesAnyValue`.
+    private let deletions: [SecretKey]
 
-    /// Reads the current value of every submitted key. Nothing is written if any read fails, since the
-    /// write could not then be undone.
-    init(store: any SecretStore, entries: [SecretEntry]) throws {
+    /// Reads the current value of every submitted or deleted key. Nothing is written if any read fails,
+    /// since the write could not then be undone.
+    init(store: any SecretStore, entries: [SecretEntry], deletions: [SecretKey] = []) throws {
         self.store = store
         self.entries = entries
-        for entry in entries where previous.index(forKey: entry.key) == nil {
+        self.deletions = deletions
+        for key in entries.map(\.key) + deletions where previous.index(forKey: key) == nil {
             do {
-                previous[entry.key] = .some(try store.read(entry.key))
+                previous[key] = .some(try store.read(key))
             } catch {
-                throw AgentError.storage("Restorey couldn't read \(entry.key.account) from the Keychain: \(error)")
+                throw AgentError.storage("Restorey couldn't read \(key.account) from the Keychain: \(error)")
             }
         }
     }
@@ -38,13 +42,22 @@ struct PlanSecrets {
         return old != entry.value
     }
 
-    /// Writes every entry. If one fails, the ones already written are restored before throwing.
+    /// Writes every entry, then removes every deletion. If one fails, everything already changed is
+    /// restored before throwing.
     func write() throws {
         for entry in entries {
             do {
                 try store.write(entry.value, for: entry.key)
             } catch {
                 let failure = "Restorey couldn't save \(entry.key.account) in the Keychain: \(error)"
+                throw AgentError.storage(failure + Self.describe(restore()))
+            }
+        }
+        for key in deletions where (previous[key] ?? nil) != nil {
+            do {
+                try store.delete(key)
+            } catch {
+                let failure = "Restorey couldn't remove \(key.account) from the Keychain: \(error)"
                 throw AgentError.storage(failure + Self.describe(restore()))
             }
         }

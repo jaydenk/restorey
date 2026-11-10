@@ -52,20 +52,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         refreshIcon()
     }
 
-    private var hasProblem: Bool {
+    private var iconState: StatusIconState {
         switch mode {
-        case .refused, .broken: return true
-        case .running(let supervisor):
-            switch supervisor.health {
-            case .healthy: return supervisor.status?.configError != nil
-            case .checking, .updating: return false
-            case .switchedOff, .notRunning, .failed: return true
-            }
+        case .refused: .warning
+        case .broken: .error
+        case .running(let supervisor): statusIconState(health: supervisor.health, status: supervisor.status)
         }
     }
 
     private func refreshIcon() {
-        let symbol = hasProblem ? "externaldrive.badge.exclamationmark" : "externaldrive.badge.timemachine"
+        let symbol = switch iconState {
+        case .neutral: "externaldrive.badge.timemachine"
+        case .warning: "externaldrive.trianglebadge.exclamationmark"
+        case .error: "externaldrive.badge.xmark"
+        }
         item.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Restorey")
         if case .refused = mode { item.button?.toolTip = "Move Restorey to Applications" }
     }
@@ -90,15 +90,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     private func addRunningItems(to menu: NSMenu, _ supervisor: AgentSupervisor) {
-        var showPlans = false
-        switch supervisor.health {
+        let health = supervisor.health
+        switch health {
         case .checking:
             menu.addItem(line("Connecting to the background agent…"))
         case .healthy:
-            showPlans = true
+            break
         case .updating:
             menu.addItem(line("Finishing the current backup before updating the agent"))
-            showPlans = true
+        case .waitingForUpdate:
+            menu.addItem(line("Updating the background agent…"))
         case .switchedOff:
             menu.addItem(line("Background agent is switched off"))
             menu.addItem(action("Open Login Items…", #selector(openLoginItems)))
@@ -106,13 +107,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             menu.addItem(line(reachable ? "Background agent isn't working properly" : "Background agent isn't running"))
             menu.addItem(action("Restart Agent", #selector(restartAgent)))
             menu.addItem(action("Open Login Items…", #selector(openLoginItems)))
+        case .damaged:
+            // No action: re-registering can't fix a bundle that's missing the agent's plist.
+            menu.addItem(line("Restorey's installation is damaged — reinstall it from the download"))
         case .failed(let message):
             menu.addItem(line(message))
             menu.addItem(action("Restart Agent", #selector(restartAgent)))
         }
 
-        // A status from an agent that isn't answering is stale, so it isn't shown.
-        if showPlans {
+        // In any other state the status may be from before a change, so it isn't shown.
+        if showsPlanLines(health) {
             if let status = supervisor.status {
                 if let configError = status.configError {
                     menu.addItem(line("Restorey can't read its settings: \(configError)"))
@@ -124,11 +128,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             } else {
                 menu.addItem(line("Waiting for the background agent…"))
             }
-            menu.addItem(.separator())
-            let backUp = action("Back Up Now", #selector(backUpNow))
-            backUp.isEnabled = supervisor.health == .healthy && !(supervisor.status?.plans.isEmpty ?? true)
-            menu.addItem(backUp)
         }
+        menu.addItem(.separator())
+        let backUp = action("Back Up Now", #selector(backUpNow))
+        backUp.isEnabled = allowsBackUpNow(health) && !(supervisor.status?.plans.isEmpty ?? true)
+        menu.addItem(backUp)
 
         #if DEBUG
         menu.addItem(.separator())

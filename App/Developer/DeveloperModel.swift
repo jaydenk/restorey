@@ -71,6 +71,11 @@ final class DeveloperModel {
             kind = .local
             localPath = repository
         }
+        clearSecrets()
+    }
+
+    /// Drops every secret the form holds: after a save (successful or not) and when the window closes.
+    func clearSecrets() {
         keyID = ""
         secret = ""
         repositoryPassword = ""
@@ -84,18 +89,15 @@ final class DeveloperModel {
         do {
             request = try makeRequest()
         } catch {
-            output = "\(error)"
+            clearSecrets()
+            output = "\(error) Enter the secrets again."
             return
         }
+        // The request holds the only copy from here on; the form keeps none, whatever the outcome.
+        clearSecrets()
         run("Save plan") { [connection = supervisor.connection] in
             let result = await connection.savePlan(request)
-            if case .success = result {
-                self.selectedPlanID = request.plan.id
-                self.keyID = ""
-                self.secret = ""
-                self.repositoryPassword = ""
-                self.checkInURL = ""
-            }
+            if case .success = result { self.selectedPlanID = request.plan.id }
             return Self.describe(result)
         }
     }
@@ -170,7 +172,8 @@ final class DeveloperModel {
                 hostLabel: hostLabel, sources: sourceList,
                 exclusions: DefaultExclusions.paths(home: home, identity: identity), now: Date())
         }
-        if !checkInURL.isEmpty { plan.hasCheckInURL = true }
+        // An empty field removes the check-in URL: the agent saves `false` and deletes the secret.
+        plan.hasCheckInURL = !checkInURL.isEmpty
 
         var secrets: [SecretEntry] = []
         if !repositoryPassword.isEmpty { secrets.append(SecretEntry(key: .repositoryPassword(plan.id), value: repositoryPassword)) }

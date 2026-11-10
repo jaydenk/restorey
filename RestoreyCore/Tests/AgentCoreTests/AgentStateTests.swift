@@ -781,3 +781,121 @@ extension AgentStateTests {
         #expect(await state.takeHelperFailure(planID: a) == nil)
     }
 }
+
+// MARK: Draining before re-registration (Ruling R51)
+
+extension AgentStateTests {
+    @Test func reregistrationDrainWaitsForInFlightRun() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        let events = EventLog()
+        let run = try await Self.fakeRun(state, planID: plan.id, seconds: 2, events: events)
+
+        let drain = Task {
+            await state.prepareForReregistration()
+            await events.append("drained")
+        }
+        try await Self.waitUntilDraining(state)
+        await run.value
+        await drain.value
+        #expect(await events.items == ["run ended", "drained"])
+    }
+
+    /// The agent stays up after this drain: only a restart drain exits (AgentService acts on
+    /// `exitsAfterwards`), so `unregister()` stops this drained process, not a fresh KeepAlive launch.
+    @Test func reregistrationDrainDoesNotExit() async throws {
+        let dir = try TempDirectory()
+        let state = await Self.makeState(dir)
+        await state.prepareForReregistration()
+        #expect(await state.drainPurpose == .reregistration)
+        #expect(!DrainPurpose.reregistration.exitsAfterwards)
+        #expect(DrainPurpose.restart.exitsAfterwards)
+        // A later restart drain (an app that finds the agent stuck drained) does exit.
+        await state.prepareForRestart()
+        #expect(await state.drainPurpose == .restart)
+    }
+
+    @Test func mutatingCallsAreRefusedAfterReregistrationDrainUntilRestart() async throws {
+        let dir = try TempDirectory()
+        let secrets = InMemorySecretStore()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, secrets: secrets, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        await state.prepareForReregistration()
+
+        #expect(await state.isDraining)
+        await #expect(throws: AgentError.draining) { try await state.savePlan(Self.request(plan)) }
+        await #expect(throws: AgentError.draining) { try await state.backUpNow(nil) }
+        await #expect(throws: AgentError.draining) { try await state.backUpNow(plan.id) }
+        await #expect(throws: AgentError.draining) { try await state.resume(plan.id) }
+        await #expect(throws: AgentError.draining) { try await state.confirmRecoveryKit(plan.id) }
+        await #expect(throws: AgentError.draining) { try await state.deletePlan(plan.id) }
+        await #expect(throws: AgentError.draining) { try await state.beginRun(planID: plan.id) }
+
+        // The registered agent that launchd starts next is a new process over the same files.
+        let restarted = await Self.makeState(dir, secrets: secrets, clock: clock)
+        #expect(!(await restarted.isDraining))
+        #expect(await restarted.drainPurpose == nil)
+        _ = try await restarted.savePlan(Self.request(plan))
+    }
+}
+
+// MARK: Removing a check-in URL (Ruling R51)
+
+extension AgentStateTests {
+    @Test func savingWithoutCheckInURLDeletesTheStoredOne() async throws {
+        let dir = try TempDirectory()
+        let secrets = InMemorySecretStore()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, secrets: secrets, clock: clock)
+        var plan = Self.plan(now: clock.now)
+        plan.hasCheckInURL = true
+        var request = Self.request(plan)
+        request.secrets.append(SecretEntry(key: .checkInURL(plan.id), value: "https://hc.example/ping/abc"))
+        _ = try await state.savePlan(request)
+        _ = try await state.confirmRecoveryKit(plan.id)
+        #expect(try secrets.read(.checkInURL(plan.id)) == "https://hc.example/ping/abc")
+
+        plan.hasCheckInURL = false
+        let status = try await state.savePlan(SavePlanRequest(plan: plan, secrets: []))
+        #expect(try secrets.read(.checkInURL(plan.id)) == nil)
+        #expect(status.plans.first?.plan.hasCheckInURL == false)
+        // Removing monitoring isn't a credentials change, so the recovery kit stays confirmed.
+        #expect(status.plans.first?.plan.recoveryKitConfirmedAt != nil)
+    }
+
+    @Test func checkInURLForAPlanWithoutOneIsRefused() async throws {
+        let dir = try TempDirectory()
+        let secrets = InMemorySecretStore()
+        let state = await Self.makeState(dir, secrets: secrets)
+        let plan = Self.plan(now: Date())
+        var request = Self.request(plan)
+        request.secrets.append(SecretEntry(key: .checkInURL(plan.id), value: "https://hc.example/ping/abc"))
+        await #expect(throws: AgentError.self) { try await state.savePlan(request) }
+        #expect(try secrets.read(.checkInURL(plan.id)) == nil)
+        #expect(try secrets.read(.repositoryPassword(plan.id)) == nil)
+    }
+
+    /// A failed config write puts a deleted check-in URL back.
+    @Test func failedSaveRestoresADeletedCheckInURL() async throws {
+        let dir = try TempDirectory()
+        let secrets = InMemorySecretStore()
+        let clock = TestClock()
+        let store = ControlledStore(AgentState.configStore(in: dir.url))
+        let state = await Self.makeState(dir, configStore: store, secrets: secrets, clock: clock)
+        var plan = Self.plan(now: clock.now)
+        plan.hasCheckInURL = true
+        var request = Self.request(plan)
+        request.secrets.append(SecretEntry(key: .checkInURL(plan.id), value: "https://hc.example/ping/abc"))
+        _ = try await state.savePlan(request)
+
+        await store.failNextSave()
+        plan.hasCheckInURL = false
+        await #expect(throws: AgentError.self) { try await state.savePlan(SavePlanRequest(plan: plan, secrets: [])) }
+        #expect(try secrets.read(.checkInURL(plan.id)) == "https://hc.example/ping/abc")
+    }
+}

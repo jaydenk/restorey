@@ -64,6 +64,9 @@ struct HelperResponderTests {
                 .s3SecretAccessKey(planID): "se\"cret\\/",
             ]
             for (key, value) in values { try secrets.inner.write(value, for: key) }
+            // Saving reads the keychain (a plan saved without a check-in URL has any stored one removed).
+            // The tests count only the helper request's reads.
+            secrets.reads.withLock { $0 = 0 }
         }
 
         deinit { try? FileManager.default.removeItem(at: directory) }

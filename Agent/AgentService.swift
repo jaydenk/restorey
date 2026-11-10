@@ -126,18 +126,33 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func prepareForRestart(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        drain(.restart, reply: reply)
+    }
+
+    func prepareForReregistration(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        drain(.reregistration, reply: reply)
+    }
+
+    /// Replies once no run is in flight. Only a restart drain then exits.
+    private func drain(_ purpose: DrainPurpose, reply: @escaping @Sendable (Data?, String?) -> Void) {
         Task { [state, log, afterDrain] in
-            log.info("Asked to restart: finishing any run in progress first")
-            if !(await state.prepareForRestart()) {
+            log.info(purpose.exitsAfterwards
+                ? "Asked to restart: finishing any run in progress first"
+                : "Asked to drain before re-registration: finishing any run in progress first")
+            let flushed = purpose == .restart
+                ? await state.prepareForRestart() : await state.prepareForReregistration()
+            if !flushed {
                 log.error("Gave up waiting for check-in pings after 3 minutes; some may not have been sent")
             }
-            log.info("No run in progress; exiting so launchd starts the agent again")
+            log.info(purpose.exitsAfterwards
+                ? "No run in progress; exiting so launchd starts the agent again"
+                : "No run in progress; staying up, drained, until the app re-registers the agent")
             do {
                 reply(try XPCCoding.encode(DrainReply(drained: true)), nil)
             } catch {
                 reply(nil, "Restorey's agent couldn't encode its reply: \(error.localizedDescription)")
             }
-            afterDrain()
+            if purpose.exitsAfterwards { afterDrain() }
         }
     }
 
