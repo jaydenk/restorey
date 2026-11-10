@@ -17,7 +17,7 @@ Answers the open questions in spec §12.1. Times are UTC, with Adelaide local ti
 | Not in §12.1 | A plist change in an update is ignored until re-registration | Re-register when the embedded plist's hash changes |
 | Not in §12.1 | A crashed run leaves a stale lock that blocks `check` (exit 11) | Plain `restic unlock` (never `--remove-all`) before maintenance and after an agent restart |
 
-**Still open:** the reboot test (the agent starts at login and runs a keychain-backed backup 60 s later; the owner will do it later), the end-to-end `credential_process` run against B2's S3 endpoint, and a measurement of restic's CPU use during a real first backup under `Standard`.
+**Still open:** SIGINT lock removal during a real backup, whole-home EPERM paths under FDA, telling "user switched the agent off" apart from a fault, the self-move quarantine strip, the Homebrew and Sparkle install paths, the reboot test (the agent starts at login and runs a keychain-backed backup 60 s later; the owner will do it later), the end-to-end `credential_process` run against B2's S3 endpoint, and a measurement of restic's CPU use during a real first backup under `Standard`.
 
 ## Environment
 
@@ -59,7 +59,7 @@ restic: identifier "com.jaydenkerr.restorey.spike.restic" and … (same certific
 - Triggered over XPC from the app, so the agent runs under launchd. The terminal used for inspection has no FDA itself: it can't open `~/Library/Application Support/com.apple.TCC/TCC.db`.
 - In the agent: `~/Library/Safari`, `~/Library/Mail` and `~/Library/Messages` were all `denied: NSCocoaErrorDomain 257`.
 - restic as the agent's child: **exit code 3**, with 6 "operation not permitted" errors (scan and archival for each folder), **and it still wrote a snapshot** of 3 empty directories (`dirs_new: 3`).
-- **Consequence for v0.1 (anti-goal 3):** without FDA, a backup produces a snapshot and exit code 3, which looks like "partly worked". The agent has to recognise "operation not permitted" errors on source paths as **missing Full Disk Access**, an error state with a fix action, not the ordinary "some files skipped" warning.
+- **Consequence for v0.1 (anti-goal 3):** without FDA, a backup produces a snapshot and exit code 3, which looks like "partly worked". The agent decides "FDA is missing" from its **own probe of a known protected directory**. That's an error state with a fix action, not the ordinary "some files skipped" warning. *(Corrected after review: missing FDA causes EPERM, but EPERM doesn't mean FDA is missing, because SIP and datavault paths return it even with FDA. Other EPERMs count as skipped files.)*
 
 ## H2 — Keychain password helper from launchd, no prompt
 
@@ -83,17 +83,17 @@ Running the installed, correctly signed helper from Terminal, `…/RestoreySpike
 Options for v0.1, from least to most effort:
 
 1. **Accept and document.** Same-user code execution can already do a lot, e.g. read `~/Library` and the restic cache. State it in the README.
-2. **Verify the parent chain in `print-password`.** Refuse unless the parent process is the bundled restic (code signature: identifier `…restic` plus the team) and its parent is the agent. Use `proc_pidpath` plus `SecCodeCopyGuestWithAttributes` on the parent's audit token. This raises the bar, but an attacker can still run the bundled restic with our helper as its password command. restic then holds the password and could, for example, `key add` a new key.
+2. **Check the launch chain, with the agent as the judge** (the owner chose this). A helper can't get its parent's audit token, and checking by pid and path can be fooled by exec-in-place: fork, then exec the signed binary, keeping the pid. So `print-password` asks the agent over XPC. The agent checks the caller's audit token, and checks that the caller's parent pid is a restic the agent itself spawned and is still supervising. *(Corrected after review. The first version proposed a parent-chain check inside the helper and named the wrong residual hole.)*
 3. **One-time token.** The agent puts a random nonce in restic's environment, and `print-password` asks the agent over XPC (the agent verifies the caller's code signature) to exchange the nonce for the secret, once. This stops "run the helper by hand". It doesn't stop an attacker who can read the restic child's environment while it runs (see H4).
 
-Recommendation: option 2 in v0.1, plus the README statement from option 1. Option 3 only if H4 shows child environments are not readable by other same-user processes.
+Recommendation: option 2 in v0.1, plus the README statement from option 1. Option 3's nonce-in-environment idea doesn't work, because H4 shows child environments are readable.
 
 ## H3 — Agent process shape: registration, lifecycle, notifications
 
 ### H3a — Registration and lifecycle (Task 2, 9 Nov 2026 22:28–22:36 UTC (10 Nov 08:58–09:06))
 
 - **Registration needed no approval.** `SMAppService.agent(plistName:).status` read `notFound` before the first `register()`, not `notRegistered`. The app has to treat `notFound` as "not registered yet" on first launch, not as a broken bundle. `register()` went straight to `enabled` and launchd started the agent within about 1 s. Nothing had to be approved in Login Items.
-- **How Login Items records it** (`sfltool dumpbtm`): one parent item `RestoreySpike` (type app, Developer Name "Jayden Kerr", team X72LEXP4DY). Under it is a child `RestoreySpikeAgent` (type agent, `Parent Identifier: 2.com.jaydenkerr.restorey.spike`, disposition `enabled, allowed, notified`). The child's name is the agent's **executable/product name**, not its `CFBundleDisplayName`. So the real agent's product name needs to read well, e.g. "Restorey Agent".
+- **How Login Items records it** (`sfltool dumpbtm`): one parent item `RestoreySpike` (type app, Developer Name "Jayden Kerr", team X72LEXP4DY). Under it is a child `RestoreySpikeAgent` (type agent, `Parent Identifier: 2.com.jaydenkerr.restorey.spike`, disposition `enabled, allowed, notified`). The child's name is the agent's **executable/product name**, not its `CFBundleDisplayName`. So the real agent's product name needs to read well, and must contain no spaces because of the `credential_process` limit (H4): e.g. "RestoreyAgent".
 - **XPC:** a Mach service declared in the plist's `MachServices` works. The agent sets `setConnectionCodeSigningRequirement` to accept only the app's identifier plus team OU, and the app's connections pass it.
 - **KeepAlive:** after `kill -9` of the agent, launchd had a new agent process **0.4 s** later, and the app's heartbeat recovered on its next 10-second ping.
 - **Replacing the app bundle while the agent runs** (same build): the old agent process kept running from its now-deleted binary and served the new app fine.
@@ -127,12 +127,12 @@ Recommendation: option 2 in v0.1, plus the README statement from option 1. Optio
 - A backup the agent scheduled itself (90 s timer, no XPC request pending) took **more than 4 minutes** for the same dry run that took about 50 s when triggered over XPC. During it, `ps -o pri` showed **priority 4** for both the agent and restic, which is Darwin's throttled background band. restic used about 8% CPU. `launchctl print` showed `spawn type = adaptive (6)`.
 - launchd's Adaptive type keeps the job at background priority except while it is serving an XPC request. Every earlier test run was triggered over XPC from the app, so it ran boosted. **The scheduled backups that make up nearly all of Restorey's work would always run throttled.**
 - Spec §8 says "Use `ProcessType=Adaptive` or `Standard`". **Adaptive is wrong for this agent.**
-- The throttled run was stopped with SIGINT after **954 s**. restic exited **130** and **removed its own lock** (`locks/` empty), which confirms the pause path in spec §5.1. Its keychain pre-read while the screen was locked had returned `0 (No error.)`.
+- The throttled run was stopped with SIGINT after **954 s**. restic exited **130** and **removed its own lock** (`locks/` empty), but **this proves nothing about the lock**: the run was a `--dry-run`, and restic takes no lock on a dry run (`cmd/restic/lock.go`: `if !dryRun`). Lock removal on SIGINT is **unverified**. *(Corrected after review.)* Its keychain pre-read while the screen was locked had returned `0 (No error.)`.
 
 ### Fix verified: `ProcessType=Standard` (0.0.3), 9 Nov 2026 23:21–23:23 UTC
 
 - **A plist change in an update is not picked up.** After 0.0.3 (plist `ProcessType` changed to `Standard`) replaced 0.0.2 and launchd relaunched the agent, `launchctl print` **still showed `spawn type = adaptive (6)`**. launchd keeps the job definition submitted at `register()` time. Only **`unregister()` followed by `register()`** applied the new plist: `spawn type = daemon (3)`, with no approval prompt. **Consequence for v0.1:** whenever the embedded plist changes, the update path has to re-register, not just restart the agent. Simplest is for the version handshake to unregister and re-register whenever the plist's hash differs from the one stored at the last registration.
-- The agent then scheduled its own run (60 s after start, no XPC pending): the agent was at **priority 20**, restic (`Process.qualityOfService = .utility`) at **priority 46, about 324% CPU**, and the same keychain-backed dry run **finished in 69 s, exit 0** (it had been stopped after 954 s under Adaptive).
+- The agent then scheduled its own run (60 s after start, no XPC pending): the agent was at **priority 20**, restic (`Process.qualityOfService = .utility`) at **priority 46, about 324% CPU** (this doesn't show that `.utility` took effect; verify it in v0.1), and the same keychain-backed dry run **finished in 69 s, exit 0** (it had been stopped after 954 s under Adaptive).
 - **Consequence for v0.1:** use `ProcessType=Standard`. restic at roughly 3 cores is "noticeable". Whether it's "disruptive" needs the spec §8 measurement on a real first backup, and `GOMAXPROCS` may be the lever if it is. Record that measurement in `docs/` as the spec asks.
 
 ## H2 addendum — keychain while the screen is locked (Task 4 step 4), 9 Nov 2026 23:02–23:03 UTC
@@ -144,14 +144,14 @@ Recommendation: option 2 in v0.1, plus the README statement from option 1. Optio
 
 **Verdict: environment variables are readable by other same-user processes (confirmed). A better route exists for S3, and so for B2 through its S3 API (confirmed from source, not run end-to-end).**
 
-### Child environments are not private (10 Nov 2026 UTC 22:58 (09:28))
+### Child environments are not private (9 Nov 2026 22:58 UTC (10 Nov 09:28))
 
 The bundled, hardened-runtime restic was started with `SPIKE_FAKE_SECRET=…` in its environment. A separate process running as the same user then read that variable two ways: with `ps -E -ww -p <pid>`, and with `sysctl(CTL_KERN, KERN_PROCARGS2, pid)` (rc 0, secret present). `launchctl procinfo` needs root and isn't needed. So **any backend key passed as an environment variable is readable by any same-user process for as long as restic runs**, which matches spec §7's caution. The test's parent was a shell, not the agent. The check is based on uid, so the parent shouldn't matter.
 
 ### What restic 0.19.1 accepts (source, with file and line)
 
 - **S3** (`internal/backend/s3/s3.go:103–132`): `credentials.NewChainCredentials` over `Static` (test only), `EnvAWS`, `EnvMinio`, `FileAWSCredentials`, `FileMinioClient` and `IAM`, in that order. `EnvAWS` comes first, so any `AWS_*` variables in the child environment win.
-- **`FileAWSCredentials`** (minio-go **v7.1.0**, the version restic pins, `pkg/credentials/file_aws_credentials.go:74–140`) honours `AWS_SHARED_CREDENTIALS_FILE`, `AWS_PROFILE`, and **`credential_process`**. The process is run with `exec.Command` and must print `{"AccessKeyId","SecretAccessKey","SessionToken"?,"Expiration"?}`. Two constraints:
+- **`FileAWSCredentials`** (minio-go **v7.1.0**, the version restic pins, `pkg/credentials/file_aws_credentials.go:74–140`) honours `AWS_SHARED_CREDENTIALS_FILE`, `AWS_PROFILE`, and **`credential_process`**. The process is run with `exec.Command` and must print `{"AccessKeyId","SecretAccessKey","SessionToken"?,"Expiration"}`. **`Expiration` is effectively required.** With a zero value, minio-go's `SetExpiration` (`credentials.go`) puts the cut-off in the past, `IsExpired()` is always true, and the helper runs again for nearly every signed request. Two constraints:
   - the line is split with `strings.Fields`, so **no quoting is possible and the helper's path must not contain spaces**
   - it needs at least two arguments, e.g. `<helper> s3-credentials --plan <id>`
 - **B2 native** (`internal/backend/b2/config.go:90–93`, `b2.go:63–78`): `B2_ACCOUNT_ID` and `B2_ACCOUNT_KEY` from the environment only. Nothing else.
@@ -162,11 +162,14 @@ The bundled, hardened-runtime restic was started with `SPIKE_FAKE_SECRET=…` in
 - **S3 and B2:** use restic's S3 backend, so B2 goes through its S3-compatible endpoint, as restic recommends. Pass no `AWS_*` variables. Write a per-plan shared-credentials file in Restorey's Application Support (mode 0600) that holds **only** `[restorey-<plan id>] credential_process = <agent executable> s3-credentials --plan <id>`, and set `AWS_SHARED_CREDENTIALS_FILE` and `AWS_PROFILE` in restic's environment. The secret then never appears in an environment variable or a file. It reaches restic through a pipe, from the same keychain-backed helper as the repository password, with the same confused-deputy caveat (H2).
 - The real app's bundle path must contain **no spaces**: `/Applications/Restorey.app/Contents/Helpers/RestoreyAgent.app/Contents/MacOS/RestoreyAgent` is fine. The helper should check its own path at startup and refuse to run otherwise.
 - **Other backends** (raw repository string plus variables, spec §5.3): child environment only, and the README says plainly that the environment is readable by other processes running as the user while a run is in progress.
-- README wording (spec §7): "Repository passwords and S3/B2 keys are read from your Keychain by Restorey's background agent and handed to restic through a pipe. They are never written to disk or put in environment variables. Credentials for other backends are passed to restic as environment variables while it runs; other programs running as you can read those."
+- README wording (spec §7): "Repository passwords, and keys for S3 (including Backblaze B2 through its S3 endpoint), are read from your Keychain by Restorey's background agent and handed to restic through a pipe. They are never written to disk or put in environment variables. Credentials for other backends, including repositories that use restic's native `b2:` backend, are passed to restic as environment variables while it runs. Other programs running as you can read those."
 
 ### Not done
 
-The end-to-end `credential_process` run against a local S3 server. MinIO's community images are no longer published, and auto mode blocked running `moto` from PyPI. **To do in v0.1:** check it against the owner's real B2 bucket through its S3 endpoint, with an unset `AWS_*` environment as the negative control. Without credentials restic should fail, because `s3.go:146` errors when no credentials are found.
+The end-to-end `credential_process` run against a local S3 server. MinIO's community images are no longer published, and auto mode blocked running `moto` from PyPI. **To do in v0.1** (corrected after review) — test against the owner's real B2 bucket through its S3 endpoint, with three checks:
+- a **positive control**: the helper logs each call, and the count per run is recorded
+- a **negative control**: a profile pointing at a deliberately failing helper must make restic fail. minio-go's chain otherwise falls through to `~/.mc/config.json` and IAM, so a passing run proves nothing on its own
+- helper errors go to os_log, because `cmd.Output()` discards stderr
 
 ## H6 — Manual N→N+1 update
 
@@ -191,7 +194,7 @@ The end-to-end `credential_process` run against a local S3 server. MinIO's commu
 - **The export re-signed every piece of nested code with Developer ID and a secure timestamp:** the app, the agent app, and `Contents/Helpers/restic`. restic doesn't need a manual re-sign step. `get-task-allow` is gone. Xcode created explicit profiles, "Mac Team Direct Provisioning Profile: com.jaydenkerr.restorey.spike" and "…spike.agent", which both carry the keychain group.
 - **The Developer ID designated requirement pins the team, not a certificate:** `anchor apple generic and identifier "…" and (certificate leaf[field.1.2.840.113635.100.6.1.9] or certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] = X72LEXP4DY)`. This is what should let grants survive certificate renewal.
 
-### A copy run from the DMG breaks the installed agent (10 Nov 2026 23:48:52 UTC) — **anti-goal 1**
+### A copy run from the DMG breaks the installed agent (9 Nov 2026 23:48:52 UTC (10 Nov 10:18)) — **anti-goal 1**
 
 With development-signed 0.0.3 installed in /Applications and its agent running, the notarised 0.1.0 app was opened **straight from the mounted, quarantined DMG**:
 
