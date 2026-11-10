@@ -178,8 +178,8 @@ again (a record from another version or build is ignored). A fault that survives
 with `BUILD_NUMBER=4 scripts/install-dev.sh` while a backup ran. The drain was ordered correctly (the build 3 agent
 waited for restic, then exited), but the backup failed with `Fatal: Resolving password failed: exit status 1`.
 restic runs the helper from the bundle path, which now held build 4. The new helper connects to the old, still
-running agent, whose listener checks the client's code signature: the old process's signature seals an Info.plist
-no longer on disk, so validation fails (`xpc_support_check_token: status: -67030`, `errSecCSInfoPlistFailed`;
+running agent and checks the agent against its connection's code requirement (`Agent/HelperMode.swift`). The old
+process's signature seals an Info.plist no longer on disk, so validation fails in the helper (`xpc_support_check_token: status: -67030`, `errSecCSInfoPlistFailed`;
 "Received message forbidden due to code signing requirement"; the helper logged "The agent gave the helper
 nothing: XPC error: Couldn't communicate with a helper application."). Every new restic process an old agent
 starts after its bundle is replaced fails this way: the maintenance after a backup, a run waiting in the
@@ -188,6 +188,14 @@ requirement is unchanged. A draining agent starts no new restic step (a backup n
 `skipped(agentUpdating)` with no ping, and is due at once for the next agent), and an agent checks before every
 restic step and on every scheduler tick whether the file at its executable path still matches its launch
 fingerprint. If not, it drains itself and exits 0 so launchd's `KeepAlive` starts the new binary.
+
+**Checked live after the fix** (23:26:10–23:26:44 UTC): build 5 → 6 installed while a backup ran (paused with
+SIGSTOP after it had fetched its password, then resumed). The build 6 app asked for a restart at 23:26:20; the
+backup finished with success (snapshot `6decfdb3`) at 23:26:40; the agent started no forget or check and exited;
+build 6 was running at 23:26:42, and its recovery `unlock` succeeded through the new helper. No failure, no
+`/fail`, no alert. Two earlier `unlock` failures ("The file “restic” doesn't exist", 22:43 and 22:50 UTC) came
+from pre-fix build 4 agents attempting a step while `install-dev.sh` had the bundle removed mid-copy; the fix
+treats an unreadable executable as replaced, so it drains instead.
 
 **Translocation detection on macOS 27.2 (26B123).** `SecTranslocateIsTranslocatedURL` is still exported by
 Security.framework, resolves through `dlsym` and returns success with `false` for non-translocated paths. A
