@@ -15,15 +15,24 @@ public enum AgentHeartbeat: Sendable, Equatable {
     case unreachable
 }
 
-/// The last automatic repair, persisted in the app's `UserDefaults` so the hourly limit survives a
-/// relaunch. A record from another app version or build doesn't count, so a new build restarts the agent
-/// at once.
+/// The two kinds of automatic repair. The hourly limit is per kind: a restart (for a stale agent) is
+/// often followed at once by a re-registration (for a changed plist), and each must still be allowed.
+public enum RepairKind: String, Codable, Sendable, Equatable, CaseIterable {
+    case restart
+    case reregister
+}
+
+/// The last automatic repair of one kind, persisted in the app's `UserDefaults` so the hourly limit
+/// survives a relaunch. A record from another app version or build doesn't count, so a new build
+/// restarts the agent at once.
 public struct RepairRecord: Codable, Sendable, Equatable {
+    public var kind: RepairKind
     public var at: Date
     public var appVersion: String
     public var appBuild: String
 
-    public init(at: Date, appVersion: String, appBuild: String) {
+    public init(kind: RepairKind, at: Date, appVersion: String, appBuild: String) {
+        self.kind = kind
         self.at = at
         self.appVersion = appVersion
         self.appBuild = appBuild
@@ -49,13 +58,16 @@ public struct AgentHealthInput: Sendable, Equatable {
     /// The SHA-256 of the embedded launchd plist at the last successful `register()`, if any.
     public var storedPlistHash: String?
     public var currentPlistHash: String
-    public var lastRepair: RepairRecord?
+    /// `ExecutableFingerprint` of the file at the heartbeat's `executablePath` now, if readable.
+    public var executableFingerprintOnDisk: String?
+    /// The last repair of each kind (at most one per kind).
+    public var lastRepairs: [RepairRecord]
     public var now: Date
 
     public init(
         smStatus: AgentServiceStatus, heartbeat: AgentHeartbeat, expectedExecutablePrefix: String,
         appVersion: String, appBuild: String, storedPlistHash: String?, currentPlistHash: String,
-        lastRepair: RepairRecord?, now: Date
+        executableFingerprintOnDisk: String?, lastRepairs: [RepairRecord], now: Date
     ) {
         self.smStatus = smStatus
         self.heartbeat = heartbeat
@@ -64,13 +76,14 @@ public struct AgentHealthInput: Sendable, Equatable {
         self.appBuild = appBuild
         self.storedPlistHash = storedPlistHash
         self.currentPlistHash = currentPlistHash
-        self.lastRepair = lastRepair
+        self.executableFingerprintOnDisk = executableFingerprintOnDisk
+        self.lastRepairs = lastRepairs
         self.now = now
     }
 
-    /// An automatic repair (re-register or restart) by this build ran within the last hour.
-    public var repairAttemptedRecently: Bool {
-        lastRepair?.isRecent(appVersion: appVersion, appBuild: appBuild, now: now) ?? false
+    /// An automatic repair of this kind by this build ran within the last hour.
+    public func repairAttemptedRecently(_ kind: RepairKind) -> Bool {
+        lastRepairs.contains { $0.kind == kind && $0.isRecent(appVersion: appVersion, appBuild: appBuild, now: now) }
     }
 }
 
@@ -107,7 +120,7 @@ public enum AgentHealthPolicy: Sendable, Equatable {
     /// agent the user switched off).
     public static let enabledButUnreachable: AgentHealthPolicy = .offerRestart
 
-    /// At most one automatic repair an hour.
+    /// At most one automatic repair of each kind an hour.
     public static let repairInterval: TimeInterval = 3600
     /// `hello` every 10 s.
     public static let heartbeatInterval: TimeInterval = 10
@@ -119,7 +132,8 @@ public func decideAgentHealth(
 ) -> AgentHealthAction {
     /// Every automatic repair restarts the agent, so a fault that survives one waits for the user.
     func repair(_ action: AgentHealthAction) -> AgentHealthAction {
-        input.repairAttemptedRecently ? .showNotRunning(canRepair: true) : action
+        let kind: RepairKind = action == .restartAfterDrain ? .restart : .reregister
+        return input.repairAttemptedRecently(kind) ? .showNotRunning(canRepair: true) : action
     }
 
     switch input.smStatus {
@@ -134,13 +148,20 @@ public func decideAgentHealth(
             case .offerRestart: return .showNotRunning(canRepair: true)
             }
         }
-        if !isInside(reply.executablePath, prefix: input.expectedExecutablePrefix)
-            || input.storedPlistHash != input.currentPlistHash {
+        // A re-pointed registration is never restarted: launchd would start the copy elsewhere again.
+        if !isInside(reply.executablePath, prefix: input.expectedExecutablePrefix) {
             return repair(.reregisterAfterDrain)
         }
         if reply.draining { return .waitForUpdate }
-        if reply.agentBuild != input.appBuild || reply.agentVersion != input.appVersion {
+        // Before any plist re-registration: a stale agent may not know `prepareForReregistration`, but
+        // every agent has `prepareForRestart`. The fresh agent is then re-registered on a later heartbeat.
+        if !agentIsCurrent(
+            reply, appVersion: input.appVersion, appBuild: input.appBuild,
+            executableFingerprintOnDisk: input.executableFingerprintOnDisk) {
             return repair(.restartAfterDrain)
+        }
+        if plistNeedsReregistration(stored: input.storedPlistHash, current: input.currentPlistHash) {
+            return repair(.reregisterAfterDrain)
         }
         return .none
     }
@@ -151,4 +172,23 @@ private func isInside(_ path: String, prefix: String) -> Bool {
     let directory = prefix.hasSuffix("/") ? prefix : prefix + "/"
     let standardised = URL(fileURLWithPath: path).standardizedFileURL.path
     return standardised.lowercased().hasPrefix(directory.lowercased())
+}
+
+/// The agent runs this app's version and build, from the binary now on disk. An agent that kept running
+/// a replaced binary (a fingerprint that differs, or none from an agent older than fingerprints) is not
+/// current, even with the same version and build.
+public func agentIsCurrent(
+    _ reply: HelloReply, appVersion: String, appBuild: String, executableFingerprintOnDisk: String?
+) -> Bool {
+    guard reply.agentVersion == appVersion, reply.agentBuild == appBuild else { return false }
+    guard let running = reply.executableFingerprint, let disk = executableFingerprintOnDisk else { return false }
+    return running == disk
+}
+
+/// Spec §8: re-register when the embedded plist differs from the one recorded at the last registration.
+/// With nothing recorded (registered by an older build, or the app's defaults were reset) launchd's job
+/// definition is unknown. It is re-registered once rather than trusted: a stale definition (an old
+/// `ProcessType`, a missing Mach service) would otherwise persist silently, and the cost is one drain.
+public func plistNeedsReregistration(stored: String?, current: String) -> Bool {
+    stored != current
 }

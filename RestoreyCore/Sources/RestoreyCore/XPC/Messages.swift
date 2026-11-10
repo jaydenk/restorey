@@ -34,16 +34,20 @@ public struct HelloReply: Codable, Sendable, Equatable {
     public var draining: Bool
     /// Nil until the user has been asked.
     public var notificationsAuthorised: Bool?
+    /// `ExecutableFingerprint` of the agent's binary when it started. Nil from agents older than fix
+    /// round 3, which the app treats as replaced.
+    public var executableFingerprint: String?
 
     public init(
         agentVersion: String, agentBuild: String, executablePath: String, draining: Bool,
-        notificationsAuthorised: Bool?
+        notificationsAuthorised: Bool?, executableFingerprint: String? = nil
     ) {
         self.agentVersion = agentVersion
         self.agentBuild = agentBuild
         self.executablePath = executablePath
         self.draining = draining
         self.notificationsAuthorised = notificationsAuthorised
+        self.executableFingerprint = executableFingerprint
     }
 }
 

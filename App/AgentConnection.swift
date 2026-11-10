@@ -134,14 +134,17 @@ final class AgentConnection {
                     once.resume(.failure(.unreachable("no answer within \(timeout.components.seconds) s")))
                 }
             }
-            let proxy = connection.remoteObjectProxyWithErrorHandler { error in
+            // Every closure handed to XPC is @Sendable, so it is nonisolated: XPC calls it on its own queue.
+            // A plain closure written here would inherit the main actor, and the Swift 6 runtime traps when
+            // XPC calls it off the main queue (the crash in fix round 3).
+            let proxy = connection.remoteObjectProxyWithErrorHandler { @Sendable error in
                 once.resume(.failure(.unreachable(error.localizedDescription)))
             }
             guard let agent = proxy as? AgentXPC else {
                 once.resume(.failure(.unreachable("no proxy")))
                 return
             }
-            send(agent) { data, error in
+            send(agent) { @Sendable data, error in
                 if let data {
                     do {
                         once.resume(.success(try XPCCoding.decode(T.self, from: data)))
@@ -162,10 +165,11 @@ final class AgentConnection {
         made.exportedInterface = NSXPCInterface(with: AgentClientXPC.self)
         made.exportedObject = receiver
         let key = ObjectIdentifier(made)
-        made.interruptionHandler = { [weak self] in
+        // @Sendable, so nonisolated (see `call`); they hop to the main queue themselves.
+        made.interruptionHandler = { @Sendable [weak self] in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.lost(key, invalidated: false) } }
         }
-        made.invalidationHandler = { [weak self] in
+        made.invalidationHandler = { @Sendable [weak self] in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.lost(key, invalidated: true) } }
         }
         made.resume()
@@ -204,7 +208,8 @@ private final class StatusReceiver: NSObject, AgentClientXPC, @unchecked Sendabl
     /// Set once, before the first connection is made; read only on the main actor.
     weak var connection: AgentConnection?
 
-    func statusChanged(_ status: Data) {
+    /// Nonisolated (the class has no actor): XPC calls it on its own queue.
+    nonisolated func statusChanged(_ status: Data) {
         guard let decoded = try? XPCCoding.decode(AgentStatus.self, from: status) else { return }
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated { self?.connection?.received(decoded) }

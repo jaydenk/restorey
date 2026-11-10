@@ -9,25 +9,29 @@ struct AgentHealthTests {
 
     private static func reply(
         version: String = "0.1.0", build: String = "7",
-        path: String = prefix + "RestoreyDevAgent.app/Contents/MacOS/RestoreyDevAgent", draining: Bool = false
+        path: String = prefix + "RestoreyDevAgent.app/Contents/MacOS/RestoreyDevAgent", draining: Bool = false,
+        fingerprint: String? = "disk"
     ) -> HelloReply {
         HelloReply(agentVersion: version, agentBuild: build, executablePath: path, draining: draining,
-                   notificationsAuthorised: true)
+                   notificationsAuthorised: true, executableFingerprint: fingerprint)
     }
 
     /// A repair 30 minutes ago by this same build.
-    private static let recentRepair = RepairRecord(at: now.addingTimeInterval(-1800), appVersion: "0.1.0", appBuild: "7")
+    private static func recent(_ kind: RepairKind) -> RepairRecord {
+        RepairRecord(kind: kind, at: now.addingTimeInterval(-1800), appVersion: "0.1.0", appBuild: "7")
+    }
+    private static let recentRepair = recent(.reregister)
 
     private static func input(
         _ smStatus: AgentServiceStatus = .enabled,
         heartbeat: AgentHeartbeat = .ok(reply()),
         storedPlistHash: String? = "abc",
-        lastRepair: RepairRecord? = nil
+        lastRepairs: [RepairRecord] = []
     ) -> AgentHealthInput {
         AgentHealthInput(
             smStatus: smStatus, heartbeat: heartbeat, expectedExecutablePrefix: prefix, appVersion: "0.1.0",
-            appBuild: "7", storedPlistHash: storedPlistHash, currentPlistHash: "abc", lastRepair: lastRepair,
-            now: now)
+            appBuild: "7", storedPlistHash: storedPlistHash, currentPlistHash: "abc",
+            executableFingerprintOnDisk: "disk", lastRepairs: lastRepairs, now: now)
     }
 
     private static func input(
@@ -37,7 +41,7 @@ struct AgentHealthTests {
         repairAttemptedRecently: Bool
     ) -> AgentHealthInput {
         input(smStatus, heartbeat: heartbeat, storedPlistHash: storedPlistHash,
-              lastRepair: repairAttemptedRecently ? recentRepair : nil)
+              lastRepairs: repairAttemptedRecently ? [recent(.restart), recent(.reregister)] : [])
     }
 
     @Test func healthyAgentNeedsNothing() {
@@ -85,10 +89,51 @@ struct AgentHealthTests {
         #expect(decideAgentHealth(Self.input(heartbeat: .ok(Self.reply(build: "6")))) == .restartAfterDrain)
     }
 
-    /// Re-registering restarts the agent too, so it wins over a plain restart.
-    @Test func reregisterWinsOverRestart() {
-        let both = Self.reply(build: "6", path: "/Volumes/X/RestoreyDevAgent")
+    /// Fix round 3: a stale agent (an older binary of the same version and build) may not know newer
+    /// calls such as `prepareForReregistration`, so it is restarted first with `prepareForRestart`, which
+    /// every agent has. The fresh agent then re-registers.
+    @Test func restartComesBeforePlistReregistration() {
+        let stale = Self.reply(fingerprint: nil)
+        #expect(decideAgentHealth(Self.input(heartbeat: .ok(stale), storedPlistHash: nil)) == .restartAfterDrain)
+        #expect(decideAgentHealth(Self.input(heartbeat: .ok(Self.reply(build: "6")), storedPlistHash: "old"))
+            == .restartAfterDrain)
+    }
+
+    /// A re-pointed registration is never restarted: launchd would relaunch the copy elsewhere (spike
+    /// phase B). It re-registers whatever else differs.
+    @Test func executableOutsideBundleWinsOverRestart() {
+        let both = Self.reply(build: "6", path: "/Volumes/X/RestoreyDevAgent", fingerprint: nil)
         #expect(decideAgentHealth(Self.input(heartbeat: .ok(both))) == .reregisterAfterDrain)
+    }
+
+    /// The live case: the agent kept running a replaced binary with the same version and build.
+    @Test func replacedBinaryRestarts() {
+        #expect(decideAgentHealth(Self.input(heartbeat: .ok(Self.reply(fingerprint: "before-install"))))
+            == .restartAfterDrain)
+    }
+
+    /// An agent from before fingerprints existed reports none, which counts as replaced.
+    @Test func agentWithoutFingerprintRestarts() {
+        #expect(decideAgentHealth(Self.input(heartbeat: .ok(Self.reply(fingerprint: nil)))) == .restartAfterDrain)
+    }
+
+    @Test func agentIsCurrentNeedsVersionBuildAndBinary() {
+        let disk = "disk"
+        #expect(agentIsCurrent(Self.reply(), appVersion: "0.1.0", appBuild: "7", executableFingerprintOnDisk: disk))
+        #expect(!agentIsCurrent(Self.reply(version: "0.0.9"), appVersion: "0.1.0", appBuild: "7", executableFingerprintOnDisk: disk))
+        #expect(!agentIsCurrent(Self.reply(build: "6"), appVersion: "0.1.0", appBuild: "7", executableFingerprintOnDisk: disk))
+        #expect(!agentIsCurrent(Self.reply(fingerprint: "old"), appVersion: "0.1.0", appBuild: "7", executableFingerprintOnDisk: disk))
+        #expect(!agentIsCurrent(Self.reply(fingerprint: nil), appVersion: "0.1.0", appBuild: "7", executableFingerprintOnDisk: disk))
+        // The app can't read the file: it can't confirm the agent is current.
+        #expect(!agentIsCurrent(Self.reply(), appVersion: "0.1.0", appBuild: "7", executableFingerprintOnDisk: nil))
+    }
+
+    /// Fix round 3, item 3: with nothing recorded, launchd's job definition is unknown, so it is
+    /// re-registered once rather than trusted (see the report).
+    @Test func plistRule() {
+        #expect(!plistNeedsReregistration(stored: "abc", current: "abc"))
+        #expect(plistNeedsReregistration(stored: "old", current: "abc"))
+        #expect(plistNeedsReregistration(stored: nil, current: "abc"))
     }
 
     /// Ruling R50: until the "switched off versus fault" check is done at the Mac, an enabled but
@@ -133,8 +178,8 @@ struct AgentHealthTests {
     /// build within the hour doesn't repair again.
     @Test func relaunchWithinTheHourDoesNotRepair() {
         let elsewhere = Self.reply(path: "/Volumes/X/RestoreyDevAgent")
-        let input = Self.input(heartbeat: .ok(elsewhere), lastRepair: Self.recentRepair)
-        #expect(input.repairAttemptedRecently)
+        let input = Self.input(heartbeat: .ok(elsewhere), lastRepairs: [Self.recentRepair])
+        #expect(input.repairAttemptedRecently(.reregister))
         #expect(decideAgentHealth(input) == .showNotRunning(canRepair: true))
     }
 
@@ -142,21 +187,33 @@ struct AgentHealthTests {
     @Test func newBuildIgnoresTheLastRepair() {
         let other = Self.reply(build: "6")
         for record in [
-            RepairRecord(at: Self.recentRepair.at, appVersion: "0.1.0", appBuild: "6"),
-            RepairRecord(at: Self.recentRepair.at, appVersion: "0.0.9", appBuild: "7"),
+            RepairRecord(kind: .restart, at: Self.recentRepair.at, appVersion: "0.1.0", appBuild: "6"),
+            RepairRecord(kind: .restart, at: Self.recentRepair.at, appVersion: "0.0.9", appBuild: "7"),
         ] {
-            let input = Self.input(heartbeat: .ok(other), lastRepair: record)
-            #expect(!input.repairAttemptedRecently)
+            let input = Self.input(heartbeat: .ok(other), lastRepairs: [record])
+            #expect(!input.repairAttemptedRecently(.restart))
             #expect(decideAgentHealth(input) == .restartAfterDrain)
         }
     }
 
     @Test func repairOverAnHourAgoAllowsAnother() {
-        let old = RepairRecord(at: Self.now.addingTimeInterval(-3601), appVersion: "0.1.0", appBuild: "7")
-        #expect(decideAgentHealth(Self.input(storedPlistHash: "old", lastRepair: old)) == .reregisterAfterDrain)
+        let old = RepairRecord(kind: .reregister, at: Self.now.addingTimeInterval(-3601), appVersion: "0.1.0", appBuild: "7")
+        #expect(decideAgentHealth(Self.input(storedPlistHash: "old", lastRepairs: [old])) == .reregisterAfterDrain)
         // A clock that moved backwards doesn't block repairs for longer than an hour.
-        let future = RepairRecord(at: Self.now.addingTimeInterval(600), appVersion: "0.1.0", appBuild: "7")
-        #expect(!Self.input(lastRepair: future).repairAttemptedRecently)
+        let future = RepairRecord(kind: .reregister, at: Self.now.addingTimeInterval(600), appVersion: "0.1.0", appBuild: "7")
+        #expect(!Self.input(lastRepairs: [future]).repairAttemptedRecently(.reregister))
+    }
+
+    /// Fix round 3: the limit is per kind. A stale agent is restarted, and the fresh agent must then be
+    /// re-registered for a changed plist straight away, not an hour later.
+    @Test func restartThenReregistrationAreBothAllowed() {
+        let afterRestart = Self.input(storedPlistHash: nil, lastRepairs: [Self.recent(.restart)])
+        #expect(decideAgentHealth(afterRestart) == .reregisterAfterDrain)
+        let afterReregister = Self.input(heartbeat: .ok(Self.reply(fingerprint: nil)), lastRepairs: [Self.recent(.reregister)])
+        #expect(decideAgentHealth(afterReregister) == .restartAfterDrain)
+        // A repeat of the same kind within the hour waits for the user.
+        let again = Self.input(heartbeat: .ok(Self.reply(fingerprint: nil)), lastRepairs: [Self.recent(.restart)])
+        #expect(decideAgentHealth(again) == .showNotRunning(canRepair: true))
     }
 
     @Test func repairRecordRoundTrips() throws {

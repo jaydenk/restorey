@@ -34,7 +34,16 @@ struct MessagesTests {
             draining: true, notificationsAuthorised: nil))
         try roundTrip(HelloReply(
             agentVersion: "0.1.0", agentBuild: "8", executablePath: "/x", draining: false,
-            notificationsAuthorised: false))
+            notificationsAuthorised: false, executableFingerprint: "16777234:42:59216:1.5"))
+    }
+
+    /// An agent from before fix round 3 sends no fingerprint; its reply must still decode (as nil), so the
+    /// app can tell it apart and restart it.
+    @Test func helloReplyWithoutFingerprintDecodes() throws {
+        let json = #"{"agentBuild":"1","agentVersion":"0.1.0","draining":false,"executablePath":"/x"}"#
+        let reply = try XPCCoding.decode(HelloReply.self, from: Data(json.utf8))
+        #expect(reply.executableFingerprint == nil)
+        #expect(reply.agentBuild == "1")
     }
 
     @Test func statusRoundTripsWithEveryPhase() throws {

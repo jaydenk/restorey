@@ -68,7 +68,9 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
 - the agent's binary isn't inside this app's bundle, or the embedded launchd plist changed since the last
   registration: it asks the agent to finish any run in progress and stay up (`prepareForReregistration`), then
   unregisters and registers again. If the agent can't be asked, it doesn't unregister, and tries again later
-- the agent runs a different version or build: it asks the agent to finish any run in progress and exit
+- the agent runs a different version or build, or still runs a binary that an install has since replaced (it
+  reports a fingerprint of its executable taken at launch, so a reinstall with the same build number is caught
+  too): it asks the agent to finish any run in progress and exit
   (`prepareForRestart`), and launchd starts the new one. The menu says "Finishing the current backup before
   updating the agent" meanwhile, or "Updating the background agent…" when it finds the agent already draining
 - the app's own bundle is missing the agent's plist: "Restorey's installation is damaged — reinstall it from the
@@ -78,7 +80,9 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
   Items". It doesn't repair this on its own yet, because "switched off" and "broken" can't be told apart
   until the check in `docs/spike-findings.md` is done
 
-Automatic repairs happen at most once an hour, also across relaunches (a new version or build may repair at
+A stale agent is restarted before any re-registration, since an older agent may not know the newer
+`prepareForReregistration` call. Automatic repairs happen at most once an hour for each kind (restart,
+re-register), also across relaunches (a new version or build may repair at
 once). Plan lines are shown only while the agent is healthy, and are fetched afresh each time it becomes healthy.
 The icon shows an error for a stopped plan, a settings error, a failure alert or an agent that isn't running, a
 warning for a skipped run or missing notifications, check-in or recent success, and is plain otherwise.

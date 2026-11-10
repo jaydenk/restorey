@@ -133,11 +133,18 @@ Mac, so Task 17 shipped the conservative table (Ruling R50) and the check is sti
 | `notFound`, `notRegistered` | any | `register()` |
 | `enabled` | agent binary outside this app's bundle, or plist hash changed | drain without exiting (`prepareForReregistration`), `unregister()`, `register()`; no unregister if the drain call fails |
 | `enabled` | agent already draining | wait, then `prepareForRestart` so it can't stay drained |
-| `enabled` | different agent version or build | drain, launchd's `KeepAlive` starts the new binary |
+| `enabled` | different agent version or build, or a binary replaced since the agent started | drain, launchd's `KeepAlive` starts the new binary (before any plist re-registration) |
 | `enabled` | unreachable | **no automatic repair**: "Background agent isn't running", with "Restart Agent" and "Open Login Items" |
 | `requiresApproval` | any | "Background agent is switched off", with "Open Login Items" |
 
-Automatic repairs run at most once an hour, recorded in the app's `UserDefaults` so a relaunch doesn't repair
+**Found on the first real launch (fix round 3, 10 Nov 2026 19:44 UTC (11 Nov 06:14)):** an install replaced the
+bundle while an agent from an earlier install kept running (spike H6), with the same version and build (0.1.0,
+1). It didn't know the new `prepareForReregistration` call, so NSXPC dropped the message ("Exception caught during
+decoding of received selector prepareForReregistrationWithReply:") and failed the call. The agent now reports a
+fingerprint of its executable (device, inode, size, modification time) taken at launch, and the app restarts an
+agent whose fingerprint differs from the file on disk, or that reports none, before anything else.
+
+Automatic repairs run at most once an hour for each kind (restart, re-register), recorded in the app's `UserDefaults` so a relaunch doesn't repair
 again (a record from another version or build is ignored). A fault that survives one shows "Restart Agent". If the check shows
 that "switched off" reads `requiresApproval`, the unreachable row can become an automatic repair by changing
 `AgentHealthPolicy.enabledButUnreachable` (`RestoreyCore/Sources/RestoreyCore/App/AgentHealth.swift`). If it

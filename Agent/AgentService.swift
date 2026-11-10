@@ -9,15 +9,18 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     private let state: AgentState
     private let log: AppLog
     private let notifier: Notifier
+    /// `ExecutableFingerprint` of the binary at launch, reported in `hello`.
+    private let executableFingerprint: String?
     /// Called once a drain has been replied to, to exit so launchd starts the new binary.
     private let afterDrain: @Sendable () -> Void
     /// Called after a change that can make a plan due now: a save, a recovery kit confirmation, a resume.
     private let plansChanged: @Sendable () -> Void
 
     init(
-        state: AgentState, log: AppLog, notifier: Notifier, plansChanged: @escaping @Sendable () -> Void,
-        afterDrain: @escaping @Sendable () -> Void
+        state: AgentState, log: AppLog, notifier: Notifier, executableFingerprint: String?,
+        plansChanged: @escaping @Sendable () -> Void, afterDrain: @escaping @Sendable () -> Void
     ) {
+        self.executableFingerprint = executableFingerprint
         self.state = state
         self.log = log
         self.notifier = notifier
@@ -29,7 +32,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
 
     func hello(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
         // Not logged: the app's heartbeat sends one every 10 s.
-        respond(reply) { [state, notifier] in
+        respond(reply) { [state, notifier, executableFingerprint] in
             _ = try Self.decode(HelloRequest.self, from: request)
             let info = Bundle.main.infoDictionary ?? [:]
             return HelloReply(
@@ -37,7 +40,8 @@ final class AgentService: NSObject, AgentXPC, Sendable {
                 agentBuild: info["CFBundleVersion"] as? String ?? "unknown",
                 executablePath: Bundle.main.executableURL?.path ?? "unknown",
                 draining: await state.isDraining,
-                notificationsAuthorised: await notifier.authorisationStatus())
+                notificationsAuthorised: await notifier.authorisationStatus(),
+                executableFingerprint: executableFingerprint)
         }
     }
 

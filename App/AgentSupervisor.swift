@@ -7,8 +7,8 @@ import RestoreyCore
 @MainActor
 @Observable
 final class AgentSupervisor {
-    /// The last automatic repair, as `RepairRecord` JSON in the app's `UserDefaults`.
-    static let repairRecordKey = "lastAgentRepair"
+    /// The last automatic repair of each kind, as `[RepairRecord]` JSON in the app's `UserDefaults`.
+    static let repairRecordKey = "lastAgentRepairs"
 
     private(set) var health: AgentHealthState = .checking
     /// The latest status from the agent. Cleared whenever the health leaves `.healthy`, and fetched
@@ -28,7 +28,7 @@ final class AgentSupervisor {
     @ObservationIgnored private var busy = false
     /// True while a heartbeat runs, so the loop and `checkSoon` never decide twice at once.
     @ObservationIgnored private var checking = false
-    @ObservationIgnored private var lastRepair: RepairRecord?
+    @ObservationIgnored private var lastRepairs: [RepairRecord] = []
     @ObservationIgnored private var lastAction: AgentHealthAction?
     /// After a drain call fails, re-registration waits until then (10 s doubling to 10 min).
     @ObservationIgnored private var drainRetryAfter: Date?
@@ -44,7 +44,7 @@ final class AgentSupervisor {
         request = HelloRequest(
             appVersion: info["CFBundleShortVersionString"] as? String ?? "unknown",
             appBuild: info["CFBundleVersion"] as? String ?? "unknown")
-        lastRepair = loadRepairRecord()
+        lastRepairs = loadRepairRecords()
         connection.onStatus = { [weak self] status in self?.received(status) }
     }
 
@@ -104,7 +104,8 @@ final class AgentSupervisor {
             smStatus: smStatus, heartbeat: beat, expectedExecutablePrefix: installed.helpersPrefix,
             appVersion: request.appVersion, appBuild: request.appBuild,
             storedPlistHash: registration.storedPlistHash, currentPlistHash: plistHash,
-            lastRepair: lastRepair, now: Date())
+            executableFingerprintOnDisk: lastHello.flatMap(Self.fingerprintOnDisk),
+            lastRepairs: lastRepairs, now: Date())
         let action = decideAgentHealth(input)
         if action != lastAction {
             log.info("Agent health: \(describe(input)) → \(action)")
@@ -144,7 +145,7 @@ final class AgentSupervisor {
             busy = false
             checkSoon()
         case .restartAfterDrain:
-            recordRepair()
+            recordRepair(.restart)
             await restart()
         case .reregisterAfterDrain:
             if let retryAfter = drainRetryAfter, Date() < retryAfter { return }
@@ -172,7 +173,9 @@ final class AgentSupervisor {
             try? await Task.sleep(for: .seconds(2))
             if case .success(let reply) = await connection.hello(request) {
                 lastHello = reply
-                if reply.agentBuild == request.appBuild, reply.agentVersion == request.appVersion {
+                if agentIsCurrent(
+                    reply, appVersion: request.appVersion, appBuild: request.appBuild,
+                    executableFingerprintOnDisk: Self.fingerprintOnDisk(reply)) {
                     log.info("The agent restarted and now runs \(reply.agentVersion) (\(reply.agentBuild))")
                     return
                 }
@@ -212,7 +215,7 @@ final class AgentSupervisor {
         }
         drainRetryAfter = nil
         drainRetryDelay = AgentHealthPolicy.heartbeatInterval
-        recordRepair()
+        recordRepair(.reregister)
         set(.checking)
         do {
             try await registration.unregister()
@@ -236,6 +239,11 @@ final class AgentSupervisor {
         }
     }
 
+    /// The fingerprint of the file now at the path the agent reports.
+    private static func fingerprintOnDisk(_ reply: HelloReply) -> String? {
+        ExecutableFingerprint.of(URL(fileURLWithPath: reply.executablePath))
+    }
+
     private func logged<T>(_ result: Result<T, AgentCallError>, _ name: String) -> Result<T, AgentCallError> {
         if case .failure(let error) = result { log.error("\(name) failed: \(error)") }
         return result
@@ -251,23 +259,28 @@ final class AgentSupervisor {
 
     // MARK: Repair record
 
-    /// Ruling R51: persisted, so a relaunch within the hour doesn't repair again. A record from another
-    /// version or build is cleared, so a new build restarts the agent at once.
-    private func loadRepairRecord() -> RepairRecord? {
+    /// Ruling R51: persisted, so a relaunch within the hour doesn't repair again. Records from another
+    /// version or build are cleared, so a new build restarts the agent at once.
+    private func loadRepairRecords() -> [RepairRecord] {
         guard let data = defaults.data(forKey: Self.repairRecordKey),
-              let record = try? XPCCoding.decode(RepairRecord.self, from: data)
-        else { return nil }
-        guard record.appVersion == request.appVersion, record.appBuild == request.appBuild else {
+              let records = try? XPCCoding.decode([RepairRecord].self, from: data)
+        else {
             defaults.removeObject(forKey: Self.repairRecordKey)
-            return nil
+            return []
         }
-        return record
+        let current = records.filter { $0.appVersion == request.appVersion && $0.appBuild == request.appBuild }
+        if current.count != records.count { saveRepairRecords(current) }
+        return current
     }
 
-    private func recordRepair() {
-        let record = RepairRecord(at: Date(), appVersion: request.appVersion, appBuild: request.appBuild)
-        lastRepair = record
-        if let data = try? XPCCoding.encode(record) { defaults.set(data, forKey: Self.repairRecordKey) }
+    private func recordRepair(_ kind: RepairKind) {
+        let record = RepairRecord(kind: kind, at: Date(), appVersion: request.appVersion, appBuild: request.appBuild)
+        lastRepairs = lastRepairs.filter { $0.kind != kind } + [record]
+        saveRepairRecords(lastRepairs)
+    }
+
+    private func saveRepairRecords(_ records: [RepairRecord]) {
+        if let data = try? XPCCoding.encode(records) { defaults.set(data, forKey: Self.repairRecordKey) }
     }
 
     // MARK: State
@@ -298,6 +311,7 @@ final class AgentSupervisor {
         let beat: String = switch input.heartbeat {
         case .ok(let reply): "\(reply.agentVersion) (\(reply.agentBuild)) at \(reply.executablePath)"
             + (reply.draining ? ", draining" : "")
+            + (reply.executableFingerprint == input.executableFingerprintOnDisk ? "" : ", binary replaced since launch")
         case .unreachable: "unreachable"
         }
         return "\(input.smStatus), \(beat), app \(input.appVersion) (\(input.appBuild)), plist "

@@ -12,6 +12,10 @@ import RestoreyCore
 // the running agent over XPC and exits: it must branch before NSApplication and before any listener.
 if let code = HelperMode.exitCode(arguments: CommandLine.arguments) { exit(code) }
 
+/// The binary this process was started from, recorded now: an install can replace the file while this
+/// process keeps running the old one, and `hello` lets the app tell (fix round 3).
+let launchFingerprint = Bundle.main.executableURL.flatMap(ExecutableFingerprint.of)
+
 /// Objects that must live as long as the process: the XPC listener and its delegate (the listener
 /// holds its delegate weakly), and the MetricKit subscriber.
 var keptAlive: [AnyObject] = []
@@ -44,7 +48,8 @@ do {
             let notifier = Notifier()
             await state.attach(notifier: notifier, log: { log.info($0) })
             let service = AgentService(
-                state: state, log: log, notifier: notifier, plansChanged: { scheduler.nudge(.configChanged) }
+                state: state, log: log, notifier: notifier, executableFingerprint: launchFingerprint,
+                plansChanged: { scheduler.nudge(.configChanged) }
             ) {
                 // Give the reply time to leave before exiting; launchd's KeepAlive starts the new binary.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { exit(0) }
