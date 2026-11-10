@@ -41,9 +41,9 @@ struct ResticInvocationTests {
     @Test func backupArguments() {
         let p = plan()
         #expect(inv(.backup, p).arguments == [
-            "backup", "--json", "--cache-dir", Self.cache, "--host", "pepper", "--tag", tag,
+            "backup", "--json", "--cache-dir", Self.cache, "--host=pepper", "--tag=\(tag)",
             "--skip-if-unchanged", "--exclude-cloud-files", "--exclude-caches", "--pack-size", "64",
-            "--exclude", "/Users/x/Library/Caches", "--exclude", "**/node_modules",
+            "--exclude=/Users/x/Library/Caches", "--exclude=**/node_modules",
             "--", "/Users/x/Documents", "/Users/x/-drafts", "/Users/x/Café Notes",
         ])
     }
@@ -72,10 +72,36 @@ struct ResticInvocationTests {
         #expect(!args[..<sep].contains("/Users/x/-drafts"))
     }
 
+    @Test func leadingDashValuesCannotBeReadAsFlags() {
+        var p = plan(exclusions: ["-foo"])
+        p.hostLabel = "-host"
+        p.sources = ["-drafts"] // not a valid plan; builder-only check
+        #expect(inv(.backup, p).arguments == [
+            "backup", "--json", "--cache-dir", Self.cache, "--host=-host", "--tag=\(tag)",
+            "--skip-if-unchanged", "--exclude-cloud-files", "--exclude-caches", "--pack-size", "64",
+            "--exclude=-foo", "--", "-drafts",
+        ])
+        #expect(inv(.snapshots(allHosts: false), p).arguments.contains("--host=-host"))
+        #expect(inv(.forget(dryRun: false), p).arguments.contains("--host=-host"))
+    }
+
+    @Test func validationErrors() {
+        #expect(plan().validationErrors() == [])
+        var p = plan()
+        p.hostLabel = " \t"
+        #expect(p.validationErrors() == [.emptyHostLabel])
+        p = plan(); p.hostLabel = ""
+        #expect(p.validationErrors() == [.emptyHostLabel])
+        p = plan(); p.sources = []
+        #expect(p.validationErrors() == [.noSources])
+        p = plan(); p.sources = ["/ok", "rel/path", "-drafts"]
+        #expect(p.validationErrors() == [.relativeSource("rel/path"), .relativeSource("-drafts")])
+    }
+
     @Test func forgetIsScopedToRestoreyTagAndHost() {
         let args = inv(.forget(dryRun: false)).arguments
         #expect(args == [
-            "forget", "--json", "--cache-dir", Self.cache, "--host", "pepper", "--tag", tag,
+            "forget", "--json", "--cache-dir", Self.cache, "--host=pepper", "--tag=\(tag)",
             "--group-by", "host,paths,tags",
             "--keep-hourly", "24", "--keep-daily", "30", "--keep-weekly", "52", "--keep-monthly", "120",
             "--retry-lock", "5m",
@@ -96,7 +122,7 @@ struct ResticInvocationTests {
     @Test func forgetDryRunAddsDryRun() {
         let args = inv(.forget(dryRun: true)).arguments
         #expect(args.contains("--dry-run"))
-        #expect(args.contains("--tag"))
+        #expect(args.contains("--tag=\(tag)"))
         #expect(!args.contains("--prune"))
     }
 
@@ -134,7 +160,7 @@ struct ResticInvocationTests {
 
     @Test func snapshotsScopedToHostUnlessAllHosts() {
         #expect(inv(.snapshots(allHosts: false)).arguments == [
-            "snapshots", "--json", "--cache-dir", Self.cache, "--host", "pepper",
+            "snapshots", "--json", "--cache-dir", Self.cache, "--host=pepper",
         ])
         let all = inv(.snapshots(allHosts: true)).arguments
         #expect(all == ["snapshots", "--json", "--cache-dir", Self.cache])

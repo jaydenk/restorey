@@ -29,6 +29,8 @@ struct ResticInvocationAcceptanceTests {
         )
     }
 
+    private struct Snap: Decodable { let hostname: String; let tags: [String]? }
+
     @Test func everyOperationIsAcceptedByRestic0191() throws {
         let restic = try TestBinaries.requireRestic()
         let fm = FileManager.default
@@ -58,6 +60,28 @@ struct ResticInvocationAcceptanceTests {
             credentialsFile: nil, rawEnvironment: [:], homeDirectory: dir
         )
 
+        // Foreign snapshots forget must never touch, seeded by direct restic calls.
+        func direct(_ args: [String], tag: String) throws {
+            var inv = makeInvocation(.check, plan: plan, context: context)
+            inv.arguments = args
+            let r = try run(restic, inv, dir: dir, tag: tag)
+            #expect(r.status == 0, "\(tag): \(r.stderr)")
+        }
+        let sourcePath = source.path
+        let otherTag = "restorey:\(UUID().uuidString)"
+        func seed() throws {
+            // Two snapshots of the plan's own group, so keep-1 has something to remove.
+            for i in 0..<2 {
+                try "v\(i)".write(to: source.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
+                try direct(["backup", "--host=testhost", "--tag=restorey:\(plan.id.uuidString)", sourcePath], tag: "own\(i)")
+            }
+            // (a) other host, same tag; (b) same host, no tag; (c) same host, different Restorey tag.
+            try direct(["backup", "--host=other-mac", "--tag=restorey:\(plan.id.uuidString)", sourcePath], tag: "seed-a")
+            try direct(["backup", "--host=testhost", sourcePath], tag: "seed-b")
+            try direct(["backup", "--host=testhost", "--tag=\(otherTag)", sourcePath], tag: "seed-c")
+        }
+        plan.retention = Retention(hourly: 1, daily: 1, weekly: 1, monthly: 1)
+
         let sequence: [(String, ResticOperation)] = [
             ("init", .initRepository),
             ("backup", .backup),
@@ -70,6 +94,7 @@ struct ResticInvocationAcceptanceTests {
             ("unlock", .unlock),
         ]
         for (name, op) in sequence {
+            if name == "forget" { try seed() }
             let inv = makeInvocation(op, plan: plan, context: context)
             let r = try run(restic, inv, dir: dir, tag: name)
             #expect(!r.stderr.contains("unknown flag"), "\(name): \(r.stderr)")
@@ -77,6 +102,20 @@ struct ResticInvocationAcceptanceTests {
             #expect(r.status == 0, "\(name) exited \(r.status): \(r.stderr)")
             if name == "backup" {
                 #expect(r.stdout.contains("\"message_type\":\"summary\""), "backup produced no JSON summary")
+            }
+            if name == "forget" {
+                let all = try run(restic, makeInvocation(.snapshots(allHosts: true), plan: plan, context: context),
+                                  dir: dir, tag: "after-forget")
+                #expect(all.status == 0, "\(all.stderr)")
+                // Keep-1 removed the extra snapshots of the plan's own group, but all three
+                // foreign snapshots must survive.
+                let snaps = try JSONDecoder().decode([Snap].self, from: Data(all.stdout.utf8))
+                let own = "restorey:\(plan.id.uuidString)"
+                #expect(snaps.contains { $0.hostname == "other-mac" && ($0.tags ?? []).contains(own) }, "(a) lost")
+                #expect(snaps.contains { $0.hostname == "testhost" && ($0.tags ?? []).isEmpty }, "(b) lost")
+                #expect(snaps.contains { $0.hostname == "testhost" && ($0.tags ?? []) == [otherTag] }, "(c) lost")
+                #expect(snaps.filter { $0.hostname == "testhost" && ($0.tags ?? []) == [own] }.count == 1,
+                        "own group should be reduced to one snapshot")
             }
             if name == "snapshots" || name == "snapshots-all" {
                 #expect(r.stdout.contains("\"hostname\":\"testhost\""), "\(name): \(r.stdout)")

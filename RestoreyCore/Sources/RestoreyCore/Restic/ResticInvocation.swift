@@ -92,6 +92,11 @@ private let maintenanceRetryLock = "5m"
 
 /// Builds the restic invocation for `op`.
 ///
+/// Callers must refuse a plan whose `validationErrors()` is non-empty before calling this; the
+/// builder does not throw, so an invalid host label or source would reach restic as given.
+///
+/// Values are joined to their flag with `=` so one starting with `-` is never read as a flag.
+///
 /// Safety properties, each covered by a test:
 /// - `forget` is always limited to this plan's host and `restorey:<id>` tag and never prunes, so it
 ///   cannot delete snapshots that Restorey did not make.
@@ -107,16 +112,16 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
         args = ["init"] + common(context)
     case .backup:
         args = ["backup"] + common(context)
-            + ["--host", plan.hostLabel, "--tag", tag,
+            + ["--host=\(plan.hostLabel)", "--tag=\(tag)",
                "--skip-if-unchanged", "--exclude-cloud-files", "--exclude-caches"]
             + packSize(plan)
         if let limit = plan.uploadLimitKiB { args += ["--limit-upload", String(limit)] }
-        for pattern in plan.exclusions { args += ["--exclude", pattern] }
+        for pattern in plan.exclusions { args.append("--exclude=\(pattern)") }
         args += ["--"] + plan.sources
     case .forget(let dryRun):
         let r = plan.retention
         args = ["forget"] + common(context)
-            + ["--host", plan.hostLabel, "--tag", tag, "--group-by", "host,paths,tags",
+            + ["--host=\(plan.hostLabel)", "--tag=\(tag)", "--group-by", "host,paths,tags",
                "--keep-hourly", String(r.hourly), "--keep-daily", String(r.daily),
                "--keep-weekly", String(r.weekly), "--keep-monthly", String(r.monthly)]
         if dryRun { args.append("--dry-run") }
@@ -127,7 +132,7 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
         args = ["check"] + common(context) + ["--retry-lock", maintenanceRetryLock]
     case .snapshots(let allHosts):
         args = ["snapshots"] + common(context)
-        if !allHosts { args += ["--host", plan.hostLabel] }
+        if !allHosts { args.append("--host=\(plan.hostLabel)") }
     case .unlock:
         args = ["unlock"] + common(context)
     }

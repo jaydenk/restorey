@@ -103,6 +103,25 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
     }
 }
 
+public enum PlanValidationError: Error, Equatable, Sendable {
+    case emptyHostLabel
+    case noSources
+    /// A source that does not start with `/`.
+    case relativeSource(String)
+}
+
+extension Plan {
+    /// Problems that make a plan unsafe to run. The agent and the plan runner refuse an invalid
+    /// plan before building restic invocations.
+    public func validationErrors() -> [PlanValidationError] {
+        var errors: [PlanValidationError] = []
+        if hostLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { errors.append(.emptyHostLabel) }
+        if sources.isEmpty { errors.append(.noSources) }
+        for source in sources where !source.hasPrefix("/") { errors.append(.relativeSource(source)) }
+        return errors
+    }
+}
+
 public enum RepositoryOrigin: String, Codable, Sendable, Equatable {
     /// Restorey ran `restic init`.
     case created
