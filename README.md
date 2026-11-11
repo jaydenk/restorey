@@ -301,7 +301,7 @@ they create, so they never touch real Restorey items.
 The test host is the agent's own executable, launched by XCTest from DerivedData, so it carries the real Debug
 identity. The agent therefore runs its start-up only as the launchd job for its label: launchd sets
 `XPC_SERVICE_NAME` to the label in the job's environment (`launchctl print gui/$(id -u)/<label>` shows it), and
-any other process sees something else (`0` from a shell, `application.<bundle id>…` for an app launched by
+any other process sees something else (for example `0` from a login shell, `application.<bundle id>…` for an app launched by
 macOS). Under XCTest (`XCTestConfigurationFilePath` and friends set) the agent does nothing but let XCTest run;
 otherwise it logs one line to the unified log (category `agent`) and exits with status 78. Either way it writes
 nothing to `agent.log`, loads no `config.json` or `state.json`, and starts no listener, recovery or scheduler,

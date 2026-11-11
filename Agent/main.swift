@@ -27,6 +27,10 @@ if let identity = try? Identity.fromBundle(.main) {
         host.run()
         exit(0)
     case .refused(let reason):
+        // A stray copy (launched by hand or by another program) isn't a launchd job, so it simply exits. If the
+        // real job were ever refused (for example if launchd stopped setting XPC_SERVICE_NAME), KeepAlive would
+        // respawn it at launchd's throttle, about every 10 s, logging this line each time while the app reports
+        // the agent unreachable. That loud failure is chosen over a second agent writing the same state (R66).
         Logger(subsystem: identity.rootID, category: "agent").error("Not starting the agent: \(reason, privacy: .public)")
         exit(AgentLaunchRole.refusedExitStatus)
     }

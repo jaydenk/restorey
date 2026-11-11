@@ -5,7 +5,8 @@
 #
 # A live check, not a test: it needs RestoreyDev installed (scripts/install-dev.sh), opened once to register
 # its agent, and the agent running the installed build. It reads the real agent.log, which no test may touch
-# (Ruling R66), and changes nothing.
+# (Ruling R66). It writes nothing itself; the only change is the agent's own refusal line in agent.log, which is
+# what it looks for.
 set -euo pipefail
 
 helper=/Applications/RestoreyDev.app/Contents/Helpers/RestoreyDevAgent.app/Contents/MacOS/RestoreyDevAgent
