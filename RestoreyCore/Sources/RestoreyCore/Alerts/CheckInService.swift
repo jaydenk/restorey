@@ -1,7 +1,7 @@
 import Foundation
 
-/// Sends a plan's check-in pings to its Healthchecks-style URL (spec §6.2): `.start` to `<url>/start`,
-/// `.success` to `<url>`, and `.fail` to `<url>/fail` with its body as `text/plain; charset=utf-8`.
+/// Sends a plan's check-in pings to its Healthchecks-style URL (spec §6.2): `.success` to `<url>`, and
+/// `.fail` to `<url>/fail` with its body as `text/plain; charset=utf-8`. There is no `/start` (Ruling R57).
 /// Every ping is a POST; only `/fail` has a body.
 ///
 /// The URL is read from the keychain when the ping is sent, so a changed URL takes effect at once. A
@@ -72,7 +72,6 @@ public actor CheckInService: CheckInSending {
         let kind: String
         let suffix: String?
         switch ping {
-        case .start: (kind, suffix) = ("start", "start")
         case .success: (kind, suffix) = ("success", nil)
         case .fail: (kind, suffix) = ("fail", "fail")
         }

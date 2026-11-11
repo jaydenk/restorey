@@ -5,11 +5,6 @@ import Testing
 struct CheckInTests {
     private let redactor = Redactor(secrets: ["s3cret"])
 
-    @Test func startPing() {
-        #expect(pingsAtStart(trigger: .scheduled) == [.start])
-        #expect(pingsAtStart(trigger: .manual) == [.start])
-    }
-
     @Test func pingTable() {
         func ping(_ outcome: RunOutcome) -> CheckInPing? {
             pingAtEnd(outcome: outcome, logTail: [], redactor: redactor)

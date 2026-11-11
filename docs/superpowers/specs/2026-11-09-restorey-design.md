@@ -252,11 +252,11 @@ A failure of any check is an alert-worthy event, with the same severity as a fai
 
 - **macOS notifications:** always on.
 - **Check-in URL (Healthchecks.io-style dead-man's switch):**
-  - ping `/start` at run start (when the backup itself starts, after any wait for the repository's queue)
-  - ping success or `/fail` at the end
+  - ping success or `/fail` at the end of a backup
+  - **No `/start` ping (Ruling R57, owner decision, 11 Nov 2026).** Healthchecks.io marks a check that received a start signal and then no success within its grace time as down. A run that is paused, cancelled or retried for a lock has no honest ending to send, so a `/start` would make Pause raise a false alarm. Without it, the check alerts only when no success arrives within its period and grace.
   - the service alerts the user when pings stop
   - This is the only defence against "the Mac is off, broken or stolen" and against Restorey itself being dead. It is therefore the most important integration for anti-goal 1.
-  - **One URL per plan (my call).** Ping only on real outcomes: `/start`, then success or `/fail`. Skipped and paused runs send nothing.
+  - **One URL per plan (my call).** Ping only on real outcomes: success or `/fail`. Skipped, paused, cancelled and lock-retried runs send nothing.
   - **The `/fail` ping carries the reason (review 3).** Healthchecks-style services accept a request body and show it with the alert. Send the restic exit code and the last ~20 lines of the run log, with secrets stripped, so the email the user gets at work says *why*, not just that it failed.
   - **The user sets tolerance on the service side.** The period and grace set on the check service define how long "no successful backup" can last. The settings screen recommends setting them to the plan's N-day threshold (e.g. 3 days) rather than the hourly schedule. That way battery skips don't cause noise, and a laptop that never charges still triggers an alert. A success ping on a skipped run would hide exactly that case, so it is never sent.
 - **Agent liveness without a check-in URL (review 4).** The check-in URL is optional, so it cannot be the only thing that notices a dead agent.

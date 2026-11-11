@@ -129,10 +129,9 @@ The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`) runs
    because restic would otherwise save a snapshot of empty folders.
 
    A failure found in steps 1 to 3 (an invalid plan, a missing source, Full Disk Access missing) sends the
-   check-in `/fail` ping with the reason, and no `/start`. A plan whose recovery kit isn't confirmed yet
-   sends nothing.
-4. Sends the check-in `/start` ping, runs `restic backup` through the repository's queue, classifies the
-   result, records it, and sends the success or `/fail` ping straight away, so maintenance never delays it.
+   check-in `/fail` ping with the reason. A plan whose recovery kit isn't confirmed yet sends nothing.
+4. Runs `restic backup` through the repository's queue, classifies the result, records it, and sends the
+   success or `/fail` ping straight away, so maintenance never delays it.
 5. After a successful backup, in the same turn of the queue: `forget` (after every backup that made a
    snapshot, or daily for an adopted repository), `prune` weekly when it is switched on, and a plain
    `unlock` followed by `check` weekly. Each is its own run with its own log; a failed `check` raises its own
@@ -156,12 +155,15 @@ then waits up to 3 minutes for queued check-in pings.
 ## Alerts
 
 **Check-in pings.** If a plan has a check-in URL (a Healthchecks-style dead-man's switch, kept in the
-Keychain), the agent POSTs `/start` when a backup starts, then the URL itself on success or `/fail` on failure.
-The `/fail` body is plain text: restic's exit code and the last 20 lines of the run's error output, with
+Keychain), the agent POSTs to the URL itself when a backup succeeds and to `/fail` when it fails. It never sends
+`/start`: Healthchecks.io treats a check that was told a run started and then hears nothing within its grace
+time as down, and a paused, cancelled or lock-retried run has no honest ending to send, so a start ping would
+raise a false alarm on every Pause. Paused, cancelled, skipped and lock-retried runs send nothing. The `/fail` body is plain text: restic's exit code and the last 20 lines of the run's error output, with
 secrets removed. A network error or a 5xx is retried after 5 s, 30 s and 120 s; a 4xx is not. Each request
-times out after 30 s without data or 60 s in all, and one send, retries included, is bounded at 170 s. A
-queued `/start` followed by its end ping can take longer than the 3 minutes the agent waits for pings before
-exiting for an update; the agent then exits anyway and logs it. A ping that fails is written to the agent's
+times out after 30 s without data or 60 s in all, and one send, retries included, is bounded at 170 s, inside
+the 3 minutes the agent waits for pings before exiting for an update. A plan's pings go out one after another,
+so a ping queued behind an earlier one for the same plan that is still being retried can take longer; the
+agent then exits anyway and logs it. A ping that fails is written to the agent's
 log as "check-in ping <kind> for <plan ID>: <outcome>", never with the URL, and never fails the backup. If
 the service answers a ping with a 4xx, the plan shows "Check-in URL rejected" and the agent notifies, because
 the service won't alert anyone if backups stop; the next successful ping, or changing or removing the URL,

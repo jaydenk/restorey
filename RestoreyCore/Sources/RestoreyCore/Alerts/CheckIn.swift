@@ -1,8 +1,12 @@
 import Foundation
 
 /// One ping to a plan's dead-man's-switch check-in URL.
+///
+/// There is no start ping (Ruling R57): Healthchecks.io marks a check that got a start signal and no
+/// success within its grace time as down, and a paused, cancelled or lock-retried run has no honest
+/// ending to send, so a start would raise a false alarm. The check alerts only when no success arrives
+/// within its period and grace.
 public enum CheckInPing: Sendable, Equatable {
-    case start
     case success
     case fail(body: String)
 }
@@ -10,11 +14,6 @@ public enum CheckInPing: Sendable, Equatable {
 /// Sends pings. Implemented in Task 16; failures are the sender's to log, never the run's.
 public protocol CheckInSending: Sendable {
     func send(_ ping: CheckInPing, planID: UUID) async
-}
-
-/// The pings to send as a run starts.
-public func pingsAtStart(trigger: RunTrigger) -> [CheckInPing] {
-    [.start]
 }
 
 /// The ping to send when a run ends, or nil for none.

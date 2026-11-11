@@ -41,25 +41,25 @@ struct CheckInServiceTests {
         }
     }
 
-    @Test func startSuccessFailPaths() async throws {
+    /// Success goes to the URL, a failure to `/fail`; there is no `/start` ping (Ruling R57).
+    @Test func successAndFailPaths() async throws {
         let server = try StubHTTPServer()
         defer { server.stop() }
         let checkIn = try service(server)
-        await checkIn.send(.start, planID: planID)
         await checkIn.send(.success, planID: planID)
         await checkIn.send(.fail(body: "restic exit code 1\n"), planID: planID)
-        #expect(server.requests.map(\.path) == ["/abc/start", "/abc", "/abc/fail"])
-        #expect(server.requests.map(\.method) == ["POST", "POST", "POST"])
+        #expect(server.requests.map(\.path) == ["/abc", "/abc/fail"])
+        #expect(server.requests.map(\.method) == ["POST", "POST"])
     }
 
-    /// The success ping goes to the URL exactly as stored; the others add one `/` and their suffix.
+    /// The success ping goes to the URL exactly as stored; `/fail` adds one `/` and its suffix.
     @Test func aTrailingSlashOnTheURLIsNotDoubled() async throws {
         let server = try StubHTTPServer()
         defer { server.stop() }
         let checkIn = try service(server, path: "/abc/")
-        await checkIn.send(.start, planID: planID)
+        await checkIn.send(.fail(body: "x"), planID: planID)
         await checkIn.send(.success, planID: planID)
-        #expect(server.requests.map(\.path) == ["/abc/start", "/abc/"])
+        #expect(server.requests.map(\.path) == ["/abc/fail", "/abc/"])
     }
 
     @Test func failBodyIsSent() async throws {
@@ -68,7 +68,7 @@ struct CheckInServiceTests {
         let checkIn = try service(server)
         let body = "restic exit code 3\nFatal: unable to open config file — no such file\n"
         await checkIn.send(.fail(body: body), planID: planID)
-        await checkIn.send(.start, planID: planID)
+        await checkIn.send(.success, planID: planID)
         let requests = server.requests
         try #require(requests.count == 2)
         #expect(requests[0].body == Data(body.utf8))
@@ -91,9 +91,9 @@ struct CheckInServiceTests {
         defer { server.stop() }
         let log = LogLines()
         let checkIn = try service(server, log: log)
-        await checkIn.send(.start, planID: planID)
+        await checkIn.send(.success, planID: planID)
         #expect(server.requests.count == 4)
-        #expect(log.all.map(\.text) == ["check-in ping start for \(planID.uuidString): failed after 4 attempts (HTTP 500)"])
+        #expect(log.all.map(\.text) == ["check-in ping success for \(planID.uuidString): failed after 4 attempts (HTTP 500)"])
         #expect(log.all.map(\.failure) == [true])
     }
 
@@ -113,9 +113,9 @@ struct CheckInServiceTests {
         let log = LogLines()
         let results = Results()
         let checkIn = try service(nil, log: log, results: results, baseURL: "http://127.0.0.1:\(port)")
-        await checkIn.send(.start, planID: planID)
+        await checkIn.send(.success, planID: planID)
         let line = try #require(log.all.first?.text)
-        #expect(line.hasPrefix("check-in ping start for \(planID.uuidString): failed after 4 attempts ("))
+        #expect(line.hasPrefix("check-in ping success for \(planID.uuidString): failed after 4 attempts ("))
         #expect(results.statuses.isEmpty)
     }
 
@@ -124,9 +124,9 @@ struct CheckInServiceTests {
         defer { server.stop() }
         let results = Results()
         let checkIn = try service(server, results: results)
-        await checkIn.send(.start, planID: planID)
         await checkIn.send(.success, planID: planID)
-        await checkIn.send(.start, planID: planID)
+        await checkIn.send(.success, planID: planID)
+        await checkIn.send(.success, planID: planID)
         #expect(results.statuses == [404, 200])
         #expect(results.plans == [planID, planID])
     }
@@ -140,10 +140,10 @@ struct CheckInServiceTests {
         let log = LogLines()
         let session = CheckInService.makeSession(requestTimeout: 1, resourceTimeout: 2)
         let checkIn = try service(server, session: session, log: log)
-        let elapsed = await ContinuousClock().measure { await checkIn.send(.start, planID: planID) }
+        let elapsed = await ContinuousClock().measure { await checkIn.send(.success, planID: planID) }
         #expect(elapsed < .seconds(4 * 2 + 3))
         #expect(server.requests.count == 4)
-        #expect(log.all.map(\.text) == ["check-in ping start for \(planID.uuidString): failed after 4 attempts (timed out)"])
+        #expect(log.all.map(\.text) == ["check-in ping success for \(planID.uuidString): failed after 4 attempts (timed out)"])
     }
 
     /// With the real 30 s and 60 s timeouts, the send budget is what ends a hung send.
@@ -152,10 +152,10 @@ struct CheckInServiceTests {
         defer { server.stop() }
         let log = LogLines()
         let checkIn = try service(server, budget: .seconds(1), log: log)
-        let elapsed = await ContinuousClock().measure { await checkIn.send(.start, planID: planID) }
+        let elapsed = await ContinuousClock().measure { await checkIn.send(.success, planID: planID) }
         #expect(elapsed < .seconds(3))
         #expect(server.requests.count == 1)
-        #expect(log.all.map(\.text) == ["check-in ping start for \(planID.uuidString): failed after 1 attempt (no reply in time)"])
+        #expect(log.all.map(\.text) == ["check-in ping success for \(planID.uuidString): failed after 1 attempt (no reply in time)"])
     }
 
     /// A retry whose back-off would end after the budget is not made.
@@ -177,7 +177,7 @@ struct CheckInServiceTests {
         defer { server.stop() }
         let log = LogLines()
         let checkIn = try service(nil, log: log)
-        await checkIn.send(.start, planID: planID)
+        await checkIn.send(.success, planID: planID)
         await checkIn.send(.fail(body: "x"), planID: planID)
         #expect(server.requests.isEmpty)
         #expect(log.all.isEmpty)
@@ -188,9 +188,9 @@ struct CheckInServiceTests {
         try secrets.write("ftp://hc.example/secret-token", for: .checkInURL(planID))
         let log = LogLines()
         let checkIn = CheckInService(secrets: secrets, session: CheckInService.makeSession(), log: log.function)
-        await checkIn.send(.start, planID: planID)
+        await checkIn.send(.success, planID: planID)
         #expect(log.all.map(\.text) == [
-            "check-in ping start for \(planID.uuidString): not sent, the check-in URL isn't an http or https address",
+            "check-in ping success for \(planID.uuidString): not sent, the check-in URL isn't an http or https address",
         ])
     }
 
@@ -199,7 +199,7 @@ struct CheckInServiceTests {
         defer { server.stop() }
         let log = LogLines()
         let checkIn = try service(server, path: "/secret-token", log: log)
-        await checkIn.send(.start, planID: planID)
+        await checkIn.send(.success, planID: planID)
         await checkIn.send(.success, planID: planID)
         #expect(log.all.count == 2)
         for line in log.all.map(\.text) {

@@ -110,7 +110,7 @@ struct AgentReplacementTests {
             return
         }
         #expect(await drain.value)
-        #expect(await f.pings() == [.start, .success])
+        #expect(await f.pings() == [.success])
         // A created plan forgets after every snapshot and checks weekly: neither ran.
         #expect(await f.operations() == [.catConfig, .initRepository, .backup])
         #expect(held.calls.map { $0.split(separator: " ").first.map(String.init) ?? "" } == ["cat", "init", "backup"])
@@ -150,7 +150,7 @@ struct AgentReplacementTests {
         #expect(!held.calls.contains { $0.contains(queuedID.uuidString) })
         await f.runner.pingsFlushed()
         #expect(await f.checkIn.pingsByPlan[queuedID] == nil)
-        #expect(await f.checkIn.pingsByPlan[f.planID] == [.start, .success])
+        #expect(await f.checkIn.pingsByPlan[f.planID] == [.success])
         let (plan, history) = try await f.state.runInputs(queuedID)
         #expect(history.recent.map(\.id) == [skipped.id])
         #expect(history.activeAlerts.isEmpty)
@@ -188,7 +188,7 @@ struct AgentReplacementTests {
         }
         #expect(await f.state.isDraining)
         #expect(await f.state.drainPurpose == .restart)
-        #expect(await f.pings() == [.start, .success])
+        #expect(await f.pings() == [.success])
         #expect(await f.operations() == [.catConfig, .initRepository, .backup])
         await #expect { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) } throws: {
             ($0 as? AgentError)?.message == Self.refused

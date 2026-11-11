@@ -14,7 +14,7 @@ struct PlanRunnerTests {
 
     // MARK: One run
 
-    @Test func successfulRunRecordsSnapshotAndPingsStartThenSuccess() async throws {
+    @Test func successfulRunRecordsSnapshotAndSendsOnlyTheSuccessPing() async throws {
         let f = try await RunnerFixture.make()
         defer { f.remove() }
         try f.write("a.txt", "hello")
@@ -29,7 +29,8 @@ struct PlanRunnerTests {
         #expect(record.trigger == .scheduled)
         #expect(record.summary?.snapshotID == snapshotID)
         #expect(record.droppedLogLines == 0)
-        #expect(await f.pings() == [.start, .success])
+        // Exactly one ping, the success: there is no /start (Ruling R57).
+        #expect(await f.pings() == [.success])
 
         let history = await f.history()
         #expect(history.lastSuccessAt == record.endedAt)
@@ -92,7 +93,7 @@ struct PlanRunnerTests {
             // A directory source with nothing changed: restic 0.19.1 skips the snapshot.
             let second = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
             #expect(second.outcome == .unchanged)
-            #expect(await f.pings() == [.start, .success, .start, .success])
+            #expect(await f.pings() == [.success, .success])
             #expect(try await f.snapshots().count == 1)
 
             // No snapshot means nothing for forget to thin: only the first backup was followed by forget.
@@ -238,7 +239,7 @@ struct PlanRunnerTests {
             Issue.record("a failed check must not fail the backup, got \(backup.outcome)")
             return
         }
-        #expect(await f.pings() == [.start, .success])
+        #expect(await f.pings() == [.success])
         let history = await f.history()
         let check = try #require(history.recent.first)
         #expect(check.operation == .check)
@@ -282,7 +283,7 @@ struct PlanRunnerTests {
         }
         #expect(FileManager.default.fileExists(atPath: started.path))
         await f.runner.pingsFlushed()
-        #expect(await f.checkIn.pings == [.start, .success])
+        #expect(await f.checkIn.pings == [.success])
         #expect(await f.history().runningRecord?.operation == .forget(dryRun: false))
 
         try "".write(to: release, atomically: true, encoding: .utf8)
@@ -290,7 +291,7 @@ struct PlanRunnerTests {
             Issue.record("expected a success")
             return
         }
-        #expect(await f.pings() == [.start, .success]) // maintenance added nothing
+        #expect(await f.pings() == [.success]) // maintenance added nothing
         #expect(await f.operations().suffix(4) == [.backup, .forget(dryRun: false), .unlock, .check])
     }
 
@@ -304,7 +305,7 @@ struct PlanRunnerTests {
 
         let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
         #expect(record.outcome == .failed(exitCode: -1, reason: "Full Disk Access is missing"))
-        // Found before /start (Ruling R33): /fail with the reason, and no /start.
+        // Found before the backup starts (Ruling R33): /fail with the reason.
         #expect(await f.pings() == [.fail(body: "restic exit code -1\nFull Disk Access is missing")])
         #expect(try await f.snapshots().isEmpty)
         #expect(await f.history().activeAlerts[.fullDiskAccessMissing] != nil)
@@ -337,16 +338,15 @@ struct PlanRunnerTests {
         #expect(nextRunDate(plan: await f.plan(), history: history, now: f.clock.now) == .distantFuture)
         #expect(await f.status().phase == .stopped(reason: "The repository password is wrong"))
         let pings = await f.pings()
-        #expect(pings.count == 2)
-        #expect(pings.first == .start)
-        #expect(Self.isFail(pings[1], heading: "restic exit code 12"))
+        #expect(pings.count == 1)
+        #expect(Self.isFail(pings[0], heading: "restic exit code 12"))
         // No maintenance after a failed backup.
         #expect(await f.operations() == [.catConfig, .initRepository, .backup])
     }
 
     @Test func missingEnvironmentValueStopsThePlanWithTheKeychainReason() async throws {
         // A raw plan whose environment value is missing from the Keychain can't build restic's
-        // environment: the plan stops with the Keychain reason, after /start, without running restic.
+        // environment: the plan stops with the Keychain reason and sends /fail, without running restic.
         let f = try await RunnerFixture.make(createRepository: false) { plan in
             if case .raw(let repository, _) = plan.repository {
                 plan.repository = .raw(repository: repository, environmentNames: ["RESTIC_COMPRESSION"])
@@ -362,8 +362,7 @@ struct PlanRunnerTests {
         let reason = try #require(await f.history().stoppedReason)
         #expect(reason == "Couldn't read the backup keys from the Keychain. The environment value RESTIC_COMPRESSION isn't in the Keychain")
         let pings = await f.pings()
-        #expect(pings.first == .start)
-        #expect(pings.count == 2 && Self.isFail(pings[1], heading: "restic exit code 1"))
+        #expect(pings.count == 1 && Self.isFail(pings[0], heading: "restic exit code 1"))
         #expect(try await f.snapshots().isEmpty)
     }
 
@@ -410,7 +409,7 @@ struct PlanRunnerTests {
         #expect(await f.history().stoppedReason
             == "Couldn't read the backup keys from the Keychain. The S3 secret access key isn't in the Keychain")
         let pings = await f.pings()
-        #expect(pings.count == 2)
+        #expect(pings.count == 1)
         if case .fail(let body)? = pings.last {
             #expect(body.hasPrefix("restic exit code 1\n"))
             #expect(body.contains("The S3 secret access key isn't in the Keychain"))
@@ -441,7 +440,7 @@ struct PlanRunnerTests {
     }
 
     /// Ruling R33: a source missing for any reason but an unmounted volume is a failure found before
-    /// /start, so /fail goes out with the reason and /start doesn't.
+    /// the backup starts, so /fail goes out with the reason.
     @Test func missingSourceSendsFailWithTheReason() async throws {
         let f = try await RunnerFixture.make()
         defer { f.remove() }
@@ -500,7 +499,7 @@ struct PlanRunnerTests {
         let record = try await run.value
 
         #expect(record.outcome == .paused)
-        #expect(await f.pings() == [.start]) // nothing at the end of a paused run
+        #expect(await f.pings() == []) // a paused run sends nothing (Ruling R57)
         #expect(f.lockFiles().isEmpty, "an honoured SIGINT removes restic's own lock")
         let history = await f.history()
         let until = pausedAt.addingTimeInterval(3600)
@@ -519,7 +518,7 @@ struct PlanRunnerTests {
             return
         }
         #expect(await f.history().pausedUntil == nil)
-        #expect(await f.pings() == [.start, .start, .success])
+        #expect(await f.pings() == [.success])
     }
 
     /// restic ignores SIGINT here, so our SIGKILL ends it: still a pause, but its lock is left behind,
@@ -741,7 +740,7 @@ struct PlanRunnerTests {
         #expect(await f.checkIn.pings.count < 2, "the sender is slow, so the pings are still queued")
 
         #expect(await f.state.prepareForRestart())
-        #expect(await f.checkIn.pings == [.start, .success])
+        #expect(await f.checkIn.pings == [.success])
     }
 
     @Test func drainGivesUpOnPingsAfterItsBudget() async throws {

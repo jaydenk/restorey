@@ -75,7 +75,7 @@ public struct RunnerDependencies: Sendable {
 /// 2. `preflight`;
 /// 3. the Full Disk Access probe (missing: a failure and the `fullDiskAccessMissing` alert, no restic);
 /// 4. the repository's queue; in its slot, a plain `unlock` first if a restic died there by a signal;
-/// 5. the check-in `/start` ping, then the backup, classified;
+/// 5. the backup, classified (there is no check-in `/start` ping, Ruling R57);
 /// 6. history and alerts (written after every step, so an agent that dies mid-run loses nothing);
 /// 7. the check-in end ping, as soon as the backup's record is committed (Ruling R37);
 /// 8. in the same queue slot, after a successful backup: `forget`, `prune` and a plain `unlock`
@@ -88,9 +88,9 @@ public struct RunnerDependencies: Sendable {
 /// The check is a best-effort guard: a drain or replacement that lands between the check and restic's
 /// launch still lets that one step start.
 ///
-/// A failure found before `/start` (an invalid plan, a missing source, Full Disk Access missing) sends
-/// `/fail` with the reason and no `/start` (Ruling R33). A skip, a pause, and a plan whose recovery kit
-/// isn't confirmed yet send nothing.
+/// A failure found before the backup starts (an invalid plan, a missing source, Full Disk Access
+/// missing, unreadable backup keys) sends `/fail` with the reason (Ruling R33). A skip, a pause, and a
+/// plan whose recovery kit isn't confirmed yet send nothing.
 ///
 /// Every restic step has its own `RunRecord` and run log. A maintenance failure is its own record and
 /// alert and never turns the backup's record into a failure. Wrong password, missing repository and
@@ -333,7 +333,6 @@ public actor PlanRunner {
 
         switch prepare(plan) {
         case .failed(let outcome, let reason, let redactor):
-            for ping in pingsAtStart(trigger: trigger) { queuePing(ping, planID: planID) }
             let record = RunRecord(
                 id: UUID(), planID: planID, operation: .backup, trigger: trigger, startedAt: startedAt,
                 endedAt: deps.now(), outcome: outcome, summary: nil, logFile: "")
@@ -376,7 +375,6 @@ public actor PlanRunner {
         }
 
         if await isWindingDown() { return await skippedForUpdate() }
-        for ping in pingsAtStart(trigger: trigger) { queuePing(ping, planID: plan.id) }
         let backup = await runStep(.backup, trigger: trigger, session: session, handle: handle, progress: true)
         await commit(backup.record, plan: plan, fda: fda, stoppedReason: backup.stoppedReason)
         queueEndPing(backup, redactor: session.redactor)
