@@ -117,6 +117,19 @@ struct AgentStateTests {
 
     // MARK: Saving
 
+    /// Ruling R64b: file types are stored as the plan's doc comment says, trimmed, lower case and without
+    /// duplicates (the first kept, in order), so config.json holds what the backup uses.
+    @Test func savePlanNormalisesFileTypes() async throws {
+        let dir = try TempDirectory()
+        let state = await Self.makeState(dir)
+        var plan = Self.plan(now: Date(timeIntervalSince1970: 1_800_000_000))
+        plan.fileTypeExclusions = [" VMDK ", "vmdk", "Iso"]
+        let status = try await state.savePlan(Self.request(plan))
+        #expect(status.plans.first?.plan.fileTypeExclusions == ["vmdk", "iso"])
+        let stored = try #require(try await AgentState.configStore(in: dir.url).load())
+        #expect(stored.plans.first?.fileTypeExclusions == ["vmdk", "iso"])
+    }
+
     @Test func savePlanPersistsAndWritesSecrets() async throws {
         let dir = try TempDirectory()
         let secrets = InMemorySecretStore()

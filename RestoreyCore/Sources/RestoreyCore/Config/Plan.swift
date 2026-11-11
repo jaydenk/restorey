@@ -153,6 +153,17 @@ extension Plan {
         return errors
     }
 
+    /// `fileTypeExclusions` normalised as `config.json` stores them: each entry trimmed and lower-cased,
+    /// duplicates dropped (the first kept, in order), invalid entries left as they are for validation to
+    /// report. The agent applies this when a plan is saved.
+    public mutating func normaliseFileTypeExclusions() {
+        var seen: Set<String> = []
+        fileTypeExclusions = fileTypeExclusions.compactMap { entry in
+            let normalised = Self.normalisedFileType(entry) ?? entry
+            return seen.insert(normalised).inserted ? normalised : nil
+        }
+    }
+
     /// A file-type exclusion normalised (trimmed, lower case), or nil when what is left isn't a bare
     /// extension: empty, a leading dot, a `/`, a glob character or whitespace inside. The pattern restic
     /// gets is built from this form; matching is case-insensitive anyway.

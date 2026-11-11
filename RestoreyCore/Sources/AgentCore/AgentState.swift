@@ -312,6 +312,7 @@ public actor AgentState {
                 store: secrets, entries: request.secrets,
                 deletions: request.plan.hasCheckInURL ? [] : [checkInKey])
             var plan = request.plan
+            plan.normaliseFileTypeExclusions()
             var updated = config
             var credentialsChanged = false
             let checkInChanged = !plan.hasCheckInURL || planSecrets.changesValue(of: .checkInURL(plan.id))

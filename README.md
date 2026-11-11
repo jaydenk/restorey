@@ -168,7 +168,8 @@ reasons are in the design spec, §5.7):
 - **File types**, passed case-insensitively as `--iexclude=*.<ext>`, at any depth: disk images (`dmg`, `iso`,
   `sparseimage`) and virtual machine disks and bundles (`vmdk`, `vhdx`, `qcow2`, `pvm` and the like). The list
   is editable per plan (`fileTypeExclusions`): remove `dmg` to back up disk images. An entry must be a bare
-  extension, with no dot, slash or wildcard, or the plan is refused as invalid.
+  extension (`dmg`, or `tar.gz`), with no leading dot, slash, wildcard or space, or the plan is refused as
+  invalid. The agent stores entries trimmed, in lower case and without duplicates.
 - **Other filesystems mounted under a source** (`--one-file-system`, on by default), such as `~/OrbStack` or a
   connected iPhone's DeviceFS. A drive listed as a source is still backed up.
 

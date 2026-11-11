@@ -62,7 +62,7 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
         case .relativeSource: "Source folders must be absolute paths"
         case .intervalTooShort: "Backups can't run more often than every 5 minutes"
         case .invalidFileType(let entry):
-            "\"\(entry)\" isn't a file type to exclude: give the extension alone, such as dmg, without a dot, slash or wildcard"
+            "\"\(entry)\" isn't a file type to exclude: give the extension alone, such as dmg or tar.gz, with no leading dot, slash, wildcard or space"
         }
     }
 }
