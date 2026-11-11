@@ -127,7 +127,9 @@ The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`) runs
 
 1. Refuses a plan that is invalid or whose recovery kit hasn't been confirmed, without running restic.
 2. Checks the plan's conditions (network, battery, mounted volumes, sources that exist). A skipped run (on
-   battery, no network, an unmounted volume) is recorded but sends no check-in ping.
+   battery, no network, an unmounted volume) is recorded but sends no check-in ping. The network conditions
+   apply only to a repository on another machine (S3, B2, or a raw `sftp:`, `rest:`, `rclone:` and so on): a
+   repository in a local folder or on an external drive (a path, or `local:`) backs up with no network.
 3. Checks Full Disk Access by listing a protected folder (`~/Library/Safari`, `Mail` or `Messages`, never a
    file's contents). Without it the run fails with "Full Disk Access is missing" and restic doesn't run,
    because restic would otherwise save a snapshot of empty folders.

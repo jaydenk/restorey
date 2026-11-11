@@ -48,7 +48,8 @@ public enum PreflightResult: Equatable, Sendable {
 
 /// Decides whether a due run should start. The checks run in a fixed order and the first that trips
 /// wins: network, then battery, then volumes and sources. So no network on a low battery is
-/// `.noNetwork`.
+/// `.noNetwork`. The network checks apply only to a repository that needs the network
+/// (`Repository.needsNetwork`); `skipOnConstrainedNetwork` is the plan's toggle for the constrained one.
 ///
 /// Every source on `/Volumes/<name>` (the path itself or anything below it) requires `/Volumes/<name>`
 /// to be a mount point, whether or not the path exists. When the drive is unplugged, macOS can leave
@@ -58,12 +59,16 @@ public enum PreflightResult: Equatable, Sendable {
 /// any other missing source is reported (the drive's absence explains the rest). Only after all volume
 /// checks pass does a missing source fail.
 public func preflight(plan: Plan, env: PreflightEnvironment) -> PreflightResult {
-    switch env.network {
-    case .unsatisfied:
-        return .skip(.noNetwork)
-    case .satisfied(let constrained, let expensive):
-        if plan.conditions.skipOnConstrainedNetwork && (constrained || expensive) {
-            return .skip(.constrainedNetwork)
+    // Only a repository on another machine needs the network (Ruling R69): a plan backing up to a
+    // folder or an external drive runs offline and on any network.
+    if plan.repository.needsNetwork {
+        switch env.network {
+        case .unsatisfied:
+            return .skip(.noNetwork)
+        case .satisfied(let constrained, let expensive):
+            if plan.conditions.skipOnConstrainedNetwork && (constrained || expensive) {
+                return .skip(.constrainedNetwork)
+            }
         }
     }
 

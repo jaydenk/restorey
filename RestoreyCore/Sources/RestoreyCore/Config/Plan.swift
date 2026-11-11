@@ -315,6 +315,33 @@ public enum Repository: Codable, Sendable, Equatable {
         if case .s3 = self { return true }
         return false
     }
+
+    /// Whether restic needs the network to reach this repository (Ruling R69). An S3 or B2 location
+    /// always does. A raw location is read the way restic 0.19.1 reads one
+    /// (`internal/backend/location/location.go` `Parse`, with the backends `internal/backend/all` registers):
+    /// the text before the first `:` names the backend. `local:` is a local folder, and so is a location
+    /// with no backend prefix that restic takes as a path (no `:` at all, or starting with `/` or `../`).
+    /// Every other backend (`s3:`, `b2:`, `rest:`, `sftp:`, `rclone:`, `azure:`, `gs:`, `swift:`) reaches
+    /// another machine. Anything else is a location restic would refuse; it counts as needing the network,
+    /// which keeps the conditions as they were for it.
+    public var needsNetwork: Bool {
+        switch self {
+        case .s3: return true
+        case .raw(let repository, _): return Self.rawLocationNeedsNetwork(repository)
+        }
+    }
+
+    static func rawLocationNeedsNetwork(_ location: String) -> Bool {
+        guard let colon = location.firstIndex(of: ":") else { return false }
+        let scheme = location[..<colon]
+        if scheme == "local" { return false }
+        if Self.networkSchemes.contains(String(scheme)) { return true }
+        // No registered backend: restic treats a path as a local folder.
+        return !(location.hasPrefix("/") || location.hasPrefix("../"))
+    }
+
+    /// restic 0.19.1's registered backends other than `local`.
+    static let networkSchemes: Set<String> = ["azure", "b2", "gs", "rclone", "rest", "s3", "sftp", "swift"]
 }
 
 public struct S3Location: Codable, Sendable, Equatable {

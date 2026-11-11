@@ -7,11 +7,12 @@ struct PreflightTests {
     private func plan(
         sources: [String] = ["/Users/me"],
         battery: BatteryRule = .minimumPercent(20),
-        skipConstrained: Bool = true
+        skipConstrained: Bool = true,
+        repository: Repository = .raw(repository: "sftp:backup@nas:/srv/restic", environmentNames: [])
     ) -> Plan {
         var plan = Plan.newHotPlan(
             name: "Home",
-            repository: .raw(repository: "/tmp/repo", environmentNames: []),
+            repository: repository,
             origin: .created, hostLabel: "mac", sources: sources, exclusions: [],
             now: Date(timeIntervalSince1970: 1_800_000_000))
         plan.conditions = Conditions(battery: battery, skipOnConstrainedNetwork: skipConstrained)
@@ -158,5 +159,51 @@ struct PreflightTests {
 
     @Test func networkBeatsMissingSources() {
         #expect(preflight(plan: plan(), env: env(network: .unsatisfied, existing: [])) == .skip(.noNetwork))
+    }
+
+    // MARK: Network conditions apply only to repositories that need the network (Ruling R69)
+
+    private static let localFolder = Repository.raw(repository: "/Volumes/Backup/restic", environmentNames: [])
+    private static let b2 = Repository.s3(S3Location(
+        provider: .b2, endpoint: URL(string: "https://s3.us-west-004.backblazeb2.com")!, bucket: "b", prefix: "p"))
+
+    @Test func localRepositoryRunsWithNoNetwork() {
+        let p = plan(repository: Self.localFolder)
+        #expect(preflight(plan: p, env: env(network: .unsatisfied)) == .run)
+    }
+
+    @Test func localRepositoryRunsOnAConstrainedNetwork() {
+        let p = plan(repository: Self.localFolder)
+        #expect(preflight(plan: p, env: env(network: .satisfied(constrained: true, expensive: true))) == .run)
+    }
+
+    @Test func localPrefixedRepositoryRunsWithNoNetwork() {
+        let p = plan(repository: .raw(repository: "local:/Users/me/repo", environmentNames: []))
+        #expect(preflight(plan: p, env: env(network: .unsatisfied)) == .run)
+    }
+
+    @Test func rawSFTPRepositorySkipsWithNoNetwork() {
+        let p = plan(repository: .raw(repository: "sftp:me@host:/srv/repo", environmentNames: []))
+        #expect(preflight(plan: p, env: env(network: .unsatisfied)) == .skip(.noNetwork))
+    }
+
+    @Test func s3RepositorySkipsWithNoNetwork() {
+        #expect(preflight(plan: plan(repository: Self.b2), env: env(network: .unsatisfied)) == .skip(.noNetwork))
+    }
+
+    @Test func localRepositoryStillChecksBatteryWithNoNetwork() {
+        let e = env(power: PowerState(onBattery: true, percent: 3), network: .unsatisfied)
+        #expect(preflight(plan: plan(repository: Self.localFolder), env: e) == .skip(.batteryBelow(20)))
+    }
+
+    @Test(arguments: [
+        ("/Users/me/repo", false), ("../repo", false), ("repo", false), ("local:/x", false),
+        ("local:relative", false), ("/path:with:colons", false),
+        ("s3:https://host/bucket", true), ("b2:bucket:path", true), ("rest:https://host/", true),
+        ("sftp:host:/srv", true), ("rclone:remote:path", true), ("azure:container:/", true),
+        ("gs:bucket:/", true), ("swift:container:/", true), ("unknown:thing", true),
+    ])
+    func rawLocationsAreReadAsResticReadsThem(location: String, needsNetwork: Bool) {
+        #expect(Repository.raw(repository: location, environmentNames: []).needsNetwork == needsNetwork)
     }
 }
