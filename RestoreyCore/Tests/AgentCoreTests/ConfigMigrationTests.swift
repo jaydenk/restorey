@@ -30,6 +30,14 @@ struct ConfigMigrationTests {
         try JSONSerialization.data(withJSONObject: root).write(to: dir.config)
     }
 
+    /// What schema 1 → 2 gives every old plan, written out: a later change to `Self.schema2FileTypes`
+    /// must not change it.
+    private static let schema2FileTypes = [
+        "dmg", "iso", "sparseimage",
+        "vmdk", "vhd", "vhdx", "vdi", "qcow2", "hdd", "hds", "pvm", "pvs", "pvi", "pva", "fdd", "vmc",
+        "vmx", "vmxf", "vmsn", "vmsd", "vmem", "nvram", "mem", "vsv",
+    ]
+
     @Test func currentVersionIsTwo() {
         #expect(ConfigMigrations.currentVersion == 2)
     }
@@ -42,11 +50,11 @@ struct ConfigMigrationTests {
 
         let loaded = try #require(try await AgentState.configStore(in: dir.url).load())
         let migrated = try #require(loaded.plans.first)
-        #expect(migrated.fileTypeExclusions == DefaultExclusions.fileTypes)
+        #expect(migrated.fileTypeExclusions == Self.schema2FileTypes)
         #expect(migrated.oneFileSystem)
         #expect(migrated.exclusions == own)
         var expected = original
-        expected.fileTypeExclusions = DefaultExclusions.fileTypes
+        expected.fileTypeExclusions = Self.schema2FileTypes
         expected.oneFileSystem = true
         #expect(migrated == expected)
 
@@ -104,7 +112,7 @@ struct ConfigMigrationTests {
         let state = await AgentState(directory: dir.url, secrets: InMemorySecretStore(), now: { Self.now })
         let status = await state.status()
         #expect(status.configError == nil)
-        #expect(status.plans.first?.plan.fileTypeExclusions == DefaultExclusions.fileTypes)
+        #expect(status.plans.first?.plan.fileTypeExclusions == Self.schema2FileTypes)
         #expect(status.plans.first?.plan.exclusions == ["/Users/me/x"])
     }
 }
