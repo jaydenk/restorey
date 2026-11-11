@@ -487,6 +487,61 @@ struct PlanRunnerTests {
 
     // MARK: Pause
 
+    /// Ruling R59: Resume on a paused plan clears the pause and starts one fresh backup at once, as
+    /// Back Up Now does (trigger `.manual`), instead of waiting for the interval.
+    @Test func resumeWhilePausedStartsOneManualBackup() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        _ = try await f.state.pause(f.planID)
+        #expect(await f.history().pausedUntil != nil)
+
+        let status = try await f.state.resume(f.planID)
+        #expect(status.plans.first?.phase.isRunning == true)
+        let record = try #require(await f.runner.waitForBackgroundRun(planID: f.planID))
+        #expect(record.trigger == .manual)
+        guard case .success = record.outcome else {
+            Issue.record("expected the resumed backup to succeed, got \(record.outcome)")
+            return
+        }
+        let history = await f.history()
+        #expect(history.pausedUntil == nil)
+        #expect(history.recent.filter { $0.operation == .backup }.map(\.id) == [record.id])
+    }
+
+    /// A Resume on a plan that isn't paused only answers with the status.
+    @Test func resumeWhileNotPausedStartsNothing() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        let status = try await f.state.resume(f.planID)
+        #expect(status.plans.first?.phase == .idle)
+        #expect(await f.runner.waitForBackgroundRun(planID: f.planID) == nil)
+        #expect(await f.history().recent.allSatisfy { $0.operation != .backup })
+
+        // A pause that has already run out is no pause: the scheduler's catch-up runs it, not Resume.
+        try await f.state.updateHistory(f.planID) { $0.pausedUntil = f.clock.now.addingTimeInterval(-1) }
+        _ = try await f.state.resume(f.planID)
+        #expect(await f.runner.waitForBackgroundRun(planID: f.planID) == nil)
+        #expect(await f.history().pausedUntil == nil)
+    }
+
+    /// A stopped plan waits for its repository or secrets to be fixed: Resume clears the pause only.
+    @Test func resumeWhilePausedButStoppedClearsThePauseOnly() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        try await f.state.updateHistory(f.planID) { $0.stoppedReason = "The repository password is wrong" }
+        _ = try await f.state.pause(f.planID)
+
+        _ = try await f.state.resume(f.planID)
+        #expect(await f.runner.waitForBackgroundRun(planID: f.planID) == nil)
+        let history = await f.history()
+        #expect(history.pausedUntil == nil)
+        #expect(history.stoppedReason == "The repository password is wrong")
+        #expect(history.recent.allSatisfy { $0.operation != .backup })
+    }
+
     @Test func pauseThenAutoResume() async throws {
         let f = try await RunnerFixture.make { $0.uploadLimitKiB = 20_000 } // keeps the backup running
         defer { f.remove() }

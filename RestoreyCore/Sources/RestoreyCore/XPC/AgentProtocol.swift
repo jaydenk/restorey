@@ -26,6 +26,8 @@ import Foundation
     func backUpNow(_ planID: String?, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// Pauses for an hour, then resumes on its own.
     func pause(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
+    /// Clears the pause and, if the plan was paused and isn't stopped, starts a backup at once as Back Up
+    /// Now does (Ruling R59); its refusals come back as the error.
     func resume(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// Runs `restic init`: the only call that ever does.
     func createRepository(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)

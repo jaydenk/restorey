@@ -405,7 +405,12 @@ struct AgentStateTests {
         clock.advance(3601)
         #expect(await state.status().plans.first?.phase == .idle)
 
+        // Resume on a paused plan starts a backup through Back Up Now (PlanRunnerTests); with no runner
+        // attached that is refused, and the pause has been cleared first.
         _ = try await state.pause(plan.id)
+        await #expect(throws: AgentError.runnerUnavailable) { try await state.resume(plan.id) }
+        #expect(await state.status().plans.first?.phase == .idle)
+        // Resume on a plan that isn't paused starts nothing.
         let resumed = try await state.resume(plan.id)
         #expect(resumed.plans.first?.phase == .idle)
 

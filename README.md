@@ -140,7 +140,9 @@ The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`) runs
 
 A wrong repository password, a missing repository or unreadable backup keys (including a password the helper
 couldn't read from the Keychain) stop the plan until its repository or secrets are changed, or a later backup
-succeeds. Pause stops a run in progress (SIGINT, then SIGKILL after 10 s) and resumes after an hour. Restorey
+succeeds. Pause stops a run in progress (SIGINT, then SIGKILL after 10 s) and resumes after an hour. Resume on a
+paused plan starts a fresh backup at once, exactly as Back Up Now does (so it can still be skipped on battery or
+without a network); a stopped plan's pause is cleared but nothing runs until it is fixed. Restorey
 never runs `restic init` except from the explicit "Create new repository" action. That action first runs
 `restic cat config`: if a repository is already there it refuses ("A repository already exists there"), and it
 initialises only when restic reports nothing at the address. Restorey never creates an S3 or B2 bucket: create
