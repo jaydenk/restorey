@@ -158,11 +158,12 @@ then waits up to 3 minutes for queued check-in pings.
 ## Alerts
 
 **Check-in pings.** If a plan has a check-in URL (a Healthchecks-style dead-man's switch, kept in the
-Keychain), the agent POSTs to the URL itself when a backup succeeds and to `/fail` when it fails. It never sends
-`/start`: Healthchecks.io treats a check that was told a run started and then hears nothing within its grace
-time as down, and a paused, cancelled or lock-retried run has no honest ending to send, so a start ping would
-raise a false alarm on every Pause. Paused, cancelled, skipped and lock-retried runs send nothing. The `/fail` body is plain text: restic's exit code and the last 20 lines of the run's error output, with
-secrets removed. A network error or a 5xx is retried after 5 s, 30 s and 120 s; a 4xx is not. Each request
+Keychain), the agent POSTs to the URL itself when a backup succeeds and to `/fail` when it fails. It never
+sends `/start`: Healthchecks.io treats a check that was told a run started and then hears nothing within its
+grace time as down, and a paused, cancelled or lock-retried run has no honest ending to send, so a start ping
+would raise a false alarm on every Pause. Paused, cancelled, skipped and lock-retried runs send nothing. The
+`/fail` body is plain text: restic's exit code and the last 20 lines of the run's error output, with secrets
+removed. A network error or a 5xx is retried after 5 s, 30 s and 120 s; a 4xx is not. Each request
 times out after 30 s without data or 60 s in all, and one send, retries included, is bounded at 170 s, inside
 the 3 minutes the agent waits for pings before exiting for an update. A plan's pings go out one after another,
 so a ping queued behind an earlier one for the same plan that is still being retried can take longer; the
