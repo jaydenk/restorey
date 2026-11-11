@@ -192,10 +192,16 @@ public actor ResticProcess {
         guard let process, process.isRunning else { return }
         kill(process.processIdentifier, SIGINT)
         Task { [weak self] in
-            try? await Task.sleep(for: killAfter)
+            // An explicit tolerance: with none, the system is free to fire the timer late to coalesce
+            // wake-ups, and a 10 s grace was measured ending 0.45–0.56 s late while other processes ran,
+            // so SIGKILL came noticeably after the grace period.
+            try? await Task.sleep(for: killAfter, tolerance: Self.killTimerTolerance)
             await self?.killIfStillRunning()
         }
     }
+
+    /// How late the SIGKILL after an interrupt's grace period may come.
+    static let killTimerTolerance: Duration = .milliseconds(50)
 
     private func killIfStillRunning() {
         guard let process, !exited, process.isRunning else { return }
