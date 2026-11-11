@@ -4,3 +4,6 @@ RESTOREY_ROOT_ID = com.jaydenkerr.restorey
 RESTOREY_LOGS_NAME = Restorey
 RESTOREY_APP_PRODUCT_NAME = Restorey
 RESTOREY_AGENT_PRODUCT_NAME = RestoreyAgent
+// The name macOS shows for both the app and its agent (notifications, permission prompts), so the
+// agent reads as Restorey rather than as a separate "Restorey Agent" (Ruling R61).
+RESTOREY_DISPLAY_NAME = Restorey

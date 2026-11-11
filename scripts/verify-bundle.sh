@@ -27,8 +27,8 @@ INFO="$APP/Contents/Info.plist"
 # Identity: every expected value is derived from the root ID, which must be one of the two known.
 root=$(plist_get "$INFO" RestoreyRootID)
 case "$root" in
-  com.jaydenkerr.restorey)     app_name="Restorey";    agent_name="RestoreyAgent";    logs="Restorey" ;;
-  com.jaydenkerr.restorey.dev) app_name="RestoreyDev"; agent_name="RestoreyDevAgent"; logs="Restorey-Dev" ;;
+  com.jaydenkerr.restorey)     app_name="Restorey";    agent_name="RestoreyAgent";    logs="Restorey";     display="Restorey" ;;
+  com.jaydenkerr.restorey.dev) app_name="RestoreyDev"; agent_name="RestoreyDevAgent"; logs="Restorey-Dev"; display="Restorey Dev" ;;
   *) fail "RestoreyRootID is '$root', expected com.jaydenkerr.restorey[.dev]" ;;
 esac
 label="$root.agent"
@@ -57,6 +57,13 @@ no_space "restic path" "Contents/Helpers/restic"
 no_space "launch agent plist name" "$(basename "$PLIST")"
 
 [[ "$(plist_get "$AGENT/Contents/Info.plist" CFBundleIdentifier)" == "$label" ]] || fail "agent CFBundleIdentifier differs from $label"
+
+# The agent posts the notifications and asks for their permission, so it carries the app's display name
+# and both read as Restorey in System Settings and in banners (Ruling R61).
+app_display=$(plist_get "$INFO" CFBundleDisplayName)
+agent_display=$(plist_get "$AGENT/Contents/Info.plist" CFBundleDisplayName)
+[[ "$app_display" == "$display" ]] || fail "app CFBundleDisplayName is '$app_display', expected '$display'"
+[[ "$agent_display" == "$app_display" ]] || fail "agent CFBundleDisplayName is '$agent_display', the app's is '$app_display'"
 
 # Launch agent plist.
 [[ "$(plist_get "$PLIST" Label)" == "$label" ]] || fail "plist Label differs from $label"

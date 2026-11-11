@@ -189,7 +189,11 @@ one notification, "Restorey has stopped — its settings can't be read", on the 
 The agent needs its own notification permission, separate from the app's, and macOS reports a notification
 from an agent without one as posted while showing nothing. So the agent checks its permission before posting.
 Without it, it posts nothing, raises "notifications off" for the menu bar to show, and holds the alerts back
-until permission is granted.
+until permission is granted. The agent carries the app's display name (`RESTOREY_DISPLAY_NAME` in
+`Config/Debug.xcconfig` and `Release.xcconfig`: "Restorey", or "Restorey Dev" for a Debug build), so its
+permission prompt, its banners and its entry in System Settings → Notifications read as Restorey, not as a
+separate agent. `scripts/verify-bundle.sh` checks that both bundles carry it. Login Items names the agent by its
+executable instead (`RestoreyAgent`, or `RestoreyDevAgent`).
 
 ## When backups run
 
