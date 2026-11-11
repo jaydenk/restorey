@@ -96,7 +96,7 @@ struct ScheduleTests {
         #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == Self.now)
     }
 
-    @Test func lockedAppliesOnlyWhenTheLatestRecordIsALockedBackup() {
+    @Test func lockedAppliesOnlyWhenTheNewestBackupRecordIsLocked() {
         let last = Self.now.addingTimeInterval(-300)
         // A locked check is not a locked backup.
         var other = history(lastAttempt: last)
@@ -108,6 +108,37 @@ struct ScheduleTests {
         recovered.record(record(.locked, at: last.addingTimeInterval(-1000)))
         recovered.record(record(.success(snapshotID: "a"), at: last))
         #expect(nextRunDate(plan: plan(), history: recovered, now: Self.now) == last.addingTimeInterval(Self.hour))
+    }
+
+    /// Ruling R58: an agent that died mid-backup leaves an `.interrupted` record; the plan retries soon,
+    /// 15 minutes after the attempt, even once the next agent's recovery unlock is the newest record.
+    @Test func interruptedRetriesIn15Minutes() {
+        let last = Self.now.addingTimeInterval(-300)
+        var h = history(lastAttempt: last, latest: .interrupted)
+        #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == last.addingTimeInterval(15 * 60))
+        h.record(record(.success(snapshotID: nil), at: Self.now, operation: .unlock))
+        #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == last.addingTimeInterval(15 * 60))
+        // Not now, and not a tight loop: an interruption long ago is a catch-up, not a burst.
+        let old = history(lastAttempt: Self.now.addingTimeInterval(-3 * Self.hour), latest: .interrupted)
+        #expect(nextRunDate(plan: plan(), history: old, now: Self.now) == Self.now)
+    }
+
+    /// A later successful backup puts the plan back on its interval.
+    @Test func aSuccessAfterAnInterruptionUsesTheNormalInterval() {
+        let last = Self.now.addingTimeInterval(-300)
+        var h = PlanRunHistory()
+        h.record(record(.interrupted, at: last.addingTimeInterval(-900)))
+        h.record(record(.success(snapshotID: "a"), at: last))
+        h.lastAttemptAt = last
+        #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == last.addingTimeInterval(Self.hour))
+    }
+
+    /// An interrupted check (the agent died during maintenance) is not an interrupted backup.
+    @Test func anInterruptedCheckIsNotAShortRetry() {
+        let last = Self.now.addingTimeInterval(-300)
+        var h = history(lastAttempt: last, latest: .success(snapshotID: "a"))
+        h.record(record(.interrupted, at: last, operation: .check))
+        #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == last.addingTimeInterval(Self.hour))
     }
 
     /// A backup skipped because the agent was being replaced never happened: the next agent runs it at
