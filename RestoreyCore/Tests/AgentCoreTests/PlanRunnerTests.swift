@@ -509,6 +509,57 @@ struct PlanRunnerTests {
         #expect(history.recent.filter { $0.operation == .backup }.map(\.id) == [record.id])
     }
 
+    /// Ruling R62: Resume pressed while the paused run is still stopping isn't refused as "already backing
+    /// up". restic ignores SIGINT here, so the run is certainly still stopping when Resume arrives; the
+    /// fresh backup (trigger `.manual`) starts once the paused run has ended and been recorded.
+    @Test func resumeWhileThePausedRunIsStillStoppingStartsAfterIt() async throws {
+        let restic = try ResticBinary.require()
+        let markerDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restorey-stubborn-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: markerDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: markerDirectory) }
+        let marker = markerDirectory.appendingPathComponent("stubborn")
+        let wrapper = markerDirectory.appendingPathComponent("restic.sh")
+        // Only the first backup is stubborn: it removes the marker as it starts.
+        try """
+            #!/bin/sh
+            if [ "$1" = backup ] && [ -f '\(marker.path)' ]; then
+              rm -f '\(marker.path)'
+              trap '' INT
+              echo '{"message_type":"status","percent_done":0.1,"total_files":1,"files_done":0,"total_bytes":1,"bytes_done":0}'
+              exec /bin/sleep 30
+            fi
+            exec '\(restic.path)' "$@"
+
+            """.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+
+        let f = try await RunnerFixture.make(executable: wrapper, gracePeriod: .seconds(2))
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        try "".write(to: marker, atomically: true, encoding: .utf8)
+
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress != nil }
+        _ = try await f.state.pause(f.planID)
+        // The paused run is still stopping (SIGKILL comes after 2 s): Resume returns without an error.
+        _ = try await f.state.resume(f.planID)
+
+        let paused = try await run.value
+        #expect(paused.outcome == .paused)
+        let record = try #require(await f.runner.waitForBackgroundRun(planID: f.planID))
+        #expect(record.trigger == .manual)
+        #expect(record.startedAt >= paused.endedAt)
+        guard case .success = record.outcome else {
+            Issue.record("expected the resumed backup to succeed, got \(record.outcome)")
+            return
+        }
+        let history = await f.history()
+        #expect(history.pausedUntil == nil)
+        // Exactly one backup after the paused one (the stale lock's unlock runs before it).
+        #expect(history.recent.filter { $0.operation == .backup }.map(\.id) == [record.id, paused.id])
+    }
+
     /// A Resume on a plan that isn't paused only answers with the status.
     @Test func resumeWhileNotPausedStartsNothing() async throws {
         let f = try await RunnerFixture.make()

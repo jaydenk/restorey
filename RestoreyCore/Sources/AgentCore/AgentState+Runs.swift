@@ -28,7 +28,7 @@ extension AgentState {
         return try await requireRunner().adopt(planID: id)
     }
 
-    private func requireRunner() throws -> PlanRunner {
+    func requireRunner() throws -> PlanRunner {
         guard let runner else { throw AgentError.runnerUnavailable }
         return runner
     }

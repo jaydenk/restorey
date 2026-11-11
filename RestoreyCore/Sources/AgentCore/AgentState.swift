@@ -419,15 +419,15 @@ public actor AgentState {
     }
 
     /// Clears the plan's pause. When it was paused (`pausedUntil` still in the future), Resume also starts
-    /// a fresh backup at once (spec §3, Ruling R59), through Back Up Now, so the pre-run conditions, the
-    /// recovery-kit refusal and "already backing up" are exactly Back Up Now's: a skip for battery or
-    /// network is a fine outcome, and a refusal is thrown after the pause has been cleared. A stopped plan
+    /// a fresh backup at once (spec §3, Ruling R59), through Back Up Now, so the pre-run conditions and
+    /// the recovery-kit refusal are exactly Back Up Now's: a skip for battery or network is a fine
+    /// outcome, and a refusal is thrown after the pause has been cleared. A run still stopping for the
+    /// pause isn't "already backing up": the fresh backup starts as soon as it has ended (Ruling R62). A stopped plan
     /// (`stoppedReason`) has its pause cleared and starts nothing: it waits for its repository or secrets
     /// to be fixed, as the scheduler does. A plan that wasn't paused only returns the status. The pause
     /// running out on its own is the scheduler's catch-up run, not this.
     public func resume(_ id: UUID) async throws -> AgentStatus {
         try requireMutable()
-        _ = try requirePlan(id)
         let start = try await serialisedWrite {
             _ = try requirePlan(id)
             var state = runState
@@ -439,7 +439,8 @@ public actor AgentState {
             return wasPaused && history.stoppedReason == nil
         }
         guard start else { return status() }
-        return try await backUpNow(id)
+        try requireRunnable(id)
+        return try await requireRunner().backUpNow(id, afterPausedRun: true)
     }
 
     /// Changes one plan's history and saves `state.json`, through the write gate. The runner records

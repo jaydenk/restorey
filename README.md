@@ -142,10 +142,11 @@ A wrong repository password, a missing repository or unreadable backup keys (inc
 couldn't read from the Keychain) stop the plan until its repository or secrets are changed, or a later backup
 succeeds. Pause stops a run in progress (SIGINT, then SIGKILL after 10 s) and resumes after an hour. Resume on a
 paused plan starts a fresh backup at once, exactly as Back Up Now does (so it can still be skipped on battery or
-without a network); a stopped plan's pause is cleared but nothing runs until it is fixed. Restorey
-never runs `restic init` except from the explicit "Create new repository" action. That action first runs
-`restic cat config`: if a repository is already there it refuses ("A repository already exists there"), and it
-initialises only when restic reports nothing at the address. Restorey never creates an S3 or B2 bucket: create
+without a network), and if the paused run is still stopping, the new backup starts as soon as it has ended; a
+stopped plan's pause is cleared but nothing runs until it is fixed. Restorey never runs `restic init` except
+from the explicit "Create new repository" action. That action first runs `restic cat config`: if a repository
+is already there it refuses ("A repository already exists there"), and it initialises only when restic reports
+nothing at the address. Restorey never creates an S3 or B2 bucket: create
 it in your provider's console first. Adopting a repository only lists its snapshots.
 
 Every restic run has its own log in `~/Library/Logs/Restorey/runs/<plan ID>/` (`Restorey-Dev` for Debug builds),

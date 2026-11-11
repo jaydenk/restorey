@@ -115,6 +115,9 @@ public actor PlanRunner {
     private var handles: [UUID: RunHandle] = [:]
     /// The latest background run `backUpNow` started, by plan.
     private var background: [UUID: Task<RunRecord, Never>] = [:]
+    /// Plans to back up (trigger `.manual`) as soon as their run, being paused, has ended: a Resume that
+    /// came while that run was still stopping (Ruling R62).
+    private var startWhenPausedRunEnds: Set<UUID> = []
     /// The last ping queued, by plan; the next one waits for it.
     private var pingTails: [UUID: Task<Void, Never>] = [:]
     /// Repositories where a restic died by a signal (our SIGKILL, a crash), so its lock may be left
@@ -143,12 +146,20 @@ public actor PlanRunner {
     /// Starts a manual backup of one plan (or of every plan that may run, when nil) in the background
     /// and returns the status showing it running. A single plan that is invalid or has no confirmed
     /// recovery kit is refused with the reason.
-    public func backUpNow(_ planID: UUID?) async throws -> AgentStatus {
+    ///
+    /// `afterPausedRun` is Resume's (Ruling R62): when the plan's run is still stopping for a pause, the
+    /// backup starts, through this same path, once that run has ended and recorded `.paused`, instead of
+    /// being refused as "already backing up". Back Up Now itself doesn't pass it.
+    public func backUpNow(_ planID: UUID?, afterPausedRun: Bool = false) async throws -> AgentStatus {
         try await deps.state.requireRunnable(planID)
         if let planID {
             let plan = try await deps.state.runInputs(planID).plan
             if let refusal = Self.refusal(plan) { throw refusal }
-            try await startInBackground(planID)
+            if afterPausedRun, handles[planID]?.intent == .pause {
+                startWhenPausedRunEnds.insert(planID)
+            } else {
+                try await startInBackground(planID)
+            }
         } else {
             for (plan, _) in await deps.state.allRunInputs() where Self.refusal(plan) == nil {
                 // Plans already running are left to finish; the rest start.
@@ -283,6 +294,15 @@ public actor PlanRunner {
     func end(_ planID: UUID, _ handle: RunHandle) async {
         if handles[planID] === handle { handles[planID] = nil }
         await deps.state.endRun(planID: planID)
+        guard startWhenPausedRunEnds.remove(planID) != nil else { return }
+        // Paused again meanwhile: the new pause wins, and its end is the scheduler's catch-up.
+        if let until = try? await deps.state.runInputs(planID).history.pausedUntil, until > deps.now() { return }
+        do {
+            try await startInBackground(planID)
+        } catch {
+            let message = (error as? AgentError)?.message ?? "\(error)"
+            deps.agentLog("Couldn't start the backup Resume asked for, for plan \(planID.uuidString): \(message)")
+        }
     }
 
     // MARK: Backup
