@@ -10,9 +10,10 @@ log=build/xcodebuild.log
 mkdir -p build
 
 # Run xcodebuild quietly, keep the full log, and print the tail so failures stay readable.
+# build <configuration> <derived data> [xcodebuild settings…]
 build() {
-  local derived="$1"; shift
-  if ! xcodebuild -project Restorey.xcodeproj -scheme Restorey -configuration Debug \
+  local configuration="$1" derived="$2"; shift 2
+  if ! xcodebuild -project Restorey.xcodeproj -scheme Restorey -configuration "$configuration" \
       -destination 'platform=macOS' -derivedDataPath "$derived" "$@" build >"$log" 2>&1; then
     tail -40 "$log" >&2
     echo "error: build failed, full log in $log" >&2
@@ -31,12 +32,18 @@ step "Generate the Xcode project"
 xcodegen generate --quiet
 
 step "Build Debug (unsigned)"
-build build/DerivedData-unsigned CODE_SIGNING_ALLOWED=NO
+build Debug build/DerivedData-unsigned CODE_SIGNING_ALLOWED=NO
 scripts/verify-bundle.sh build/DerivedData-unsigned/Build/Products/Debug/RestoreyDev.app --skip-signature
+
+# The release identity and settings are built on every run too, so a Release-only break (a
+# configuration-specific name, a setting) shows up before a release is cut. Signing it is Plan 3's.
+step "Build Release (unsigned)"
+build Release build/DerivedData-release-unsigned CODE_SIGNING_ALLOWED=NO
+scripts/verify-bundle.sh build/DerivedData-release-unsigned/Build/Products/Release/Restorey.app --skip-signature
 
 if [[ -f Config/Local.xcconfig ]]; then
   step "Build Debug (signed)"
-  build build/DerivedData-signed -allowProvisioningUpdates
+  build Debug build/DerivedData-signed -allowProvisioningUpdates
   scripts/verify-bundle.sh build/DerivedData-signed/Build/Products/Debug/RestoreyDev.app
 
   # The keychain tests need the agent's keychain-access-groups entitlement, so they run inside the

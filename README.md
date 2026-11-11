@@ -33,16 +33,18 @@ because the App Store sandbox rules out the Full Disk Access a backup tool needs
 
 ## Building from source
 
-Prerequisites: macOS 27, Xcode 27 and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
+Prerequisites: macOS 27, Xcode 27 and [XcodeGen](https://github.com/yonaskolb/XcodeGen) 2.46.0 (`brew install
+xcodegen`; CI installs exactly 2.46.0 from its release, checked against the published SHA-256).
 
 1. Fetch the pinned upstream binaries (restic 0.19.1 and rest-server 0.14.0, checked against each release's
-   `SHA256SUMS`) into the gitignored `vendor/` folder:
+   `SHA256SUMS`) into the gitignored `vendor/` folder. A cached binary is reused only while it still matches
+   the checksum recorded when it was extracted (`vendor/<name>.sha256`); otherwise it is downloaded again:
 
    ```sh
    scripts/fetch-binaries.sh
    ```
 
-2. Run the CI checks: the `RestoreyCore` tests, an unsigned Debug build and the bundle checks. If
+2. Run the CI checks: the `RestoreyCore` tests, unsigned Debug and Release builds and the bundle checks. If
    `Config/Local.xcconfig` exists, it also does a signed Debug build and the full signature checks.
 
    ```sh

@@ -9,7 +9,16 @@ jobs:
       - uses: actions/checkout@v7
       - name: Select Xcode 27
         run: sudo xcode-select -s /Applications/Xcode_27.0.app
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      # Pinned to the plan's XcodeGen 2.46.0, from the release asset, checked against the SHA-256 digest
+      # GitHub publishes for it (gh api repos/yonaskolb/XcodeGen/releases/tags/2.46.0).
+      - name: Install XcodeGen 2.46.0
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" \
+            https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" \
+            | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/xcodegen/bin/xcodegen" --version
       - name: Run the CI checks
         run: scripts/ci.sh
