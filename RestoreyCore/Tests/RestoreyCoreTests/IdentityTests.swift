@@ -85,8 +85,8 @@ import Testing
 
     @Test func devIdentityExcludesItsOwnLogsAndSupportFolders() throws {
         let dev = try Self.identity(root: "com.jaydenkerr.restorey.dev", logs: "Restorey-Dev")
-        let base = DefaultExclusions.paths(home: Self.home, standardExclusionsPlist: nil)
-        let paths = DefaultExclusions.paths(home: Self.home, identity: dev, standardExclusionsPlist: nil)
+        let base = DefaultExclusions.paths(home: Self.home)
+        let paths = DefaultExclusions.paths(home: Self.home, identity: dev)
         #expect(Array(paths.prefix(base.count)) == base)
         #expect(Array(paths.dropFirst(base.count)) == [
             "/Users/test/Library/Logs/Restorey-Dev",
@@ -96,7 +96,7 @@ import Testing
 
     @Test func releaseIdentityExcludesItsOwnLogsAndSupportFolders() throws {
         let release = try Self.identity(root: "com.jaydenkerr.restorey", logs: "Restorey")
-        let paths = DefaultExclusions.paths(home: Self.home, identity: release, standardExclusionsPlist: nil)
+        let paths = DefaultExclusions.paths(home: Self.home, identity: release)
         #expect(paths.contains("/Users/test/Library/Logs/Restorey"))
         #expect(paths.contains("/Users/test/Library/Application Support/com.jaydenkerr.restorey"))
         #expect(!paths.contains("/Users/test/Library/Logs/Restorey-Dev"))

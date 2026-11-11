@@ -155,6 +155,28 @@ interrupted backup sends its `/fail` ping) and runs a plain `restic unlock` (nev
 repository, before it accepts any run. Before exiting for an update, the agent finishes the run in progress and
 then waits up to 3 minutes for queued check-in pings.
 
+## What a backup leaves out
+
+Each plan starts with these defaults (`RestoreyCore/Sources/RestoreyCore/Restic/DefaultExclusions.swift`; the
+reasons are in the design spec, §5.7):
+
+- **Folders**, passed as `--exclude`: caches (`~/Library/Caches` and the caches inside app containers), the
+  Trash, `node_modules`, Docker Desktop's and OrbStack's VM images, the folders Time Machine leaves out by
+  default or that carry its exclusion attribute (`~/Library/Logs`, the Spotlight index, Xcode's DerivedData,
+  the simulators, `~/.cache`, `~/.npm`, Mail's index and similar rebuilt state), a few system folders that fail
+  on every run even with Full Disk Access, and Restorey's own logs and settings. Logs elsewhere are backed up.
+- **File types**, passed case-insensitively as `--iexclude=*.<ext>`, at any depth: disk images (`dmg`, `iso`,
+  `sparseimage`) and virtual machine disks and bundles (`vmdk`, `vhdx`, `qcow2`, `pvm` and the like). The list
+  is editable per plan (`fileTypeExclusions`): remove `dmg` to back up disk images. An entry must be a bare
+  extension, with no dot, slash or wildcard, or the plan is refused as invalid.
+- **Other filesystems mounted under a source** (`--one-file-system`, on by default), such as `~/OrbStack` or a
+  connected iPhone's DeviceFS. A drive listed as a source is still backed up.
+
+restic also skips folders tagged with `CACHEDIR.TAG` (`--exclude-caches`) and iCloud files that aren't
+downloaded to this Mac (`--exclude-cloud-files`). Time Machine's own exclusion list can't be read on macOS 27,
+so Restorey doesn't try. Plans saved by an earlier build get the file types and the one-file-system setting when
+`config.json` is upgraded to schema 2; their folder exclusions are kept as they were.
+
 ## Alerts
 
 **Check-in pings.** If a plan has a check-in URL (a Healthchecks-style dead-man's switch, kept in the

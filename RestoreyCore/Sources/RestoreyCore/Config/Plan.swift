@@ -12,7 +12,16 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
     public var hostLabel: String
     /// Absolute paths.
     public var sources: [String]
+    /// restic exclude patterns (folders, mostly), passed as `--exclude`. They belong to the person: a
+    /// migration never rewrites them.
     public var exclusions: [String]
+    /// File extensions without the dot, in lower case (`dmg`, `vmdk`), passed as `--iexclude=*.<ext>`
+    /// (Ruling R64b). Editable per plan; new plans start with `DefaultExclusions.fileTypes`.
+    public var fileTypeExclusions: [String]
+    /// Passes `--one-file-system`: other filesystems mounted under a source (an NFS view, a connected
+    /// iPhone's DeviceFS) are skipped, while every source's own filesystem, such as a USB drive listed as
+    /// a source, is still backed up (Ruling R64c).
+    public var oneFileSystem: Bool
     public var schedule: Schedule
     public var conditions: Conditions
     public var retention: Retention
@@ -34,6 +43,8 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         hostLabel: String,
         sources: [String],
         exclusions: [String],
+        fileTypeExclusions: [String],
+        oneFileSystem: Bool,
         schedule: Schedule,
         conditions: Conditions,
         retention: Retention,
@@ -53,6 +64,8 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         self.hostLabel = hostLabel
         self.sources = sources
         self.exclusions = exclusions
+        self.fileTypeExclusions = fileTypeExclusions
+        self.oneFileSystem = oneFileSystem
         self.schedule = schedule
         self.conditions = conditions
         self.retention = retention
@@ -66,8 +79,9 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         self.createdAt = createdAt
     }
 
-    /// A new plan with every spec default applied. Callers pass the exclusion list
-    /// (`DefaultExclusions.paths(home:identity:)`) so this type stays independent of it.
+    /// A new plan with every spec default applied. Callers pass the folder exclusion list
+    /// (`DefaultExclusions.paths(home:identity:)`), which depends on the home folder and the build's
+    /// identity; the file types default to `DefaultExclusions.fileTypes`.
     public static func newHotPlan(
         name: String,
         repository: Repository,
@@ -75,6 +89,7 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         hostLabel: String,
         sources: [String],
         exclusions: [String],
+        fileTypeExclusions: [String] = DefaultExclusions.fileTypes,
         now: Date
     ) -> Plan {
         let created = origin == .created
@@ -86,6 +101,8 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
             hostLabel: hostLabel,
             sources: sources,
             exclusions: exclusions,
+            fileTypeExclusions: fileTypeExclusions,
+            oneFileSystem: true,
             schedule: .interval(seconds: 3600),
             conditions: Conditions(battery: .minimumPercent(20), skipOnConstrainedNetwork: true),
             retention: Retention(),
@@ -111,6 +128,9 @@ public enum PlanValidationError: Error, Equatable, Sendable {
     /// A schedule interval under `Plan.minimumIntervalSeconds` (includes zero and negative values),
     /// which would leave the plan perpetually due.
     case intervalTooShort(seconds: Int)
+    /// A file-type exclusion that isn't a bare extension once trimmed and lower-cased: empty, with a
+    /// leading dot, a `/`, a glob character (`*?[]\`) or whitespace inside.
+    case invalidFileType(String)
 }
 
 extension Plan {
@@ -127,7 +147,21 @@ extension Plan {
         case .interval(let seconds):
             if seconds < Self.minimumIntervalSeconds { errors.append(.intervalTooShort(seconds: seconds)) }
         }
+        for type in fileTypeExclusions where Self.normalisedFileType(type) == nil {
+            errors.append(.invalidFileType(type))
+        }
         return errors
+    }
+
+    /// A file-type exclusion normalised (trimmed, lower case), or nil when what is left isn't a bare
+    /// extension: empty, a leading dot, a `/`, a glob character or whitespace inside. The pattern restic
+    /// gets is built from this form; matching is case-insensitive anyway.
+    public static func normalisedFileType(_ entry: String) -> String? {
+        let trimmed = entry.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("."),
+            !trimmed.contains(where: { "/*?[]\\".contains($0) || $0.isWhitespace })
+        else { return nil }
+        return trimmed
     }
 }
 

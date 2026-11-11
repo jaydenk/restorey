@@ -135,8 +135,15 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
             + ["--host=\(plan.hostLabel)", "--tag=\(tag)",
                "--skip-if-unchanged", "--exclude-cloud-files", "--exclude-caches"]
             + packSize(plan)
+        if plan.oneFileSystem { args.append("--one-file-system") }
         if let limit = plan.uploadLimitKiB { args += ["--limit-upload", String(limit)] }
         for pattern in plan.exclusions { args.append("--exclude=\(pattern)") }
+        // A relative pattern matches a whole path component at any depth (restic 0.19.1
+        // internal/filter/filter.go), so `*.pvm` also excludes a `.pvm` bundle directory; `--iexclude`
+        // lower-cases pattern and path. Invalid entries never get here: the plan fails validation.
+        for type in plan.fileTypeExclusions {
+            if let ext = Plan.normalisedFileType(type) { args.append("--iexclude=*.\(ext)") }
+        }
         args += ["--"] + plan.sources
     case .forget(let dryRun):
         let r = plan.retention

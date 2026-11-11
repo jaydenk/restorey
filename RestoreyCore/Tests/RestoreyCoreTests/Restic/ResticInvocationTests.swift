@@ -43,7 +43,8 @@ struct ResticInvocationTests {
         #expect(inv(.backup, p).arguments == [
             "backup", "--json", "--cache-dir", Self.cache, "--host=pepper", "--tag=\(tag)",
             "--skip-if-unchanged", "--exclude-cloud-files", "--exclude-caches", "--pack-size", "64",
-            "--exclude=/Users/x/Library/Caches", "--exclude=**/node_modules",
+            "--one-file-system", "--exclude=/Users/x/Library/Caches", "--exclude=**/node_modules",
+        ] + DefaultExclusions.fileTypes.map { "--iexclude=*.\($0)" } + [
             "--", "/Users/x/Documents", "/Users/x/-drafts", "/Users/x/Café Notes",
         ])
     }
@@ -74,12 +75,13 @@ struct ResticInvocationTests {
 
     @Test func leadingDashValuesCannotBeReadAsFlags() {
         var p = plan(exclusions: ["-foo"])
+        p.fileTypeExclusions = []
         p.hostLabel = "-host"
         p.sources = ["-drafts"] // not a valid plan; builder-only check
         #expect(inv(.backup, p).arguments == [
             "backup", "--json", "--cache-dir", Self.cache, "--host=-host", "--tag=\(tag)",
             "--skip-if-unchanged", "--exclude-cloud-files", "--exclude-caches", "--pack-size", "64",
-            "--exclude=-foo", "--", "-drafts",
+            "--one-file-system", "--exclude=-foo", "--", "-drafts",
         ])
         #expect(inv(.snapshots(allHosts: false), p).arguments.contains("--host=-host"))
         #expect(inv(.forget(dryRun: false), p).arguments.contains("--host=-host"))
@@ -283,50 +285,90 @@ struct ResticInvocationTests {
 
     // MARK: Default exclusions
 
+    /// Ruling R64a: the decided folder list, resolved against the given home and nothing else (the
+    /// Time Machine plist reader is gone, so nothing is read from the real system).
     @Test func defaultExclusionsAreResolvedAgainstGivenHome() {
-        let home = URL(fileURLWithPath: "/Users/test")
-        let paths = DefaultExclusions.paths(home: home, standardExclusionsPlist: nil)
+        let paths = DefaultExclusions.paths(home: URL(fileURLWithPath: "/Users/test"))
+        let h = "/Users/test"
         #expect(paths == [
-            "/Users/test/Library/Caches",
-            "/Users/test/.Trash",
-            "**/node_modules",
-            "/Users/test/Library/Containers/com.docker.docker/Data/vms",
-            "/Users/test/Library/Group Containers/HUAQ24HBR6.dev.orbstack/data",
+            "\(h)/Library/Caches", "\(h)/.Trash", "**/node_modules",
+            "\(h)/Library/Containers/com.docker.docker/Data/vms",
+            "\(h)/Library/Group Containers/HUAQ24HBR6.dev.orbstack/data",
+            "\(h)/Library/Logs", "\(h)/Library/Metadata/CoreSpotlight", "\(h)/Library/Mobile Documents/.Trash",
+            "\(h)/Library/Saved Application State", "\(h)/Library/Developer/Xcode/DerivedData",
+            "\(h)/Library/Developer/CoreSimulator", "\(h)/Library/Suggestions", "\(h)/Library/Biome",
+            "\(h)/Library/Trial", "\(h)/Library/Application Support/CloudDocs/session/db",
+            "**/Mail/V*/MailData/Envelope Index*", "\(h)/.cache", "\(h)/.npm",
+            "\(h)/Library/Containers/*/Data/Library/Caches", "\(h)/Library/Group Containers/*/Library/Caches",
+            "\(h)/Library/Application Support/FileProvider/*/wharf",
+            "\(h)/Library/Group Containers/group.com.apple.secure-control-center-preferences",
         ])
+        // The owner keeps logs and project build folders: none of these become defaults.
+        for unwanted in ["*.log", "**/.venv", "**/Pods", "**/target", "**/.build"] {
+            #expect(!paths.contains(unwanted))
+        }
     }
 
-    @Test func defaultExclusionsReadStandardExclusionsPlist() throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("excl-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let plist = dir.appendingPathComponent("StdExclusions.plist")
-        let dict: [String: Any] = [
-            "UserPathsExcluded": ["Library/Foo", "Library/Bar/"],
-            "PathsExcluded": ["/private/var/vm", "/Volumes/Scratch"],
-            "ContainerPathsExcluded": ["ignored"],
-        ]
-        try PropertyListSerialization.data(fromPropertyList: dict, format: .xml, options: 0).write(to: plist)
-        let paths = DefaultExclusions.paths(home: URL(fileURLWithPath: "/Users/test"), standardExclusionsPlist: plist)
-        #expect(paths.suffix(4) == [
-            "/Users/test/Library/Foo", "/Users/test/Library/Bar", "/private/var/vm", "/Volumes/Scratch",
-        ])
-        #expect(!paths.contains { $0.contains("ignored") })
-    }
-
-    @Test func missingOrMalformedPlistIsOmitted() throws {
-        let home = URL(fileURLWithPath: "/Users/test")
-        let base = DefaultExclusions.paths(home: home, standardExclusionsPlist: nil)
-        let missing = URL(fileURLWithPath: "/nonexistent/StdExclusions.plist")
-        #expect(DefaultExclusions.paths(home: home, standardExclusionsPlist: missing) == base)
-        let bad = FileManager.default.temporaryDirectory.appendingPathComponent("bad-\(UUID().uuidString).plist")
-        try Data("not a plist".utf8).write(to: bad)
-        defer { try? FileManager.default.removeItem(at: bad) }
-        #expect(DefaultExclusions.paths(home: home, standardExclusionsPlist: bad) == base)
-    }
-
-    @Test func publicPathsDoNotReadTheRealHome() {
-        // Every non-system entry is under the supplied home (or a glob).
+    @Test func everyDefaultIsUnderTheHomeOrAnyDepthPattern() {
         let paths = DefaultExclusions.paths(home: URL(fileURLWithPath: "/Users/nobody"))
-        #expect(paths.prefix(5).allSatisfy { $0.hasPrefix("/Users/nobody/") || $0.hasPrefix("**/") })
+        #expect(paths.allSatisfy { $0.hasPrefix("/Users/nobody/") || $0.hasPrefix("**/") })
+    }
+
+    /// restic matches with Go's `filepath.Match`, so a home path's own glob characters are escaped and
+    /// match only themselves (the real-restic check is in `ResticInvocationAcceptanceTests`).
+    @Test func globCharactersInTheHomePathAreEscaped() {
+        #expect(DefaultExclusions.escapedGlob("/Users/a[b]*?\\c") == "/Users/a\\[b\\]\\*\\?\\\\c")
+        let paths = DefaultExclusions.paths(home: URL(fileURLWithPath: "/Users/x[1]"))
+        #expect(paths.first == "/Users/x\\[1\\]/Library/Caches")
+        #expect(paths.contains("/Users/x\\[1\\]/Library/Containers/*/Data/Library/Caches"))
+        #expect(DefaultExclusions.escapedGlob("/Users/Jo Smith") == "/Users/Jo Smith")
+    }
+
+    // MARK: File types and filesystems (Ruling R64b, R64c)
+
+    @Test func defaultFileTypes() {
+        #expect(DefaultExclusions.fileTypes == [
+            "dmg", "iso", "sparseimage",
+            "vmdk", "vhd", "vhdx", "vdi", "qcow2", "hdd", "hds", "pvm", "pvs", "pvi", "pva", "fdd", "vmc",
+            "vmx", "vmxf", "vmsn", "vmsd", "vmem", "nvram", "mem", "vsv",
+        ])
+        for kept in ["log", "o", "exe", "dll", "sparsebundle"] { #expect(!DefaultExclusions.fileTypes.contains(kept)) }
+        #expect(DefaultExclusions.fileTypes.allSatisfy { Plan.normalisedFileType($0) == $0 })
+    }
+
+    @Test func fileTypesBecomeCaseInsensitiveExcludesBeforeTheSources() {
+        var p = plan()
+        p.fileTypeExclusions = ["dmg", " VMDK "]
+        let args = inv(.backup, p).arguments
+        let types = args.filter { $0.hasPrefix("--iexclude=") }
+        #expect(types == ["--iexclude=*.dmg", "--iexclude=*.vmdk"])
+        #expect(args.firstIndex(of: "--iexclude=*.vmdk")! < args.firstIndex(of: "--")!)
+        // A new plan carries the default list.
+        #expect(inv(.backup).arguments.filter { $0.hasPrefix("--iexclude=") }.count == DefaultExclusions.fileTypes.count)
+        p.fileTypeExclusions = []
+        #expect(!inv(.backup, p).arguments.contains { $0.hasPrefix("--iexclude") })
+    }
+
+    @Test func invalidFileTypesFailValidation() {
+        for bad in ["", "  ", ".dmg", "a/b", "*.iso", "v?mdk", "[ab]", "x\\y", "two words"] {
+            var p = plan()
+            p.fileTypeExclusions = ["dmg", bad]
+            #expect(p.validationErrors() == [.invalidFileType(bad)], "\(bad)")
+        }
+        var p = plan()
+        p.fileTypeExclusions = ["DMG", " iso", "tar.gz"]
+        #expect(p.validationErrors().isEmpty)
+    }
+
+    @Test func oneFileSystemByDefaultAndOffWhenTurnedOff() {
+        var p = plan()
+        #expect(p.oneFileSystem)
+        let args = inv(.backup, p).arguments
+        #expect(args.contains("--one-file-system"))
+        #expect(args.firstIndex(of: "--one-file-system")! < args.firstIndex(of: "--")!)
+        p.oneFileSystem = false
+        #expect(!inv(.backup, p).arguments.contains("--one-file-system"))
+        // Only backup takes it.
+        #expect(!inv(.forget(dryRun: false)).arguments.contains("--one-file-system"))
     }
 }
