@@ -65,12 +65,16 @@ public struct AgentHealthInput: Sendable, Equatable {
     /// When an `enabled` agent's heartbeat first failed in the current run of failures; `nil` while it
     /// answers.
     public var unreachableSince: Date?
+    /// A restic from this app's `Contents/Helpers` is running under the agent (`resticRunsUnderAgent`).
+    /// Only asked for an unreachable agent, the one case that would be unregistered without a drain.
+    public var resticRunningUnderAgent: Bool
     public var now: Date
 
     public init(
         smStatus: AgentServiceStatus, heartbeat: AgentHeartbeat, expectedExecutablePrefix: String,
         appVersion: String, appBuild: String, storedPlistHash: String?, currentPlistHash: String,
-        executableFingerprintOnDisk: String?, lastRepairs: [RepairRecord], unreachableSince: Date? = nil, now: Date
+        executableFingerprintOnDisk: String?, lastRepairs: [RepairRecord], unreachableSince: Date? = nil,
+        resticRunningUnderAgent: Bool = false, now: Date
     ) {
         self.smStatus = smStatus
         self.heartbeat = heartbeat
@@ -82,6 +86,7 @@ public struct AgentHealthInput: Sendable, Equatable {
         self.executableFingerprintOnDisk = executableFingerprintOnDisk
         self.lastRepairs = lastRepairs
         self.unreachableSince = unreachableSince
+        self.resticRunningUnderAgent = resticRunningUnderAgent
         self.now = now
     }
 
@@ -100,6 +105,10 @@ public enum AgentHealthAction: Sendable, Equatable {
     case reregisterAfterDrain
     /// `prepareForRestart`; launchd's `KeepAlive` starts the new binary.
     case restartAfterDrain
+    /// The agent doesn't answer, but a restic it started is running, so an undrained `unregister()` would
+    /// kill a live backup (Ruling R68): shown as not running, logged, and decided again at the next
+    /// heartbeat.
+    case waitForRunningRestic
     /// The agent is already draining: "Updating the background agent…", with Back Up Now disabled. The
     /// app asks it to restart once drained, which also frees an agent left drained by an app that quit
     /// half-way through a re-registration.
@@ -158,6 +167,8 @@ public func decideAgentHealth(
                 guard input.now.timeIntervalSince(since) >= AgentHealthPolicy.unreachableGrace else {
                     return .showNotRunning(canRepair: true)
                 }
+                // An unreachable agent can't be drained, so the re-registration would kill the restic.
+                if input.resticRunningUnderAgent { return .waitForRunningRestic }
                 return repair(.reregisterAfterDrain)
             case .offerRestart: return .showNotRunning(canRepair: true)
             }

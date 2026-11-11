@@ -28,16 +28,16 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     // MARK: AgentXPC
 
     func hello(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        // Not logged: the app's heartbeat sends one every 10 s.
-        respond(reply) { [state, notifier, executableFingerprint] in
+        // Not logged: the app's heartbeat sends one every 10 s. Built in process from what the agent holds,
+        // never by asking the notification centre (Ruling R68): a hung usernoted must not make the app
+        // think the agent is dead and unregister it mid-backup.
+        respond(reply) { [state, executableFingerprint] in
             _ = try Self.decode(HelloRequest.self, from: request)
             let info = Bundle.main.infoDictionary ?? [:]
-            return HelloReply(
+            return await state.helloReply(
                 agentVersion: info["CFBundleShortVersionString"] as? String ?? "unknown",
                 agentBuild: info["CFBundleVersion"] as? String ?? "unknown",
                 executablePath: Bundle.main.executableURL?.path ?? "unknown",
-                draining: await state.isDraining,
-                notificationsAuthorised: await notifier.authorisationStatus(),
                 executableFingerprint: executableFingerprint)
         }
     }

@@ -244,6 +244,26 @@ extension AgentState {
         }
     }
 
+    /// The notification authorisation as the alert rounds last learnt it, for `hello` (Ruling R68): nil
+    /// until the notifier has answered once (or when it said "not asked yet"), false while an abandoned
+    /// call has had no answer since. Never asks the notification centre, so `hello` can't wait on it.
+    public var knownNotificationAuthorisation: Bool? {
+        if authorisationAbandoned { return false }
+        return lastAuthorisation ?? nil
+    }
+
+    /// The heartbeat's reply, built from what the agent already holds: nothing here waits on another
+    /// process (Ruling R68), so a notification centre that has stopped answering can't make the app
+    /// think the agent is dead.
+    public func helloReply(
+        agentVersion: String, agentBuild: String, executablePath: String, executableFingerprint: String?
+    ) -> HelloReply {
+        HelloReply(
+            agentVersion: agentVersion, agentBuild: agentBuild, executablePath: executablePath,
+            draining: isDraining, notificationsAuthorised: knownNotificationAuthorisation,
+            executableFingerprint: executableFingerprint)
+    }
+
     private func noteAuthorisation(_ answer: Bool?) {
         lastAuthorisation = .some(answer)
         authorisationAbandoned = false

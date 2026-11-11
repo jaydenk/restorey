@@ -115,10 +115,17 @@ final class AgentSupervisor {
             appVersion: request.appVersion, appBuild: request.appBuild,
             storedPlistHash: registration.storedPlistHash, currentPlistHash: plistHash,
             executableFingerprintOnDisk: lastHello.flatMap(Self.fingerprintOnDisk),
-            lastRepairs: lastRepairs, unreachableSince: unreachableSince, now: Date())
+            lastRepairs: lastRepairs, unreachableSince: unreachableSince,
+            // Only an unreachable agent would be unregistered undrained, so only then is the process table read.
+            resticRunningUnderAgent: unreachableSince != nil
+                && resticRunsUnderAgent(helpersPrefix: installed.helpersPrefix),
+            now: Date())
         let action = decideAgentHealth(input)
         if action != lastAction {
             log.info("Agent health: \(describe(input)) → \(action)")
+            if action == .waitForRunningRestic {
+                log.info("Not re-registering the unreachable agent: a restic it started is still running, and unregister() without a drain would kill it. Checking again at each heartbeat")
+            }
             lastAction = action
         }
         await perform(action, heartbeat: beat)
@@ -163,6 +170,9 @@ final class AgentSupervisor {
             if case .ok = heartbeat { await reregister(reachable: true) } else { await reregister(reachable: false) }
         case .waitForUpdate:
             await waitForUpdate()
+        case .waitForRunningRestic:
+            // Re-decided at every heartbeat; `heartbeat` logs why when the action begins.
+            set(.notRunning(reachable: false))
         case .showSwitchedOff:
             set(.switchedOff)
         case .showNotRunning:

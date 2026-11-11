@@ -139,6 +139,46 @@ struct AgentStateAlertTests {
         return stored?.plans[plan ?? world.plan.id]?.activeAlerts ?? [:]
     }
 
+    // MARK: hello (Ruling R68)
+
+    private func hello(_ state: AgentState) async -> HelloReply {
+        await state.helloReply(agentVersion: "1", agentBuild: "2", executablePath: "/x", executableFingerprint: nil)
+    }
+
+    /// The notification centre has stopped answering: `hello` still replies at once, from what it knows.
+    @Test func helloRepliesPromptlyWhileTheNotifierHangs() async throws {
+        let world = try await world()
+        let notifier = HangingNotifier(hangAuthorisation: true, hangPosts: true)
+        await world.state.attach(notifier: notifier, log: { _ in })
+        await world.state.scheduleAlertDelivery()
+        while await notifier.hangingCalls == 0 { try await Task.sleep(for: .milliseconds(10)) }
+
+        let replied = Locked(false)
+        let reply = Task { () -> HelloReply in
+            let reply = await hello(world.state)
+            replied.set(true)
+            return reply
+        }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while !replied.value, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(replied.value, "hello waited on the notification centre")
+        #expect(await reply.value.notificationsAuthorised == nil, "never answered, so not known")
+        #expect(await notifier.authorisationCalls == 1, "hello made no notifier call of its own")
+        await notifier.answer()
+    }
+
+    @Test func helloReportsTheAuthorisationTheAlertRoundsLearnt() async throws {
+        let world = try await world(authorised: false)
+        await world.state.attach(notifier: world.notifier, log: { _ in })
+        #expect(await hello(world.state).notificationsAuthorised == nil)
+        await world.state.deliverAlerts()
+        #expect(await hello(world.state).notificationsAuthorised == false)
+        await world.notifier.set(authorised: true)
+        await world.state.deliverAlerts()
+        #expect(await hello(world.state).notificationsAuthorised == true)
+        #expect(await hello(world.state).draining == false)
+    }
+
     @Test func aRaisedAlertIsPostedAtOnceThenBacksOff() async throws {
         let world = try await world()
         await world.state.attach(notifier: world.notifier, log: { _ in })

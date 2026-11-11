@@ -156,6 +156,24 @@ struct AgentHealthTests {
         #expect(decideAgentHealth(Self.input(heartbeat: .unreachable, unreachableFor: 600)) == .reregisterAfterDrain)
     }
 
+    /// Ruling R68: an unreachable agent can't be drained, so while a restic it started is running the app
+    /// waits rather than unregister it, and decides again at the next heartbeat.
+    @Test func anUnreachableAgentRunningResticIsNotUnregistered() {
+        func decide(running: Bool, for seconds: TimeInterval?) -> AgentHealthAction {
+            var input = Self.input(heartbeat: .unreachable, unreachableFor: seconds)
+            input.resticRunningUnderAgent = running
+            return decideAgentHealth(input)
+        }
+        #expect(decide(running: true, for: 600) == .waitForRunningRestic)
+        #expect(decide(running: true, for: 10) == .showNotRunning(canRepair: true), "inside the grace, as before")
+        // The backup has finished: the next heartbeat repairs.
+        #expect(decide(running: false, for: 610) == .reregisterAfterDrain)
+        // A reachable agent is drained, so a running restic changes nothing there.
+        var reachable = Self.input(heartbeat: .ok(Self.reply(path: "/elsewhere/RestoreyDevAgent")))
+        reachable.resticRunningUnderAgent = true
+        #expect(decideAgentHealth(reachable) == .reregisterAfterDrain)
+    }
+
     /// A fault that survives one repair waits for the user ("Restart Agent").
     @Test func enabledUnreachableRepairsAtMostHourly() {
         #expect(decideAgentHealth(Self.input(heartbeat: .unreachable, repairAttemptedRecently: true, unreachableFor: 600))

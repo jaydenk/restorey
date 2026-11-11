@@ -84,8 +84,10 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
 - switched off in Login Items: "Background agent is switched off", with "Open Login Items". Never switched
   back on by Restorey. (macOS also quits Restorey when you switch the agent off, so this shows on the next launch.)
 - registered but not answering: "Background agent isn't running", with "Restart Agent" and "Open Login
-  Items". After 30 seconds without an answer it unregisters and registers the agent again on its own. A
-  switched-off agent reads differently (see `docs/spike-findings.md`), so this never overrides your choice
+  Items". After 30 seconds without an answer it unregisters and registers the agent again on its own, unless
+  a restic from Restorey's own bundle is still running under the agent: unregistering would kill that backup,
+  so it waits and looks again at each heartbeat. The agent's answer never waits on the notification centre, so a
+  stuck `usernoted` doesn't make a working agent look dead. A switched-off agent reads differently (see `docs/spike-findings.md`), so this never overrides your choice
 
 When an update lands while a backup runs, the old agent finishes only the restic step in progress and starts no
 new one, since restic would run the new helper, which the old agent refuses. A backup still waiting its turn shows
