@@ -60,8 +60,10 @@ extension PlanRunner {
 
     /// What the app shows when `cat config` failed with something other than "nothing there". Init never
     /// runs after such a failure, whatever the text says; the text only chooses the explanation. An S3
-    /// bucket that is missing (or that the key can't see) gets its own sentence, because Restorey never
-    /// creates buckets: scoped keys can't, and spec §5.4 forbids creating storage the user didn't ask for.
+    /// bucket that is missing (or that the key can't see) gets its own sentence. Restorey makes no bucket
+    /// call of its own (Ruling R38): only `restic init`, after a probe that found nothing (exit 10), may
+    /// create a missing bucket, and only when the key is allowed to. A probe that failed some other way
+    /// never reaches init, so the user is told to create the bucket in the provider's console.
     static func probeFailureMessage(
         repository: Repository, outcome: RunOutcome, stoppedReason: String?, stderr: [String]
     ) -> String {
