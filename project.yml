@@ -98,6 +98,8 @@ targets:
       - target: RestoreyAgent
         link: false
       - package: RestoreyCore
+      - package: RestoreyCore
+        product: AgentCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(RESTOREY_ROOT_ID).hostedtests

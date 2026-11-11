@@ -12,6 +12,26 @@ import RestoreyCore
 // the running agent over XPC and exits: it must branch before NSApplication and before any listener.
 if let code = HelperMode.exitCode(arguments: CommandLine.arguments) { exit(code) }
 
+// Only the launchd job for this build's label runs the agent (Ruling R66). Decided before anything touches
+// the identity's files: no agent.log line, no config or state, no listener, recovery or scheduler. An
+// unreadable identity is left to the start-up below, which logs it to os_log and stays idle.
+if let identity = try? Identity.fromBundle(.main) {
+    switch AgentLaunchRole.decide(environment: ProcessInfo.processInfo.environment, label: identity.agentLabel) {
+    case .launchdJob:
+        break
+    case .testHost:
+        // XCTest injects its bundle once the application has finished launching; the tests drive the code
+        // they need with their own directories and fakes.
+        let host = NSApplication.shared
+        host.setActivationPolicy(.prohibited)
+        host.run()
+        exit(0)
+    case .refused(let reason):
+        Logger(subsystem: identity.rootID, category: "agent").error("Not starting the agent: \(reason, privacy: .public)")
+        exit(AgentLaunchRole.refusedExitStatus)
+    }
+}
+
 /// The binary this process was started from, recorded now: an install can replace the file while this
 /// process keeps running the old one, and `hello` lets the app tell (fix round 3).
 let launchFingerprint = Bundle.main.executableURL.flatMap(ExecutableFingerprint.of)

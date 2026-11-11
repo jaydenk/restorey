@@ -3,9 +3,10 @@
 A free, open-source macOS menu bar app that puts an Arq/Backblaze-style front end on
 [restic](https://restic.net).
 
-> **Status: design stage.** There is no app to download yet. The design is approved and the
-> platform spike is done ([findings](docs/spike-findings.md)); v0.1 engine work has begun with the project scaffold.
-> Nothing here is ready to protect your data.
+> **Status: engine in alpha on the owner's Mac.** There is no app to download yet. The v0.1 engine (background
+> agent, scheduler, plans, Keychain secrets, check-ins and notifications) runs from a development build, driven by a
+> Debug-only Developer window; the menu bar and setup screens come next. The alpha's results are in
+> [docs/v0.1-measurements.md](docs/v0.1-measurements.md). Nothing here is ready to protect your data.
 
 ## What it will do
 
@@ -110,7 +111,10 @@ resumes, asks for notification permission, and shows the agent's live status as 
 launchctl print gui/$(id -u)/com.jaydenkerr.restorey.dev.agent        # spawn type = daemon (3), both Mach services
 ```
 
-The agent serves its XPC interface only to the signed app: the listener requires the app's bundle ID and the
+The agent runs only as its launchd job: started any other way (double-clicked, run from Terminal, or as the
+hosted tests' XCTest host) it touches none of its files and starts nothing, so there is never a second agent
+beside the real one ("Why the keychain tests need a signed host" has the details). The agent serves its XPC
+interface only to the signed app: the listener requires the app's bundle ID and the
 team in `Config/Local.xcconfig`, so any other process is refused. It is the only writer of `config.json`,
 `state.json` and the plans' keychain items, all under `~/Library/Application Support/<root ID>` (mode 0700).
 If either file is corrupt or was written by a newer Restorey, the agent reports it in `status`, refuses every
@@ -260,7 +264,9 @@ How it works (design spec §7; [spike findings](docs/spike-findings.md) H2 and H
   (`RestoreyAgent print-password --plan <id>`) and, for S3 and B2, as the `credential_process` in a per-plan
   shared-credentials file (`RestoreyAgent s3-credentials --plan <id>`). That file holds only the command line,
   never a key. The route itself was verified against a real B2 bucket through its S3 endpoint with a test
-  helper: restic ran it once per command. Restorey's own helper is checked end to end in the v0.1 alpha.
+  helper: restic ran it once per command. Restorey's own helper was checked end to end in the v0.1 alpha: a
+  23-minute, 15 GB first backup to B2 asked it once for the password and once for the keys, and never during
+  the upload.
 - The helper holds no secrets. It asks the running agent over XPC. The agent accepts the connection only
   from its own executable, signed by the same team (checked against the caller's audit token). It then
   checks that the caller's parent process is a restic that the agent itself started and is still
@@ -289,12 +295,22 @@ in tests would pass but test the wrong keychain, so the keychain tests are not i
 They live in the `AgentHostedTests` bundle, which runs inside the signed Debug agent
 (`xcodebuild test -scheme AgentHostedTests -configuration Debug`). `scripts/ci.sh` runs them only when
 `Config/Local.xcconfig` exists. On GitHub Actions it doesn't, and the script prints
-`hosted keychain tests skipped: no signing` instead. The bundle also runs the installed helper by hand
-and checks the agent refuses it (`HelperEndToEndTests`), so it needs `RestoreyDev.app` installed with
-`scripts/install-dev.sh` and opened once so it registers its agent, and the agent restarted after each later
-install (`launchctl kickstart -k gui/$(id -u)/com.jaydenkerr.restorey.dev.agent`): the app restarts it on its
-own only when the build number differs. Without that it fails rather than skips. The tests use a random plan ID each and delete what they
-create, so they never touch real Restorey items. The hosted build goes in `~/Library/Caches/restorey-ci`
+`hosted keychain tests skipped: no signing` instead. The tests use a random plan ID each and delete what
+they create, so they never touch real Restorey items.
+
+The test host is the agent's own executable, launched by XCTest from DerivedData, so it carries the real Debug
+identity. The agent therefore runs its start-up only as the launchd job for its label: launchd sets
+`XPC_SERVICE_NAME` to the label in the job's environment (`launchctl print gui/$(id -u)/<label>` shows it), and
+any other process sees something else (`0` from a shell, `application.<bundle id>…` for an app launched by
+macOS). Under XCTest (`XCTestConfigurationFilePath` and friends set) the agent does nothing but let XCTest run;
+otherwise it logs one line to the unified log (category `agent`) and exits with status 78. Either way it writes
+nothing to `agent.log`, loads no `config.json` or `state.json`, and starts no listener, recovery or scheduler,
+before or after (`AgentLaunchRole`, Ruling R66). Hosted tests must not refer to the real logs, Application
+Support or caches folders or the installed app; `scripts/ci.sh` checks that. The confused-deputy check, the
+installed helper run by hand and refused by the running agent, is a live check instead:
+`scripts/check-helper-refusal.sh`, with `RestoreyDev.app` installed by `scripts/install-dev.sh`, opened once so it
+registers its agent, and the agent restarted after each later install
+(`launchctl kickstart -k gui/$(id -u)/com.jaydenkerr.restorey.dev.agent`). The hosted build goes in `~/Library/Caches/restorey-ci`
 (override with `RESTOREY_HOSTED_DERIVED_DATA`), not `build/`, because macOS blocks launching an app from
 `~/Documents` on a privacy prompt that nobody is there to answer.
 

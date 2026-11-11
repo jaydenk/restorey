@@ -43,9 +43,15 @@ if [[ -f Config/Local.xcconfig ]]; then
   # signed agent (README: "Why the keychain tests need a signed host"). The agent is launched, and
   # macOS blocks a launch from ~/Documents (and Desktop, Downloads, iCloud Drive) on a privacy
   # prompt, so this build lives under ~/Library/Caches instead of build/.
-  # HelperEndToEndTests also runs the installed RestoreyDev helper and needs its agent registered
-  # and running the installed build (README).
+  # The host is the agent's own executable, which takes its test-host branch and runs none of its start-up
+  # (Ruling R66). The tests must never reach the real identity's files or the installed build: the
+  # helper's negative control against the running agent is scripts/check-helper-refusal.sh, a live check.
   step "Hosted tests (signed agent as test host)"
+  if grep -nE 'logsDirectory|applicationSupportDirectory|cachesDirectory|Library/(Logs|Application Support)|/Applications/' \
+      AgentHostedTests/*.swift; then
+    echo "error: a hosted test refers to the real identity's folders or the installed app (above)" >&2
+    exit 1
+  fi
   hosted_derived="${RESTOREY_HOSTED_DERIVED_DATA:-$HOME/Library/Caches/restorey-ci/DerivedData-hosted}"
   mkdir -p "$hosted_derived"
   hosted_log=build/xcodebuild-hosted.log
