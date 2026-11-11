@@ -676,6 +676,9 @@ public actor AgentState {
         return await Self.bounded(pingBudget) { await runner.pingsFlushed() } != nil
     }
 
+    /// How late a `bounded` budget may end.
+    static let boundedTimerTolerance: Duration = .milliseconds(50)
+
     /// `work`'s result if it finishes within `budget`, otherwise nil. The work is not cancelled when it
     /// doesn't: it may be stuck in a call that can't be cancelled (another process's IPC, say).
     static func bounded<T: Sendable>(_ budget: Duration, _ work: @escaping @Sendable () async -> T) async -> T? {
@@ -688,7 +691,10 @@ public actor AgentState {
             }
             timer.withLock {
                 $0 = Task {
-                    try? await Task.sleep(for: budget)
+                    // An explicit tolerance, as for restic's SIGKILL timer: with none, the system may fire
+                    // the timer late to coalesce wake-ups (measured at about 5% late), eating into the
+                    // system stop's margin under launchd's exit timeout.
+                    try? await Task.sleep(for: budget, tolerance: boundedTimerTolerance)
                     settle(nil)
                 }
             }

@@ -71,14 +71,13 @@ struct SystemStopTests {
         #expect(await f.checkIn.pings == [])
     }
 
-    /// restic ignores SIGINT: our SIGKILL after the system-stop grace ends it, inside the budget, and
-    /// it is still the system's stop (its lock is left for the next start's plain unlock).
-    @Test func aResticIgnoringSIGINTIsKilledWithinTheBudget() async throws {
+    /// A restic whose backup ignores SIGINT (as a hung network call would) and runs for 30 s; every
+    /// other command is the real restic. The caller removes the returned directory.
+    static func stubbornRestic() throws -> (directory: URL, wrapper: URL) {
         let restic = try ResticBinary.require()
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("restorey-stubborn-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
         let wrapper = directory.appendingPathComponent("restic.sh")
         try """
             #!/bin/sh
@@ -91,6 +90,14 @@ struct SystemStopTests {
 
             """.write(to: wrapper, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+        return (directory, wrapper)
+    }
+
+    /// restic ignores SIGINT: our SIGKILL after the system-stop grace ends it, inside the budget, and
+    /// it is still the system's stop (its lock is left for the next start's plain unlock).
+    @Test func aResticIgnoringSIGINTIsKilledWithinTheBudget() async throws {
+        let (directory, wrapper) = try Self.stubbornRestic()
+        defer { try? FileManager.default.removeItem(at: directory) }
         let f = try await RunnerFixture.make(executable: wrapper)
         defer { f.remove() }
         try f.write("a.txt", "one")
@@ -99,9 +106,37 @@ struct SystemStopTests {
         try await f.waitForPhase { $0.progress != nil }
         let started = ContinuousClock.now
         #expect(await f.state.stopForSystem(runner: f.runner))
-        #expect(ContinuousClock.now - started < AgentState.systemStopBudget)
-        #expect(try await run.value.outcome == .stoppedBySystem)
+        // Timed to the run's end: the stop's own wait is bounded and returns in time either way.
+        let outcome = try await run.value.outcome
+        let took = ContinuousClock.now - started
+        #expect(took < AgentState.systemStopBudget, "the run ended \(took) after SIGTERM")
+        #expect(outcome == .stoppedBySystem)
         #expect(await f.pings() == [])
+    }
+
+    /// A pause already stopping restic when SIGTERM arrives keeps its request (no second SIGINT), but
+    /// its SIGKILL comes forward from the pause's 10 s grace to the system stop's, so the stop still
+    /// ends inside launchd's exit timeout rather than leaving a run for recovery to call interrupted.
+    @Test func aPauseInFlightIsKilledWithinTheSystemStopBudget() async throws {
+        let (directory, wrapper) = try Self.stubbornRestic()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let f = try await RunnerFixture.make(executable: wrapper)
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress != nil }
+        await f.runner.interrupt(planID: f.planID, intent: .pause)
+        let started = ContinuousClock.now
+        #expect(await f.state.stopForSystem(runner: f.runner))
+        // The stop's own wait is bounded, so it returns in time either way; what launchd's SIGKILL
+        // would cut short is the run, so time it to its end.
+        let record = try await run.value
+        let took = ContinuousClock.now - started
+        #expect(took < AgentState.systemStopBudget, "the run ended \(took) after SIGTERM")
+        #expect(record.outcome == .paused, "the pause's own non-verdict outcome")
+        #expect(await f.pings() == [])
+        #expect((await f.history()).runningRecordID == nil, "committed, not left to recovery")
     }
 
     @Test func sigtermWhileIdleExitsPromptlyAndOnlyOnce() async throws {

@@ -268,12 +268,19 @@ public actor PlanRunner {
 
     /// Asks every run in flight (recovery's unlocks, backups, maintenance, create, adopt) to stop with
     /// `intent`, giving restic `killAfter` to honour SIGINT. A run whose step hasn't started yet stops
-    /// before restic does. A run already being stopped (a pause) keeps that request: a second SIGINT
-    /// gains nothing, and its outcome carries no verdict either. `AgentState.stopForSystem` is the way in.
+    /// before restic does. A run already being stopped (a pause) keeps that request, since a second
+    /// SIGINT would make restic skip removing its lock and its outcome carries no verdict either, but its
+    /// SIGKILL comes forward to `killAfter`: left at the pause's longer grace, a restic slow to honour
+    /// SIGINT would outlive launchd's exit timeout and the next start would record a false failure.
+    /// `AgentState.stopForSystem` is the way in.
     func interruptAll(_ intent: InterruptIntent, killAfter: Duration) async {
-        for handle in handles.values where handle.intent == nil {
-            guard let process = handle.request(intent) else { continue }
-            await process.interrupt(intent, killAfter: killAfter)
+        for handle in handles.values {
+            if handle.intent == nil {
+                guard let process = handle.request(intent) else { continue }
+                await process.interrupt(intent, killAfter: killAfter)
+            } else {
+                await handle.process?.killIfStillRunning(after: killAfter)
+            }
         }
     }
 

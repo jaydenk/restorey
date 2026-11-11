@@ -193,11 +193,18 @@ public actor ResticProcess {
         self.intent = intent
         guard let process, process.isRunning else { return }
         kill(process.processIdentifier, SIGINT)
+        killIfStillRunning(after: killAfter)
+    }
+
+    /// Sends SIGKILL after `delay` if restic is still running, without another SIGINT (a second one
+    /// makes restic stop without removing its lock). Each call arms its own timer, so a later, shorter
+    /// deadline wins: the system stop uses it to bring forward a pause's SIGKILL (Ruling R67).
+    public func killIfStillRunning(after delay: Duration) {
         Task { [weak self] in
             // An explicit tolerance: with none, the system is free to fire the timer late to coalesce
             // wake-ups, and a 10 s grace was measured ending 0.45–0.56 s late while other processes ran,
             // so SIGKILL came noticeably after the grace period.
-            try? await Task.sleep(for: killAfter, tolerance: Self.killTimerTolerance)
+            try? await Task.sleep(for: delay, tolerance: Self.killTimerTolerance)
             await self?.killIfStillRunning()
         }
     }

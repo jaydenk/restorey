@@ -89,7 +89,8 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
   Items". After 30 seconds without an answer it unregisters and registers the agent again on its own, unless
   a restic from Restorey's own bundle is still running under the agent: unregistering would kill that backup,
   so it waits and looks again at each heartbeat. The agent's answer never waits on the notification centre, so a
-  stuck `usernoted` doesn't make a working agent look dead. A switched-off agent reads differently (see `docs/spike-findings.md`), so this never overrides your choice
+  stuck `usernoted` doesn't make a working agent look dead. A switched-off agent reads differently (see
+  `docs/spike-findings.md`), so this never overrides your choice
 
 When an update lands while a backup runs, the old agent finishes only the restic step in progress and starts no
 new one, since restic would run the new helper, which the old agent refuses. A backup still waiting its turn shows
@@ -167,9 +168,10 @@ with secrets redacted. Run logs are kept for 400 days: the agent removes older o
 day after that. Logging out, restarting or shutting down the Mac stops the agent with SIGTERM: it gives each restic
 in progress SIGINT (so restic removes its own lock), records the run as stopped by the system, which is not a
 failure (no alert, no check-in ping; the backup is tried again 15 minutes after it started), and exits within
-4 seconds, before launchd's 5-second limit. If the agent stops mid-run any other way (a crash, `kill -9`), its next
-start records that run as interrupted (an interrupted backup is a failure and sends its `/fail` ping) and runs a plain `restic unlock` (never `--remove-all`) once per
-repository, before it accepts any run. Before exiting for an update, the agent finishes the restic step in
+4 seconds, before launchd's 5-second limit (restic gets 2.5 seconds to honour SIGINT). A run already being paused
+keeps its pause, but its restic gets the same 2.5 seconds instead of the pause's 10. If the agent stops mid-run any other way (a crash, `kill -9`), its next start records
+that run as interrupted (an interrupted backup is a failure and sends its `/fail` ping) and runs a plain
+`restic unlock` (never `--remove-all`) once per repository, before it accepts any run. Before exiting for an update, the agent finishes the restic step in
 progress (a backup's maintenance waits for the next backup) and then waits up to 3 minutes for queued check-in
 pings.
 
