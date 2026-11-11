@@ -178,6 +178,27 @@ struct SchedulerCoreTests {
         #expect(triggers == [missed.id: .catchUp, locked.id: .retry, resumed.id: .catchUp])
     }
 
+    /// Ruling R63: the retry after an interrupted backup is labelled `.retry`, by the same newest-backup
+    /// rule that times it, even once the next agent's recovery unlock is the newest record.
+    @Test func theRunAfterAnInterruptedBackupIsARetry() async throws {
+        let w = World()
+        let now = w.now.value
+        let plan = Self.plan("Interrupted", now: now)
+        var history = Self.history(attempted: 16 * 60, before: now, latest: .interrupted, planID: plan.id)
+        let unlockedAt = now.addingTimeInterval(-15 * 60)
+        history.record(RunRecord(
+            id: UUID(), planID: plan.id, operation: .unlock, trigger: .scheduled, startedAt: unlockedAt,
+            endedAt: unlockedAt, outcome: .success(snapshotID: nil), summary: nil, logFile: ""))
+        await w.runner.set([(plan, history)])
+
+        await w.core.tick()
+        await w.core.runsFinished()
+
+        let starts = await w.runner.starts
+        #expect(starts.map(\.planID) == [plan.id])
+        #expect(starts.first?.trigger == .retry)
+    }
+
     @Test func onePlanNeverRunsTwiceConcurrently() async throws {
         let w = World()
         let home = Self.plan("Home", now: w.now.value)

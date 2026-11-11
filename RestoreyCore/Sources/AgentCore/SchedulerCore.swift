@@ -37,9 +37,9 @@ public protocol SchedulerRunner: Sendable {
 /// queue serialises those that share a repository.
 ///
 /// Missed runs, runs after a pause, and runs after waking, the network coming back or a volume mounting
-/// are catch-ups; a run after a lock is a retry. When the agent is winding down (a tick finds it draining
-/// or its executable replaced, or the runner refuses because it is draining), the scheduler stops for
-/// good: the agent is about to exit or be re-registered. Any other refusal is logged once per plan per reason.
+/// are catch-ups; a run after a lock or an interruption is a retry. When the agent is winding down (a tick
+/// finds it draining or its executable replaced, or the runner refuses because it is draining), the
+/// scheduler stops for good: the agent is about to exit or be re-registered. Any other refusal is logged once per plan per reason.
 public actor SchedulerCore {
     public static let tickInterval: Duration = .seconds(60)
     /// How long a wake waits for the network before catching up anyway.
@@ -270,10 +270,11 @@ public actor SchedulerCore {
 
     // MARK: Decisions
 
-    /// Why a due plan runs: a retry after a lock, a catch-up after a pause ran out or a run missed by
-    /// more than `catchUpLateness`, otherwise scheduled.
+    /// Why a due plan runs: a retry after a lock or an interruption (`isShortRetry`, the rule that also
+    /// times it), a catch-up after a pause ran out or a run missed by more than `catchUpLateness`,
+    /// otherwise scheduled.
     static func trigger(plan: Plan, history: PlanRunHistory, now: Date) -> RunTrigger {
-        if let latest = history.recent.first, latest.operation == .backup, latest.outcome == .locked { return .retry }
+        if isShortRetry(history) { return .retry }
         if let until = history.pausedUntil, until <= now { return .catchUp }
         guard let last = history.lastAttemptAt else { return .scheduled }
         let interval: TimeInterval
