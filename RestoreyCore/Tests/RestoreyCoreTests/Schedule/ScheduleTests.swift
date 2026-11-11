@@ -70,6 +70,15 @@ struct ScheduleTests {
         #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == until)
     }
 
+    /// Final review M2: a pause set before the clock went back 5 hours ends within an hour, not 6.
+    @Test func aBackwardClockDoesNotStretchAPause() {
+        var h = history(lastAttempt: Self.now)
+        h.pausedUntil = Self.now.addingTimeInterval(6 * Self.hour)
+        #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == Self.now.addingTimeInterval(Self.hour))
+        h.pausedUntil = Self.now.addingTimeInterval(Self.hour)
+        #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == Self.now.addingTimeInterval(Self.hour))
+    }
+
     @Test func pausedUntilBeatsFirstRun() {
         var h = PlanRunHistory()
         let until = Self.now.addingTimeInterval(1800)
@@ -165,7 +174,8 @@ struct ScheduleTests {
     @Test func pauseBeatsLockedRetry() {
         let last = Self.now.addingTimeInterval(-300)
         var h = history(lastAttempt: last, latest: .locked)
-        let until = Self.now.addingTimeInterval(7200)
+        // Later than the lock's retry (10 minutes from now), within the pause's hour.
+        let until = Self.now.addingTimeInterval(1800)
         h.pausedUntil = until
         #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == until)
     }

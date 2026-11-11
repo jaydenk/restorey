@@ -318,7 +318,8 @@ final class AgentSupervisor {
     }
 
     private func received(_ status: AgentStatus) {
-        if let current = self.status, current.generatedAt > status.generatedAt { return }
+        // By the agent's sequence number, not its clock, which can go backwards (final review M1).
+        guard status.supersedes(self.status) else { return }
         self.status = status
         notify()
     }

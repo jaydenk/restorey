@@ -31,7 +31,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
         // Not logged: the app's heartbeat sends one every 10 s. Built in process from what the agent holds,
         // never by asking the notification centre (Ruling R68): a hung usernoted must not make the app
         // think the agent is dead and unregister it mid-backup.
-        respond(reply) { [state, executableFingerprint] in
+        respond(reply, "hello") { [state, executableFingerprint] in
             _ = try Self.decode(HelloRequest.self, from: request)
             let info = Bundle.main.infoDictionary ?? [:]
             return await state.helloReply(
@@ -43,11 +43,11 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func status(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state] in await state.status() }
+        respond(reply, "status") { [state] in await state.status() }
     }
 
     func savePlan(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state, log, plansChanged] in
+        respond(reply, "savePlan") { [state, log, plansChanged] in
             let save = try Self.decode(SavePlanRequest.self, from: request)
             let status = try await state.savePlan(save)
             // The request's description names the secrets' keys, never their values.
@@ -58,7 +58,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func deletePlan(_ id: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state, log] in
+        respond(reply, "deletePlan") { [state, log] in
             let status = try await state.deletePlan(try Self.planID(id))
             log.info("Deleted plan \(id)")
             return status
@@ -66,7 +66,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func backUpNow(_ planID: String?, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state, log] in
+        respond(reply, "Back Up Now") { [state, log] in
             let status = try await state.backUpNow(try planID.map(Self.planID))
             log.info("Back up now: \(planID.map { "plan \($0)" } ?? "every plan")")
             return status
@@ -74,7 +74,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func pause(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state, log] in
+        respond(reply, "pause") { [state, log] in
             let status = try await state.pause(try Self.planID(planID))
             log.info("Paused plan \(planID)")
             return status
@@ -82,7 +82,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func resume(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state, log, plansChanged] in
+        respond(reply, "resume") { [state, log, plansChanged] in
             let status = try await state.resume(try Self.planID(planID))
             log.info("Resumed plan \(planID)")
             plansChanged()
@@ -91,7 +91,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func createRepository(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state, log] in
+        respond(reply, "createRepository") { [state, log] in
             let status = try await state.createRepository(try Self.planID(planID))
             log.info("Created the repository for plan \(planID)")
             return status
@@ -99,7 +99,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func adopt(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state, log] in
+        respond(reply, "adopt") { [state, log] in
             let report = try await state.adopt(try Self.planID(planID))
             log.info("Read \(report.snapshotCount) snapshots for plan \(planID) to adopt its repository")
             return report
@@ -107,7 +107,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func confirmRecoveryKit(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state, log, plansChanged] in
+        respond(reply, "confirmRecoveryKit") { [state, log, plansChanged] in
             let status = try await state.confirmRecoveryKit(try Self.planID(planID))
             log.info("Recovery details confirmed for plan \(planID)")
             plansChanged()
@@ -116,7 +116,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func requestNotificationPermission(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply) { [state, log, notifier] in
+        respond(reply, "requestNotificationPermission") { [state, log, notifier] in
             let granted = try await notifier.requestPermission()
             log.info("Notification permission \(granted ? "granted" : "not granted")")
             // Clears or raises `notificationsOff`, and posts any alert that was waiting for permission.
@@ -172,14 +172,19 @@ final class AgentService: NSObject, AgentXPC, Sendable {
 
     // MARK: Helpers
 
+    /// - Parameter call: names the call in `agent.log` when it is refused.
     private func respond<T: Encodable & SendableMetatype>(
         _ reply: @escaping @Sendable (Data?, String?) -> Void,
+        _ call: String,
         _ work: @escaping @Sendable () async throws -> T
     ) {
         Task { [log] in
             do {
                 reply(try XPCCoding.encode(try await work()), nil)
             } catch let error as AgentError {
+                // A refusal is an answer, not a fault, but it must leave a trace: a Back Up Now that did
+                // nothing is otherwise invisible (final review M5). The message never names a secret.
+                log.info("Refused \(call): \(error.message)")
                 reply(nil, error.message)
             } catch {
                 log.error("Unexpected error handling an XPC request: \(error)")

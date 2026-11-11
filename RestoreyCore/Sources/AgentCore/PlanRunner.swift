@@ -164,8 +164,16 @@ public actor PlanRunner {
             }
         } else {
             for (plan, _) in await deps.state.allRunInputs() where Self.refusal(plan) == nil {
-                // Plans already running are left to finish; the rest start.
-                try? await startInBackground(plan.id)
+                // Plans already running are left to finish; the rest start. Anything else that stops one
+                // starting is written to agent.log, since this call still succeeds for the others.
+                do {
+                    try await startInBackground(plan.id)
+                } catch AgentError.alreadyRunning {
+                    continue
+                } catch {
+                    let message = (error as? AgentError)?.message ?? "\(error)"
+                    deps.agentLog("Back Up Now couldn't start plan \(plan.id.uuidString): \(message)")
+                }
             }
         }
         return await deps.state.status()

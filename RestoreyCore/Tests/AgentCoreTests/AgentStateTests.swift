@@ -115,6 +115,25 @@ struct AgentStateTests {
 
     private static func message(_ error: any Error) -> String? { (error as? AgentError)?.message }
 
+    // MARK: Status ordering (final review M1)
+
+    /// Every status carries this process's run and a sequence that only counts up, whatever the clock does.
+    @Test func statusesCountUpWhileTheClockGoesBackwards() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let first = await state.status()
+        clock.advance(-5 * 3600)
+        let second = await state.status()
+        #expect(first.agentRun != nil && first.agentRun == second.agentRun)
+        #expect((second.sequence ?? 0) > (first.sequence ?? 0))
+        #expect(second.generatedAt < first.generatedAt)
+        #expect(second.supersedes(first))
+        // A new agent process starts its own run.
+        let restarted = await Self.makeState(dir, clock: clock)
+        #expect(await restarted.status().agentRun != first.agentRun)
+    }
+
     // MARK: Saving
 
     /// Ruling R64b: file types are stored as the plan's doc comment says, trimmed, lower case and without

@@ -74,6 +74,38 @@ struct MessagesTests {
             generatedAt: Self.now))
     }
 
+    // MARK: Ordering statuses (final review M1)
+
+    private func status(at seconds: TimeInterval, run: UUID?, sequence: UInt64?) -> AgentStatus {
+        AgentStatus(plans: [], configError: nil, fdaMissing: nil, generatedAt: Self.now.addingTimeInterval(seconds),
+                    agentRun: run, sequence: sequence)
+    }
+
+    @Test func aLaterStatusSupersedesEvenWhenTheClockWentBackwards() {
+        let run = UUID()
+        let shown = status(at: 0, run: run, sequence: 7)
+        // Built after `shown` by the same agent, with the clock moved back 5 hours.
+        #expect(status(at: -5 * 3600, run: run, sequence: 8).supersedes(shown))
+        #expect(!status(at: 60, run: run, sequence: 6).supersedes(shown), "an older reply arriving late")
+        #expect(status(at: 0, run: run, sequence: 7).supersedes(shown))
+        #expect(status(at: 0, run: run, sequence: 1).supersedes(nil))
+    }
+
+    @Test func aRestartedAgentsStatusAlwaysSupersedes() {
+        let shown = status(at: 0, run: UUID(), sequence: 900)
+        #expect(status(at: -60, run: UUID(), sequence: 1).supersedes(shown))
+    }
+
+    @Test func anOlderAgentWithoutSequenceNumbersIsOrderedByDate() throws {
+        let shown = status(at: 0, run: nil, sequence: nil)
+        #expect(status(at: 1, run: nil, sequence: nil).supersedes(shown))
+        #expect(!status(at: -1, run: nil, sequence: nil).supersedes(shown))
+        // And its JSON, without the new keys, still decodes.
+        let old = #"{"plans":[],"generatedAt":"2027-01-15T08:00:00.000Z"}"#
+        let decoded = try XPCCoding.decode(AgentStatus.self, from: Data(old.utf8))
+        #expect(decoded.sequence == nil && decoded.agentRun == nil)
+    }
+
     @Test func phaseShapeIsPinned() throws {
         #expect(try json(PlanPhase.idle) == #"{"type":"idle"}"#)
         #expect(try json(PlanPhase.running(nil, retrying: nil)) == #"{"type":"running"}"#)

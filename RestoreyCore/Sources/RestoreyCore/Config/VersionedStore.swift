@@ -8,10 +8,16 @@ public enum VersionedStoreError: Error, Equatable {
     case corrupt(underlying: String)
     /// The file is at an older version and no migration is registered for it.
     case missingMigration(from: Int)
+    /// The migration from this version threw. The file is left untouched (Ruling R72).
+    case migrationFailed(from: Int, underlying: String)
 }
 
 /// A JSON file holding `{"schemaVersion": n, "payload": {...}}`, written atomically and migrated
 /// forward on load. Holds `config.json` and `state.json`. The payload must encode to a JSON object.
+///
+/// Before a file at an older version is first rewritten at the current one, it is copied, byte for
+/// byte, to `<name>.v<n>.bak` beside it (mode 0600), so the user's settings as they were survive a
+/// migration that turns out wrong (Ruling R72). If that copy can't be made, the file isn't rewritten.
 public actor VersionedStore<Payload: Codable & Sendable> {
     private let fileURL: URL
     private let currentVersion: Int
@@ -30,21 +36,50 @@ public actor VersionedStore<Payload: Codable & Sendable> {
     /// The stored payload, or nil when there is no file. A migrated file is rewritten at the
     /// current version only after the migrated payload decodes.
     public func load() throws -> Payload? {
-        guard let (decoded, migrated) = try readExisting() else { return nil }
-        if migrated { try write(decoded) }
-        return decoded
+        guard let existing = try readExisting() else { return nil }
+        if existing.migrated { try write(existing.payload, replacing: existing) }
+        return existing.payload
     }
 
     /// Replaces the file atomically: the data is written to a temporary file and renamed over the
     /// old one, so a failure leaves the previous file intact. An existing file that `load()` would
     /// refuse (newer schema, corrupt, no migration) is never overwritten: the same error is thrown.
     public func save(_ payload: Payload) throws {
-        _ = try readExisting()
+        try write(payload, replacing: try readExisting())
+    }
+
+    /// Where a file at `version` is kept before it is migrated: `config.json.v1.bak`.
+    public static func backupURL(for fileURL: URL, version: Int) -> URL {
+        fileURL.deletingLastPathComponent().appendingPathComponent("\(fileURL.lastPathComponent).v\(version).bak")
+    }
+
+    private struct Existing {
+        var payload: Payload
+        var version: Int
+        var data: Data
+        var migrated: Bool { version < currentVersion }
+        let currentVersion: Int
+    }
+
+    /// Writes `payload`, first keeping the file it replaces when that file is at an older version.
+    private func write(_ payload: Payload, replacing existing: Existing?) throws {
+        if let existing, existing.migrated {
+            let backup = Self.backupURL(for: fileURL, version: existing.version)
+            // An earlier copy (from a rewrite that then failed) is the same file and is replaced; anything
+            // that isn't a plain file is never touched.
+            let type = (try? FileManager.default.attributesOfItem(atPath: backup.path))?[.type] as? FileAttributeType
+            guard type == nil || type == .typeRegular,
+                FileManager.default.createFile(
+                    atPath: backup.path, contents: existing.data, attributes: [.posixPermissions: 0o600])
+            else {
+                throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: backup.path])
+            }
+        }
         try write(payload)
     }
 
     /// Reads, validates and migrates the file in memory. Nil when there is no file. Never writes.
-    private func readExisting() throws -> (payload: Payload, migrated: Bool)? {
+    private func readExisting() throws -> Existing? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
         let data = try Data(contentsOf: fileURL)
 
@@ -72,14 +107,14 @@ public actor VersionedStore<Payload: Codable & Sendable> {
             do {
                 try migrate(&payload)
             } catch {
-                throw VersionedStoreError.corrupt(underlying: "Migration from version \(from) failed: \(error)")
+                throw VersionedStoreError.migrationFailed(from: from, underlying: String(describing: error))
             }
         }
 
         do {
             let payloadData = try JSONSerialization.data(withJSONObject: payload)
             let decoded = try Self.makeDecoder().decode(Payload.self, from: payloadData)
-            return (decoded, version < currentVersion)
+            return Existing(payload: decoded, version: version, data: data, currentVersion: currentVersion)
         } catch {
             throw VersionedStoreError.corrupt(underlying: String(describing: error))
         }

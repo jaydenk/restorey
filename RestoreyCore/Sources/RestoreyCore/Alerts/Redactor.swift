@@ -13,14 +13,30 @@ import Foundation
 ///   or whitespace so the rest of a JSON or prose line survives.
 /// - URL userinfo is removed in any scheme, up to the last `@` before the first `/`:
 ///   `https://user:pass@host` becomes `https://[redacted]@host`.
+///
+/// The patterns are compiled once, in `init`. It fails closed (final review M3): if the secrets' pattern
+/// can't be compiled, secrets are replaced by a literal single-pass scan instead, and if a fixed pattern
+/// (check-in path, userinfo) can't be, the whole text is replaced by `[redacted]`. Unredacted text never
+/// comes out.
 public struct Redactor: Sendable {
-    private static let placeholder = "[redacted]"
+    static let placeholder = "[redacted]"
+
+    /// Compiles a pattern; tests pass one that fails, to reach the fallbacks.
+    typealias Compile = @Sendable (_ pattern: String, _ options: NSRegularExpression.Options) throws -> NSRegularExpression
 
     private let secrets: [String]
     private let checkInHosts: [String]
+    /// The secrets' alternation, nil when there are none or it couldn't be compiled.
+    private let secretPattern: NSRegularExpression?
+    /// The check-in path patterns, then the userinfo pattern; nil when any couldn't be compiled.
+    private let fixedPatterns: [NSRegularExpression]?
 
     /// - Parameter checkInURLs: the user's own check-in URLs; the path after each host is redacted.
     public init(secrets: [String], checkInURLs: [String] = []) {
+        self.init(secrets: secrets, checkInURLs: checkInURLs, compile: { try NSRegularExpression(pattern: $0, options: $1) })
+    }
+
+    init(secrets: [String], checkInURLs: [String], compile: Compile) {
         var variants: Set<String> = []
         for secret in secrets {
             let trimmed = secret.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -35,6 +51,23 @@ public struct Redactor: Sendable {
             if let host = URLComponents(string: url)?.host, !host.isEmpty { hosts.append(host.lowercased()) }
         }
         self.checkInHosts = Array(Set(hosts)).sorted()
+
+        let alternation = self.secrets.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|")
+        secretPattern = self.secrets.isEmpty ? nil : try? compile(alternation, [])
+        var fixed: [NSRegularExpression]? = []
+        for host in checkInHosts {
+            // Before the userinfo pass, so `https://x@hc-ping.com/<id>` still loses its id.
+            let pattern =
+                #"(https?://(?:[^/\s"']*@)?(?:[A-Za-z0-9\-]+\.)*"# + NSRegularExpression.escapedPattern(for: host)
+                + #"(?::\d+)?)/[^"'),>;\s]*"#
+            if let regex = try? compile(pattern, [.caseInsensitive]) { fixed?.append(regex) } else { fixed = nil }
+        }
+        if let userinfo = try? compile(#"([A-Za-z][A-Za-z0-9+.\-]*://)[^/\s"']*@"#, []) {
+            fixed?.append(userinfo)
+        } else {
+            fixed = nil
+        }
+        fixedPatterns = fixed
     }
 
     private static let unreserved: CharacterSet = {
@@ -86,30 +119,40 @@ public struct Redactor: Sendable {
     }
 
     public func redact(_ s: String) -> String {
+        // A fixed pattern that didn't compile: nothing can say what is safe to keep.
+        guard let fixedPatterns else { return Self.placeholder }
         var out = s
-        if !secrets.isEmpty {
-            let alternation = secrets.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|")
-            out = Self.replace(alternation, in: out, with: Self.placeholder)
+        if let secretPattern {
+            out = Self.replace(secretPattern, in: out, with: Self.placeholder)
+        } else if !secrets.isEmpty {
+            out = Self.literalRedaction(out, secrets: secrets)
         }
-        // Before the userinfo pass, so `https://x@hc-ping.com/<id>` still loses its id.
-        for host in checkInHosts {
-            let pattern =
-                #"(https?://(?:[^/\s"']*@)?(?:[A-Za-z0-9\-]+\.)*"# + NSRegularExpression.escapedPattern(for: host)
-                + #"(?::\d+)?)/[^"'),>;\s]*"#
-            out = Self.replace(pattern, in: out, with: "$1/\(Self.placeholder)", caseInsensitive: true)
+        for (index, regex) in fixedPatterns.enumerated() {
+            let isUserinfo = index == fixedPatterns.count - 1
+            out = Self.replace(regex, in: out, with: isUserinfo ? "$1\(Self.placeholder)@" : "$1/\(Self.placeholder)")
         }
-        return Self.replace(
-            #"([A-Za-z][A-Za-z0-9+.\-]*://)[^/\s"']*@"#, in: out, with: "$1\(Self.placeholder)@")
+        return out
     }
 
-    private static func replace(
-        _ pattern: String, in s: String, with template: String, caseInsensitive: Bool = false
-    ) -> String {
-        guard
-            let regex = try? NSRegularExpression(
-                pattern: pattern, options: caseInsensitive ? [.caseInsensitive] : [])
-        else { return s }
-        return regex.stringByReplacingMatches(
-            in: s, range: NSRange(s.startIndex..., in: s), withTemplate: template)
+    /// The same single pass as the alternation, without a regular expression: at each position the
+    /// longest secret that starts there (`secrets` is longest first) is replaced, and the scan carries on
+    /// after it, so a short secret can't match inside an inserted placeholder.
+    static func literalRedaction(_ s: String, secrets: [String]) -> String {
+        var out = ""
+        var index = s.startIndex
+        while index < s.endIndex {
+            if let secret = secrets.first(where: { s[index...].hasPrefix($0) }) {
+                out += placeholder
+                index = s.index(index, offsetBy: secret.count)
+            } else {
+                out.append(s[index])
+                index = s.index(after: index)
+            }
+        }
+        return out
+    }
+
+    private static func replace(_ regex: NSRegularExpression, in s: String, with template: String) -> String {
+        regex.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: template)
     }
 }

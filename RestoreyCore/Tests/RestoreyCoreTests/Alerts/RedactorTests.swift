@@ -4,6 +4,38 @@ import Testing
 @testable import RestoreyCore
 
 struct RedactorTests {
+    // MARK: Failing closed (final review M3)
+
+    private struct CompileFailed: Error {}
+
+    /// A compiler that refuses the secrets' alternation (the only pattern not starting with a group).
+    private static let refusingSecrets: Redactor.Compile = { pattern, options in
+        guard pattern.hasPrefix("(") else { throw CompileFailed() }
+        return try NSRegularExpression(pattern: pattern, options: options)
+    }
+
+    @Test func secretsAreStillRedactedWhenTheirPatternCantBeCompiled() {
+        let r = Redactor(secrets: ["act", "hunter2", "hunter2-long"], checkInURLs: [], compile: Self.refusingSecrets)
+        #expect(r.redact("pw=hunter2-long and hunter2, act") == "pw=[redacted] and [redacted], [redacted]")
+        // Single pass: "act" doesn't match inside the "[redacted]" it inserted.
+        #expect(r.redact("act") == "[redacted]")
+        // The other passes still run.
+        #expect(r.redact("https://u:p@host/x") == "https://[redacted]@host/x")
+        #expect(r.redact("pw=aHVudGVyMg==") == "pw=[redacted]", "the variants too (base64 of hunter2)")
+    }
+
+    @Test func aFixedPatternThatCantBeCompiledRedactsEverything() {
+        let r = Redactor(secrets: ["hunter2"], checkInURLs: [], compile: { _, _ in throw CompileFailed() })
+        #expect(r.redact("nothing secret here") == "[redacted]")
+    }
+
+    @Test func theLiteralFallbackMatchesTheRegularExpression() {
+        let secrets = ["pa ss\"wörd", "abc", "abcdef"]
+        let text = "x abcdef y abc z pa ss\"wörd abcabc"
+        #expect(Redactor(secrets: secrets).redact(text)
+            == Redactor(secrets: secrets, checkInURLs: [], compile: Self.refusingSecrets).redact(text))
+    }
+
     @Test func redactsLongestSecretFirst() {
         let r = Redactor(secrets: ["hunter", "hunter2-long"])
         #expect(r.redact("pw=hunter2-long end") == "pw=[redacted] end")

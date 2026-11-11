@@ -91,6 +91,15 @@ struct RunOutcomeTests {
             == .warning(unreadable: 2))
     }
 
+    /// Final review M9: exit 3 is "files couldn't be read" only for a backup.
+    @Test func forgetExitThreeIsAFailureToRemoveSnapshots() {
+        #expect(outcome(3, op: .forget(dryRun: false))
+            == .failed(exitCode: 3, reason: "restic couldn't remove every snapshot it was asked to forget"))
+        #expect(outcome(3, op: .forget(dryRun: false), message: "Fatal: unable to remove snapshot abc")
+            == .failed(exitCode: 3, reason: "Fatal: unable to remove snapshot abc"))
+        #expect(outcome(3, op: .check) == .failed(exitCode: 3, reason: "restic exited with status 3."))
+    }
+
     @Test func repositoryExitCodesMapToTheirCases() {
         #expect(outcome(10, message: "Fatal: repository does not exist") == .repositoryMissing)
         #expect(outcome(11, message: "Fatal: unable to create lock") == .locked)

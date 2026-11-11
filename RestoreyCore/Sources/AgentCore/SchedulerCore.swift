@@ -326,6 +326,7 @@ extension PlanRunner: SchedulerRunner {
     }
 
     public func refreshStatus() async {
+        await deps.state.clampStretchedPauses()
         await deps.state.pushStatusIfChanged()
         // Time alone can make an alert due again, or raise `noRecentSuccess`. Scheduled, never awaited:
         // a notification centre that doesn't answer must not hold up the tick's runs (Ruling R44).

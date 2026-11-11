@@ -62,13 +62,37 @@ public struct AgentStatus: Codable, Sendable, Equatable {
     public var configError: String?
     /// Nil until the Full Disk Access probe has run.
     public var fdaMissing: Bool?
+    /// For display only: wall-clock time, which can go backwards. Ordering uses `agentRun` and `sequence`.
     public var generatedAt: Date
+    /// Identifies the agent process that built this status (a new one each launch). Nil from an agent
+    /// older than the sequence number (final review M1).
+    public var agentRun: UUID?
+    /// Counts up with every status one agent process builds, so the app can order pushes and replies
+    /// without trusting the clock.
+    public var sequence: UInt64?
 
-    public init(plans: [PlanStatus], configError: String?, fdaMissing: Bool?, generatedAt: Date) {
+    public init(
+        plans: [PlanStatus], configError: String?, fdaMissing: Bool?, generatedAt: Date,
+        agentRun: UUID? = nil, sequence: UInt64? = nil
+    ) {
         self.plans = plans
         self.configError = configError
         self.fdaMissing = fdaMissing
         self.generatedAt = generatedAt
+        self.agentRun = agentRun
+        self.sequence = sequence
+    }
+
+    /// Whether the app should show `self` in place of `current`: a status from another agent process (a
+    /// restart) always, otherwise only one built no earlier, by `sequence`. A clock that moved backwards
+    /// therefore can't freeze the menu (final review M1). Without sequence numbers (an older agent), by
+    /// `generatedAt` as before.
+    public func supersedes(_ current: AgentStatus?) -> Bool {
+        guard let current else { return true }
+        if let run = agentRun, let currentRun = current.agentRun, let sequence, let currentSequence = current.sequence {
+            return run != currentRun || sequence >= currentSequence
+        }
+        return generatedAt >= current.generatedAt
     }
 }
 

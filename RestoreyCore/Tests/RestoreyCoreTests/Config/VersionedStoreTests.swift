@@ -115,6 +115,63 @@ struct VersionedStoreTests {
         #expect(log.withLock { $0.count } == 2)
     }
 
+    // MARK: Ruling R72
+
+    /// The file as it was is kept, byte for byte and private, before the migrated one replaces it.
+    @Test func aMigrationKeepsTheOldFileFirst() async throws {
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("config.json")
+        let original = Data(#"{"schemaVersion": 1, "payload": {"title": "x", "when": "2027-01-15T08:00:00Z"}}"#.utf8)
+        try original.write(to: file)
+        let s = store(dir, version: 2, migrations: [1: { payload in
+            payload["name"] = payload.removeValue(forKey: "title")
+            payload["count"] = 1
+        }])
+
+        #expect(try await s.load() == Doc(name: "x", count: 1, when: Self.when))
+        let backup = dir.appendingPathComponent("config.json.v1.bak")
+        #expect(VersionedStore<Doc>.backupURL(for: file, version: 1) == backup)
+        #expect(try Data(contentsOf: backup) == original)
+        let mode = try FileManager.default.attributesOfItem(atPath: backup.path)[.posixPermissions] as? Int
+        #expect(mode == 0o600)
+        let raw = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any]
+        #expect(raw?["schemaVersion"] as? Int == 2)
+
+        // A file already at the current version is rewritten without another copy.
+        try FileManager.default.removeItem(at: backup)
+        try await s.save(Doc(name: "y", count: 2, when: Self.when))
+        #expect(!FileManager.default.fileExists(atPath: backup.path))
+    }
+
+    /// No copy, no rewrite: the old file stays as it was.
+    @Test func aMigrationThatCantKeepTheOldFileDoesntRewriteIt() async throws {
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("config.json")
+        let original = Data(#"{"schemaVersion": 1, "payload": {"name": "x", "count": 1, "when": "2027-01-15T08:00:00Z"}}"#.utf8)
+        try original.write(to: file)
+        // A directory where the copy should go, so it can't be created.
+        try FileManager.default.createDirectory(
+            at: dir.appendingPathComponent("config.json.v1.bak/inside"), withIntermediateDirectories: true)
+        let s = store(dir, version: 2, migrations: [1: { _ in }])
+        await #expect(throws: (any Error).self) { try await s.load() }
+        #expect(try Data(contentsOf: file) == original)
+    }
+
+    @Test func aThrowingMigrationIsReportedAsSuch() async throws {
+        struct Broken: Error {}
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("config.json")
+        let original = Data(#"{"schemaVersion": 1, "payload": {}}"#.utf8)
+        try original.write(to: file)
+        let s = store(dir, version: 2, migrations: [1: { _ in throw Broken() }])
+        await #expect(throws: VersionedStoreError.migrationFailed(from: 1, underlying: "Broken()")) { try await s.load() }
+        #expect(try Data(contentsOf: file) == original)
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("config.json.v1.bak").path))
+    }
+
     @Test func failedMigrationDecodeLeavesFileAtOldVersion() async throws {
         let dir = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

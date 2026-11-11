@@ -114,5 +114,22 @@ struct ConfigMigrationTests {
         #expect(status.configError == nil)
         #expect(status.plans.first?.plan.fileTypeExclusions == Self.schema2FileTypes)
         #expect(status.plans.first?.plan.exclusions == ["/Users/me/x"])
+        // The schema-1 file is kept beside the migrated one (Ruling R72).
+        #expect(FileManager.default.fileExists(atPath: dir.url.appendingPathComponent("config.json.v1.bak").path))
+    }
+
+    /// Ruling R72: a migration that throws is reported as such, and the agent's config-error state is as
+    /// before: nothing runs, nothing is written.
+    @Test func aThrowingMigrationPutsTheAgentInTheConfigErrorState() async throws {
+        let dir = try AgentStateTests.TempDirectory()
+        let bad = Data(#"{"schemaVersion": 1, "payload": {"plans": "nope"}}"#.utf8)
+        try bad.write(to: dir.config)
+        await #expect(throws: VersionedStoreError.migrationFailed(from: 1, underlying: "notAPlanList")) {
+            try await AgentState.configStore(in: dir.url).load()
+        }
+        let state = await AgentState(directory: dir.url, secrets: InMemorySecretStore(), now: { Self.now })
+        let error = try #require(await state.status().configError)
+        #expect(error.hasPrefix("config.json couldn't be upgraded from schema 1"), "\(error)")
+        #expect(try Data(contentsOf: dir.config) == bad)
     }
 }

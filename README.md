@@ -192,7 +192,9 @@ reasons are in the design spec, §5.7):
 restic also skips folders tagged with `CACHEDIR.TAG` (`--exclude-caches`) and iCloud files that aren't
 downloaded to this Mac (`--exclude-cloud-files`). Time Machine's own exclusion list can't be read on macOS 27,
 so Restorey doesn't try. Plans saved by an earlier build get the file types and the one-file-system setting when
-`config.json` is upgraded to schema 2; their folder exclusions are kept as they were.
+`config.json` is upgraded to schema 2; their folder exclusions are kept as they were. Before a file is
+rewritten by an upgrade, the old one is kept beside it as `config.json.v1.bak` (`<file>.v<schema>.bak`, readable
+only by you). If an upgrade fails, the agent says so and leaves the file alone.
 
 ## Alerts
 

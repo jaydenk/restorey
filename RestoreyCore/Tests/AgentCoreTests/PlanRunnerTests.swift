@@ -627,6 +627,25 @@ struct PlanRunnerTests {
         #expect(await f.pings() == [.success])
     }
 
+    /// Final review M2: the scheduler's tick cuts a pause the clock stretched back to an hour from now and
+    /// saves it, so it runs out an hour later instead of sliding along with the clock.
+    @Test func theTickCutsBackAPauseTheClockStretched() async throws {
+        let f = try await RunnerFixture.make(createRepository: false)
+        defer { f.remove() }
+        try await f.state.updateHistory(f.planID) { [now = f.clock.now] in $0.pausedUntil = now.addingTimeInterval(5 * 3600) }
+
+        await f.runner.refreshStatus()
+        let limit = f.clock.now.addingTimeInterval(3600)
+        #expect(await f.history().pausedUntil == limit)
+        #expect(await f.status().phase == .paused(until: limit))
+        let saved = try await AgentState.stateStore(in: f.support).load()
+        #expect(saved?.plans[f.planID]?.pausedUntil == limit)
+
+        f.clock.advance(1800)
+        await f.runner.refreshStatus()
+        #expect(await f.history().pausedUntil == limit, "a pause within the hour is left alone")
+    }
+
     /// restic ignores SIGINT here, so our SIGKILL ends it: still a pause, but its lock is left behind,
     /// so the next run unlocks first.
     @Test func killedPauseUnlocksBeforeNextRun() async throws {

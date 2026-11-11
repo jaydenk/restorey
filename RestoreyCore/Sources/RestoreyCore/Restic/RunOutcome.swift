@@ -263,7 +263,7 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
 private let missingCredentialsMessage = "s3.getCredentials: no credentials found"
 
 /// Maps a finished restic process to an outcome. Exit codes are restic's documented ones:
-/// 0 success, 3 backup finished with unreadable files, 10 repository missing, 11 lock failure,
+/// 0 success, 3 backup finished with unreadable files (for `forget`: a snapshot couldn't be removed), 10 repository missing, 11 lock failure,
 /// 12 wrong password, 130 interrupted (SIGINT). `exitErrorMessage` is the `exit_error` text.
 ///
 /// A process we interrupted is classified by what we asked for (`InterruptIntent.outcome`) when it exits 130, or when it ignored
@@ -295,7 +295,16 @@ public func classify(
         if let snapshotID = summary.snapshotID { return .success(snapshotID: snapshotID) }
         return .unchanged
     case 3:
-        return .warning(unreadable: errors.count)
+        // Exit 3 means "some source data couldn't be read" only for a backup. For `forget` it means a
+        // snapshot couldn't be removed (restic 0.19.1's documented exit codes), which is a failure of that
+        // step, not unreadable files (final review M9). Any other operation has no documented 3.
+        switch operation {
+        case .backup: return .warning(unreadable: errors.count)
+        case .forget:
+            return .failed(exitCode: 3, reason: exitErrorMessage ?? errors.first?.message
+                ?? "restic couldn't remove every snapshot it was asked to forget")
+        default: break
+        }
     case 10: return .repositoryMissing
     case 11: return .locked
     case 12: return .wrongPassword

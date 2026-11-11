@@ -18,7 +18,7 @@ import Synchronization
 /// can still stop a long first backup; the next agent honours `pausedUntil`. The runner starts no new
 /// restic step while draining: the step in flight finishes, nothing after it (Ruling R55).
 public actor AgentState {
-    public static let pauseDuration: TimeInterval = 3600
+    public static let pauseDuration: TimeInterval = planPauseDuration
     /// Progress pushes are at most this often; phase changes are always pushed.
     public static let progressPushInterval: TimeInterval = 0.5
     static let stateSchemaVersion = 1
@@ -95,6 +95,10 @@ public actor AgentState {
     var lastAuthorisation: Bool?? = .none
     /// An authorisation call was abandoned and no answer has come since: notifications aren't working.
     var authorisationAbandoned = false
+
+    /// This process's statuses, in the order they were built (`AgentStatus.supersedes`).
+    private let statusRun = UUID()
+    private var statusSequence: UInt64 = 0
 
     private var observer: (@Sendable (AgentStatus) -> Void)?
     private var lastProgressPush: Date?
@@ -203,6 +207,8 @@ public actor AgentState {
             return "\(file) can't be read: \(underlying). \(leftAlone)"
         case .missingMigration(let from)?:
             return "\(file) uses schema \(from), which this version of Restorey can't upgrade. \(leftAlone)"
+        case .migrationFailed(let from, let underlying)?:
+            return "\(file) couldn't be upgraded from schema \(from): \(underlying). \(leftAlone)"
         case nil:
             return "\(file) can't be read: \(error.localizedDescription). \(leftAlone)"
         }
@@ -218,6 +224,7 @@ public actor AgentState {
 
     public func status() -> AgentStatus {
         let now = now()
+        statusSequence += 1
         if let loadError {
             // Without history nothing can be scheduled, but the user still sees their plans.
             let plans = onlyStateUnreadable
@@ -226,11 +233,13 @@ public actor AgentState {
                                alerts: [.configurationError])
                 }
                 : []
-            return AgentStatus(plans: plans, configError: loadError, fdaMissing: nil, generatedAt: now)
+            return AgentStatus(
+                plans: plans, configError: loadError, fdaMissing: nil, generatedAt: now,
+                agentRun: statusRun, sequence: statusSequence)
         }
         return AgentStatus(
             plans: config.plans.map { planStatus($0, now: now) }, configError: nil, fdaMissing: fdaMissing,
-            generatedAt: now)
+            generatedAt: now, agentRun: statusRun, sequence: statusSequence)
     }
 
     private func planStatus(_ plan: Plan, now: Date) -> PlanStatus {
@@ -241,7 +250,7 @@ public actor AgentState {
         } else if let reason = history.stoppedReason {
             phase = .stopped(reason: reason)
         } else if let until = history.pausedUntil, until > now {
-            phase = .paused(until: until)
+            phase = .paused(until: min(until, now.addingTimeInterval(Self.pauseDuration)))
         } else if case .skipped(let reason)? = history.recent.first?.outcome {
             phase = .skipped(reason)
         } else {
@@ -277,6 +286,22 @@ public actor AgentState {
 
     private static func pushed(_ status: AgentStatus) -> [UUID: PushedPlan] {
         Dictionary(status.plans.map { ($0.plan.id, PushedPlan($0, now: status.generatedAt)) }) { first, _ in first }
+    }
+
+    /// A pause can only be `pauseDuration` long. One that ends later than that from now was set before
+    /// the clock went backwards, and would last as long again as the clock moved: it is cut back to
+    /// `pauseDuration` from now and saved, so it then runs out normally (final review M2). The scheduler's
+    /// tick calls this. A save that fails is tried again at the next tick.
+    public func clampStretchedPauses() async {
+        let now = now()
+        let limit = now.addingTimeInterval(Self.pauseDuration)
+        let stretched = runState.plans.filter { _, history in (history.pausedUntil ?? .distantPast) > limit }.map(\.key)
+        for id in stretched where config.plans.contains(where: { $0.id == id }) {
+            _ = try? await updateHistory(id) { history in
+                if let until = history.pausedUntil, until > limit { history.pausedUntil = limit }
+            }
+            restartLog("The clock went backwards during a pause, so plan \(id.uuidString) is now paused for an hour from now")
+        }
     }
 
     // MARK: Plans
