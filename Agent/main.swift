@@ -57,6 +57,16 @@ var keptAlive: [AnyObject] = []
 let app = NSApplication.shared
 app.setActivationPolicy(.prohibited)
 
+/// launchd sends SIGTERM at logout, restart and shutdown, then SIGKILL after the job's exit timeout. The
+/// default action would kill the agent mid-run and the next start would record a false failure, so the
+/// agent stops its runs itself and exits (Ruling R67). Installed before anything starts; until the state
+/// exists there is nothing to stop, so the agent simply exits.
+let systemStop = SystemStop()
+signal(SIGTERM, SIG_IGN)
+let terminationSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+terminationSource.setEventHandler { systemStop.stop() }
+terminationSource.resume()
+
 do {
     let identity = try Identity.fromBundle(.main)
     let log = AppLog(identity: identity, kind: .agent)
@@ -76,6 +86,7 @@ do {
             let secrets = KeychainSecretStore(service: identity.rootID, accessGroup: identity.keychainAccessGroup)
             let state = await AgentState(
                 directory: identity.applicationSupportDirectory(), secrets: secrets, now: { Date() })
+            systemStop.attach(state: state)
             if let configError = await state.status().configError {
                 log.error("Not running any plan until the settings are fixed: \(configError)")
             }
@@ -130,6 +141,7 @@ do {
                 agentLog: { log.error($0) },
                 binaryReplaced: { executableReplaced() }))
             keptAlive.append(runner)
+            systemStop.attach(runner: runner)
             // Recovery runs to completion before the runner is attached, so a run action that arrives
             // meanwhile is refused as "still starting up" rather than racing recovery. It runs after the
             // helper listener is up, because the unlock asks it for the repository password.

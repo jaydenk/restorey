@@ -159,8 +159,11 @@ only lists its snapshots.
 
 Every restic run has its own log in `~/Library/Logs/Restorey/runs/<plan ID>/` (`Restorey-Dev` for Debug builds),
 with secrets redacted. Run logs are kept for 400 days: the agent removes older ones when it starts and once a
-day after that. If the agent stops mid-run, its next start records that run as interrupted (an
-interrupted backup sends its `/fail` ping) and runs a plain `restic unlock` (never `--remove-all`) once per
+day after that. Logging out, restarting or shutting down the Mac stops the agent with SIGTERM: it gives each restic
+in progress SIGINT (so restic removes its own lock), records the run as stopped by the system, which is not a
+failure (no alert, no check-in ping; the backup is tried again 15 minutes after it started), and exits within
+4 seconds, before launchd's 5-second limit. If the agent stops mid-run any other way (a crash, `kill -9`), its next
+start records that run as interrupted (an interrupted backup is a failure and sends its `/fail` ping) and runs a plain `restic unlock` (never `--remove-all`) once per
 repository, before it accepts any run. Before exiting for an update, the agent finishes the restic step in
 progress (a backup's maintenance waits for the next backup) and then waits up to 3 minutes for queued check-in
 pings.
@@ -248,8 +251,9 @@ daylight saving change never moves a run. It also looks again straight away:
 
 A skipped run (on battery below the plan's threshold, a constrained or expensive network such as a phone
 hotspot or Low Data Mode, no network, an unmounted volume) is recorded and tried again at the next interval, or
-sooner when the network comes back or the volume mounts, as above. A backup that met another client's lock, or
-was interrupted because the agent stopped mid-run, is retried 15 minutes after it started (not at once, so
+sooner when the network comes back or the volume mounts, as above. A backup that met another client's lock, was
+stopped by the system at logout or shutdown, or was interrupted because the agent stopped mid-run, is retried 15
+minutes after it started (not at once, so
 something that kills the agent on every run can't loop); a paused plan runs as soon as its hour is up. One plan
 never runs twice at once; different plans can, and plans that share a repository take turns. While restic runs, the agent
 holds a power assertion that stops the Mac idle-sleeping ("Restorey backup" in `pmset -g assertions`); the

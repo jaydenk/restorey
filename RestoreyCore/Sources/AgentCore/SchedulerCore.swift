@@ -269,7 +269,7 @@ public actor SchedulerCore {
         guard !isStopped else { return }
         isStopped = true
         pause?.cancel()
-        log("The agent is finishing up before a restart, so no more backups will be scheduled")
+        log("The agent is finishing up before it exits or is re-registered, so no more backups will be scheduled")
     }
 
     // MARK: Decisions

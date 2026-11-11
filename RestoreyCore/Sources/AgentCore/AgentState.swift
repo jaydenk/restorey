@@ -41,8 +41,11 @@ public actor AgentState {
     private let onlyStateUnreadable: Bool
 
     public private(set) var isDraining = false
-    /// Why the agent is draining, once it is. A restart drain wins over a re-registration one.
+    /// Why the agent is draining, once it is. A drain that ends in an exit (a restart, the system stopping
+    /// the agent) wins over a re-registration one, and the system stop wins over a restart.
     public private(set) var drainPurpose: DrainPurpose?
+    /// The system asked the agent to exit (launchd's SIGTERM, `stopForSystem`, Ruling R67).
+    public private(set) var isStoppingForSystem = false
     private var running: [UUID: RunProgress] = [:]
     /// Plans `deletePlan` has started removing. No run may begin on them.
     private var deleting: Set<UUID> = []
@@ -534,7 +537,7 @@ public actor AgentState {
     public func restartForReplacedBinary(pingBudget: Duration = .seconds(180)) {
         guard !replacementNoticed else { return }
         replacementNoticed = true
-        drainPurpose = .restart
+        if drainPurpose != .systemStop { drainPurpose = .restart }
         isDraining = true
         restartLog(
             "This agent's executable was replaced by an update: finishing the restic step in progress, then exiting so launchd starts the new one")
@@ -548,7 +551,8 @@ public actor AgentState {
     }
 
     private func exitIfDone() {
-        guard exitWanted, restartRepliesOwed == 0, !exited, let restartExit else { return }
+        // Once the system is stopping the agent, `stopForSystem` owns the exit and its deadline.
+        guard exitWanted, restartRepliesOwed == 0, !exited, !isStoppingForSystem, let restartExit else { return }
         exited = true
         if replacementNoticed { restartLog("Exiting so launchd starts the agent's replaced executable") }
         restartExit()
@@ -563,14 +567,70 @@ public actor AgentState {
     /// app's `unregister()` would then meet the fresh agent launchd starts, perhaps mid-backup.
     @discardableResult
     public func prepareForReregistration(pingBudget: Duration = .seconds(180)) async throws -> Bool {
-        guard drainPurpose != .restart else { throw AgentError.restarting }
+        guard drainPurpose?.exitsAfterwards != true else { throw AgentError.restarting }
         let flushed = await drain(.reregistration, pingBudget: pingBudget)
-        guard drainPurpose != .restart else { throw AgentError.restarting }
+        guard drainPurpose?.exitsAfterwards != true else { throw AgentError.restarting }
         return flushed
     }
 
+    // MARK: The system stopping the agent (Ruling R67)
+
+    /// The whole of `stopForSystem`, from SIGTERM to the exit: well under launchd's exit timeout, which is
+    /// 5 s for a LaunchAgent on macOS 27 (`launchctl print gui/<uid>/<label>` reports "exit timeout = 5";
+    /// launchd.plist(5) `ExitTimeOut` calls the default system-defined), after which launchd sends SIGKILL.
+    public static let systemStopBudget: Duration = .milliseconds(4_000)
+    /// How long restic gets to honour our SIGINT before SIGKILL when the system is stopping the agent. An
+    /// honoured SIGINT took under a second in the alpha (Pause stopped restic in 0.8 s).
+    public static let systemStopInterruptGrace: Duration = .milliseconds(2_500)
+    /// How much of the budget is kept for the queued check-in pings.
+    static let systemStopPingShare: Duration = .milliseconds(500)
+
+    /// launchd is stopping the agent (logout, restart or shutdown). That is routine, not a failure: no new
+    /// restic step or mutating call is accepted from now on, each run in flight is interrupted with
+    /// `.systemStop` (restic gets SIGINT, removes its own lock and the run is committed `.stoppedBySystem`:
+    /// no alert, no ping, retried after the short retry), and the state and queued pings are given the
+    /// rest of `budget`. Runs that haven't ended by then are left to recovery, which records them
+    /// `.interrupted`.
+    ///
+    /// - Parameter runner: the runner, which may not be attached yet (recovery's unlocks run before it is).
+    /// - Returns: true when the caller should exit now; false when it is already exiting (a restart exit
+    ///   is on its way) or another call is handling the stop, so the agent never exits twice.
+    public func stopForSystem(
+        runner: PlanRunner?, budget: Duration = systemStopBudget,
+        interruptGrace: Duration = systemStopInterruptGrace
+    ) async -> Bool {
+        guard !isStoppingForSystem, !exited else { return false }
+        isStoppingForSystem = true
+        isDraining = true
+        drainPurpose = .systemStop
+        let clock = ContinuousClock()
+        let deadline = clock.now + budget
+        restartLog("The system is stopping the agent (logout, restart or shutdown): stopping any restic in progress, then exiting")
+        let runner = runner ?? self.runner
+        await runner?.interruptAll(.systemStop, killAfter: interruptGrace)
+
+        let idleBudget = max(deadline - clock.now - Self.systemStopPingShare, .zero)
+        if await Self.bounded(idleBudget, { await self.waitUntilIdle() }) == nil {
+            restartLog("A run hadn't ended when the agent had to exit; its next start records it as interrupted")
+        }
+        if let runner, await Self.bounded(max(deadline - clock.now, .zero), { await runner.pingsFlushed() }) == nil {
+            restartLog("Exiting before every queued check-in ping was sent")
+        }
+        // A restart exit that fired meanwhile has the process on its way out already.
+        guard !exited else { return false }
+        exited = true
+        restartLog("Exiting because the system asked the agent to stop")
+        return true
+    }
+
+    private func waitUntilIdle() async {
+        while !isIdle {
+            await withCheckedContinuation { drainWaiters.append($0) }
+        }
+    }
+
     private func drain(_ purpose: DrainPurpose, pingBudget: Duration) async -> Bool {
-        if drainPurpose != .restart { drainPurpose = purpose }
+        if drainPurpose?.exitsAfterwards != true { drainPurpose = purpose }
         isDraining = true
         while !isIdle {
             await withCheckedContinuation { drainWaiters.append($0) }
@@ -706,7 +766,9 @@ public enum DrainPurpose: Sendable, Equatable {
     case restart
     /// The app will `unregister()` then `register()`: the agent stays up, drained, until it is stopped.
     case reregistration
+    /// launchd's SIGTERM (logout, restart, shutdown): runs are interrupted and the agent exits (R67).
+    case systemStop
 
-    /// Whether the agent exits after replying.
-    public var exitsAfterwards: Bool { self == .restart }
+    /// Whether the agent exits afterwards.
+    public var exitsAfterwards: Bool { self != .reregistration }
 }

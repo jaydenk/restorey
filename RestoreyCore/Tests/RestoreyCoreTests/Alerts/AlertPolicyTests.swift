@@ -83,6 +83,17 @@ struct AlertPolicyTests {
         #expect(activeConditions(history: h, plan: plan(), now: Self.now) == [.backupFailed])
     }
 
+    /// Ruling R67: the system stopping the agent at logout or shutdown is not a verdict.
+    @Test func stoppedBySystemRaisesNothingAndIsLookedPast() {
+        let quiet = history(successDaysAgo: 0.5, recent: [record(.stoppedBySystem), record(.success(snapshotID: "a"), ago: 60)])
+        #expect(activeConditions(history: quiet, plan: plan(), now: Self.now).isEmpty)
+        let failedBefore = history(
+            successDaysAgo: 0.5, recent: [record(.stoppedBySystem), record(.failed(exitCode: 1, reason: "x"), ago: 60)])
+        #expect(activeConditions(history: failedBefore, plan: plan(), now: Self.now) == [.backupFailed])
+        let check = history(successDaysAgo: 0.5, recent: [record(.stoppedBySystem, operation: .check)])
+        #expect(activeConditions(history: check, plan: plan(), now: Self.now).isEmpty)
+    }
+
     @Test func backupFailedIgnoresNonBackupRecords() {
         // A newer successful check does not clear an older failed backup.
         let h = history(

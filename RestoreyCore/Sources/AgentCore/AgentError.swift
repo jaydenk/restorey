@@ -6,8 +6,8 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
     case configUnavailable
     /// `prepareForRestart` was called; the agent is waiting to exit.
     case draining
-    /// A re-registration drain was asked for while a restart drain is under way: the agent is about to
-    /// exit on its own, so the app must not unregister the agent launchd starts next.
+    /// A re-registration drain was asked for while a restart drain or a system stop is under way: the agent
+    /// is about to exit on its own, so the app must not unregister the agent launchd starts next.
     case restarting
     case invalidPlan([PlanValidationError])
     case unknownPlan

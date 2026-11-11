@@ -83,8 +83,7 @@ public enum ResticOperation: Codable, Sendable, Equatable {
         case "snapshots": self = .snapshots(allHosts: try c.decode(Bool.self, forKey: .allHosts))
         case "unlock": self = .unlock
         case "catConfig": self = .catConfig
-        case let other: throw DecodingError.dataCorruptedError(
-            forKey: .type, in: c, debugDescription: "Unknown restic operation \(other)")
+        case let other: throw UnknownCase.error(kind: "restic operation", name: other, in: c, forKey: .type)
         }
     }
 

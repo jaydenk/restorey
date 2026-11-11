@@ -258,6 +258,17 @@ public actor PlanRunner {
         await process.interrupt(intent, killAfter: deps.interruptGracePeriod)
     }
 
+    /// Asks every run in flight (recovery's unlocks, backups, maintenance, create, adopt) to stop with
+    /// `intent`, giving restic `killAfter` to honour SIGINT. A run whose step hasn't started yet stops
+    /// before restic does. A run already being stopped (a pause) keeps that request: a second SIGINT
+    /// gains nothing, and its outcome carries no verdict either. `AgentState.stopForSystem` is the way in.
+    func interruptAll(_ intent: InterruptIntent, killAfter: Duration) async {
+        for handle in handles.values where handle.intent == nil {
+            guard let process = handle.request(intent) else { continue }
+            await process.interrupt(intent, killAfter: killAfter)
+        }
+    }
+
     /// Waits for the latest run `backUpNow` started for the plan and returns its record.
     func waitForBackgroundRun(planID: UUID) async -> RunRecord? {
         await background[planID]?.value
@@ -351,7 +362,7 @@ public actor PlanRunner {
         let fda = deps.fdaProbe()
         await deps.state.noteFullDiskAccess(fda)
         if fda == .missing { return await refuse(failed(Self.fullDiskAccessMissing), fda: fda, failPing: true) }
-        if let intent = handle.intent { return await refuse(intent == .pause ? .paused : .cancelled, fda: fda) }
+        if let intent = handle.intent { return await refuse(intent.outcome, fda: fda) }
 
         switch prepare(plan) {
         case .failed(let outcome, let reason, let redactor):
@@ -383,10 +394,13 @@ public actor PlanRunner {
         session: RunSession, trigger: RunTrigger, handle: RunHandle, fda: FDAProbeResult, startedAt: Date
     ) async -> StepResult {
         let plan = session.plan
+        /// A backup that never started because the agent is winding down: stopped by the system when
+        /// that is why (Ruling R67), otherwise skipped for the update.
         func skippedForUpdate() async -> StepResult {
+            let outcome: RunOutcome = handle.intent == .systemStop ? .stoppedBySystem : .skipped(.agentUpdating)
             let record = RunRecord(
                 id: UUID(), planID: plan.id, operation: .backup, trigger: trigger, startedAt: startedAt,
-                endedAt: deps.now(), outcome: .skipped(.agentUpdating), summary: nil, logFile: "")
+                endedAt: deps.now(), outcome: outcome, summary: nil, logFile: "")
             await commit(record, plan: plan, fda: fda)
             return StepResult(record: record, stoppedReason: nil, tail: [])
         }
@@ -410,7 +424,7 @@ public actor PlanRunner {
             let step = await runStep(op, trigger: trigger, session: session, handle: handle)
             await commit(step.record, plan: plan)
             switch step.record.outcome {
-            case .paused, .cancelled, .locked:
+            case .paused, .cancelled, .locked, .stoppedBySystem:
                 // Interrupted, or another client holds the lock: try the rest at the next backup.
                 return backup
             default:
@@ -493,8 +507,12 @@ public actor PlanRunner {
                 collector?.collect(message)
             }
             termination = finished
+            // A restic that exits 130 with no request from us, while the system is stopping the agent,
+            // was signalled by the system itself before our SIGINT went out: the same system stop.
+            var intent = finished.interruptIntent
+            if intent == nil, await deps.state.isStoppingForSystem { intent = .systemStop }
             outcome = classify(
-                operation: op, exitCode: finished.exitCode, interruptedByUs: finished.interruptIntent,
+                operation: op, exitCode: finished.exitCode, interruptedByUs: intent,
                 terminatedBySignal: finished.terminatedBySignal, killedByUs: finished.killedByUs,
                 summary: finished.summary, errors: finished.messages, exitErrorMessage: finished.exitErrorMessage)
             if finished.terminatedBySignal != nil { needsUnlock.insert(session.key) }

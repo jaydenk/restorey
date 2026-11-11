@@ -62,7 +62,7 @@ extension PlanRunner {
             switch record.outcome {
             // No verdict, or the check never really ran (the agent died, restic didn't start): check
             // again at the next backup rather than a week later.
-            case .paused, .cancelled, .locked, .skipped, .interrupted: break
+            case .paused, .cancelled, .locked, .skipped, .interrupted, .stoppedBySystem: break
             case .failed(let exitCode, _) where exitCode == startFailureExitCode: break
             default: history.lastCheckAt = ended
             }
@@ -123,6 +123,7 @@ extension PlanRunner {
         case .cancelled: return "Cancelled"
         case .locked: return "Another restic holds the repository's lock"
         case .interrupted: return "Interrupted"
+        case .stoppedBySystem: return "Stopped because the Mac was logging out, restarting or shutting down"
         case .skipped(let reason): return reason.summary
         case .failed(_, let reason): return reason
         case .repositoryMissing, .wrongPassword, .credentialsUnavailable:

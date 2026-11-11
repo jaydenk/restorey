@@ -6,9 +6,10 @@ import Foundation
 ///   than `plan.noSuccessAlertDays` days old. Skips, pauses and cancellations never reset it, so a
 ///   machine that is always on battery still ends up telling the user.
 /// - `backupFailed`: the newest backup record with a verdict is a failure: `failed`, `interrupted` (the
-///   agent died mid-run), `wrongPassword`, `repositoryMissing` or `credentialsUnavailable`.
-///   `success`, `unchanged` and `warning` clear it; `paused`, `cancelled`, `skipped` and `locked`
-///   carry no verdict and are looked past.
+///   agent died mid-run without saying why: a crash or `kill -9`, R21), `wrongPassword`, `repositoryMissing` or `credentialsUnavailable`.
+///   `success`, `unchanged` and `warning` clear it; `paused`, `cancelled`, `skipped`, `locked` and
+///   `stoppedBySystem` (the system stopped the agent at logout or shutdown, Ruling R67) carry no verdict
+///   and are looked past.
 /// - `checkFailed`: the same rule applied to the newest check record.
 /// - Either stays raised while it is in `history.activeAlerts` and `recent` holds no verdict for its
 ///   operation: a failure that has aged out of `recent` was never cleared.
@@ -60,7 +61,7 @@ extension RunOutcome {
     /// False for outcomes that say nothing about whether the work succeeded.
     fileprivate var isVerdict: Bool {
         switch self {
-        case .paused, .cancelled, .skipped, .locked: false
+        case .paused, .cancelled, .skipped, .locked, .stoppedBySystem: false
         default: true
         }
     }

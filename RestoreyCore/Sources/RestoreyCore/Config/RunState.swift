@@ -91,8 +91,15 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
         lastPruneAt = try c.decodeIfPresent(Date.self, forKey: .lastPruneAt)
         lastCheckAt = try c.decodeIfPresent(Date.self, forKey: .lastCheckAt)
         runningRecordID = try c.decodeIfPresent(UUID.self, forKey: .runningRecordID)
-        runningRecord = try c.decodeIfPresent(RunRecord.self, forKey: .runningRecord)
-        recent = try c.decodeIfPresent([RunRecord].self, forKey: .recent) ?? []
+        // A record whose outcome, skip reason or operation is a case only a newer build knows is dropped,
+        // not fatal, so a downgrade keeps the rest of the history loadable (as for alert keys below). Real
+        // corruption still fails the file. A dropped in-progress record is rebuilt by recovery from its ID.
+        do {
+            runningRecord = try c.decodeIfPresent(RunRecord.self, forKey: .runningRecord)
+        } catch where UnknownCase.isUnknownCase(error) {
+            runningRecord = nil
+        }
+        recent = try c.decodeIfPresent([KnownRecord].self, forKey: .recent)?.compactMap(\.record) ?? []
         // Through string keys, so a condition from a newer build is dropped rather than failing the whole
         // file: a downgrade must not turn state.json into the load-error state (Ruling R48).
         let alerts = try c.decodeIfPresent([String: AlertNotificationState].self, forKey: .activeAlerts) ?? [:]
@@ -101,6 +108,19 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
         })
         stoppedReason = try c.decodeIfPresent(String.self, forKey: .stoppedReason)
         pausedUntil = try c.decodeIfPresent(Date.self, forKey: .pausedUntil)
+    }
+}
+
+/// A `RunRecord`, or nil when it names a case this build doesn't know (`UnknownCase`).
+private struct KnownRecord: Decodable {
+    var record: RunRecord?
+
+    init(from decoder: any Decoder) throws {
+        do {
+            record = try RunRecord(from: decoder)
+        } catch where UnknownCase.isUnknownCase(error) {
+            record = nil
+        }
     }
 }
 

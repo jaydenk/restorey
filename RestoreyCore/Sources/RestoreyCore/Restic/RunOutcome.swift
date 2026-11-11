@@ -37,8 +37,7 @@ public enum SkipReason: Codable, Sendable, Equatable {
         case "noNetwork": self = .noNetwork
         case "volumeNotMounted": self = .volumeNotMounted(try c.decode(String.self, forKey: .volume))
         case "agentUpdating": self = .agentUpdating
-        case let other: throw DecodingError.dataCorruptedError(
-            forKey: .type, in: c, debugDescription: "Unknown skip reason \(other)")
+        case let other: throw UnknownCase.error(kind: "skip reason", name: other, in: c, forKey: .type)
         }
     }
 
@@ -75,8 +74,13 @@ public enum RunOutcome: Codable, Sendable, Equatable {
     case wrongPassword
     case credentialsUnavailable
     case locked
-    /// The agent died or was killed mid-run. Set on recovery (Task 14), never by `classify`.
+    /// The agent died or was killed mid-run without saying why (a crash, `kill -9`): recovery finds the
+    /// run still marked in progress. Set on recovery (Task 14), never by `classify`. A failure (R21).
     case interrupted
+    /// The system stopped the agent (logout, restart or shutdown: launchd's SIGTERM) and the agent
+    /// stopped the run itself, restic removing its own lock (Ruling R67). Not a verdict: no alert, no
+    /// check-in ping, and the backup is tried again after the short retry.
+    case stoppedBySystem
     case skipped(SkipReason)
     case failed(exitCode: Int32, reason: String)
 
@@ -95,13 +99,13 @@ public enum RunOutcome: Codable, Sendable, Equatable {
         case "credentialsUnavailable": self = .credentialsUnavailable
         case "locked": self = .locked
         case "interrupted": self = .interrupted
+        case "stoppedBySystem": self = .stoppedBySystem
         case "skipped": self = .skipped(try c.decode(SkipReason.self, forKey: .reason))
         case "failed":
             self = .failed(
                 exitCode: try c.decode(Int32.self, forKey: .exitCode),
                 reason: try c.decode(String.self, forKey: .reason))
-        case let other: throw DecodingError.dataCorruptedError(
-            forKey: .type, in: c, debugDescription: "Unknown run outcome \(other)")
+        case let other: throw UnknownCase.error(kind: "run outcome", name: other, in: c, forKey: .type)
         }
     }
 
@@ -122,6 +126,7 @@ public enum RunOutcome: Codable, Sendable, Equatable {
         case .credentialsUnavailable: try c.encode("credentialsUnavailable", forKey: .type)
         case .locked: try c.encode("locked", forKey: .type)
         case .interrupted: try c.encode("interrupted", forKey: .type)
+        case .stoppedBySystem: try c.encode("stoppedBySystem", forKey: .type)
         case .skipped(let reason):
             try c.encode("skipped", forKey: .type)
             try c.encode(reason, forKey: .reason)
@@ -137,6 +142,40 @@ public enum RunOutcome: Codable, Sendable, Equatable {
 public enum InterruptIntent: Sendable, Equatable {
     case pause
     case cancel
+    /// The system is stopping the agent (launchd's SIGTERM at logout, restart or shutdown, Ruling R67).
+    case systemStop
+
+    /// How a run we stopped this way ends.
+    public var outcome: RunOutcome {
+        switch self {
+        case .pause: .paused
+        case .cancel: .cancelled
+        case .systemStop: .stoppedBySystem
+        }
+    }
+}
+
+/// The error a Codable enum throws for a case name this build doesn't know, which a newer build wrote.
+/// It is a `DecodingError.dataCorrupted` whose `underlyingError` is an `UnknownCase`, so a caller that
+/// can do without the value (a history record) can tell it from real corruption and drop just that value.
+public struct UnknownCase: Error, CustomStringConvertible {
+    public var kind: String
+    public var name: String
+    public var description: String { "Unknown \(kind) \(name)" }
+
+    static func error<K: CodingKey>(
+        kind: String, name: String, in container: KeyedDecodingContainer<K>, forKey key: K
+    ) -> DecodingError {
+        let unknown = UnknownCase(kind: kind, name: name)
+        return .dataCorrupted(DecodingError.Context(
+            codingPath: container.codingPath + [key], debugDescription: unknown.description, underlyingError: unknown))
+    }
+
+    /// True when `error` is one of these, so the value was written by a newer build.
+    public static func isUnknownCase(_ error: any Error) -> Bool {
+        guard case DecodingError.dataCorrupted(let context) = error else { return false }
+        return context.underlyingError is UnknownCase
+    }
 }
 
 /// What started a run.
@@ -222,7 +261,7 @@ private let missingCredentialsMessage = "s3.getCredentials: no credentials found
 /// 0 success, 3 backup finished with unreadable files, 10 repository missing, 11 lock failure,
 /// 12 wrong password, 130 interrupted (SIGINT). `exitErrorMessage` is the `exit_error` text.
 ///
-/// A process we interrupted is classified by what we asked for when it exits 130, or when it ignored
+/// A process we interrupted is classified by what we asked for (`InterruptIntent.outcome`) when it exits 130, or when it ignored
 /// SIGINT and was then killed by the SIGKILL that `ResticProcess` itself sent (`killedByUs`). Any
 /// other death by signal (SIGSEGV, SIGABRT, a SIGKILL from elsewhere) is a failure, interrupted or not.
 ///
@@ -240,7 +279,7 @@ public func classify(
     exitErrorMessage: String?
 ) -> RunOutcome {
     if let interruptedByUs, killedByUs, terminatedBySignal == SIGKILL {
-        return interruptedByUs == .pause ? .paused : .cancelled
+        return interruptedByUs.outcome
     }
     switch exitCode {
     case 0:
@@ -256,11 +295,10 @@ public func classify(
     case 11: return .locked
     case 12: return .wrongPassword
     case 130:
-        switch interruptedByUs {
-        case .pause?: return .paused
-        case .cancel?: return .cancelled
-        case nil: break
-        }
+        // restic exits 130 for SIGINT and SIGTERM alike (0.19.1 cmd/restic/cleanup.go cancels its
+        // context on either; main.go maps context.Canceled to 130), so a restic the system signalled
+        // directly while we were stopping it for the system reads the same.
+        if let interruptedByUs { return interruptedByUs.outcome }
     case 1:
         if exitErrorMessage?.contains(missingCredentialsMessage) == true { return .credentialsUnavailable }
     default:

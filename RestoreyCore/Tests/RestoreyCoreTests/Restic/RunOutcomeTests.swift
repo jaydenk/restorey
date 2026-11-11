@@ -26,6 +26,45 @@ struct RunOutcomeTests {
             summary: summary, errors: errors, exitErrorMessage: message)
     }
 
+    // MARK: The system stopping the agent (Ruling R67)
+
+    @Test func exit130AfterASystemStopIsStoppedBySystem() {
+        #expect(outcome(130, intent: .systemStop) == .stoppedBySystem)
+    }
+
+    @Test func ourSIGKILLAfterASystemStopIsStoppedBySystem() {
+        #expect(outcome(137, intent: .systemStop, signal: SIGKILL, killedByUs: true) == .stoppedBySystem)
+    }
+
+    @Test func aCrashDuringASystemStopIsStillAFailure() {
+        #expect(outcome(139, intent: .systemStop, signal: SIGSEGV) == .failed(exitCode: 139, reason: "restic exited with status 139."))
+    }
+
+    @Test func aBackupThatFinishedBeforeTheSystemStopIsASuccess() {
+        #expect(outcome(0, intent: .systemStop, summary: summary(snapshotID: "abc")) == .success(snapshotID: "abc"))
+    }
+
+    @Test func aStoppedBySystemRunSendsNoPing() {
+        #expect(pingAtEnd(outcome: .stoppedBySystem, logTail: ["x"], redactor: Redactor(secrets: [])) == nil)
+    }
+
+    /// A value from a newer build is marked as such, so a history can drop just that record.
+    @Test func unknownCasesAreMarkedAsUnknown() {
+        for text in [#"{"type":"from_the_future"}"#, #"{"type":"skipped","reason":{"type":"x"}}"#] {
+            do {
+                _ = try JSONDecoder().decode(RunOutcome.self, from: Data(text.utf8))
+                Issue.record("decoded \(text)")
+            } catch {
+                #expect(UnknownCase.isUnknownCase(error), "\(error)")
+            }
+        }
+        do {
+            _ = try JSONDecoder().decode(RunOutcome.self, from: Data(#"{"snapshotID":"a"}"#.utf8))
+        } catch {
+            #expect(!UnknownCase.isUnknownCase(error), "a missing type is corruption, not a newer case")
+        }
+    }
+
     @Test func exitZeroWithASnapshotIsSuccess() {
         #expect(outcome(0, summary: summary(snapshotID: "abc")) == .success(snapshotID: "abc"))
     }
@@ -174,6 +213,7 @@ struct RunOutcomeTests {
         try roundTrip(RunOutcome.credentialsUnavailable, #"{"type":"credentialsUnavailable"}"#)
         try roundTrip(RunOutcome.locked, #"{"type":"locked"}"#)
         try roundTrip(RunOutcome.interrupted, #"{"type":"interrupted"}"#)
+        try roundTrip(RunOutcome.stoppedBySystem, #"{"type":"stoppedBySystem"}"#)
         try roundTrip(RunOutcome.skipped(.noNetwork), #"{"reason":{"type":"noNetwork"},"type":"skipped"}"#)
         try roundTrip(RunOutcome.failed(exitCode: 2, reason: "boom"),
                       #"{"exitCode":2,"reason":"boom","type":"failed"}"#)

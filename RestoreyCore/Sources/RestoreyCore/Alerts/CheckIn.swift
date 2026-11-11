@@ -19,7 +19,8 @@ public protocol CheckInSending: Sendable {
 /// The ping to send when a run ends, or nil for none.
 ///
 /// A missing ping is what trips the dead-man's switch, so nil is only for runs that did not really
-/// happen or will be retried: `paused`, `cancelled`, `skipped` and `locked` (rescheduled in 15 min).
+/// happen or will be retried: `paused`, `cancelled`, `skipped`, `locked` (rescheduled in 15 min) and
+/// `stoppedBySystem` (the Mac logging out or shutting down; retried in 15 min, Ruling R67).
 /// `warning` is a success ping: the data is protected, and the warning reaches the user through the UI.
 /// `credentialsUnavailable` is a failure (Task 1 finding): nothing was backed up.
 ///
@@ -31,7 +32,7 @@ public func pingAtEnd(outcome: RunOutcome, logTail: [String], redactor: Redactor
     switch outcome {
     case .success, .unchanged, .warning:
         return .success
-    case .paused, .cancelled, .skipped, .locked:
+    case .paused, .cancelled, .skipped, .locked, .stoppedBySystem:
         return nil
     case .failed(let exitCode, _): heading = "restic exit code \(exitCode)"
     case .wrongPassword: heading = "restic exit code 12"

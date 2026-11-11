@@ -141,6 +141,27 @@ struct RunStateTests {
         #expect(loaded.plans[planID]?.activeAlerts.keys.map(\.rawValue) == ["checkFailed"])
     }
 
+    /// A record whose outcome, skip reason or operation only a newer build knows is dropped, so a
+    /// downgrade keeps the rest of the history (as for alert keys). Real corruption still fails.
+    @Test func recordsWithCasesFromANewerBuildAreDropped() throws {
+        let known = String(decoding: try JSONEncoder().encode(makeRecord()), as: UTF8.self)
+        func record(outcome: String = #"{"type":"paused"}"#, operation: String = #"{"type":"backup"}"#) -> String {
+            #"{"id":"\#(UUID().uuidString)","planID":"\#(planID.uuidString)","operation":\#(operation),"trigger":"manual","startedAt":1,"endedAt":2,"outcome":\#(outcome),"logFile":""}"#
+        }
+        let newer = [
+            record(outcome: #"{"type":"fromTheFuture"}"#),
+            record(outcome: #"{"type":"skipped","reason":{"type":"fromTheFuture"}}"#),
+            record(operation: #"{"type":"fromTheFuture"}"#),
+        ]
+        let text = #"{"runningRecord":\#(newer[0]),"recent":[\#(newer.joined(separator: ",")),\#(known)]}"#
+        let decoded = try JSONDecoder().decode(PlanRunHistory.self, from: Data(text.utf8))
+        #expect(decoded.recent == [makeRecord()])
+        #expect(decoded.runningRecord == nil)
+
+        let corrupt = #"{"recent":[{"id":"not-a-uuid"},\#(known)]}"#
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(PlanRunHistory.self, from: Data(corrupt.utf8)) }
+    }
+
     @Test func emptyHistoryEncodesOnlyRequiredKeys() throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
