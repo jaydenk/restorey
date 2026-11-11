@@ -24,7 +24,9 @@ public protocol CheckInSending: Sendable {
 /// `warning` is a success ping: the data is protected, and the warning reaches the user through the UI.
 /// `credentialsUnavailable` is a failure (Task 1 finding): nothing was backed up.
 ///
-/// The fail body is `restic exit code <n>`, or `interrupted` for an interrupted run, then a newline and
+/// The fail body is `restic exit code <n>`, `not started` for a failure found before restic ran (a missing
+/// source, Full Disk Access missing; exit code `RunOutcome.notStartedExitCode`), or `interrupted` for an
+/// interrupted run, then a newline and
 /// the last 20 lines of `logTail`, redacted. Restic exit codes for outcomes that do not carry one:
 /// wrong password 12, repository missing 10, credentials unavailable 1.
 public func pingAtEnd(outcome: RunOutcome, logTail: [String], redactor: Redactor) -> CheckInPing? {
@@ -34,6 +36,7 @@ public func pingAtEnd(outcome: RunOutcome, logTail: [String], redactor: Redactor
         return .success
     case .paused, .cancelled, .skipped, .locked, .stoppedBySystem:
         return nil
+    case .failed(let exitCode, _) where exitCode == RunOutcome.notStartedExitCode: heading = "not started"
     case .failed(let exitCode, _): heading = "restic exit code \(exitCode)"
     case .wrongPassword: heading = "restic exit code 12"
     case .repositoryMissing: heading = "restic exit code 10"

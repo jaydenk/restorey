@@ -92,9 +92,19 @@ struct HelperAuthorisationTests {
     @Test func parentNoLongerSupervisedRefused() async {
         let plan = UUID()
         let supervised = await Self.supervising(plan: plan)
-        await supervised.remove(pid: Self.restic)
+        await supervised.remove(pid: Self.restic, startTime: Self.resticStart)
         #expect(await !authoriseHelper(
             callerPID: Self.caller, planID: plan, lookup: Self.lookup(), supervised: supervised))
+    }
+
+    /// Removing an exited restic by its start time leaves a later process that reused the pid alone
+    /// (final review M13).
+    @Test func removingAnOldProcessLeavesThePidsNewOwner() async {
+        let plan = UUID()
+        let later = KernelProcessInfo.StartTime(seconds: Self.resticStart.seconds + 5, microseconds: 0)
+        let supervised = await Self.supervising(plan: plan, start: later)
+        await supervised.remove(pid: Self.restic, startTime: Self.resticStart)
+        #expect(await supervised.isSupervised(pid: Self.restic, planID: plan, startTime: later))
     }
 
     // MARK: Kernel process info

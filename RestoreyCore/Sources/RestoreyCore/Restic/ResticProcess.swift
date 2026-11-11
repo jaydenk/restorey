@@ -146,8 +146,10 @@ public actor ResticProcess {
         // Bind the pid to its start time, and only once the kernel confirms it is still our own child:
         // if restic has already exited and been reaped, the pid may already be someone else's, so it is
         // not recorded at all (a helper call from it is then refused, never granted).
+        var supervisedSince: KernelProcessInfo.StartTime?
         if let info = processInfo(pid: pid), info.parentPID == getpid() {
             await supervisor.insert(pid: pid, planID: planID, startTime: info.startTime)
+            supervisedSince = info.startTime
         }
 
         async let out = Self.drain(stdout.fileHandleForReading, onMessage: onMessage)
@@ -161,7 +163,7 @@ public actor ResticProcess {
         }.value
         // restic has been reaped, so its pid is free for reuse: stop trusting it now, not after the
         // drains, which a grandchild holding stdout or stderr open can keep going much longer.
-        await supervisor.remove(pid: pid)
+        if let supervisedSince { await supervisor.remove(pid: pid, startTime: supervisedSince) }
         let stdoutResult = await out
         let stderrResult = await err
 

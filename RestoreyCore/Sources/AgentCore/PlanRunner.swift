@@ -105,7 +105,7 @@ public actor PlanRunner {
     static let fullDiskAccessMissing = "Full Disk Access is missing"
     static let keychainUnreadable = "Couldn't read the backup keys from the Keychain"
     /// The exit code of a run that restic never ran for (refused, or restic couldn't start).
-    static let startFailureExitCode: Int32 = -1
+    static let startFailureExitCode: Int32 = RunOutcome.notStartedExitCode
     static let day: TimeInterval = 86_400
     static let week: TimeInterval = 7 * 86_400
 

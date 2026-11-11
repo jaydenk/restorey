@@ -18,7 +18,8 @@ public enum SkipReason: Codable, Sendable, Equatable {
     public var summary: String {
         switch self {
         case .onBattery: "Skipped while on battery"
-        case .batteryBelow(let percent): "Skipped: battery below \(percent) %"
+        // No space before the sign (Australian Government Style Manual).
+        case .batteryBelow(let percent): "Skipped: battery below \(percent)%"
         case .constrainedNetwork: "Skipped on a low data network"
         case .noNetwork: "Skipped: no network"
         case .volumeNotMounted(let volume): "Skipped: \(volume) isn't connected"
@@ -83,6 +84,10 @@ public enum RunOutcome: Codable, Sendable, Equatable {
     case stoppedBySystem
     case skipped(SkipReason)
     case failed(exitCode: Int32, reason: String)
+
+    /// The `exitCode` of a failure restic never ran for: refused before it started, or restic couldn't
+    /// be started at all.
+    public static let notStartedExitCode: Int32 = -1
 
     private enum CodingKeys: String, CodingKey { case type, snapshotID, unreadable, reason, exitCode }
 

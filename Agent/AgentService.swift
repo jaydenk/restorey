@@ -143,7 +143,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
                 : "Asked to drain before re-registration: finishing the restic step in progress first")
             let answer: @Sendable (Bool) -> Void = { flushed in
                 if !flushed {
-                    log.error("Gave up waiting for check-in pings after 3 minutes; some may not have been sent")
+                    log.error(AgentState.pingsGivenUp(after: AgentState.drainPingBudget))
                 }
                 log.info(purpose.exitsAfterwards
                     ? "No run in progress; exiting so launchd starts the agent again"

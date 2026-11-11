@@ -137,7 +137,8 @@ The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`) runs
    because restic would otherwise save a snapshot of empty folders.
 
    A failure found in steps 1 to 3 (an invalid plan, a missing source, Full Disk Access missing) sends the
-   check-in `/fail` ping with the reason. A plan whose recovery kit isn't confirmed yet sends nothing.
+   check-in `/fail` ping with the reason, headed "not started". A plan whose recovery kit isn't confirmed yet
+   sends nothing.
 4. Runs `restic backup` through the repository's queue, classifies the result, records it, and sends the
    success or `/fail` ping straight away, so maintenance never delays it.
 5. After a successful backup, in the same turn of the queue: `forget` (after every backup that made a
@@ -199,9 +200,10 @@ so Restorey doesn't try. Plans saved by an earlier build get the file types and 
 Keychain), the agent POSTs to the URL itself when a backup succeeds and to `/fail` when it fails. It never
 sends `/start`: Healthchecks.io treats a check that was told a run started and then hears nothing within its
 grace time as down, and a paused, cancelled or lock-retried run has no honest ending to send, so a start ping
-would raise a false alarm on every Pause. Paused, cancelled, skipped and lock-retried runs send nothing. The
-`/fail` body is plain text: restic's exit code and the last 20 lines of the run's error output, with secrets
-removed. A network error or a 5xx is retried after 5 s, 30 s and 120 s; a 4xx is not. Each request
+would raise a false alarm on every Pause. Paused, cancelled, skipped and lock-retried runs send nothing, nor does
+a run the system stopped at logout or shutdown. The `/fail` body is plain text: restic's exit code (or "not
+started" for a failure found before restic ran, or "interrupted") and the last 20 lines of the run's error
+output, with secrets removed. A network error or a 5xx is retried after 5 s, 30 s and 120 s; a 4xx is not. Each request
 times out after 30 s without data or 60 s in all, and one send, retries included, is bounded at 170 s, inside
 the 3 minutes the agent waits for pings before exiting for an update. A plan's pings go out one after another,
 so a ping queued behind an earlier one for the same plan that is still being retried can take longer; the

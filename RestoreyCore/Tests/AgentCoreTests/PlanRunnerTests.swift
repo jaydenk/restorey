@@ -306,7 +306,7 @@ struct PlanRunnerTests {
         let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
         #expect(record.outcome == .failed(exitCode: -1, reason: "Full Disk Access is missing"))
         // Found before the backup starts (Ruling R33): /fail with the reason.
-        #expect(await f.pings() == [.fail(body: "restic exit code -1\nFull Disk Access is missing")])
+        #expect(await f.pings() == [.fail(body: "not started\nFull Disk Access is missing")])
         #expect(try await f.snapshots().isEmpty)
         #expect(await f.history().activeAlerts[.fullDiskAccessMissing] != nil)
         #expect(await f.status().alerts.contains(.fullDiskAccessMissing))
@@ -448,7 +448,7 @@ struct PlanRunnerTests {
         let failed = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
         #expect(failed.outcome == .failed(exitCode: -1, reason: "\(f.source.path) doesn't exist"))
         #expect(await f.history().activeAlerts[.backupFailed] != nil)
-        #expect(await f.pings() == [.fail(body: "restic exit code -1\n\(f.source.path) doesn't exist")])
+        #expect(await f.pings() == [.fail(body: "not started\n\(f.source.path) doesn't exist")])
         #expect(try await f.snapshots().isEmpty)
     }
 
@@ -481,7 +481,7 @@ struct PlanRunnerTests {
         let record = try await runner.runBackup(planID: f.planID, trigger: .manual)
         #expect(record.outcome == .failed(exitCode: -1, reason: "Source folders must be absolute paths"))
         await runner.pingsFlushed()
-        #expect(await f.checkIn.pings == [.fail(body: "restic exit code -1\nSource folders must be absolute paths")])
+        #expect(await f.checkIn.pings == [.fail(body: "not started\nSource folders must be absolute paths")])
         #expect(try await f.snapshots().isEmpty)
     }
 
@@ -859,6 +859,24 @@ struct PlanRunnerTests {
         #expect(await f.state.prepareForRestart(pingBudget: .milliseconds(300)) == false)
         #expect(ContinuousClock.now - started < .seconds(5))
         #expect(await f.checkIn.pings.isEmpty)
+    }
+
+    /// The agent's own restart drain says how long it really waited (final review M7).
+    @Test func aSelfRestartLogsTheRealPingBudget() async throws {
+        let f = try await RunnerFixture.make(pingDelay: .seconds(20))
+        defer { f.remove() }
+        let lines = Locked<[String]>([])
+        let exited = Locked(false)
+        await f.state.attach(restartExit: { exited.set(true) }, log: { line in lines.mutate { $0.append(line) } })
+        try f.write("a.txt", "one")
+        _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+
+        await f.state.restartForReplacedBinary(pingBudget: .seconds(1))
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !exited.value, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(lines.value.contains("Gave up waiting for check-in pings after 1 second; some may not have been sent"))
+        #expect(AgentState.pingsGivenUp(after: .seconds(180)).contains("after 3 minutes;"))
+        #expect(AgentState.pingsGivenUp(after: .seconds(90)).contains("after 90 seconds;"))
     }
 
     // MARK: Progress (Ruling R14)

@@ -26,7 +26,10 @@ public actor SupervisedProcesses {
         entries[pid] = Entry(planID: planID, startTime: startTime)
     }
 
-    public func remove(pid: pid_t) {
+    /// Removes the entry for this process only: one with the same pid and start time. A later process
+    /// that reused the pid (and was inserted meanwhile) keeps its own entry.
+    public func remove(pid: pid_t, startTime: KernelProcessInfo.StartTime) {
+        guard entries[pid]?.startTime == startTime else { return }
         entries[pid] = nil
     }
 

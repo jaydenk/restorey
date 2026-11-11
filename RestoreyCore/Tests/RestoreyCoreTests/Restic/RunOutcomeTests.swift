@@ -231,7 +231,7 @@ struct RunOutcomeTests {
     /// The one wording of each skip, shared by the menu and the run log and alerts.
     @Test func skipReasonsReadAsSentences() {
         #expect(SkipReason.onBattery.summary == "Skipped while on battery")
-        #expect(SkipReason.batteryBelow(20).summary == "Skipped: battery below 20 %")
+        #expect(SkipReason.batteryBelow(20).summary == "Skipped: battery below 20%")
         #expect(SkipReason.constrainedNetwork.summary == "Skipped on a low data network")
         #expect(SkipReason.noNetwork.summary == "Skipped: no network")
         #expect(SkipReason.volumeNotMounted("Backup").summary == "Skipped: Backup isn't connected")
