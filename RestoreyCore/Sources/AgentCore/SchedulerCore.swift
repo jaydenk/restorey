@@ -7,6 +7,9 @@ public enum NudgeReason: Sendable, Equatable {
     case wake
     /// A volume was mounted at this path: plans skipped because it was missing run now.
     case volumeMounted(String)
+    /// The network path went from unsatisfied to satisfied while the Mac was awake: plans skipped for no
+    /// network run now (Ruling R60). Unlike a wake, there is nothing to wait for.
+    case networkRestored
     /// A plan's settings, recovery kit confirmation or pause changed.
     case configChanged
     case manual
@@ -33,10 +36,10 @@ public protocol SchedulerRunner: Sendable {
 /// has two runs from the scheduler at once; different plans run at the same time, and the repository
 /// queue serialises those that share a repository.
 ///
-/// Missed runs, runs after a pause, and runs after waking or a volume mounting are catch-ups; a run
-/// after a lock is a retry. When the agent is winding down (a tick finds it draining or its executable
-/// replaced, or the runner refuses because it is draining), the scheduler stops for good: the agent is
-/// about to exit or be re-registered. Any other refusal is logged once per plan per reason.
+/// Missed runs, runs after a pause, and runs after waking, the network coming back or a volume mounting
+/// are catch-ups; a run after a lock is a retry. When the agent is winding down (a tick finds it draining
+/// or its executable replaced, or the runner refuses because it is draining), the scheduler stops for
+/// good: the agent is about to exit or be re-registered. Any other refusal is logged once per plan per reason.
 public actor SchedulerCore {
     public static let tickInterval: Duration = .seconds(60)
     /// How long a wake waits for the network before catching up anyway.
@@ -131,8 +134,8 @@ public actor SchedulerCore {
     }
 
     /// Looks again now. A wake first waits for the network, for at most `wakeNetworkTimeout`, and then
-    /// also runs plans last skipped for no network. A volume mounting runs the plans last skipped
-    /// because it wasn't mounted, even if they aren't due.
+    /// also runs plans last skipped for no network. The network coming back runs those plans at once. A
+    /// volume mounting runs the plans last skipped because it wasn't mounted, even if they aren't due.
     public func nudge(reason: NudgeReason) async {
         guard !recovering, !isStopped else { return }
         switch reason {
@@ -144,6 +147,8 @@ public actor SchedulerCore {
                 if case .volumeNotMounted(let volume) = reason { "/Volumes/\(volume)" == mounted } else { false }
             })
             await tick(Requests(forced: skipped))
+        case .networkRestored:
+            await tick(Requests(forced: await plans(skippedFor: { $0 == .noNetwork })))
         case .configChanged, .manual:
             await tick()
         }

@@ -4,8 +4,8 @@ import RestoreyCore
 import Synchronization
 
 /// Runs `SchedulerCore` in the agent: a tick every minute on the continuous clock (which keeps counting
-/// while the Mac sleeps, so the first tick after waking comes at once), and a nudge on wake, on a volume
-/// mounting and when a plan's settings change. Created early so the XPC service can nudge it; nudges
+/// while the Mac sleeps, so the first tick after waking comes at once), and a nudge on wake, on the
+/// network coming back, on a volume mounting and when a plan's settings change. Created early so the XPC service can nudge it; nudges
 /// before `start` are dropped, since the first tick covers them.
 final class Scheduler: Sendable {
     private let core = Mutex<SchedulerCore?>(nil)

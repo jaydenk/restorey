@@ -202,15 +202,17 @@ daylight saving change never moves a run. It also looks again straight away:
 
 - **after waking from sleep**, once the network is back (it waits at most 2 minutes, then goes ahead), so a run
   missed while the Mac slept catches up without failing on a network that isn't up yet;
+- **when the network comes back** (the path goes from offline to online while the Mac is awake), running any
+  plan that was skipped for no network;
 - **when a volume mounts**, running any plan that was skipped because that drive wasn't plugged in;
 - when a plan is saved, its recovery kit is confirmed, or it is resumed.
 
 A skipped run (on battery below the plan's threshold, a constrained or expensive network such as a phone
-hotspot or Low Data Mode, no network, an unmounted volume) is recorded and tried again at the next interval. A
-backup that met another client's lock, or was interrupted because the agent stopped mid-run, is retried 15
-minutes after it started (not at once, so something that kills the agent on every run can't loop); a paused
-plan runs as soon as its hour is up. One plan never runs
-twice at once; different plans can, and plans that share a repository take turns. While restic runs, the agent
+hotspot or Low Data Mode, no network, an unmounted volume) is recorded and tried again at the next interval, or
+sooner when the network comes back or the volume mounts, as above. A backup that met another client's lock, or
+was interrupted because the agent stopped mid-run, is retried 15 minutes after it started (not at once, so
+something that kills the agent on every run can't loop); a paused plan runs as soon as its hour is up. One plan
+never runs twice at once; different plans can, and plans that share a repository take turns. While restic runs, the agent
 holds a power assertion that stops the Mac idle-sleeping ("Restorey backup" in `pmset -g assertions`); the
 display can still sleep, and closing the lid still sleeps the Mac. When the agent is finishing up for a
 restart, the scheduler stops.

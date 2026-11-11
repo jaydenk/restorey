@@ -46,6 +46,23 @@ struct NetworkPathTests {
         await waited.value
     }
 
+    /// Ruling R60: `update` reports the network coming back (unsatisfied to satisfied) and nothing else:
+    /// not the first path after start-up, not a satisfied path that changes, not going offline.
+    @Test func updateReportsOnlyTheNetworkComingBack() {
+        let path = NetworkPath()
+        #expect(path.update(.satisfied(constrained: false, expensive: false)) == false) // the first path
+        #expect(path.update(.satisfied(constrained: true, expensive: false)) == false) // satisfied to satisfied
+        #expect(path.update(.unsatisfied) == false)
+        #expect(path.update(.unsatisfied) == false)
+        #expect(path.update(.satisfied(constrained: false, expensive: true)) == true) // it came back
+        #expect(path.update(.satisfied(constrained: false, expensive: false)) == false)
+
+        // A first path that is offline, then online, is the network coming back.
+        let offlineAtStart = NetworkPath()
+        #expect(offlineAtStart.update(.unsatisfied) == false)
+        #expect(offlineAtStart.update(.satisfied(constrained: false, expensive: false)) == true)
+    }
+
     @Test func aWaitCancelledBeforeTheNetworkComesBackReturnsAndIsForgotten() async {
         let path = NetworkPath()
         let cancelled = Task { await path.waitUntilSatisfied() }

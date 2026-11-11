@@ -4,6 +4,7 @@ import Foundation
 import IOKit.pwr_mgt
 import Network
 import RestoreyCore
+import Synchronization
 
 /// The machine as the agent sees it: the network path (a long-lived `NWPathMonitor`), the power state
 /// and mount points (read on demand), wake and mount notifications, and the idle-sleep assertion held
@@ -11,6 +12,8 @@ import RestoreyCore
 final class SystemObservers: Sendable {
     private let monitor = NWPathMonitor()
     private let network = NetworkPath()
+    /// Called when the path goes from unsatisfied to satisfied; set once the scheduler is running.
+    private let networkRestored = Mutex<(@Sendable () -> Void)?>(nil)
 
     /// `IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleSystemSleep)`: idle sleep only, so the
     /// display still sleeps.
@@ -26,10 +29,11 @@ final class SystemObservers: Sendable {
 
     /// Starts watching the network path.
     init() {
-        monitor.pathUpdateHandler = { [network] path in
-            network.update(
+        monitor.pathUpdateHandler = { [network, weak self] path in
+            let restored = network.update(
                 path.status == .satisfied
                     ? .satisfied(constrained: path.isConstrained, expensive: path.isExpensive) : .unsatisfied)
+            if restored, let handler = self?.networkRestored.withLock({ $0 }) { handler() }
         }
         monitor.start(queue: DispatchQueue(label: "com.jaydenkerr.restorey.agent.network"))
     }
@@ -43,6 +47,13 @@ final class SystemObservers: Sendable {
             network: network.forPreflight,
             isMountPoint: { SystemConditions.isMountPoint($0) },
             fileExists: { FileManager.default.fileExists(atPath: $0) })
+    }
+
+    /// Calls `handler` on the monitor's queue each time the network comes back (unsatisfied to satisfied,
+    /// never for the first path after start-up). The handler must hand off rather than do the work: the
+    /// scheduler's `nudge` starts a task, as it does for a wake or a volume mounting.
+    func onNetworkRestored(_ handler: @escaping @Sendable () -> Void) {
+        networkRestored.withLock { $0 = handler }
     }
 
     /// Returns once the network path is satisfied, at once if it already is, or when cancelled.

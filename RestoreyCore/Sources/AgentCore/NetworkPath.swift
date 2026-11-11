@@ -30,14 +30,20 @@ public final class NetworkPath: Sendable {
     var waiterCount: Int { lock.withLock { $0.waiters.count } }
 
     /// Records a new path. A satisfied one wakes every wait.
-    public func update(_ state: NetworkState) {
-        let woken = lock.withLock { locked -> [CheckedContinuation<Void, Never>] in
+    /// - Returns: true when the network has come back: the path was unsatisfied and now is satisfied
+    ///   (Ruling R60). Not for the first update (unknown to satisfied: start-up already waits for the
+    ///   network), and not for a satisfied path that changes only whether it is constrained or expensive.
+    @discardableResult
+    public func update(_ state: NetworkState) -> Bool {
+        let (woken, restored) = lock.withLock { locked -> ([CheckedContinuation<Void, Never>], Bool) in
+            let previous = locked.current
             locked.current = state
-            guard state != .unsatisfied else { return [] }
+            guard state != .unsatisfied else { return ([], false) }
             defer { locked.waiters.removeAll() }
-            return Array(locked.waiters.values)
+            return (Array(locked.waiters.values), previous == .unsatisfied)
         }
         for waiter in woken { waiter.resume() }
+        return restored
     }
 
     /// Returns once the path is satisfied (at once if it already is), or when the waiting task is

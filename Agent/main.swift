@@ -125,6 +125,7 @@ do {
                 onWake: { scheduler.nudge(.wake) },
                 onMount: { scheduler.nudge(.volumeMounted($0)) })
             keptAlive.append(workspace)
+            observers.onNetworkRestored { scheduler.nudge(.networkRestored) }
         }
     } else {
         // Exiting would make launchd's KeepAlive respawn the agent in a loop. Stay up, unreachable,

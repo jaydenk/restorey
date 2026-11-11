@@ -294,6 +294,49 @@ struct SchedulerCoreTests {
         #expect(starts.first?.trigger == .catchUp)
     }
 
+    // MARK: The network coming back
+
+    /// Ruling R60: the network coming back while the Mac is awake runs, once, the plan last skipped for
+    /// no network, without the wake's wait for the network (the gate here is never opened). A plan
+    /// skipped for another reason, or not skipped at all, isn't forced.
+    @Test func theNetworkComingBackRunsAPlanSkippedForNoNetwork() async throws {
+        let w = World()
+        let now = w.now.value
+        let offline = Self.plan("Offline", now: now)
+        let battery = Self.plan("Battery", now: now)
+        let home = Self.plan("Home", now: now)
+        await w.runner.set([
+            (offline, Self.history(attempted: 60, before: now, latest: .skipped(.noNetwork), planID: offline.id)),
+            (battery, Self.history(attempted: 60, before: now, latest: .skipped(.onBattery), planID: battery.id)),
+            (home, Self.history(attempted: 60, before: now, latest: .success(snapshotID: "abc"), planID: home.id)),
+        ])
+
+        // Skipped a minute ago, so not due on a plain tick.
+        await w.core.tick()
+        await w.core.runsFinished()
+        #expect(await w.runner.runCount == 0)
+
+        await w.core.nudge(reason: .networkRestored)
+        await w.core.runsFinished()
+        let starts = await w.runner.starts
+        #expect(starts.map(\.planID) == [offline.id])
+        #expect(starts.first?.trigger == .catchUp)
+    }
+
+    /// The forced plan is checked against the tick's own read, as for a wake: a run that succeeded since
+    /// leaves nothing to force.
+    @Test func theNetworkComingBackForcesOnlyAPlanStillSkippedForIt() async throws {
+        let w = World()
+        let now = w.now.value
+        let home = Self.plan("Home", now: now)
+        await w.runner.set(
+            firstRead: [(home, Self.history(attempted: 60, before: now, latest: .skipped(.noNetwork), planID: home.id))],
+            then: [(home, Self.history(attempted: 1, before: now, latest: .success(snapshotID: "def"), planID: home.id))])
+        await w.core.nudge(reason: .networkRestored)
+        await w.core.runsFinished()
+        #expect(await w.runner.runCount == 0)
+    }
+
     // MARK: Mounts
 
     @Test func volumeMountNudgesSkippedPlan() async throws {
