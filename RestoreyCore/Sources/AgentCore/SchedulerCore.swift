@@ -29,6 +29,9 @@ public protocol SchedulerRunner: Sendable {
     /// True when the agent is draining or its executable has been replaced (which begins a restart
     /// drain). Checked at the start of every tick, so an idle agent notices an update within a minute.
     func isWindingDown() async -> Bool
+    /// Removes run logs older than the 400-day retention when a day has passed since the last prune
+    /// (Ruling R70). Called on every tick; the agent also calls it at start-up.
+    func pruneRunLogsIfDue() async
 }
 
 /// Decides when each plan backs up (spec §5.5). Every minute, and on every nudge, it starts each plan
@@ -212,6 +215,7 @@ public actor SchedulerCore {
                 return
             }
             await runner.refreshStatus()
+            await runner.pruneRunLogsIfDue()
             isReading = true
             endedDuringRead = []
             let entries = await runner.scheduleEntries()
@@ -304,6 +308,21 @@ public actor SchedulerCore {
 extension PlanRunner: SchedulerRunner {
     public func scheduleEntries() async -> [(plan: Plan, history: PlanRunHistory)] {
         await deps.state.allRunInputs()
+    }
+
+    /// Due at start-up (never pruned), then 24 hours after the last prune by the injected clock. A clock
+    /// that went backwards makes it due rather than waiting out the gap. A failure is written to
+    /// `agent.log` and tried again a day later, like a success: the next day's prune covers the same files.
+    public func pruneRunLogsIfDue() async {
+        let now = deps.now()
+        if let last = lastRunLogPrune, now >= last, now.timeIntervalSince(last) < Self.day { return }
+        lastRunLogPrune = now
+        do {
+            let removed = try await deps.logStore.prune(now: now)
+            if removed > 0 { deps.agentLog("Removed \(removed) run logs older than 400 days") }
+        } catch {
+            deps.agentLog("Couldn't remove run logs older than 400 days: \(error.localizedDescription)")
+        }
     }
 
     public func refreshStatus() async {

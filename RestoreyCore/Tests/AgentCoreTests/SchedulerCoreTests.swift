@@ -54,6 +54,9 @@ struct SchedulerCoreTests {
 
         func isWindingDown() async -> Bool { false }
 
+        private(set) var pruneCalls = 0
+        func pruneRunLogsIfDue() async { pruneCalls += 1 }
+
         func runBackup(planID: UUID, trigger: RunTrigger) async throws -> RunRecord {
             if let error = errors[planID] { throw error }
             let name = entries.first { $0.plan.id == planID }?.plan.name ?? "?"
@@ -128,6 +131,14 @@ struct SchedulerCoreTests {
         let starts = await w.runner.starts
         #expect(starts.map(\.planID) == [plan.id])
         #expect(starts.first?.trigger == .scheduled)
+    }
+
+    /// Ruling R70: every tick asks the runner to prune the run logs (the runner decides whether a day has passed).
+    @Test func everyTickAsksForTheRunLogPrune() async throws {
+        let w = World()
+        await w.core.tick()
+        await w.core.tick()
+        #expect(await w.runner.pruneCalls == 2)
     }
 
     @Test func notDuePlanDoesNot() async throws {

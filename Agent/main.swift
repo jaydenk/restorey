@@ -136,6 +136,8 @@ do {
             await runner.recoverAfterStart()
             await state.attach(runner: runner)
             log.info("Recovery finished; the runner is accepting runs")
+            // The 400-day run-log retention (Ruling R70): now, then daily from the scheduler's tick.
+            await runner.pruneRunLogsIfDue()
 
             // Only now, so no scheduled run races recovery (the scheduler's own recoverAfterStart() call
             // returns at once). A drain asked for during recovery means the agent is about to exit.

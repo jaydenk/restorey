@@ -126,6 +126,8 @@ public actor PlanRunner {
     private var needsUnlock: Set<String> = []
     /// `recoverAfterStart`, while it runs and after: runs wait for it.
     private var recovery: Task<Void, Never>?
+    /// When `pruneRunLogsIfDue` last pruned the run logs; nil until it has (Ruling R70).
+    var lastRunLogPrune: Date?
 
     public init(dependencies: RunnerDependencies) {
         deps = dependencies

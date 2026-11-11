@@ -380,7 +380,7 @@ A failure of any check is an alert-worthy event, with the same severity as a fai
 - **Concurrency:** actors for the scheduler, the per-repository run queue and the state store. No GCD or locks with non-Sendable classes, which is the Resticker problem.
 - **Logging:**
   - **Persistent logs** (owner rule: "persistent logging, not just stdout"): one structured log file per run plus a rolling app log in `~/Library/Logs/Restorey/`, also mirrored to `os_log`.
-  - **Retention** long enough for a yearly restore drill, e.g. 400 days to match photos-offsite (my call).
+  - **Retention** long enough for a yearly restore drill, e.g. 400 days to match photos-offsite (my call). **(Ruling R70)** The agent removes run logs older than 400 days at start-up and once a day from the scheduler's tick.
   - **Easy to reach:** the log for any run is one click away from the plan's status.
 - **Crash reporting** (owner rule: "from day one"):
   - MetricKit diagnostics are collected locally.

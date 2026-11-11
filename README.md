@@ -158,7 +158,8 @@ create the bucket in your provider's console first. Restorey never runs `init` o
 only lists its snapshots.
 
 Every restic run has its own log in `~/Library/Logs/Restorey/runs/<plan ID>/` (`Restorey-Dev` for Debug builds),
-with secrets redacted. If the agent stops mid-run, its next start records that run as interrupted (an
+with secrets redacted. Run logs are kept for 400 days: the agent removes older ones when it starts and once a
+day after that. If the agent stops mid-run, its next start records that run as interrupted (an
 interrupted backup sends its `/fail` ping) and runs a plain `restic unlock` (never `--remove-all`) once per
 repository, before it accepts any run. Before exiting for an update, the agent finishes the restic step in
 progress (a backup's maintenance waits for the next backup) and then waits up to 3 minutes for queued check-in
