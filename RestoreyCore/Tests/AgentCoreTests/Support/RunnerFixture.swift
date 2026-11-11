@@ -304,20 +304,9 @@ final class RunnerFixture: Sendable {
         try contents.write(to: source.appendingPathComponent(name), atomically: true, encoding: .utf8)
     }
 
-    /// `count` files of `megabytes` each, of random (incompressible) data.
-    func writeRandomFiles(count: Int, megabytes: Int) throws {
-        for i in 0..<count {
-            let dd = Process()
-            dd.executableURL = URL(fileURLWithPath: "/bin/dd")
-            dd.arguments = [
-                "if=/dev/urandom", "of=\(source.appendingPathComponent("random-\(i).bin").path)",
-                "bs=1048576", "count=\(megabytes)",
-            ]
-            dd.standardError = FileHandle.nullDevice
-            try dd.run()
-            dd.waitUntilExit()
-            #expect(dd.terminationStatus == 0)
-        }
+    /// `count` files of `megabytes` each, of random (incompressible) data, off the cooperative pool.
+    func writeRandomFiles(count: Int, megabytes: Int) async throws {
+        try await Tool.writeRandomFiles(count: count, megabytes: megabytes, in: source)
     }
 
     // MARK: restic, run directly (outside the runner)

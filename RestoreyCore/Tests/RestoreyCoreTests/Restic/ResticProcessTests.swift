@@ -31,7 +31,7 @@ struct ResticProcessTests {
     @Test(.timeLimit(.minutes(1))) func initBackupSnapshotsRoundTrip() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
-        try repo.writeRandomFiles(count: 5, megabytes: 1)
+        try await repo.writeRandomFiles(count: 5, megabytes: 1)
 
         try await repo.initialise()
         let backup = try await repo.run(.backup)
@@ -53,7 +53,7 @@ struct ResticProcessTests {
         let repo = try TempRepository()
         defer { repo.remove() }
         // Throttled, so the backup lasts long enough for restic to report progress before it finishes.
-        try repo.writeRandomFiles(count: 3, megabytes: 10)
+        try await repo.writeRandomFiles(count: 3, megabytes: 10)
         repo.updatePlan { $0.uploadLimitKiB = 10_000 }
         try await repo.initialise()
 
@@ -181,10 +181,22 @@ struct ResticProcessTests {
     /// A grandchild that inherited restic's stdout keeps the pipe open after restic exits. The pid must
     /// stop being trusted when restic exits, not when the drains finish, or a process that reuses the
     /// pid in between could be taken for it.
+    ///
+    /// Driven by events, not wall-clock windows (Ruling R71): the script waits for `exit` before it
+    /// exits and its grandchild holds stdout until `release`, so the pid is certainly supervised when
+    /// the test reads it, and the drains certainly can't have finished when the removal is checked, however
+    /// slowly a loaded machine schedules either side. The deadline only bounds a real failure.
     @Test(.timeLimit(.minutes(1))) func pidIsDroppedAtExitEvenWhileAChildHoldsStdoutOpen() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
-        let exitsEarly = try script("echo ready\n/bin/sleep 5 &\n/bin/sleep 0.5\nexit 0", in: repo)
+        let exitFile = repo.root.appendingPathComponent("exit")
+        let releaseFile = repo.root.appendingPathComponent("release")
+        let exitsEarly = try script("""
+            echo ready
+            ( while [ ! -f '\(releaseFile.path)' ]; do /bin/sleep 0.02; done ) &
+            while [ ! -f '\(exitFile.path)' ]; do /bin/sleep 0.02; done
+            exit 0
+            """, in: repo)
         let process = repo.process(try repo.invocation(.backup), executable: exitsEarly)
 
         let (ready, readyContinuation) = AsyncStream<Void>.makeStream()
@@ -193,19 +205,24 @@ struct ResticProcessTests {
             defer { finished.store(true, ordering: .sequentiallyConsistent) }
             return try await process.run { _ in readyContinuation.yield() }
         }
+        // Always let the grandchild go, so a failing expectation can't leave the run waiting.
+        defer { FileManager.default.createFile(atPath: releaseFile.path, contents: nil) }
         var readyIterator = ready.makeAsyncIterator()
         await readyIterator.next()
-        let pid = try #require(await repo.supervisor.all().first)
+        let pid = try #require(await repo.supervisor.all().first, "restic can't have exited yet, so it is supervised")
 
-        let deadline = ContinuousClock.now + .seconds(3)
+        FileManager.default.createFile(atPath: exitFile.path, contents: nil)
+        let deadline = ContinuousClock.now + .seconds(30)
         while await !repo.supervisor.all().isEmpty, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(await repo.supervisor.all().isEmpty, "pid \(pid) is still supervised after restic exited")
         let returnedEarly = finished.load(ordering: .sequentiallyConsistent)
-        #expect(!returnedEarly,
-                "run returned early, so the sleep didn't hold stdout and the test proves nothing")
-        _ = try await running.value
+        #expect(!returnedEarly, "run returned while the grandchild still held stdout, so the test proves nothing")
+
+        FileManager.default.createFile(atPath: releaseFile.path, contents: nil)
+        let termination = try await running.value
+        #expect(termination.exitCode == 0)
     }
 
     @Test(.timeLimit(.minutes(1))) func aProcessRunsOnlyOnce() async throws {

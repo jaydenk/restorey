@@ -10,7 +10,7 @@ final class RestServer: @unchecked Sendable {
     var repository: String { "rest:http://127.0.0.1:\(port)/" }
 
     /// - Parameter authentication: leave off for an open server; on, only `.htpasswd` users get in.
-    init(directory: URL, authentication: Bool = false) throws {
+    private init(directory: URL, authentication: Bool) throws {
         self.directory = directory
         port = try freeLocalPort()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -20,16 +20,18 @@ final class RestServer: @unchecked Sendable {
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
-        try waitUntilListening()
     }
 
-    private func waitUntilListening() throws {
+    /// Starts the server and returns once it accepts connections. Waits with `Task.sleep`, never by
+    /// blocking a cooperative thread (Ruling R71).
+    static func start(directory: URL, authentication: Bool = false) async throws -> RestServer {
+        let server = try RestServer(directory: directory, authentication: authentication)
         for _ in 0..<100 {
-            guard process.isRunning else { throw POSIXError(.ECONNREFUSED) }
-            if canConnect() { return }
-            Thread.sleep(forTimeInterval: 0.05)
+            guard server.process.isRunning else { throw POSIXError(.ECONNREFUSED) }
+            if server.canConnect() { return server }
+            try await Task.sleep(for: .milliseconds(50))
         }
-        stop()
+        server.stop()
         throw POSIXError(.ETIMEDOUT)
     }
 
@@ -49,9 +51,9 @@ final class RestServer: @unchecked Sendable {
         } == 0
     }
 
+    /// Kills the server. Foundation reaps it; nothing waits here.
     func stop() {
         guard process.isRunning else { return }
         kill(process.processIdentifier, SIGKILL)
-        process.waitUntilExit()
     }
 }

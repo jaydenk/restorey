@@ -26,7 +26,7 @@ struct SystemStopTests {
         defer { f.remove() }
         let recorder = ExitRecorder()
         await recorder.attach(to: f.state)
-        try f.writeRandomFiles(count: 6, megabytes: 30)
+        try await f.writeRandomFiles(count: 6, megabytes: 30)
 
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
         try await f.waitForPhase { $0.progress != nil }
@@ -139,7 +139,7 @@ struct SystemStopTests {
         defer { f.remove() }
         let recorder = ExitRecorder()
         await recorder.attach(to: f.state)
-        try f.writeRandomFiles(count: 6, megabytes: 30)
+        try await f.writeRandomFiles(count: 6, megabytes: 30)
 
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
         try await f.waitForPhase { $0.progress != nil }

@@ -169,19 +169,9 @@ final class TempRepository: @unchecked Sendable {
 
     // MARK: Source data
 
-    /// Writes `count` files of `megabytes` each, of random (incompressible) data.
-    func writeRandomFiles(count: Int, megabytes: Int, in directory: URL? = nil) throws {
-        let dir = directory ?? source
-        for i in 0..<count {
-            let file = dir.appendingPathComponent("random-\(i).bin")
-            let dd = Process()
-            dd.executableURL = URL(fileURLWithPath: "/bin/dd")
-            dd.arguments = ["if=/dev/urandom", "of=\(file.path)", "bs=1048576", "count=\(megabytes)"]
-            dd.standardError = FileHandle.nullDevice
-            try dd.run()
-            dd.waitUntilExit()
-            #expect(dd.terminationStatus == 0)
-        }
+    /// Writes `count` files of `megabytes` each, of random (incompressible) data, off the cooperative pool.
+    func writeRandomFiles(count: Int, megabytes: Int, in directory: URL? = nil) async throws {
+        try await Tool.writeRandomFiles(count: count, megabytes: megabytes, in: directory ?? source)
     }
 
     /// Entries in the repository's `locks/` directory.

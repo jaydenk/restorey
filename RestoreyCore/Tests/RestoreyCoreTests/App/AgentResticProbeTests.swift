@@ -33,22 +33,20 @@ struct AgentResticProbeTests {
     private struct Bundle {
         let root: URL
         let helpers: URL
-        init() throws {
-            root = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-probe-\(UUID().uuidString)")
-            helpers = root.appendingPathComponent("Restorey.app/Contents/Helpers", isDirectory: true)
+
+        static func make() async throws -> Bundle {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-probe-\(UUID().uuidString)")
+            let helpers = root.appendingPathComponent("Restorey.app/Contents/Helpers", isDirectory: true)
             try FileManager.default.createDirectory(at: helpers, withIntermediateDirectories: true)
             let source = root.appendingPathComponent("standin.c")
             try AgentResticProbeTests.source.write(to: source, atomically: true, encoding: .utf8)
             let built = root.appendingPathComponent("standin")
-            let cc = Process()
-            cc.executableURL = URL(fileURLWithPath: "/usr/bin/cc")
-            cc.arguments = ["-o", built.path, source.path]
-            try cc.run()
-            cc.waitUntilExit()
-            guard cc.terminationStatus == 0 else { throw CocoaError(.executableLoad) }
+            try await Tool.succeed("/usr/bin/cc", ["-o", built.path, source.path])
             try FileManager.default.copyItem(at: built, to: helpers.appendingPathComponent("Agent"))
             try FileManager.default.copyItem(at: built, to: helpers.appendingPathComponent("restic"))
+            return Bundle(root: root, helpers: helpers)
         }
+
         var prefix: String { helpers.path + "/" }
         var agent: URL { helpers.appendingPathComponent("Agent") }
         var restic: URL { helpers.appendingPathComponent("restic") }
@@ -74,7 +72,7 @@ struct AgentResticProbeTests {
     }
 
     @Test func findsAResticRunningUnderTheAgent() async throws {
-        let bundle = try Bundle()
+        let bundle = try await Bundle.make()
         defer { bundle.remove() }
         #expect(!resticRunsUnderAgent(helpersPrefix: bundle.prefix))
         let agent = try start(bundle.agent, ["spawn", bundle.restic.path, "30"])
@@ -85,7 +83,7 @@ struct AgentResticProbeTests {
     }
 
     @Test func ignoresAResticWhoseParentIsNotTheAgent() async throws {
-        let bundle = try Bundle()
+        let bundle = try await Bundle.make()
         defer { bundle.remove() }
         // Started by this test process, which lives outside the bundle.
         let restic = try start(bundle.restic, ["30"])
@@ -95,8 +93,8 @@ struct AgentResticProbeTests {
     }
 
     @Test func ignoresAnotherBundlesRestic() async throws {
-        let ours = try Bundle()
-        let theirs = try Bundle()
+        let ours = try await Bundle.make()
+        let theirs = try await Bundle.make()
         defer { ours.remove(); theirs.remove() }
         let agent = try start(theirs.agent, ["spawn", theirs.restic.path, "30"])
         defer { agent.terminate() }

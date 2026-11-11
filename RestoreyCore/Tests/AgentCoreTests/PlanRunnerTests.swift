@@ -596,7 +596,7 @@ struct PlanRunnerTests {
     @Test func pauseThenAutoResume() async throws {
         let f = try await RunnerFixture.make { $0.uploadLimitKiB = 20_000 } // keeps the backup running
         defer { f.remove() }
-        try f.writeRandomFiles(count: 6, megabytes: 30)
+        try await f.writeRandomFiles(count: 6, megabytes: 30)
 
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
         try await f.waitForPhase { $0.progress != nil }
@@ -675,7 +675,7 @@ struct PlanRunnerTests {
     @Test func interruptedRunRecoveredAfterStart() async throws {
         let f = try await RunnerFixture.make()
         defer { f.remove() }
-        try f.writeRandomFiles(count: 4, megabytes: 20)
+        try await f.writeRandomFiles(count: 4, megabytes: 20)
 
         // A restic killed with SIGKILL mid-backup leaves its lock behind, as an agent crash would.
         let plan = await f.plan()
@@ -755,7 +755,7 @@ struct PlanRunnerTests {
         let plan = await f.plan()
 
         // A stale lock from a restic killed mid-backup, and the run the agent had marked in progress.
-        try f.writeRandomFiles(count: 2, megabytes: 20)
+        try await f.writeRandomFiles(count: 2, megabytes: 20)
         var invocation = makeInvocation(.backup, plan: plan, context: f.context())
         invocation.arguments.insert(contentsOf: ["--limit-upload", "5000"], at: 1)
         let supervisor = SupervisedProcesses()

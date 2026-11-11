@@ -62,7 +62,7 @@ struct ResticUnhappyPathTests {
     @Test(.timeLimit(.minutes(1))) func staleLockBlocksCheckThenPlainUnlockClears() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
-        try repo.writeRandomFiles(count: 6, megabytes: 20)
+        try await repo.writeRandomFiles(count: 6, megabytes: 20)
         repo.updatePlan { $0.uploadLimitKiB = 20_000 } // keeps the backup running while we kill it
         try await repo.initialise()
 
@@ -96,7 +96,7 @@ struct ResticUnhappyPathTests {
     @Test(.timeLimit(.minutes(1))) func sigintDuringRealBackupLock() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
-        try repo.writeRandomFiles(count: 10, megabytes: 30) // 300 MB of random data
+        try await repo.writeRandomFiles(count: 10, megabytes: 30) // 300 MB of random data
         repo.updatePlan { $0.uploadLimitKiB = 20_000 } // about 15 s, so the signal lands mid-backup
         try await repo.initialise()
 
@@ -142,7 +142,7 @@ struct ResticUnhappyPathTests {
         // An empty .htpasswd turns authentication on and lets nobody in.
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try Data().write(to: directory.appendingPathComponent(".htpasswd"))
-        let server = try RestServer(directory: directory, authentication: true)
+        let server = try await RestServer.start(directory: directory, authentication: true)
         defer { server.stop() }
         let repo = try TempRepository(repository: .raw(repository: server.repository, environmentNames: []))
         defer { repo.remove() }
@@ -162,11 +162,11 @@ struct ResticUnhappyPathTests {
     @Test(.timeLimit(.minutes(1))) func restServerDiesMidBackupIsNeverSuccess() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-rs-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let server = try RestServer(directory: directory)
+        let server = try await RestServer.start(directory: directory)
         defer { server.stop() }
         let repo = try TempRepository(repository: .raw(repository: server.repository, environmentNames: []))
         defer { repo.remove() }
-        try repo.writeRandomFiles(count: 6, megabytes: 20)
+        try await repo.writeRandomFiles(count: 6, megabytes: 20)
         repo.updatePlan { $0.uploadLimitKiB = 20_000 }
         try await repo.initialise()
 
@@ -188,15 +188,26 @@ struct ResticUnhappyPathTests {
     // MARK: Disk and files
 
     @Test(.timeLimit(.minutes(3))) func fullDiskFails() async throws {
-        let disk = try RamDisk(megabytes: 64)
-        defer { disk.detach() }
+        let disk = try await DiskImage.make(megabytes: 64)
+        do {
+            try await backUpTooMuch(onto: disk)
+        } catch {
+            await disk.detach()
+            throw error
+        }
+        await disk.detach()
+    }
+
+    private func backUpTooMuch(onto disk: DiskImage) async throws {
         let repo = try TempRepository(
             repository: .raw(repository: disk.mountPoint.appendingPathComponent("repo").path, environmentNames: []))
         defer { repo.remove() }
-        try repo.writeRandomFiles(count: 4, megabytes: 30) // 120 MB onto a 64 MB disk
+        try await repo.writeRandomFiles(count: 4, megabytes: 30) // 120 MB onto a 64 MB disk
         try await repo.initialise()
 
         let run = try await repo.run(.backup)
+        // Still the volume it was: a missing mount would be a different failure, not a full disk.
+        #expect(disk.isMounted)
         guard case .failed = run.outcome else {
             Issue.record("expected .failed, got \(run.outcome): \(run.termination.stderrTail)")
             return
@@ -208,7 +219,7 @@ struct ResticUnhappyPathTests {
     @Test(.timeLimit(.minutes(1))) func unreadableFileIsWarning() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
-        try repo.writeRandomFiles(count: 3, megabytes: 1)
+        try await repo.writeRandomFiles(count: 3, megabytes: 1)
         let locked = repo.source.appendingPathComponent("locked.txt")
         try "secret".write(to: locked, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
