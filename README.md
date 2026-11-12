@@ -214,8 +214,22 @@ it starts, counting itself (never below 1 KiB/s). restic can't change the limit 
 share it started with. A backup to a folder or drive gets the plan's own limit alone. Wi-Fi names are matched
 ignoring case and surrounding spaces (not accents), and a backup on a listed network is recorded as "Skipped on
 Wi-Fi “<name>”". The app saves these settings through the agent, which refuses an upload limit of 0 or less, an
-empty Wi-Fi name and a name listed twice, with the reason, and saves the names trimmed. Until the agent can read
-the Wi-Fi name (it needs Location permission), a name it can't read never skips a backup.
+empty Wi-Fi name and a name listed twice, with the reason, and saves the names trimmed. The agent reads the
+Wi-Fi name itself (CoreWLAN) just before a backup to a networked repository, and only when the list isn't empty;
+a name it can't read (no Location permission, or not on Wi-Fi) never skips a backup.
+
+**Location permission.** macOS reveals the Wi-Fi network's name only to a process with Location Services
+permission, so the agent, which reads it, needs its own. Restorey asks for it only when you first add a Wi-Fi
+network to skip, never during setup; the app asks the agent over XPC (`requestLocationPermission`), and the prompt
+names the agent's display name ("Restorey", or "Restorey Dev" for a Debug build) and says "Restorey checks the
+Wi-Fi network's name so it can skip backups on networks you've listed." Once you have answered, macOS doesn't
+ask again; change it in System Settings → Privacy & Security → Location Services. The agent carries the usage text
+under `NSLocationUsageDescription` and `NSLocationWhenInUseUsageDescription`, and the hardened runtime's
+`com.apple.security.personal-information.location` entitlement; `scripts/verify-bundle.sh` checks all three.
+The agent reports the authorisation in `hello` (`locationAuthorised`) from what Core Location last told it,
+never by asking, and logs each request's answer and whether the Wi-Fi name was then readable. A Release log
+never names the network; a Debug build's log does, and also logs each name a backup's checks read. The Debug
+developer window's "Request Location" button sends the request and shows the reply.
 Each plan also records when its setup finished (`setupCompletedAt`, set when its recovery kit is first confirmed
 and never cleared), so a plan whose kit must be confirmed again is told apart from one whose setup was never
 finished, and whether the "No off-Mac monitoring" note was dismissed. The agent owns both setup dates; a saved

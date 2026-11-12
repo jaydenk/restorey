@@ -108,6 +108,13 @@ final class AgentConnection {
         }
     }
 
+    /// Waits for the user to answer the agent's Location prompt, which it needs to read the Wi-Fi name.
+    func requestLocationPermission() async -> Result<LocationPermissionReply, AgentCallError> {
+        await call(LocationPermissionReply.self, timeout: .seconds(600)) {
+            $0.requestLocationPermission(withReply: $1)
+        }
+    }
+
     /// Drops the connection, e.g. after `unregister()`; the next call makes a new one.
     /// The supervisor fetches `status` again once the agent is healthy (`shouldRefetchStatus`), which
     /// resubscribes, so a pending back-off retry is no longer needed.

@@ -31,6 +31,9 @@ targets:
         product: RestoreyCore
       - package: RestoreyCore
         product: AgentCore
+      # The Wi-Fi name for the "skip on these Wi-Fi networks" rule, and the Location permission it needs.
+      - sdk: CoreWLAN.framework
+      - sdk: CoreLocation.framework
     settings:
       base:
         PRODUCT_NAME: $(RESTOREY_AGENT_PRODUCT_NAME)

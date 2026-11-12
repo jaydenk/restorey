@@ -143,6 +143,13 @@ final class DeveloperModel {
         }
     }
 
+    /// Asks the agent for Location permission (the prompt appears the first time) and shows its reply.
+    func requestLocation() {
+        run("Request Location") { [connection = supervisor.connection] in
+            Self.describe(await connection.requestLocationPermission())
+        }
+    }
+
     private func planAction<T: Encodable>(
         _ title: String, _ call: @escaping (AgentConnection, UUID) async -> Result<T, AgentCallError>
     ) {

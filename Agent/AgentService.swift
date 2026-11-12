@@ -9,19 +9,21 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     private let state: AgentState
     private let log: AppLog
     private let notifier: Notifier
+    private let location: LocationPermission
     /// `ExecutableFingerprint` of the binary at launch, reported in `hello`.
     private let executableFingerprint: String?
     /// Called after a change that can make a plan due now: a save, a recovery kit confirmation, a resume.
     private let plansChanged: @Sendable () -> Void
 
     init(
-        state: AgentState, log: AppLog, notifier: Notifier, executableFingerprint: String?,
-        plansChanged: @escaping @Sendable () -> Void
+        state: AgentState, log: AppLog, notifier: Notifier, location: LocationPermission,
+        executableFingerprint: String?, plansChanged: @escaping @Sendable () -> Void
     ) {
         self.executableFingerprint = executableFingerprint
         self.state = state
         self.log = log
         self.notifier = notifier
+        self.location = location
         self.plansChanged = plansChanged
     }
 
@@ -31,14 +33,17 @@ final class AgentService: NSObject, AgentXPC, Sendable {
         // Not logged: the app's heartbeat sends one every 10 s. Built in process from what the agent holds,
         // never by asking the notification centre (Ruling R68): a hung usernoted must not make the app
         // think the agent is dead and unregister it mid-backup.
-        respond(reply, "hello") { [state, executableFingerprint] in
+        respond(reply, "hello") { [state, location, executableFingerprint] in
             _ = try Self.decode(HelloRequest.self, from: request)
             let info = Bundle.main.infoDictionary ?? [:]
-            return await state.helloReply(
+            var hello = await state.helloReply(
                 agentVersion: info["CFBundleShortVersionString"] as? String ?? "unknown",
                 agentBuild: info["CFBundleVersion"] as? String ?? "unknown",
                 executablePath: Bundle.main.executableURL?.path ?? "unknown",
                 executableFingerprint: executableFingerprint)
+            // The last authorisation Core Location reported, held in process: never a call to it (R68).
+            hello.locationAuthorised = location.knownAuthorised
+            return hello
         }
     }
 
@@ -138,6 +143,21 @@ final class AgentService: NSObject, AgentXPC, Sendable {
             // Bounded, so a notification centre that doesn't answer can't hold up the reply.
             await state.deliverAlerts(waitingAtMost: .seconds(15))
             return NotificationPermissionReply(granted: granted)
+        }
+    }
+
+    func requestLocationPermission(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "requestLocationPermission") { [log, location] in
+            let answer = await location.request()
+            let name = WiFiName.current()
+            #if DEBUG
+            let readable = name.map { "readable: \"\($0)\"" } ?? "not readable"
+            #else
+            // A Release log never names the network, which says where the user is.
+            let readable = name == nil ? "not readable" : "readable"
+            #endif
+            log.info("Location permission \(answer.status); the Wi-Fi name is \(readable)")
+            return answer
         }
     }
 

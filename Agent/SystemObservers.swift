@@ -27,8 +27,12 @@ final class SystemObservers: Sendable {
         },
         release: { id in _ = IOPMAssertionRelease(id) })
 
+    /// The Debug-only Wi-Fi name line in `wiFiName()`.
+    private let log: AppLog
+
     /// Starts watching the network path.
-    init() {
+    init(log: AppLog) {
+        self.log = log
         monitor.pathUpdateHandler = { [network, weak self] path in
             let restored = network.update(
                 path.status == .satisfied
@@ -47,9 +51,18 @@ final class SystemObservers: Sendable {
             network: network.forPreflight,
             isMountPoint: { SystemConditions.isMountPoint($0) },
             fileExists: { FileManager.default.fileExists(atPath: $0) },
-            // Task 3 reads the name with CoreWLAN once the agent has Location permission. Until then
-            // it's unknown, which never skips (Ruling P2-8).
-            currentWiFiName: { nil })
+            // Read only when a networked plan meets a non-empty Wi-Fi list. Nil without Location permission
+            // or off Wi-Fi, which never skips (Ruling P2-8).
+            currentWiFiName: { [self] in wiFiName() })
+    }
+
+    private func wiFiName() -> String? {
+        let name = WiFiName.current()
+        #if DEBUG
+        // For the live check only: a Release log never names the network, which says where the user is.
+        log.info("Preflight read the Wi-Fi name: \(name.map { "\"\($0)\"" } ?? "none")")
+        #endif
+        return name
     }
 
     /// Calls `handler` on the monitor's queue each time the network comes back (unsatisfied to satisfied,

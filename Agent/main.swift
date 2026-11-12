@@ -79,7 +79,7 @@ do {
 
     if let team = AgentListener.teamID(in: .main) {
         // Started now, so the network path is known by the first run.
-        let observers = SystemObservers()
+        let observers = SystemObservers(log: log)
         keptAlive.append(observers)
         let scheduler = Scheduler(log: log)
         Task { @MainActor in
@@ -99,9 +99,11 @@ do {
                 log: { log.info($0) })
             let notifier = Notifier()
             await state.attach(notifier: notifier, log: { log.info($0) })
+            // Made here, on the main thread, whose run loop delivers Core Location's reports.
+            let location = LocationPermission()
             let service = AgentService(
-                state: state, log: log, notifier: notifier, executableFingerprint: launchFingerprint,
-                plansChanged: { scheduler.nudge(.configChanged) })
+                state: state, log: log, notifier: notifier, location: location,
+                executableFingerprint: launchFingerprint, plansChanged: { scheduler.nudge(.configChanged) })
             let listener = AgentListener(service: service, log: log)
             await state.setStatusObserver { listener.broadcast($0) }
             keptAlive.append(listener)

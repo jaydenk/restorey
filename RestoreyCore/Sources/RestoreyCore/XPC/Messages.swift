@@ -37,10 +37,13 @@ public struct HelloReply: Codable, Sendable, Equatable {
     /// `ExecutableFingerprint` of the agent's binary when it started. Nil from agents older than fix
     /// round 3, which the app treats as replaced.
     public var executableFingerprint: String?
+    /// Whether the agent may use Location Services, which macOS requires before it reveals the Wi-Fi
+    /// network's name: nil until the user has been asked, and from an agent older than Task 3.
+    public var locationAuthorised: Bool?
 
     public init(
         agentVersion: String, agentBuild: String, executablePath: String, draining: Bool,
-        notificationsAuthorised: Bool?, executableFingerprint: String? = nil
+        notificationsAuthorised: Bool?, executableFingerprint: String? = nil, locationAuthorised: Bool? = nil
     ) {
         self.agentVersion = agentVersion
         self.agentBuild = agentBuild
@@ -48,6 +51,7 @@ public struct HelloReply: Codable, Sendable, Equatable {
         self.draining = draining
         self.notificationsAuthorised = notificationsAuthorised
         self.executableFingerprint = executableFingerprint
+        self.locationAuthorised = locationAuthorised
     }
 }
 
@@ -297,5 +301,19 @@ public struct NotificationPermissionReply: Codable, Sendable, Equatable {
 
     public init(granted: Bool) {
         self.granted = granted
+    }
+}
+
+/// `requestLocationPermission`'s reply: the agent's Location Services authorisation once the user has
+/// answered the prompt (or at once, if they answered before).
+public struct LocationPermissionReply: Codable, Sendable, Equatable {
+    /// True for "authorisedAlways" and "authorisedWhenInUse", which macOS treats alike.
+    public var authorised: Bool
+    /// "notDetermined", "restricted", "denied", "authorisedAlways", "authorisedWhenInUse" or "unknown".
+    public var status: String
+
+    public init(authorised: Bool, status: String) {
+        self.authorised = authorised
+        self.status = status
     }
 }

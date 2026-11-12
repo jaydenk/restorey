@@ -65,6 +65,13 @@ agent_display=$(plist_get "$AGENT/Contents/Info.plist" CFBundleDisplayName)
 [[ "$app_display" == "$display" ]] || fail "app CFBundleDisplayName is '$app_display', expected '$display'"
 [[ "$agent_display" == "$app_display" ]] || fail "agent CFBundleDisplayName is '$agent_display', the app's is '$app_display'"
 
+# The agent reads the Wi-Fi name, which needs Location permission: requestWhenInUseAuthorization fails at once
+# without the usage description (NSLocationUsageDescription on macOS, and the When In Use key it documents).
+location_text="Restorey checks the Wi-Fi network's name so it can skip backups on networks you've listed."
+for key in NSLocationUsageDescription NSLocationWhenInUseUsageDescription; do
+  [[ "$(plist_get "$AGENT/Contents/Info.plist" "$key")" == "$location_text" ]] || fail "agent $key is not the Location usage text"
+done
+
 # Launch agent plist.
 [[ "$(plist_get "$PLIST" Label)" == "$label" ]] || fail "plist Label differs from $label"
 prog=$(plist_get "$PLIST" BundleProgram)
@@ -105,6 +112,11 @@ for part in "$APP" "$AGENT"; do
   [[ "$ent" == *"keychain-access-groups"*"$app_team.$root"* ]] \
     || fail "$(basename "$part") lacks the keychain access group $app_team.$root"
 done
+
+# Under the hardened runtime, Location Services also needs the resource-access entitlement.
+agent_ent=$(codesign -d --entitlements - --xml "$AGENT" 2>/dev/null || true)
+[[ "$agent_ent" == *"<key>com.apple.security.personal-information.location</key><true/>"* ]] \
+  || fail "agent lacks com.apple.security.personal-information.location"
 
 echo "team: $app_team"
 echo "verify-bundle: OK $APP"

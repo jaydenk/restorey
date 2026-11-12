@@ -117,6 +117,7 @@ struct DeveloperView: View {
                 Button("Pause") { model.pause() }
                 Button("Resume") { model.resume() }
                 Button("Request notifications") { model.requestNotifications() }
+                Button("Request Location") { model.requestLocation() }
                 Button("Delete plan…", role: .destructive) { confirmingDelete = true }
                     .disabled(model.selectedPlan == nil)
             }

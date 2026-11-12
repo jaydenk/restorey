@@ -35,6 +35,9 @@ struct MessagesTests {
         try roundTrip(HelloReply(
             agentVersion: "0.1.0", agentBuild: "8", executablePath: "/x", draining: false,
             notificationsAuthorised: false, executableFingerprint: "16777234:42:59216:1.5"))
+        try roundTrip(HelloReply(
+            agentVersion: "0.1.0", agentBuild: "12", executablePath: "/x", draining: false,
+            notificationsAuthorised: true, executableFingerprint: "1:2:3:4.5", locationAuthorised: false))
     }
 
     /// An agent from before fix round 3 sends no fingerprint; its reply must still decode (as nil), so the
@@ -44,6 +47,7 @@ struct MessagesTests {
         let reply = try XPCCoding.decode(HelloReply.self, from: Data(json.utf8))
         #expect(reply.executableFingerprint == nil)
         #expect(reply.agentBuild == "1")
+        #expect(reply.locationAuthorised == nil, "an agent older than Task 3 sends no Location field")
     }
 
     @Test func statusRoundTripsWithEveryPhase() throws {
@@ -213,6 +217,9 @@ struct MessagesTests {
         try roundTrip(DrainReply(drained: true))
         #expect(try json(DrainReply(drained: true)) == #"{"drained":true}"#)
         try roundTrip(NotificationPermissionReply(granted: false))
+        try roundTrip(LocationPermissionReply(authorised: true, status: "authorisedAlways"))
+        #expect(try json(LocationPermissionReply(authorised: false, status: "denied"))
+            == #"{"authorised":false,"status":"denied"}"#)
     }
 
     @Test func descriptionsNeverContainSecretValues() {
