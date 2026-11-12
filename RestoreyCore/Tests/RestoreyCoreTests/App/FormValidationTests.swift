@@ -69,12 +69,16 @@ struct FormValidationTests {
 
     @Test func plainHTTPIsForTheLocalNetworkOnly() {
         for host in ["http://localhost:9000", "http://127.0.0.1:9000", "http://10.0.0.5", "http://192.168.1.20:9000",
-            "http://172.20.1.1", "http://nas.local:9000", "http://nas", "http://[::1]:9000", "http://169.254.1.1"] {
+            "http://172.20.1.1", "http://nas.local:9000", "http://nas", "http://[::1]:9000", "http://169.254.1.1",
+            "http://100.64.0.1", "http://100.127.255.254", "http://nas.tail1234.ts.net", "http://nas.lan",
+            "http://nas.home.arpa", "http://nas.internal", "http://[febf::1]:9000", "http://[fe80::1]", "http://[fd12::1]"] {
             #expect(FormValidation.endpoint(host) == nil, "\(host)")
         }
-        for host in ["http://s3.example.com", "http://8.8.8.8", "http://172.32.0.1", "http://11.0.0.1"] {
+        for host in ["http://s3.example.com", "http://8.8.8.8", "http://172.32.0.1", "http://11.0.0.1",
+            "http://100.63.255.255", "http://100.128.0.1", "http://ts.net.example.com", "http://nas.lan.example.com",
+            "http://[fec0::1]", "http://[fe7f::1]", "http://[2001:db8::1]"] {
             #expect(FormValidation.endpoint(host)
-                == "http:// is only for a store on this Mac or your local network. Use https:// for anything else.", "\(host)")
+                == "http:// is only for a store on this Mac, your local network or Tailscale. Use https:// for anything else.", "\(host)")
         }
     }
 

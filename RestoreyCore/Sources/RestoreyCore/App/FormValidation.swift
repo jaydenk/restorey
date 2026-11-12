@@ -52,7 +52,7 @@ public enum FormValidation {
     }
 
     /// An S3 endpoint: just the server address (and port), `https://` assumed when no scheme is typed.
-    /// `http://` is for a store on this Mac or the local network only. A path, user info, query or fragment
+    /// `http://` is for a store on this Mac, the local network or Tailscale only (`isLocalHost`). A path, user info, query or fragment
     /// is refused: a path would be misread as the bucket, and user info would put a secret in `config.json`.
     public static func endpoint(_ text: String) -> String? {
         let typed = trimmed(text)
@@ -78,26 +78,35 @@ public enum FormValidation {
             return "Leave the folder out of the endpoint: the bucket and prefix have their own fields."
         }
         if components.scheme?.lowercased() == "http", !isLocalHost(host) {
-            return "http:// is only for a store on this Mac or your local network. Use https:// for anything else."
+            return "http:// is only for a store on this Mac, your local network or Tailscale. Use https:// for anything else."
         }
         return nil
     }
 
-    /// A host that stays on this Mac or the local network: localhost, a loopback or private IPv4 address,
-    /// an IPv6 loopback or local address, a `.local` name, or a name with no dots.
+    /// A host `http://` is accepted for: one that stays on this Mac, the local network or the user's tailnet.
+    /// That is localhost; a loopback, private (10/8, 172.16/12, 192.168/16), link-local (169.254/16) or Tailscale
+    /// (100.64.0.0/10) IPv4 address; an IPv6 loopback, link-local (fe80::/10) or unique local (fc00::/7)
+    /// address; a name ending in `.local`, `.localhost`, `.lan`, `.home.arpa`, `.internal` or `.ts.net`; or a
+    /// name with no dots. Every other host needs `https://`.
     static func isLocalHost(_ rawHost: String) -> Bool {
         let host = rawHost.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-        if host == "localhost" || host == "::1" || host.hasSuffix(".local") || host.hasSuffix(".localhost") { return true }
-        if host.hasPrefix("fe80:") || host.hasPrefix("fc") && host.contains(":") || host.hasPrefix("fd") && host.contains(":") {
+        if host == "localhost" || host == "::1" { return true }
+        for suffix in [".local", ".localhost", ".lan", ".home.arpa", ".internal", ".ts.net"] where host.hasSuffix(suffix) {
             return true
+        }
+        if host.contains(":") {
+            guard let first = host.split(separator: ":", omittingEmptySubsequences: false).first,
+                let hextet = Int(first, radix: 16)
+            else { return false }
+            return (0xfe80...0xfebf).contains(hextet) || (0xfc00...0xfdff).contains(hextet)
         }
         let octets = host.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) }
         if octets.count == 4, octets.allSatisfy({ $0 != nil && (0...255).contains($0!) }) {
             let o = octets.map { $0! }
             return o[0] == 10 || o[0] == 127 || (o[0] == 192 && o[1] == 168) || (o[0] == 172 && (16...31).contains(o[1]))
-                || (o[0] == 169 && o[1] == 254)
+                || (o[0] == 169 && o[1] == 254) || (o[0] == 100 && (64...127).contains(o[1]))
         }
-        return !host.contains(".") && !host.contains(":")
+        return !host.contains(".")
     }
 
     /// The name restic records on every snapshot. Anything on one line will do.
