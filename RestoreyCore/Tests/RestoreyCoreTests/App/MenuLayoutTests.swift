@@ -12,9 +12,9 @@ struct MenuLayoutTests {
     }
 
     private static func choice(
-        _ id: UUID, _ name: String, backUp: Bool = true, pause: Bool = true, resume: Bool = false
+        _ id: UUID, _ name: String, backUp: Bool = true, pause: Bool = true, resume: Bool = false, restore: Bool = true
     ) -> PlanChoice {
-        PlanChoice(id: id, name: name, canBackUp: backUp, canPause: pause, canResume: resume)
+        PlanChoice(id: id, name: name, canBackUp: backUp, canPause: pause, canResume: resume, canRestore: restore)
     }
 
     private static func actions(_ plans: [PlanChoice]) -> MenuActions {
@@ -49,7 +49,7 @@ struct MenuLayoutTests {
         #expect(MenuLayout.rows(content, developer: true) == [
             .plan(Self.line(Self.a, "MacBook")),
             .plan(Self.line(Self.b, "Photos", progress: 0.42)),
-            .progress(planID: Self.b, fraction: 0.42),
+            .progress(planID: Self.b, name: "Photos", fraction: 0.42),
             .separator,
             .submenu(title: "Back Up Now", enabled: true, items: [
                 .button(title: "All Plans", command: .backUpAll),
@@ -72,6 +72,32 @@ struct MenuLayoutTests {
             .button(title: "Developer…", command: .developer),
             .button(title: "Quit Restorey", command: .quit),
         ])
+    }
+
+    /// Fix round 1: an unfinished plan has no recovery kit and may have no repository, so it has nothing to restore.
+    @Test func unfinishedPlansAreNotListedUnderRestoreFiles() {
+        let plans = [Self.choice(Self.a, "MacBook"), Self.choice(Self.b, "Photos", backUp: false, pause: false, restore: false)]
+        let rows = MenuLayout.rows(
+            MenuContent(icon: .warning, plans: [Self.line(Self.a, "MacBook"), Self.line(Self.b, "Photos")],
+                        actions: Self.actions(plans)),
+            developer: false)
+        #expect(rows.contains(.submenu(title: "Restore Files…", enabled: true, items: [
+            .button(title: "MacBook", command: .restoreFiles(Self.a)),
+        ])))
+        let onlyUnfinished = MenuLayout.rows(
+            MenuContent(icon: .warning, plans: [Self.line(Self.b, "Photos")],
+                        actions: Self.actions([Self.choice(Self.b, "Photos", backUp: false, pause: false, restore: false)])),
+            developer: false)
+        #expect(!onlyUnfinished.contains { if case .button(_, .restoreFiles, _, _) = $0 { true } else { false } })
+    }
+
+    /// Fix round 1: whether the actions get submenus is `perPlanSubmenus`, decided once by `MenuPresentation`.
+    @Test func submenusFollowPerPlanSubmenus() {
+        var actions = Self.actions([Self.choice(Self.a, "MacBook"), Self.choice(Self.b, "Photos")])
+        actions.perPlanSubmenus = false
+        let rows = MenuLayout.rows(MenuContent(icon: .ok, actions: actions), developer: false)
+        #expect(rows.contains(.button(title: "Back Up Now", command: .backUpAll)))
+        #expect(rows.contains(.button(title: "Pause", command: .pauseAll)))
     }
 
     @Test func pausedOffersResumeFirstAndNoPause() {
@@ -128,7 +154,7 @@ struct MenuLayoutTests {
         #expect(MenuRow.banner(banner).command == .banner(.openFullDiskAccess))
         #expect(MenuRow.plan(Self.line(Self.a, "MacBook")).command == .openPlan(Self.a))
         #expect(MenuRow.button(title: "Back Up Now", command: .backUpAll).command == .backUpAll)
-        for row: MenuRow in [.message("m"), .separator, .progress(planID: Self.a, fraction: 0.5),
+        for row: MenuRow in [.message("m"), .separator, .progress(planID: Self.a, name: "MacBook", fraction: 0.5),
                              .submenu(title: "Pause", enabled: true, items: [])] {
             #expect(row.command == nil, "\(row)")
         }

@@ -91,13 +91,17 @@ public struct PlanChoice: Sendable, Equatable {
     public var canBackUp: Bool
     public var canPause: Bool
     public var canResume: Bool
+    /// Listed under Restore Files…: every plan but an unfinished one, which has no recovery kit and may have no
+    /// repository yet.
+    public var canRestore: Bool
 
-    public init(id: UUID, name: String, canBackUp: Bool, canPause: Bool, canResume: Bool) {
+    public init(id: UUID, name: String, canBackUp: Bool, canPause: Bool, canResume: Bool, canRestore: Bool) {
         self.id = id
         self.name = name
         self.canBackUp = canBackUp
         self.canPause = canPause
         self.canResume = canResume
+        self.canRestore = canRestore
     }
 }
 
@@ -229,7 +233,7 @@ public enum MenuPresentation {
                 id: plan.plan.id, name: plan.plan.name,
                 canBackUp: ready && !plan.phase.isRunning,
                 canPause: ready && !plan.phase.isPaused && !plan.phase.isStopped,
-                canResume: ready && plan.phase.isPaused)
+                canResume: ready && plan.phase.isPaused, canRestore: plan.setupState != .unfinished)
         }
         return MenuActions(
             backUpNow: choices.contains(where: \.canBackUp), pause: choices.contains(where: \.canPause),

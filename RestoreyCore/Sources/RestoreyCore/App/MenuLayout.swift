@@ -26,8 +26,8 @@ public enum MenuRow: Sendable, Equatable {
     case banner(MenuBanner)
     /// A plan's name, status, detail and destination. Choosing it opens Settings at the plan.
     case plan(PlanLine)
-    /// The progress bar under a running plan's line.
-    case progress(planID: UUID, fraction: Double)
+    /// The progress bar under a running plan's line. `name` is for VoiceOver.
+    case progress(planID: UUID, name: String, fraction: Double)
     /// A plain line that does nothing.
     case message(String)
     case button(title: String, command: MenuCommand, enabled: Bool = true, indented: Bool = false)
@@ -48,7 +48,9 @@ public enum MenuLayout {
         if let message = content.message { rows.append(.message(message)) }
         for line in content.plans {
             rows.append(.plan(line))
-            if let progress = line.progress { rows.append(.progress(planID: line.id, fraction: progress)) }
+            if let progress = line.progress {
+                rows.append(.progress(planID: line.id, name: line.name, fraction: progress))
+            }
             if let action = line.action {
                 rows.append(.button(title: action.buttonTitle, command: .banner(action), indented: true))
             }
@@ -58,19 +60,22 @@ public enum MenuLayout {
         let actions = content.actions
         let plans = actions.plans
         if !plans.isEmpty {
+            let submenus = actions.perPlanSubmenus
             if actions.resume {
-                rows.append(perPlan("Resume", enabled: true, all: .resumeAll, plans, \.canResume, MenuCommand.resume))
+                rows.append(perPlan("Resume", submenus, enabled: true, all: .resumeAll, plans, \.canResume, MenuCommand.resume))
             }
-            rows.append(perPlan("Back Up Now", enabled: actions.backUpNow, all: .backUpAll, plans, \.canBackUp, MenuCommand.backUp))
+            rows.append(perPlan(
+                "Back Up Now", submenus, enabled: actions.backUpNow, all: .backUpAll, plans, \.canBackUp, MenuCommand.backUp))
             if actions.pause {
-                rows.append(perPlan("Pause", enabled: true, all: .pauseAll, plans, \.canPause, MenuCommand.pause))
+                rows.append(perPlan("Pause", submenus, enabled: true, all: .pauseAll, plans, \.canPause, MenuCommand.pause))
             }
-            if plans.count == 1 {
-                rows.append(.button(title: "Restore Files…", command: .restoreFiles(plans[0].id)))
-            } else {
+            let restorable = plans.filter(\.canRestore)
+            if submenus, !restorable.isEmpty {
                 rows.append(.submenu(
                     title: "Restore Files…", enabled: true,
-                    items: plans.map { .button(title: $0.name, command: .restoreFiles($0.id)) }))
+                    items: restorable.map { .button(title: $0.name, command: .restoreFiles($0.id)) }))
+            } else if let only = restorable.first {
+                rows.append(.button(title: "Restore Files…", command: .restoreFiles(only.id)))
             }
             rows.append(.separator)
         }
@@ -80,12 +85,13 @@ public enum MenuLayout {
         return rows
     }
 
-    /// One plan: a plain item. Several: a submenu whose first item acts on all of them, then one item per plan.
+    /// Without submenus: a plain item acting on all plans. With: a submenu whose first item acts on all of them, then
+    /// one item per plan.
     private static func perPlan(
-        _ title: String, enabled: Bool, all: MenuCommand, _ plans: [PlanChoice], _ can: KeyPath<PlanChoice, Bool>,
-        _ one: (UUID) -> MenuCommand
+        _ title: String, _ submenus: Bool, enabled: Bool, all: MenuCommand, _ plans: [PlanChoice],
+        _ can: KeyPath<PlanChoice, Bool>, _ one: (UUID) -> MenuCommand
     ) -> MenuRow {
-        guard plans.count > 1 else { return .button(title: title, command: all, enabled: enabled) }
+        guard submenus else { return .button(title: title, command: all, enabled: enabled) }
         let each = plans.map { MenuRow.button(title: $0.name, command: one($0.id), enabled: $0[keyPath: can]) }
         return .submenu(title: title, enabled: enabled, items: [.button(title: "All Plans", command: all), .separator] + each)
     }
@@ -115,7 +121,7 @@ extension MenuRow {
         switch self {
         case .banner(let banner): .banner(banner.action, dismiss: banner.dismiss)
         case .plan(let line): .plan(line.id)
-        case .progress(let id, _): .progress(id)
+        case .progress(let id, _, _): .progress(id)
         case .message: .message
         case .button(_, let command, _, let indented): .button(command, indented: indented)
         case .submenu(let title, _, let items): .submenu(title, items.map(\.shape))

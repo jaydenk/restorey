@@ -333,7 +333,7 @@ final class AgentSupervisor {
     /// A new agent run in a hello retires the run before it (R76). The menu shows the notification banner from the
     /// hello, so a change there is a change to show.
     private func noteHello(_ reply: HelloReply?) {
-        if let reply { runs.observe(reply.agentRun) }
+        if let reply { runs.helloReported(reply.agentRun) }
         let notificationsChanged = reply?.notificationsAuthorised != lastHello?.notificationsAuthorised
         lastHello = reply
         if notificationsChanged { notify() }
@@ -349,7 +349,7 @@ final class AgentSupervisor {
             }
             return
         }
-        runs.observe(status.agentRun)
+        runs.statusAccepted(status.agentRun)
         self.status = status
         lastKnownStatus = status
         rates.add(status, at: Date())

@@ -8,21 +8,31 @@ public func shouldAccept(status: AgentStatus, current: AgentStatus?, retired: Se
 }
 
 /// The agent processes the app has seen, by the `agentRun` each one stamps on its hellos and statuses. Each launch
-/// of the agent has a new one, so a newer run seen in a hello or a status means the one before it has gone for
-/// good, and anything it still sends is stale.
+/// of the agent has a new one, so a hello from a newer run means the one before it has gone for good, and anything
+/// it still sends is stale.
+///
+/// Only hellos retire runs (fix round 1). Heartbeats are serialised, so their order is the order of the agent
+/// processes; statuses aren't (a late reply can arrive at any time), and a late status from a run the app never
+/// heard of would otherwise retire the live agent and freeze the menu.
 public struct AgentRunTracker: Sendable, Equatable {
-    /// The newest run seen.
+    /// The run of the latest hello, or of the first status while no hello has been answered.
     public private(set) var current: UUID?
     /// Every run seen replaced. One per agent launch while the app runs, so it stays small.
     public private(set) var retired: Set<UUID> = []
 
     public init() {}
 
-    /// A hello or an accepted status reported `run`. Nil (an agent older than run IDs) and a retired run change
-    /// nothing.
-    public mutating func observe(_ run: UUID?) {
+    /// A hello reported `run`: a new run retires the current one. Nil (an agent older than run IDs) and a retired
+    /// run change nothing.
+    public mutating func helloReported(_ run: UUID?) {
         guard let run, run != current, !retired.contains(run) else { return }
         if let current { retired.insert(current) }
+        current = run
+    }
+
+    /// A status from `run` was accepted. It names the current run only when none is known yet, and never retires.
+    public mutating func statusAccepted(_ run: UUID?) {
+        guard current == nil, let run, !retired.contains(run) else { return }
         current = run
     }
 

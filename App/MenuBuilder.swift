@@ -26,6 +26,21 @@ enum MenuBuilder {
         }
     }
 
+    /// From `NSMenuDelegate.menu(_:willHighlight:)`. AppKit doesn't recolour an attributed title's explicit
+    /// foreground colours when it highlights an item, and the highlight is the accent colour, so accent, red or
+    /// orange text (and a coloured image) would vanish on it. The item about to be highlighted is redrawn with the
+    /// selected-menu-item text colour and a template image, which the menu tints for the highlight, and the one
+    /// losing the highlight gets its colours back. `item` nil: nothing is highlighted.
+    static func willHighlight(_ item: NSMenuItem?, in menu: NSMenu) {
+        for candidate in menu.items {
+            guard let box = candidate.representedObject as? RowBox else { continue }
+            let highlighted = candidate === item
+            guard box.highlighted != highlighted else { continue }
+            box.highlighted = highlighted
+            update(candidate, to: box.row)
+        }
+    }
+
     /// The command of an item `build` made, or nil for one that does nothing.
     static func command(of item: NSMenuItem) -> MenuCommand? {
         (item.representedObject as? RowBox)?.row.command
@@ -59,26 +74,30 @@ enum MenuBuilder {
     }
 
     private static func update(_ item: NSMenuItem, to row: MenuRow) {
-        if let box = item.representedObject as? RowBox {
+        let box: RowBox
+        if let existing = item.representedObject as? RowBox {
+            box = existing
             box.row = row
         } else {
-            item.representedObject = RowBox(row)
+            box = RowBox(row)
+            item.representedObject = box
         }
+        let palette = Palette(highlighted: box.highlighted)
         switch row {
         case .separator:
             break
         case .banner(let banner):
             item.title = "\(banner.title). \(banner.detail) \(banner.action.buttonTitle)"
-            item.attributedTitle = bannerTitle(banner)
-            item.image = bannerImage(banner.severity)
+            item.attributedTitle = bannerTitle(banner, palette)
+            item.image = bannerImage(banner.severity, palette)
             item.isEnabled = true
         case .plan(let line):
             item.title = [line.name, line.status, line.detail, line.destination].compactMap(\.self).joined(separator: ", ")
-            item.attributedTitle = planTitle(line)
+            item.attributedTitle = planTitle(line, palette)
             item.isEnabled = true
-        case .progress(_, let fraction):
+        case .progress(_, let name, let fraction):
             item.isEnabled = false
-            (item.view as? ProgressRowView)?.fraction = fraction
+            (item.view as? ProgressRowView)?.show(fraction, of: name)
         case .message(let text):
             item.title = text
             item.isEnabled = false
@@ -109,42 +128,60 @@ enum MenuBuilder {
     private static let boldFont = NSFontManager.shared.convert(NSFont.menuFont(ofSize: 0), toHaveTrait: .boldFontMask)
     private static let smallFont = NSFont.menuFont(ofSize: NSFont.smallSystemFontSize)
 
+    /// The text colours of a row: its own, or all the selected-menu-item text colour while it is highlighted.
+    private struct Palette {
+        var highlighted: Bool
+
+        func colour(_ own: NSColor) -> NSColor { highlighted ? .selectedMenuItemTextColor : own }
+    }
+
     /// "Full Disk Access is missing" in bold, then the detail and the fix, as the mockup's banners.
-    private static func bannerTitle(_ banner: MenuBanner) -> NSAttributedString {
-        let text = NSMutableAttributedString(string: banner.title, attributes: [.font: boldFont, .foregroundColor: NSColor.labelColor])
+    private static func bannerTitle(_ banner: MenuBanner, _ palette: Palette) -> NSAttributedString {
+        let text = NSMutableAttributedString(
+            string: banner.title, attributes: [.font: boldFont, .foregroundColor: palette.colour(.labelColor)])
         let detail = banner.detail.isEmpty ? "" : banner.detail + " "
         text.append(NSAttributedString(
-            string: "\n" + detail, attributes: [.font: smallFont, .foregroundColor: NSColor.secondaryLabelColor]))
+            string: "\n" + detail, attributes: [.font: smallFont, .foregroundColor: palette.colour(.secondaryLabelColor)]))
         text.append(NSAttributedString(
-            string: banner.action.buttonTitle, attributes: [.font: smallFont, .foregroundColor: NSColor.controlAccentColor]))
+            string: banner.action.buttonTitle,
+            attributes: [.font: smallFont, .foregroundColor: palette.colour(.controlAccentColor)]))
         return text
     }
 
     /// The plan's name, its status (red for an error, orange for a warning, grey while paused), then the detail and
     /// the destination in secondary text.
-    private static func planTitle(_ line: PlanLine) -> NSAttributedString {
-        let text = NSMutableAttributedString(string: line.name, attributes: [.font: boldFont, .foregroundColor: NSColor.labelColor])
+    private static func planTitle(_ line: PlanLine, _ palette: Palette) -> NSAttributedString {
+        let text = NSMutableAttributedString(
+            string: line.name, attributes: [.font: boldFont, .foregroundColor: palette.colour(.labelColor)])
         let statusColour: NSColor = switch line.severity {
         case .error: .systemRed
         case .warning: .systemOrange
         case nil: line.isPaused ? .secondaryLabelColor : .labelColor
         }
-        text.append(NSAttributedString(string: "\n" + line.status, attributes: [.font: titleFont, .foregroundColor: statusColour]))
+        text.append(NSAttributedString(
+            string: "\n" + line.status, attributes: [.font: titleFont, .foregroundColor: palette.colour(statusColour)]))
         for secondary in [line.detail, line.destination].compactMap(\.self) where !secondary.isEmpty {
             text.append(NSAttributedString(
-                string: "\n" + secondary, attributes: [.font: smallFont, .foregroundColor: NSColor.secondaryLabelColor]))
+                string: "\n" + secondary,
+                attributes: [.font: smallFont, .foregroundColor: palette.colour(.secondaryLabelColor)]))
         }
         return text
     }
 
-    /// Coloured, so not template: red for an error, orange for a warning. Inside the menu, unlike the menu bar.
-    private static func bannerImage(_ severity: Severity) -> NSImage? {
+    /// Red for an error, orange for a warning (coloured, so not template: inside the menu, unlike the menu bar).
+    /// While highlighted, a template image instead, which the menu tints like the text.
+    private static func bannerImage(_ severity: Severity, _ palette: Palette) -> NSImage? {
         let (name, colour): (String, NSColor) = switch severity {
         case .error: ("exclamationmark.octagon.fill", .systemRed)
         case .warning: ("exclamationmark.triangle", .systemOrange)
         }
-        return NSImage(systemSymbolName: name, accessibilityDescription: severity == .error ? "Error" : "Warning")?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(hierarchicalColor: colour))
+        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: severity == .error ? "Error" : "Warning")
+        else { return nil }
+        if palette.highlighted {
+            symbol.isTemplate = true
+            return symbol
+        }
+        return symbol.withSymbolConfiguration(NSImage.SymbolConfiguration(hierarchicalColor: colour))
     }
 }
 
@@ -152,6 +189,8 @@ enum MenuBuilder {
 @MainActor
 private final class RowBox: NSObject {
     var row: MenuRow
+    /// Drawn with the highlight's colours (`MenuBuilder.willHighlight`).
+    var highlighted = false
     init(_ row: MenuRow) { self.row = row }
 }
 
@@ -160,9 +199,11 @@ private final class RowBox: NSObject {
 private final class ProgressRowView: NSView {
     private let bar = NSProgressIndicator()
 
-    var fraction: Double {
-        get { bar.doubleValue }
-        set { bar.doubleValue = newValue }
+    /// The bar is the only thing VoiceOver finds in the row, so it says whose backup it is and how far along.
+    func show(_ fraction: Double, of planName: String) {
+        bar.doubleValue = fraction
+        bar.setAccessibilityLabel("\(planName) backup progress")
+        bar.setAccessibilityValueDescription(fraction.formatted(.percent.precision(.fractionLength(0))))
     }
 
     init() {

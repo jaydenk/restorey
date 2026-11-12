@@ -133,6 +133,8 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
             menu.addItem(.separator())
             menu.addItem(quitItem())
         case .running(let supervisor, _):
+            // Nothing is highlighted as the menu opens; an item highlighted when it last closed gets its colours back.
+            MenuBuilder.willHighlight(nil, in: menu)
             MenuBuilder.build(content(supervisor), into: menu, actions: self, developer: Self.developer)
         }
     }
@@ -143,6 +145,11 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
 
     func menuDidClose(_ menu: NSMenu) {
         menuIsOpen = false
+    }
+
+    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        guard case .running = mode else { return }
+        MenuBuilder.willHighlight(item, in: menu)
     }
 
     private func line(_ title: String) -> NSMenuItem {

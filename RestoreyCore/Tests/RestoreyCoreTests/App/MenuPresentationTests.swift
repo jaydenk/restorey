@@ -91,7 +91,7 @@ struct MenuPresentationTests {
         #expect(!line.isPaused)
         #expect(content.actions == MenuActions(
             backUpNow: true, pause: true, resume: false, perPlanSubmenus: false,
-            plans: [PlanChoice(id: plan.id, name: "MacBook", canBackUp: true, canPause: true, canResume: false)]))
+            plans: [PlanChoice(id: plan.id, name: "MacBook", canBackUp: true, canPause: true, canResume: false, canRestore: true)]))
     }
 
     @Test func destinationHasNoSizeBeforeTheFirstMeasurement() {
@@ -162,18 +162,22 @@ struct MenuPresentationTests {
         #expect(content.actions.backUpNow)
         // Per plan for the submenus: the running one can't be backed up again, but can be paused.
         #expect(content.actions.plans == [
-            PlanChoice(id: idle.id, name: "MacBook", canBackUp: true, canPause: true, canResume: false),
-            PlanChoice(id: photos.id, name: "Photos drive", canBackUp: false, canPause: true, canResume: false),
+            PlanChoice(id: idle.id, name: "MacBook", canBackUp: true, canPause: true, canResume: false, canRestore: true),
+            PlanChoice(id: photos.id, name: "Photos drive", canBackUp: false, canPause: true, canResume: false, canRestore: true),
         ])
     }
 
-    /// An unfinished plan is listed (for Restore Files…) but can't be backed up, paused or resumed.
-    @Test func anUnfinishedPlanCanOnlyBeListed() {
+    /// An unfinished plan can't be backed up, paused, resumed or restored from (fix round 1: it has no recovery
+    /// kit and may have no repository). One needing a new kit still has its backups to restore.
+    @Test func anUnfinishedPlanCanDoNothing() {
         let plan = Self.plan(setup: false)
         let content = Self.make(Self.status([Self.line(plan, backedUpAt: nil, next: nil)]))
         #expect(content.actions.plans == [
-            PlanChoice(id: plan.id, name: "MacBook", canBackUp: false, canPause: false, canResume: false),
+            PlanChoice(id: plan.id, name: "MacBook", canBackUp: false, canPause: false, canResume: false, canRestore: false),
         ])
+        let needsKit = Self.plan(kit: false)
+        let kitContent = Self.make(Self.status([Self.line(needsKit)]))
+        #expect(kitContent.actions.plans.first?.canRestore == true)
         #expect(!content.actions.backUpNow)
     }
 
@@ -208,7 +212,7 @@ struct MenuPresentationTests {
         #expect(content.plans[0].isPaused, "drawn grey, never as a failure")
         #expect(content.actions == MenuActions(
             backUpNow: true, pause: false, resume: true, perPlanSubmenus: false,
-            plans: [PlanChoice(id: plan.id, name: "MacBook", canBackUp: true, canPause: false, canResume: true)]))
+            plans: [PlanChoice(id: plan.id, name: "MacBook", canBackUp: true, canPause: false, canResume: true, canRestore: true)]))
         #expect(!Self.text(of: content).contains("Failed"))
         #expect(!Self.text(of: content).contains("failed"))
     }

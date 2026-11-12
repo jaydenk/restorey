@@ -108,8 +108,9 @@ A stale agent is restarted before any re-registration, since an older agent may 
 re-register), also across relaunches (a new version or build may repair at
 once). Plan lines are shown live only while the agent is healthy, and are fetched afresh each time it becomes
 healthy; otherwise the last status received is used only for "Last known: …" and the lines above. Each agent
-process stamps its hellos and statuses with its own run ID, and once a newer run has been seen, a late status from
-an older one is ignored (Ruling R76).
+process stamps its hellos and statuses with its own run ID; once a hello reports a newer run, a late status from
+the older one is ignored (Ruling R76). Only hellos retire a run: heartbeats are serialised, so their order is the
+agents' order, while a late status can arrive at any time.
 **A copy anywhere else does nothing to the agent**: no XPC, no
 registration and not even a status read, which on its own can re-point the registration at the copy. It only
 shows "Move Restorey to Applications". The app's log is `~/Library/Logs/Restorey-Dev/app.log`.
@@ -180,10 +181,13 @@ The menu, top to bottom:
 - **Resume**, **Back Up Now** and **Pause**. With one plan they act on it; with several, each opens a submenu whose
   first item, "All Plans", acts on every plan, then one item per plan (an AppKit item with a submenu can't also
   have its own action). They appear only while the agent is healthy.
-- **Restore Files…** (a submenu of plans when there are several), **Settings…** (⌘,), the Debug-only
+- **Restore Files…** (a submenu of plans when there are several; an unfinished plan isn't listed, having no
+  recovery kit and perhaps no repository yet), **Settings…** (⌘,), the Debug-only
   **Developer…**, and **Quit Restorey** (⌘Q).
 
-The menu updates while it is open: progress, speed and status change in place under the pointer. When rows come or
+Coloured text (the fix in the accent colour, a red or orange status) switches to the highlight's text colour on
+the row under the pointer, since the highlight is the accent colour and AppKit leaves an attributed title's colours
+as they are. The menu updates while it is open: progress, speed and status change in place under the pointer. When rows come or
 go (a backup starts and its progress bar appears, a banner is raised) the items are replaced instead.
 
 ## What a backup run does

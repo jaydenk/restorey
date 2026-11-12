@@ -318,16 +318,16 @@ struct AgentHealthTests {
 
     private static let runC = UUID()
 
-    /// A hello naming a new run retires the one seen before it, so a late reply from the old process can't
+    /// A hello naming a new run retires the one before it, so a late reply from the old process can't
     /// replace the new agent's status.
     @Test func aHelloFromANewRunRetiresTheOldOne() {
         var tracker = AgentRunTracker()
-        tracker.observe(Self.runA)
+        tracker.helloReported(Self.runA)
         #expect(tracker.current == Self.runA)
         #expect(tracker.retired.isEmpty)
-        tracker.observe(Self.runA)
+        tracker.helloReported(Self.runA)
         #expect(tracker.retired.isEmpty, "the same run again changes nothing")
-        tracker.observe(Self.runB)
+        tracker.helloReported(Self.runB)
         #expect(tracker.current == Self.runB)
         #expect(tracker.retired == [Self.runA])
         let shown = Self.status(run: Self.runB, sequence: 1)
@@ -335,28 +335,48 @@ struct AgentHealthTests {
         #expect(tracker.shouldAccept(Self.status(run: Self.runB, sequence: 2), over: shown))
     }
 
-    /// The first status from a new run retires the old one too, whichever arrives first.
-    @Test func aStatusFromANewRunRetiresTheOldOne() {
+    /// Fix round 1: only hellos retire runs, since heartbeats are serialised and their order is reliable. A late
+    /// status from a run the app never saw must not retire the live one: that froze the menu until relaunch.
+    @Test func aStatusNeverRetiresARun() {
         var tracker = AgentRunTracker()
-        let fromA = Self.status(run: Self.runA, sequence: 3)
-        #expect(tracker.shouldAccept(fromA, over: nil))
-        tracker.observe(fromA.agentRun)
+        tracker.helloReported(Self.runB)
         let fromB = Self.status(run: Self.runB, sequence: 1)
-        #expect(tracker.shouldAccept(fromB, over: fromA))
-        tracker.observe(fromB.agentRun)
+        tracker.statusAccepted(fromB.agentRun)
+        // A late status from an earlier process (A) the app never heard a hello from: shown, as `supersedes` allows.
+        let lateA = Self.status(run: Self.runA, sequence: 40)
+        #expect(tracker.shouldAccept(lateA, over: fromB))
+        tracker.statusAccepted(lateA.agentRun)
+        #expect(tracker.current == Self.runB)
+        #expect(tracker.retired.isEmpty)
+        // B's next status still gets through, and B's next hello retires nothing (B is current).
+        #expect(tracker.shouldAccept(Self.status(run: Self.runB, sequence: 2), over: lateA))
+        tracker.helloReported(Self.runB)
+        #expect(tracker.retired.isEmpty)
+    }
+
+    /// Before any hello, the first status names the current run, so the next hello from another run retires it.
+    @Test func aStatusSetsTheCurrentRunOnlyWhenThereIsNone() {
+        var tracker = AgentRunTracker()
+        tracker.statusAccepted(Self.runA)
+        #expect(tracker.current == Self.runA)
+        tracker.statusAccepted(Self.runB)
+        #expect(tracker.current == Self.runA)
+        #expect(tracker.retired.isEmpty)
+        tracker.helloReported(Self.runB)
         #expect(tracker.retired == [Self.runA])
-        #expect(!tracker.shouldAccept(Self.status(run: Self.runA, sequence: 4), over: fromB))
+        #expect(!tracker.shouldAccept(Self.status(run: Self.runA, sequence: 9), over: nil))
     }
 
     /// A retired run never becomes current again, and an agent without run IDs leaves the tracker alone.
     @Test func aRetiredRunNeverComesBack() {
         var tracker = AgentRunTracker()
-        tracker.observe(Self.runA)
-        tracker.observe(Self.runB)
-        tracker.observe(Self.runA)
+        tracker.helloReported(Self.runA)
+        tracker.helloReported(Self.runB)
+        tracker.helloReported(Self.runA)
         #expect(tracker.current == Self.runB)
         #expect(tracker.retired == [Self.runA])
-        tracker.observe(nil)
+        tracker.helloReported(nil)
+        tracker.statusAccepted(nil)
         #expect(tracker.current == Self.runB)
     }
 
