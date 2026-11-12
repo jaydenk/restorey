@@ -37,6 +37,7 @@ final class DeveloperWindowController: NSObject, NSWindowDelegate {
 struct DeveloperView: View {
     @Bindable var model: DeveloperModel
     @State private var confirmingCreate = false
+    @State private var confirmingDelete = false
 
     var body: some View {
         HSplitView {
@@ -116,6 +117,8 @@ struct DeveloperView: View {
                 Button("Pause") { model.pause() }
                 Button("Resume") { model.resume() }
                 Button("Request notifications") { model.requestNotifications() }
+                Button("Delete plan…", role: .destructive) { confirmingDelete = true }
+                    .disabled(model.selectedPlan == nil)
             }
             }
             .disabled(model.working)
@@ -136,6 +139,14 @@ struct DeveloperView: View {
             } else {
                 Text("The folder will be created if it doesn't exist.")
             }
+        }
+        .confirmationDialog(
+            "Delete the plan \"\(model.selectedPlan?.name ?? "")\"?", isPresented: $confirmingDelete
+        ) {
+            Button("Delete plan", role: .destructive) { model.deletePlan() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Its settings, saved passwords and keys, and history are removed. The repository and its snapshots aren't touched.")
         }
     }
 }

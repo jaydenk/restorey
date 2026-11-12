@@ -123,6 +123,20 @@ final class DeveloperModel {
     func resume() { planAction("Resume") { await $0.resume($1) } }
     func adopt() { planAction("Adopt") { await $0.adopt($1) } }
 
+    /// Deletes the chosen plan through the agent (its config entry, Keychain items, credentials file and
+    /// history). The repository and the plan's run logs are left alone. The form returns to "New plan".
+    func deletePlan() {
+        guard let id = selectedPlanID else {
+            output = "Delete plan: choose a plan first."
+            return
+        }
+        run("Delete plan") { [connection = supervisor.connection] in
+            let result = await connection.deletePlan(id)
+            if case .success = result, self.selectedPlanID == id { self.selectedPlanID = nil }
+            return Self.describe(result)
+        }
+    }
+
     func requestNotifications() {
         run("Request notifications") { [connection = supervisor.connection] in
             Self.describe(await connection.requestNotificationPermission())
