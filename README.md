@@ -122,7 +122,13 @@ The agent runs only as its launchd job: started any other way (double-clicked, r
 hosted tests' XCTest host) it touches none of its files and starts nothing, so there is never a second agent
 beside the real one ("Why the keychain tests need a signed host" has the details). The agent serves its XPC
 interface only to the signed app: the listener requires the app's bundle ID and the
-team in `Config/Local.xcconfig`, so any other process is refused. It is the only writer of `config.json`,
+team in `Config/Local.xcconfig`, so any other process is refused. Only one call returns secrets: `recoveryKit`
+replies with a plan's repository password, its S3 keys or raw environment values, and its check-in URL, so the app
+can show the recovery kit; it goes only to the signed Restorey app over that XPC connection, the agent logs just the
+plan and how many secrets it sent, and the app keeps them only while the kit is open. The other calls the setup and
+Settings screens use return no secret: `probeRepository` (is the address empty, or a repository the password opens,
+with its snapshots by host), `history` (run records, newest first, for one plan or all), `probeFullDiskAccess`
+(runs the agent's own probe and pushes the status) and `dismissOffMacNote`. It is the only writer of `config.json`,
 `state.json` and the plans' keychain items, all under `~/Library/Application Support/<root ID>` (mode 0700).
 If either file is corrupt or was written by a newer Restorey, the agent reports it in `status`, refuses every
 change and leaves the file as it is. Its log is `~/Library/Logs/Restorey-Dev/agent.log`, and MetricKit
@@ -232,8 +238,8 @@ never names the network; a Debug build's log does, and also logs each name a bac
 developer window's "Request Location" button sends the request and shows the reply.
 Each plan also records when its setup finished (`setupCompletedAt`, set when its recovery kit is first confirmed
 and never cleared), so a plan whose kit must be confirmed again is told apart from one whose setup was never
-finished, and whether the "No off-Mac monitoring" note was dismissed. The agent owns both setup dates; a saved
-plan can't change them. Upgrading from schema 2 moves the per-plan "skip on a constrained network" setting to
+finished, and whether the "No off-Mac monitoring" note was dismissed. The agent owns both setup dates and the
+dismissed note; a saved plan can't change them (only confirming the recovery kit and `dismissOffMacNote` do). Upgrading from schema 2 moves the per-plan "skip on a constrained network" setting to
 the Mac-wide one, which stays on if any plan had it on (an upgrade with every plan's setting off turns it off),
 and marks every plan whose recovery kit was already confirmed as having finished setup.
 

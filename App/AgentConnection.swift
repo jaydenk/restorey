@@ -101,6 +101,29 @@ final class AgentConnection {
         await call(AdoptReport.self, timeout: .seconds(1200)) { $0.adopt(planID.uuidString, withReply: $1) }
     }
 
+    /// Like `adopt`, restic may retry an unreachable backend for up to 15 minutes.
+    func probeRepository(_ planID: UUID) async -> Result<RepositoryProbe, AgentCallError> {
+        await call(RepositoryProbe.self, timeout: .seconds(1200)) { $0.probeRepository(planID.uuidString, withReply: $1) }
+    }
+
+    /// One plan's run records, or every plan's when `planID` is nil, newest first.
+    func history(_ planID: UUID?) async -> Result<[RunRecord], AgentCallError> {
+        await call([RunRecord].self, timeout: .seconds(10)) { $0.history(planID?.uuidString, withReply: $1) }
+    }
+
+    /// The plan's secrets for the recovery kit. Hold the reply only while the kit is shown.
+    func recoveryKit(_ planID: UUID) async -> Result<RecoveryKitSecrets, AgentCallError> {
+        await call(RecoveryKitSecrets.self, timeout: .seconds(30)) { $0.recoveryKit(planID.uuidString, withReply: $1) }
+    }
+
+    func probeFullDiskAccess() async -> Result<AgentStatus, AgentCallError> {
+        await statusCall(timeout: .seconds(10)) { $0.probeFullDiskAccess(withReply: $1) }
+    }
+
+    func dismissOffMacNote(_ planID: UUID) async -> Result<AgentStatus, AgentCallError> {
+        await statusCall(timeout: .seconds(60)) { $0.dismissOffMacNote(planID.uuidString, withReply: $1) }
+    }
+
     /// Waits for the user to answer the agent's prompt.
     func requestNotificationPermission() async -> Result<NotificationPermissionReply, AgentCallError> {
         await call(NotificationPermissionReply.self, timeout: .seconds(600)) {

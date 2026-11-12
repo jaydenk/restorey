@@ -126,6 +126,45 @@ final class AgentService: NSObject, AgentXPC, Sendable {
         }
     }
 
+    func probeRepository(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "probeRepository") { [state, log] in
+            let probe = try await state.probeRepository(try Self.planID(planID))
+            switch probe.state {
+            case .empty: log.info("Probed the repository address for plan \(planID): nothing there")
+            case .existing(let report):
+                log.info("Probed the repository address for plan \(planID): a repository with \(report.snapshotCount) snapshots")
+            }
+            return probe
+        }
+    }
+
+    func history(_ planID: String?, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        // Not logged: the app reads it whenever a history view is shown.
+        respond(reply, "history") { [state] in try await state.history(try planID.map(Self.planID)) }
+    }
+
+    func recoveryKit(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "recoveryKit") { [state, log] in
+            let kit = try await state.recoveryKit(try Self.planID(planID))
+            // The plan and a count only: the reply itself is never logged.
+            log.info("Sent the recovery kit for plan \(planID) to the app (\(kit.secrets.count) secrets)")
+            return kit
+        }
+    }
+
+    func probeFullDiskAccess(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        // Not logged: setup polls it every 2 s. A change shows in the status.
+        respond(reply, "probeFullDiskAccess") { [state] in try await state.probeFullDiskAccess() }
+    }
+
+    func dismissOffMacNote(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "dismissOffMacNote") { [state, log] in
+            let status = try await state.dismissOffMacNote(try Self.planID(planID))
+            log.info("Dismissed the off-Mac monitoring note for plan \(planID)")
+            return status
+        }
+    }
+
     func confirmRecoveryKit(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
         respond(reply, "confirmRecoveryKit") { [state, log, plansChanged] in
             let status = try await state.confirmRecoveryKit(try Self.planID(planID))

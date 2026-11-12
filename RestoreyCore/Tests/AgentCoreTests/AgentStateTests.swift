@@ -351,6 +351,123 @@ struct AgentStateTests {
         #expect(await reloaded.status().plans.first?.plan.setupCompletedAt == completedAt)
     }
 
+    // MARK: The screens' calls: history, recovery kit, off-Mac note
+
+    /// Every plan's records in one list, newest first. A last backup that has fallen out of `recent` is
+    /// still listed, and one that is still in `recent` is listed once.
+    @Test func historyMergesPlansNewestFirst() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let first = Self.plan(now: clock.now)
+        let second = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(first))
+        _ = try await state.savePlan(Self.request(second))
+
+        func record(_ plan: Plan, _ outcome: RunOutcome, minutesAgo: Double) -> RunRecord {
+            let start = clock.now.addingTimeInterval(-minutesAgo * 60)
+            return RunRecord(
+                id: UUID(), planID: plan.id, operation: .backup, trigger: .scheduled, startedAt: start,
+                endedAt: start.addingTimeInterval(30), outcome: outcome, summary: nil, logFile: "")
+        }
+        // The first plan: a success, then a full `recent` of skips (250 to 201 minutes ago) that pushes it out.
+        let success = record(first, .success(snapshotID: "abc"), minutesAgo: 300)
+        let skips = (0..<PlanRunHistory.recentLimit).map {
+            record(first, .skipped(.onBattery), minutesAgo: 250 - Double($0))
+        }
+        _ = try await state.updateHistory(first.id) { history in
+            history.record(success)
+            for skip in skips { history.record(skip) }
+        }
+        #expect(try await state.runInputs(first.id).history.recent.contains(success) == false)
+        // The second plan: its last backup is still in `recent`, between the first plan's skips.
+        let unchanged = record(second, .unchanged, minutesAgo: 225.5)
+        let failed = record(second, .failed(exitCode: 1, reason: "boom"), minutesAgo: 100)
+        _ = try await state.updateHistory(second.id) { history in
+            history.record(unchanged)
+            history.record(failed)
+        }
+
+        let newestSkips = Array(skips[25...].reversed()) // 201 to 225 minutes ago
+        let olderSkips = Array(skips[..<25].reversed()) // 226 to 250 minutes ago
+        #expect(try await state.history(nil) == [failed] + newestSkips + [unchanged] + olderSkips + [success])
+        #expect(try await state.history(first.id) == skips.reversed() + [success])
+        #expect(try await state.history(second.id) == [failed, unchanged])
+        await #expect { try await state.history(UUID()) } throws: { ($0 as? AgentError) == .unknownPlan }
+    }
+
+    /// The kit holds every stored secret: an S3 plan's password, both keys and its check-in URL; a raw
+    /// plan's password and each environment value, in the plan's order.
+    @Test func recoveryKitReturnsAllSecrets() async throws {
+        let dir = try TempDirectory()
+        let secrets = InMemorySecretStore()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, secrets: secrets, clock: clock)
+        var s3 = Self.plan(now: clock.now)
+        s3.hasCheckInURL = true
+        var request = Self.request(s3)
+        let checkIn = SecretEntry(key: .checkInURL(s3.id), value: "https://hc-ping.com/not-a-real-uuid")
+        request.secrets.append(checkIn)
+        _ = try await state.savePlan(request)
+
+        let s3Kit = try await state.recoveryKit(s3.id)
+        #expect(s3Kit.plan == s3)
+        #expect(s3Kit.secrets == request.secrets)
+
+        let raw = Plan.newHotPlan(
+            name: "NAS",
+            repository: .raw(repository: "rest:https://nas.local:8000/mac",
+                             environmentNames: ["RESTIC_REST_USERNAME", "RESTIC_REST_PASSWORD"]),
+            origin: .created, hostLabel: "mac", sources: ["/Users/me"], exclusions: [], now: clock.now)
+        let rawSecrets = [
+            SecretEntry(key: .repositoryPassword(raw.id), value: "raw password"),
+            SecretEntry(key: .environment(raw.id, name: "RESTIC_REST_USERNAME"), value: "me"),
+            SecretEntry(key: .environment(raw.id, name: "RESTIC_REST_PASSWORD"), value: "rest secret"),
+        ]
+        // Saved in another order: the kit follows the plan's environment names.
+        _ = try await state.savePlan(SavePlanRequest(plan: raw, secrets: rawSecrets.reversed()))
+        let rawKit = try await state.recoveryKit(raw.id)
+        #expect(rawKit.plan == raw)
+        #expect(rawKit.secrets == rawSecrets)
+
+        // A kit missing a secret would be useless in a disaster: refused, naming the account only.
+        try secrets.delete(.environment(raw.id, name: "RESTIC_REST_PASSWORD"))
+        await #expect { _ = try await state.recoveryKit(raw.id) } throws: { error in
+            let text = Self.message(error) ?? ""
+            return text.contains("environment.RESTIC_REST_PASSWORD") && !text.contains("rest secret")
+        }
+    }
+
+    @Test func recoveryKitRefusedForUnknownPlan() async throws {
+        let dir = try TempDirectory()
+        let state = await Self.makeState(dir)
+        _ = try await state.savePlan(Self.request(Self.plan(now: Date(timeIntervalSince1970: 1_800_000_000))))
+        await #expect { _ = try await state.recoveryKit(UUID()) } throws: { ($0 as? AgentError) == .unknownPlan }
+    }
+
+    /// The agent owns `offMacNoteDismissed`: only `dismissOffMacNote` sets it, and a saved plan can't
+    /// clear it (or set it on a new plan).
+    @Test func dismissOffMacNotePersists() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        var plan = Self.plan(now: clock.now)
+        plan.offMacNoteDismissed = true
+        _ = try await state.savePlan(Self.request(plan))
+        #expect(await state.status().plans.first?.plan.offMacNoteDismissed == false)
+
+        let status = try await state.dismissOffMacNote(plan.id)
+        #expect(status.plans.first?.plan.offMacNoteDismissed == true)
+
+        plan.offMacNoteDismissed = false
+        let resaved = try await state.savePlan(Self.request(plan))
+        #expect(resaved.plans.first?.plan.offMacNoteDismissed == true)
+
+        let reloaded = await Self.makeState(dir, clock: clock)
+        #expect(await reloaded.status().plans.first?.plan.offMacNoteDismissed == true)
+        await #expect { _ = try await state.dismissOffMacNote(UUID()) } throws: { ($0 as? AgentError) == .unknownPlan }
+    }
+
     @Test func lastBackupSkipsMaintenanceRecords() async throws {
         let dir = try TempDirectory()
         let clock = TestClock()
@@ -723,6 +840,11 @@ struct AgentStateTests {
         await #expect { _ = try await state.adopt(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.beginRun(planID: plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.saveNetworkSettings(.defaults) } throws: { Self.message($0) == refused }
+        await #expect { _ = try await state.probeRepository(plan.id) } throws: { Self.message($0) == refused }
+        await #expect { try await state.dismissOffMacNote(plan.id) } throws: { Self.message($0) == refused }
+        // Reads too: without the files there is no plan to answer for.
+        await #expect { _ = try await state.history(nil) } throws: { Self.message($0) == refused }
+        await #expect { _ = try await state.recoveryKit(plan.id) } throws: { Self.message($0) == refused }
 
         #expect(try Data(contentsOf: dir.config) == configBefore)
         #expect(try Data(contentsOf: dir.state) == stateBefore)
@@ -820,6 +942,8 @@ struct AgentStateTests {
         await #expect(throws: AgentError.runnerUnavailable) { try await state.backUpNow(plan.id) }
         await #expect(throws: AgentError.runnerUnavailable) { try await state.createRepository(plan.id) }
         await #expect(throws: AgentError.runnerUnavailable) { _ = try await state.adopt(plan.id) }
+        await #expect(throws: AgentError.runnerUnavailable) { _ = try await state.probeRepository(plan.id) }
+        await #expect(throws: AgentError.runnerUnavailable) { try await state.probeFullDiskAccess() }
         #expect(AgentError.runnerUnavailable.message == "Restorey's agent is still starting up. Try again in a moment")
     }
 

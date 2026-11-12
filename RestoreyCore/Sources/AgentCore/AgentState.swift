@@ -317,8 +317,9 @@ public actor AgentState {
     /// `recoveryKitConfirmedAt` is agent-owned. A new plan starts unconfirmed. An existing plan keeps its
     /// confirmation only if the repository is the same and every submitted secret equals the keychain's
     /// current value; otherwise the recovery details the user saved no longer match, so it is cleared.
-    /// `setupCompletedAt` is agent-owned too: a new plan starts without it and an existing plan keeps the
-    /// stored value, whatever the request says (Ruling P2-3).
+    /// `setupCompletedAt` and `offMacNoteDismissed` are agent-owned too: a new plan starts without them and
+    /// an existing plan keeps the stored values, whatever the request says (Ruling P2-3). Only
+    /// `confirmRecoveryKit` and `dismissOffMacNote` set them.
     ///
     /// The same change also clears a stop (`stoppedReason`, e.g. after a wrong password) and refreshes the
     /// plan's alerts: the user has changed what restic opens the repository with, so the next run tries it
@@ -357,10 +358,12 @@ public actor AgentState {
                 credentialsChanged = !unchanged
                 plan.recoveryKitConfirmedAt = unchanged ? stored.recoveryKitConfirmedAt : nil
                 plan.setupCompletedAt = stored.setupCompletedAt
+                plan.offMacNoteDismissed = stored.offMacNoteDismissed
                 updated.plans[index] = plan
             } else {
                 plan.recoveryKitConfirmedAt = nil
                 plan.setupCompletedAt = nil
+                plan.offMacNoteDismissed = false
                 updated.plans.append(plan)
             }
 
@@ -445,6 +448,74 @@ public actor AgentState {
             if updated.plans[index].setupCompletedAt == nil { updated.plans[index].setupCompletedAt = now }
             try await saveConfig(updated)
             return pushStatus()
+        }
+    }
+
+    /// Records that the user dismissed the plan's "No off-Mac monitoring" note. It stays dismissed: no saved
+    /// plan can bring it back.
+    public func dismissOffMacNote(_ id: UUID) async throws -> AgentStatus {
+        try requireMutable()
+        _ = try requirePlan(id)
+        return try await serialisedWrite {
+            var updated = config
+            guard let index = updated.plans.firstIndex(where: { $0.id == id }) else { throw AgentError.unknownPlan }
+            updated.plans[index].offMacNoteDismissed = true
+            try await saveConfig(updated)
+            return pushStatus()
+        }
+    }
+
+    /// The run records of one plan, or of every plan when `id` is nil, newest (by end) first (Ruling P2-4):
+    /// each plan's `recent`, and its `lastBackupRecord` when that has fallen out of `recent`. Answered while
+    /// draining; refused in the config-error state.
+    public func history(_ id: UUID?) throws -> [RunRecord] {
+        try requireLoaded()
+        let plans = try id.map { [try requirePlan($0)] } ?? config.plans
+        let records = plans.flatMap { plan -> [RunRecord] in
+            let history = runState.plans[plan.id] ?? PlanRunHistory()
+            guard let last = history.lastBackupRecord, !history.recent.contains(where: { $0.id == last.id }) else {
+                return history.recent
+            }
+            return history.recent + [last]
+        }
+        // Stable: records that ended together keep their plan's order.
+        return records.enumerated()
+            .sorted { a, b in
+                a.element.endedAt != b.element.endedAt ? a.element.endedAt > b.element.endedAt : a.offset < b.offset
+            }
+            .map(\.element)
+    }
+
+    /// The plan and every secret the agent holds for it, for the recovery kit (Ruling P2-5): the repository
+    /// password; an S3 plan's two keys or a raw plan's environment values, in the plan's order; and the
+    /// check-in URL when the plan has one. The XPC listener serves only the signed app, which holds the
+    /// reply only while the kit is open. A secret that can't be read, or is missing, refuses the kit (a kit
+    /// without it would fail the user in a disaster); the error names the Keychain account, never a value.
+    /// Read inside the write gate, so a save in progress can't pair one plan's secrets with another version.
+    public func recoveryKit(_ id: UUID) async throws -> RecoveryKitSecrets {
+        try requireLoaded()
+        _ = try requirePlan(id)
+        return try await serialisedWrite {
+            let plan = try requirePlan(id)
+            var keys: [SecretKey] = [.repositoryPassword(id)]
+            switch plan.repository {
+            case .s3: keys += [.s3AccessKeyID(id), .s3SecretAccessKey(id)]
+            case .raw(_, let names): keys += names.map { .environment(id, name: $0) }
+            }
+            if plan.hasCheckInURL { keys.append(.checkInURL(id)) }
+            let entries = try keys.map { key in
+                let value: String?
+                do {
+                    value = try secrets.read(key)
+                } catch {
+                    throw AgentError.storage("Restorey couldn't read \(key.account) from the Keychain: \(error)")
+                }
+                guard let value else {
+                    throw AgentError.storage("\(key.account) isn't in the Keychain, so the recovery kit would be incomplete")
+                }
+                return SecretEntry(key: key, value: value)
+            }
+            return RecoveryKitSecrets(plan: plan, secrets: entries)
         }
     }
 

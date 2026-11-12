@@ -1,10 +1,10 @@
 import Foundation
 import RestoreyCore
 
-/// The app's one-off restic actions: creating a repository and listing one for adoption. No preflight,
-/// no probe, no pings and no maintenance. An action that would start a restic step while the agent is
-/// winding down (it waited in the repository's queue while a drain began) is refused as draining,
-/// with no record (Ruling R55).
+/// The app's one-off restic actions: creating a repository, probing an address, and listing a repository
+/// for adoption. No preflight, no Full Disk Access probe, no pings and no maintenance. An action that would
+/// start a restic step while the agent is winding down (it waited in the repository's queue while a drain
+/// began) is refused as draining, with no record (Ruling R55).
 extension PlanRunner {
     /// Runs `restic init`. Never called on its own: only this explicit action creates a repository.
     public func createRepository(planID: UUID) async throws -> AgentStatus {
@@ -21,6 +21,24 @@ extension PlanRunner {
         let result = await listForAdoption(planID: planID, handle: handle)
         await end(planID, handle)
         return try result.get()
+    }
+
+    /// What is at the plan's repository address (Ruling P2-2): `restic cat config`, then, if a repository
+    /// is there, the same listing as `adopt`, in one turn of the repository's queue. Exit 10 is `.empty`; a
+    /// password that doesn't open the repository is `AgentError.wrongPassword`; anything else gets the
+    /// create probe's sentences (`probeFailureMessage`). Each step is recorded like adopt's, and none of
+    /// them stops the plan: the user is still choosing what to back up to. Never creates or changes anything.
+    public func probeRepository(planID: UUID) async throws -> RepositoryProbe {
+        let handle = try await begin(planID)
+        let result = await probe(planID: planID, handle: handle)
+        await end(planID, handle)
+        return try result.get()
+    }
+
+    /// Runs the agent's Full Disk Access probe, records it and pushes the status even when nothing
+    /// changed, so the setup step polling it sees every answer (Ruling P2-11).
+    public func probeFullDiskAccess() async -> AgentStatus {
+        await deps.state.noteFullDiskAccess(deps.fdaProbe(), pushingAlways: true)
     }
 
     /// Probes with `restic cat config` first, in the same turn of the queue as the `init`: exit 0 means a
@@ -80,18 +98,53 @@ extension PlanRunner {
     static let missingBucketMarkers = ["NoSuchBucket", "specified bucket does not exist"]
 
     private func listForAdoption(planID: UUID, handle: RunHandle) async -> Result<AdoptReport, AgentError> {
-        let collector = LineCollector(matching: SnapshotListing.isListing)
         let session: RunSession
         switch await actionSession(planID: planID) {
         case .failure(let error): return .failure(error)
         case .success(let ready): session = ready
         }
-        let listed = await deps.queues.run(repository: session.key) { [self] () async -> StepResult? in
+        let listed = await deps.queues.run(repository: session.key) { [self] () async -> Result<AdoptReport, AgentError>? in
             guard !(await isWindingDown()) else { return nil }
-            return await runStep(
-                .snapshots(allHosts: true), trigger: .manual, session: session, handle: handle, collector: collector)
+            return await listSnapshots(session: session, handle: handle)
         }
-        guard let step = listed else { return .failure(.draining) }
+        return listed ?? .failure(.draining)
+    }
+
+    private func probe(planID: UUID, handle: RunHandle) async -> Result<RepositoryProbe, AgentError> {
+        let session: RunSession
+        switch await actionSession(planID: planID) {
+        case .failure(let error): return .failure(error)
+        case .success(let ready): session = ready
+        }
+        let probed = await deps.queues.run(repository: session.key) {
+            [self] () async -> (StepResult, Result<AdoptReport, AgentError>?)? in
+            guard !(await isWindingDown()) else { return nil }
+            let probe = await runStep(.catConfig, trigger: .manual, session: session, handle: handle)
+            await commit(probe.record, plan: session.plan)
+            guard case .success = probe.record.outcome, !(await isWindingDown()) else { return (probe, nil) }
+            return (probe, await listSnapshots(session: session, handle: handle))
+        }
+        guard let (probe, listing) = probed else { return .failure(.draining) }
+        switch probe.record.outcome {
+        case .repositoryMissing: return .success(RepositoryProbe(state: .empty))
+        case .wrongPassword: return .failure(.wrongPassword)
+        case .success:
+            // A repository is there, but the agent began winding down before the listing.
+            guard let listing else { return .failure(.draining) }
+            return listing.map { RepositoryProbe(state: .existing($0)) }
+        case let outcome:
+            return .failure(.operationFailed(Self.probeFailureMessage(
+                repository: session.plan.repository, outcome: outcome, stoppedReason: probe.stoppedReason,
+                stderr: probe.tail)))
+        }
+    }
+
+    /// `restic snapshots` for every host, recorded, and read into what `adopt` reports. Runs inside the
+    /// caller's turn of the repository's queue.
+    private func listSnapshots(session: RunSession, handle: RunHandle) async -> Result<AdoptReport, AgentError> {
+        let collector = LineCollector(matching: SnapshotListing.isListing)
+        let step = await runStep(
+            .snapshots(allHosts: true), trigger: .manual, session: session, handle: handle, collector: collector)
         await commit(step.record, plan: session.plan)
         guard case .success = step.record.outcome else {
             return .failure(.operationFailed(Self.explain(step.record.outcome, stoppedReason: step.stoppedReason)))

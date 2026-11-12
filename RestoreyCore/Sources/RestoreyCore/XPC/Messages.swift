@@ -287,6 +287,70 @@ public struct AdoptReport: Codable, Sendable, Equatable {
     }
 }
 
+/// `probeRepository`'s reply (Ruling P2-2): what is at the plan's repository address.
+/// JSON: `{"state":{"type":"empty"}}` or `{"state":{"type":"existing","report":{…}}}`.
+public struct RepositoryProbe: Codable, Sendable, Equatable {
+    public enum State: Codable, Sendable, Equatable {
+        /// Nothing there (`restic cat config` exit 10): a repository can be created.
+        case empty
+        /// A repository the plan's password opens, with what `adopt` would report.
+        case existing(AdoptReport)
+
+        private enum CodingKeys: String, CodingKey { case type, report }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            switch try c.decode(String.self, forKey: .type) {
+            case "empty": self = .empty
+            case "existing": self = .existing(try c.decode(AdoptReport.self, forKey: .report))
+            case let other: throw DecodingError.dataCorruptedError(
+                forKey: .type, in: c, debugDescription: "Unknown repository probe state \(other)")
+            }
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case .empty: try c.encode("empty", forKey: .type)
+            case .existing(let report):
+                try c.encode("existing", forKey: .type)
+                try c.encode(report, forKey: .report)
+            }
+        }
+    }
+
+    public var state: State
+
+    public init(state: State) {
+        self.state = state
+    }
+}
+
+/// `recoveryKit`'s reply (Ruling P2-5): the plan and every secret the agent holds for it, for the app to
+/// show in the recovery kit. Only the signed app receives it, and holds it only while the kit is open. Its
+/// descriptions and mirror never include a value, like `SecretEntry`'s.
+public struct RecoveryKitSecrets: Codable, Sendable, Equatable, CustomStringConvertible,
+    CustomDebugStringConvertible, CustomReflectable
+{
+    public var plan: Plan
+    /// The repository password; for S3, both keys; for a raw repository, each environment value in the
+    /// plan's order; then the check-in URL when the plan has one.
+    public var secrets: [SecretEntry]
+
+    public init(plan: Plan, secrets: [SecretEntry]) {
+        self.plan = plan
+        self.secrets = secrets
+    }
+
+    public var description: String {
+        "RecoveryKitSecrets(plan: \(plan.id.uuidString) \"\(plan.name)\", secrets: [\(secrets.map(\.key.account).joined(separator: ", "))])"
+    }
+    public var debugDescription: String { description }
+    public var customMirror: Mirror {
+        Mirror(self, children: ["plan": plan, "secrets": secrets.map(\.key.account)], displayStyle: .struct)
+    }
+}
+
 /// `prepareForRestart`'s reply, `{"drained":true}`, sent only once no run is in flight.
 public struct DrainReply: Codable, Sendable, Equatable {
     public var drained: Bool

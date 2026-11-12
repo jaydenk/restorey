@@ -222,6 +222,41 @@ struct MessagesTests {
             == #"{"authorised":false,"status":"denied"}"#)
     }
 
+    @Test func repositoryProbeRoundTripsAndItsShapeIsPinned() throws {
+        let report = AdoptReport(hosts: ["other"], latestPathsForHost: [], snapshotCount: 2)
+        try roundTrip(RepositoryProbe(state: .empty))
+        try roundTrip(RepositoryProbe(state: .existing(report)))
+        #expect(try json(RepositoryProbe(state: .empty)) == #"{"state":{"type":"empty"}}"#)
+        #expect(try json(RepositoryProbe(state: .existing(report)))
+            == #"{"state":{"report":{"hosts":["other"],"latestPathsForHost":[],"snapshotCount":2},"type":"existing"}}"#)
+        #expect(throws: DecodingError.self) {
+            try XPCCoding.decode(RepositoryProbe.self, from: Data(#"{"state":{"type":"locked"}}"#.utf8))
+        }
+    }
+
+    @Test func recoveryKitSecretsRoundTrip() throws {
+        try roundTrip(RecoveryKitSecrets(plan: Self.plan(), secrets: [
+            SecretEntry(key: .repositoryPassword(Self.planID), value: "pa ss\"wörd\n"),
+            SecretEntry(key: .checkInURL(Self.planID), value: "https://hc-ping.com/x"),
+        ]))
+    }
+
+    /// `recoveryKit`'s reply carries every secret of a plan, so it must never print one either.
+    @Test func recoveryKitSecretsDescriptionsAreRedacted() {
+        let secret = "hunter2-very-secret"
+        let kit = RecoveryKitSecrets(plan: Self.plan(), secrets: [
+            SecretEntry(key: .repositoryPassword(Self.planID), value: secret),
+            SecretEntry(key: .checkInURL(Self.planID), value: "https://hc-ping.com/\(secret)"),
+        ])
+        var dumped = ""
+        dump(kit, to: &dumped)
+        for text in [String(describing: kit), String(reflecting: kit), "\(kit)", dumped] {
+            #expect(!text.contains("hunter2"), "leaked in: \(text)")
+        }
+        #expect(String(describing: kit).contains("repository-password"))
+        #expect(String(describing: kit).contains(Self.planID.uuidString))
+    }
+
     @Test func descriptionsNeverContainSecretValues() {
         let secret = "hunter2-very-secret"
         let entry = SecretEntry(key: .repositoryPassword(Self.planID), value: secret)

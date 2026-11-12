@@ -1240,6 +1240,93 @@ struct PlanRunnerTests {
         #expect(await f.history().stoppedReason == nil)
     }
 
+    // MARK: Probing a repository (Ruling P2-2)
+
+    /// A rest-server with nothing at the plan's path: `cat config` exits 10, so the probe says empty and
+    /// nothing is created.
+    @Test func probeEmptyRepository() async throws {
+        let served = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restorey-probe-rest-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: served) }
+        let server = try await RestServer.start(directory: served)
+        defer { server.stop() }
+        let f = try await RunnerFixture.make(createRepository: false, confirmKit: false) { plan in
+            plan.repository = .raw(repository: server.repository + "fresh", environmentNames: [])
+        }
+        defer { f.remove() }
+
+        let probe = try await f.state.probeRepository(f.planID)
+        #expect(probe == RepositoryProbe(state: .empty))
+        let history = await f.history()
+        #expect(history.recent.map(\.operation) == [.catConfig])
+        #expect(history.recent.map(\.outcome) == [.repositoryMissing])
+        #expect(history.stoppedReason == nil)
+        #expect(!FileManager.default.fileExists(atPath: served.appendingPathComponent("fresh/config").path))
+    }
+
+    /// A repository with two snapshots from another Mac: the probe lists them as adopt does.
+    @Test func probeExistingRepository() async throws {
+        let f = try await RunnerFixture.make(origin: .adopted, confirmKit: false)
+        defer { f.remove() }
+        var other = await f.plan()
+        other.hostLabel = "other"
+        for _ in 0..<2 {
+            try f.write("a.txt", UUID().uuidString)
+            let run = try await f.restic(.backup, plan: other)
+            #expect(run.exitCode == 0, "seed: \(run.stderrTail)")
+        }
+
+        let probe = try await f.state.probeRepository(f.planID)
+        #expect(probe == RepositoryProbe(state: .existing(
+            AdoptReport(hosts: ["other"], latestPathsForHost: [], snapshotCount: 2))))
+        #expect(await f.operations() == [.catConfig, .initRepository, .catConfig, .snapshots(allHosts: true)])
+        #expect(try await f.snapshots().count == 2)
+    }
+
+    @Test func probeWrongPassword() async throws {
+        let f = try await RunnerFixture.make(confirmKit: false)
+        defer { f.remove() }
+        try "wrong".write(to: f.passwordFile, atomically: true, encoding: .utf8)
+        await #expect {
+            _ = try await f.state.probeRepository(f.planID)
+        } throws: {
+            ($0 as? AgentError) == .wrongPassword
+                && ($0 as? AgentError)?.message == "That password doesn't open the repository at this address."
+        }
+        // Recorded like adopt, and no stop: the user is still choosing the password.
+        let history = await f.history()
+        #expect(history.recent.first?.operation == .catConfig)
+        #expect(history.recent.first?.outcome == .wrongPassword)
+        #expect(history.stoppedReason == nil)
+        #expect(await f.operations() == [.catConfig, .initRepository, .catConfig])
+    }
+
+    @Test func probeIsRefusedWhileDraining() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        await f.state.prepareForRestart()
+        await #expect { _ = try await f.state.probeRepository(f.planID) } throws: { ($0 as? AgentError) == .draining }
+        await #expect { _ = try await f.state.probeRepository(UUID()) } throws: { ($0 as? AgentError) == .draining }
+    }
+
+    // MARK: Full Disk Access (Ruling P2-11)
+
+    /// The setup step polls this: every call runs the agent's own probe and pushes, changed or not.
+    @Test func probeFullDiskAccessRerunsTheProbeAndPushes() async throws {
+        let f = try await RunnerFixture.make(createRepository: false)
+        defer { f.remove() }
+        let pushed = Locked<[Bool?]>([])
+        await f.state.setStatusObserver { status in pushed.mutate { $0.append(status.fdaMissing) } }
+
+        f.fda.set(.missing)
+        #expect(try await f.state.probeFullDiskAccess().fdaMissing == true)
+        #expect(try await f.state.probeFullDiskAccess().fdaMissing == true)
+        f.fda.set(.granted)
+        #expect(try await f.state.probeFullDiskAccess().fdaMissing == false)
+        #expect(pushed.value == [true, true, false])
+        #expect(await f.state.status().fdaMissing == false)
+    }
+
     @Test func actionsAreRefusedWhileDraining() async throws {
         let f = try await RunnerFixture.make()
         defer { f.remove() }

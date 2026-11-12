@@ -28,6 +28,19 @@ extension AgentState {
         return try await requireRunner().adopt(planID: id)
     }
 
+    /// What is at the plan's repository address: nothing, or a repository its password opens (Ruling P2-2).
+    /// Setup's "Check" calls it after saving the plan, so it runs before the recovery kit is confirmed.
+    public func probeRepository(_ id: UUID) async throws -> RepositoryProbe {
+        try requireRunnable(id)
+        return try await requireRunner().probeRepository(planID: id)
+    }
+
+    /// Runs the Full Disk Access probe now and pushes the status (Ruling P2-11). Changes no file, so it is
+    /// answered while draining and in the config-error state (where `fdaMissing` stays nil).
+    public func probeFullDiskAccess() async throws -> AgentStatus {
+        try await requireRunner().probeFullDiskAccess()
+    }
+
     func requireRunner() throws -> PlanRunner {
         guard let runner else { throw AgentError.runnerUnavailable }
         return runner
@@ -46,16 +59,18 @@ extension AgentState {
         return config.plans.map { ($0, runState.plans[$0.id] ?? PlanRunHistory()) }
     }
 
-    /// Records the latest Full Disk Access probe for `AgentStatus.fdaMissing`.
-    func noteFullDiskAccess(_ result: FDAProbeResult) {
+    /// Records the latest Full Disk Access probe for `AgentStatus.fdaMissing`, and pushes the status when
+    /// it changed, or always with `pushingAlways`.
+    @discardableResult
+    func noteFullDiskAccess(_ result: FDAProbeResult, pushingAlways: Bool = false) -> AgentStatus {
         let missing: Bool? =
             switch result {
             case .granted: false
             case .missing: true
             case .cannotVerify: nil
             }
-        guard missing != fdaMissing else { return }
+        guard missing != fdaMissing || pushingAlways else { return status() }
         fdaMissing = missing
-        pushStatus()
+        return pushStatus()
     }
 }
