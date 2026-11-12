@@ -15,6 +15,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let mode: Mode
+    private var visibilityObservation: NSKeyValueObservation?
     #if DEBUG
     private var openDeveloperWindow: (() -> Void)?
     #endif
@@ -43,6 +44,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         openDeveloperWindow = action
     }
     #endif
+
+    /// False when the user hid the item (System Settings → Menu Bar, or dragged out). True while macOS has
+    /// only squeezed it out of a full menu bar: nothing reports that (`NSStatusItem.isVisible`).
+    var isVisible: Bool { item.isVisible }
+
+    /// Calls `onChange` with the new visibility whenever it changes (`isVisible` is key-value observable).
+    func observeVisibility(_ onChange: @escaping @MainActor (Bool) -> Void) {
+        visibilityObservation = item.observe(\.isVisible) { [weak self] _, _ in
+            Task { @MainActor in
+                guard let self else { return }
+                onChange(self.item.isVisible)
+            }
+        }
+    }
 
     private func setUp() {
         let menu = NSMenu()

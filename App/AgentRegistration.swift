@@ -3,8 +3,8 @@ import Foundation
 import RestoreyCore
 import ServiceManagement
 
-/// The agent's `SMAppService` registration. The only file in the app that imports ServiceManagement, and
-/// it can only be made for the installed copy (`InstalledCopy`).
+/// The agent's `SMAppService` registration. With `LoginItem`, the only code in the app that imports
+/// ServiceManagement, and like it, it can only be made for the installed copy (`InstalledCopy`).
 @MainActor
 final class AgentRegistration {
     /// The SHA-256 of the embedded plist at the last successful `register()`. launchd keeps the job
@@ -22,17 +22,8 @@ final class AgentRegistration {
         self.defaults = defaults
     }
 
-    /// Reads `SMAppService.status`. An unknown future value is treated like `requiresApproval`: shown,
-    /// never acted on.
-    var status: AgentServiceStatus {
-        switch service.status {
-        case .notRegistered: .notRegistered
-        case .enabled: .enabled
-        case .requiresApproval: .requiresApproval
-        case .notFound: .notFound
-        @unknown default: .requiresApproval
-        }
-    }
+    /// Reads `SMAppService.status`.
+    var status: AgentServiceStatus { AgentServiceStatus(service.status) }
 
     var storedPlistHash: String? { defaults.string(forKey: Self.plistHashKey) }
 
@@ -58,5 +49,18 @@ final class AgentRegistration {
 
     func openLoginItems() {
         SMAppService.openSystemSettingsLoginItems()
+    }
+}
+
+extension AgentServiceStatus {
+    /// An unknown future value is treated like `requiresApproval`: shown, never acted on.
+    init(_ status: SMAppService.Status) {
+        switch status {
+        case .notRegistered: self = .notRegistered
+        case .enabled: self = .enabled
+        case .requiresApproval: self = .requiresApproval
+        case .notFound: self = .notFound
+        @unknown default: self = .requiresApproval
+        }
     }
 }
