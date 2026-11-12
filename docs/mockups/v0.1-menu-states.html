@@ -1,0 +1,98 @@
+<style>
+  .mb { font-family:-apple-system,"SF Pro Text",sans-serif; font-size:13px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:18px; }
+  .cap { font-size:12px; font-weight:600; margin-bottom:4px; color:#1d1d1f; }
+  .strip { background:#e9e9ec; color:#1d1d1f; padding:3px 10px; border-radius:6px 6px 0 0; font-size:12px; display:flex; justify-content:flex-end; gap:14px; width:290px; box-sizing:border-box; }
+  .menu { width:290px; background:rgba(246,246,246,.97); color:#1d1d1f; border-radius:0 0 10px 10px; box-shadow:0 8px 24px rgba(0,0,0,.2); padding:6px 0; border:1px solid rgba(0,0,0,.12); }
+  .row { padding:4px 14px; } .sep { height:1px; background:rgba(0,0,0,.1); margin:6px 0; }
+  .item { padding:3px 14px; } .sub::after { content:" ▸"; float:right; color:#8e8e93; }
+  .muted { color:#6e6e73; font-size:12px; }
+  .barp { height:6px; background:#ddd; border-radius:3px; overflow:hidden; margin:5px 0 3px; } .barp div { height:100%; background:#0a84ff; width:42%; }
+  .err { color:#d70015; font-weight:600; } .warn { color:#c93400; font-weight:600; } .pause { color:#6e6e73; font-weight:600; }
+  .banner { margin:2px 8px 6px; padding:6px 8px; border-radius:6px; font-size:12px; }
+  .b-err { background:#ffe5e7; } .b-warn { background:#fff1dc; }
+  .act { color:#0a64d8; font-weight:600; }
+  .ic { font-weight:700; } .ic-err { color:#fff; background:#d70015; border-radius:4px; padding:0 4px; } .ic-warn { color:#c93400; }
+  .icons { display:flex; gap:22px; font-size:12px; margin:6px 0 18px; flex-wrap:wrap; }
+  .icons div { text-align:center; } .icons .glyph { font-size:15px; display:block; margin-bottom:2px; }
+</style>
+
+<h2>Menu bar: the states the approved mockup didn't cover</h2>
+<p class="subtitle">Starting from the approved idle and in-progress menus. Each plan gets its own status line, problems sit at the top with a fix button, and the icon shows the worst state across all plans. What's wrong or missing?</p>
+
+<div class="cap">Icon, worst state across all plans</div>
+<div class="icons mb">
+  <div><span class="glyph">⟲</span>OK</div>
+  <div><span class="glyph">⟲↑</span>Backing up</div>
+  <div><span class="glyph">⟲‖</span>Paused</div>
+  <div><span class="glyph ic-warn">⟲!</span>Warning (outline !)</div>
+  <div><span class="glyph"><span class="ic-err">⟲✕</span></span>Error (filled red badge, the only filled icon)</div>
+</div>
+
+<div class="grid mb">
+  <div><div class="cap">Several plans, one backing up</div>
+    <div class="strip"><span class="ic">⟲↑</span><span>Thu 14:20</span></div>
+    <div class="menu">
+      <div class="row"><b>MacBook → B2</b><br><span class="muted">Backed up at 14:16 · next 15:16</span></div>
+      <div class="row"><b>Photos drive → B2</b> <span class="muted">· backing up</span>
+        <div class="barp"><div></div></div><span class="muted">1.2 of 2.9 GB · ~6 min · 18 MB/s</span></div>
+      <div class="sep"></div>
+      <div class="item sub">Back Up Now</div>
+      <div class="item sub">Pause</div>
+      <div class="item">Restore Files…</div>
+      <div class="sep"></div><div class="item">Settings…</div><div class="item">Quit Restorey</div>
+    </div>
+    <p class="muted">Back Up Now and Pause: click for all plans, or the submenu for one.</p>
+  </div>
+
+  <div><div class="cap">Paused</div>
+    <div class="strip"><span class="ic">⟲‖</span><span>Thu 14:20</span></div>
+    <div class="menu">
+      <div class="row"><span class="pause">Paused</span> · MacBook → B2<br><span class="muted">Resumes by itself at 15:20 · last backup 13:16</span></div>
+      <div class="sep"></div>
+      <div class="item">Resume</div><div class="item sub">Back Up Now</div><div class="item">Restore Files…</div>
+      <div class="sep"></div><div class="item">Settings…</div><div class="item">Quit Restorey</div>
+    </div>
+    <p class="muted">Never shown as failed; auto-resume after an hour (spec).</p>
+  </div>
+
+  <div><div class="cap">Warning</div>
+    <div class="strip"><span class="ic ic-warn">⟲!</span><span>Thu 14:20</span></div>
+    <div class="menu">
+      <div class="banner b-warn"><span class="warn">Notifications are off</span> — Restorey can't alert you. <span class="act">Turn On…</span></div>
+      <div class="banner b-warn"><span class="warn">No off-Mac monitoring</span> — add a check-in URL so you hear if this Mac stops. <span class="act">Add…</span></div>
+      <div class="row"><b>MacBook → B2</b><br><span class="muted">Backed up at 14:16 · 3 files couldn't be read</span></div>
+      <div class="row"><b>Photos drive → B2</b><br><span class="muted">Skipped: drive not connected (2 days)</span></div>
+      <div class="sep"></div><div class="item sub">Back Up Now</div><div class="item">Settings…</div><div class="item">Quit Restorey</div>
+    </div>
+  </div>
+
+  <div><div class="cap">Error</div>
+    <div class="strip"><span class="ic"><span class="ic-err">⟲✕</span></span><span>Thu 14:20</span></div>
+    <div class="menu">
+      <div class="banner b-err"><span class="err">Full Disk Access is missing</span> — backups would be empty. <span class="act">Fix…</span></div>
+      <div class="row"><b>MacBook → B2</b><br><span class="err">Backup failed at 14:16</span> <span class="muted">· wrong password</span><br><span class="act">Show details…</span></div>
+      <div class="row"><b>Photos drive → B2</b><br><span class="muted">No successful backup in 3 days</span></div>
+      <div class="sep"></div><div class="item sub">Back Up Now</div><div class="item">Settings…</div><div class="item">Quit Restorey</div>
+    </div>
+  </div>
+
+  <div><div class="cap">Background agent not running</div>
+    <div class="strip"><span class="ic"><span class="ic-err">⟲✕</span></span><span>Thu 14:20</span></div>
+    <div class="menu">
+      <div class="banner b-err"><span class="err">The background agent isn't running</span> — no backups will happen. <span class="act">Restart agent</span></div>
+      <div class="row muted">Last known: backed up at 13:16</div>
+      <div class="sep"></div><div class="item">Settings…</div><div class="item">Quit Restorey</div>
+    </div>
+  </div>
+
+  <div><div class="cap">Updating</div>
+    <div class="strip"><span class="ic">⟲↑</span><span>Thu 14:20</span></div>
+    <div class="menu">
+      <div class="row"><b>Finishing the current backup before updating the agent</b><br><span class="muted">MacBook → B2 · ~2 min left</span></div>
+      <div class="sep"></div><div class="item">Settings…</div><div class="item">Quit Restorey</div>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:18px">v0.1 note: the restore window is v0.2. Until then "Restore Files…" opens a short sheet with the restic commands for this plan (copy buttons), like the recovery kit's "restore without Restorey".</p>

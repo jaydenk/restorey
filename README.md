@@ -28,6 +28,7 @@ because the App Store sandbox rules out the Full Disk Access a backup tool needs
 
 - [Design](docs/superpowers/specs/2026-11-09-restorey-design.md)
 - [Menu bar and restore window mockup](docs/mockups/menubar-and-restore.html)
+- [v0.1 UI design](docs/superpowers/specs/2026-11-12-restorey-v0.1-ui-design.md), with mockups of [setup](docs/mockups/v0.1-setup-flow.html), [Settings](docs/mockups/v0.1-settings.html) and the [menu bar states](docs/mockups/v0.1-menu-states.html)
 - [Platform spike plan](docs/superpowers/plans/2026-11-10-platform-spike.md)
 - [Platform spike findings](docs/spike-findings.md) (throwaway spike code in [`spike/`](spike/))
 - [v0.1 engine plan](docs/superpowers/plans/2026-11-10-v0.1-engine.md), [measurements](docs/v0.1-measurements.md) and [rulings](docs/v0.1-rulings.md) (R1–R78)
