@@ -5,6 +5,9 @@ import AppKit
 /// through a menu item. Every item sends its standard selector to the first responder (`target` nil), so
 /// text fields, SwiftUI's included, handle them as in any Mac app.
 ///
+/// The app stays `.accessory`, so this menu isn't there to be clicked through as a menu bar: its job is the key
+/// equivalents (⌘C, ⌘V, ⌘X, ⌘A, ⌘Z, ⇧⌘Z, ⌘W, ⌘Q).
+///
 /// The entry point is `AppDelegate.main` driving `NSApplication` itself, not SwiftUI's `App`, so no scene
 /// replaces this menu after launch.
 @MainActor

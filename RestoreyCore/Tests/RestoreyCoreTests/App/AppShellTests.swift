@@ -7,7 +7,7 @@ struct AppShellTests {
 
     /// Carry list (UI design §8): someone who can't see the status item opens the app again and reaches it.
     @Test func reopenOpensSettingsWhileRunning() {
-        #expect(shellOpeningOnReopen(mode: .running, statusItemVisible: true) == .settings(.plans))
+        #expect(shellOpeningOnReopen(mode: .running, statusItemVisible: true) == .settings(nil))
         #expect(shellOpeningOnReopen(mode: .running, statusItemVisible: false) == .settings(.general))
     }
 
@@ -41,6 +41,40 @@ struct AppShellTests {
         #expect(Set(titles).count == titles.count)
         #expect(AppWindowKind.settings.title == "Restorey Settings")
         #expect(SettingsSection.allCases.map(\.title) == ["General", "Plans", "Network", "History"])
+    }
+
+    // MARK: Settings route
+
+    private static let planA = UUID(uuidString: "00000000-0000-0000-0000-00000000000A")!
+    private static let planB = UUID(uuidString: "00000000-0000-0000-0000-00000000000B")!
+
+    /// A reopen while Settings is open brings it forward showing what it showed (review fix round 1).
+    @Test func reopenKeepsWhatAnOpenSettingsWindowShows() {
+        let open = SettingsRoute(section: .plans, planID: Self.planA)
+        #expect(settingsRoute(open: open, section: nil, planID: nil) == open)
+        let history = SettingsRoute(section: .history)
+        #expect(settingsRoute(open: history, section: nil, planID: nil) == history)
+    }
+
+    @Test func newSettingsWindowStartsAtPlans() {
+        #expect(settingsRoute(open: nil, section: nil, planID: nil) == SettingsRoute(section: .plans, planID: nil))
+    }
+
+    @Test func explicitRequestsReplaceWhatIsShown() {
+        let open = SettingsRoute(section: .plans, planID: Self.planA)
+        #expect(settingsRoute(open: open, section: .general, planID: nil) == SettingsRoute(section: .general))
+        #expect(settingsRoute(open: open, section: nil, planID: Self.planB) == SettingsRoute(section: .plans, planID: Self.planB))
+        #expect(settingsRoute(open: nil, section: .network, planID: nil) == SettingsRoute(section: .network))
+        #expect(settingsRoute(open: nil, section: .plans, planID: Self.planB) == SettingsRoute(section: .plans, planID: Self.planB))
+    }
+
+    /// End to end: a visible-icon reopen asks for nothing, so an open window is unchanged.
+    @Test func reopenOpeningLeavesTheRouteAlone() throws {
+        guard case .settings(let section) = shellOpeningOnReopen(mode: .running, statusItemVisible: true) else {
+            Issue.record("expected Settings"); return
+        }
+        let open = SettingsRoute(section: .history)
+        #expect(settingsRoute(open: open, section: section, planID: nil) == open)
     }
 
     // MARK: Open at login

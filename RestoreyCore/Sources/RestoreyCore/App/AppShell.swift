@@ -55,17 +55,19 @@ public enum ShellMode: Sendable, Equatable {
 /// A window the shell opens on its own.
 public enum ShellOpening: Sendable, Equatable {
     case setup
-    case settings(SettingsSection)
+    /// Settings, switched to this section, or left on whatever it shows when nil (`settingsRoute`).
+    case settings(SettingsSection?)
     /// The damaged-build message, for a broken copy (there is no window to show it in).
     case damagedNotice
 }
 
 /// Opening the app again (Finder, Spotlight, `open`) while it runs. A menu bar app has nothing in the Dock, so
 /// this is how someone who can't see the status item (hidden, or squeezed out of a full menu bar) still reaches
-/// it (UI design §8). The General section, which holds the hidden-icon note, when the icon is hidden.
+/// it (UI design §8). An open Settings window comes forward as it is; only while the icon is hidden does it
+/// switch to General, which holds the hidden-icon note.
 public func shellOpeningOnReopen(mode: ShellMode, statusItemVisible: Bool) -> ShellOpening {
     switch mode {
-    case .running: .settings(statusItemVisible ? .plans : .general)
+    case .running: .settings(statusItemVisible ? nil : .general)
     case .refused: .setup
     case .broken: .damagedNotice
     }
@@ -76,6 +78,33 @@ public func shellOpeningOnReopen(mode: ShellMode, statusItemVisible: Bool) -> Sh
 /// (Setup's own launch rule, P2-10, is Task 11's and comes first.)
 public func shellOpeningAtLaunch(mode: ShellMode, statusItemVisible: Bool) -> ShellOpening? {
     statusItemVisible ? nil : shellOpeningOnReopen(mode: mode, statusItemVisible: false)
+}
+
+// MARK: Settings section and plan
+
+/// What the Settings window shows: a section, and in Plans, a plan.
+public struct SettingsRoute: Sendable, Equatable {
+    public var section: SettingsSection
+    public var planID: UUID?
+
+    public init(section: SettingsSection, planID: UUID? = nil) {
+        self.section = section
+        self.planID = planID
+    }
+
+    /// A new Settings window asked for nothing in particular.
+    public static let initial = SettingsRoute(section: .plans)
+}
+
+/// What Settings shows after a request for `section` and `planID` (nil when not asked for). `open` is what an
+/// open window shows, nil when there is none.
+/// - Nothing asked for: an open window keeps what it shows (a reopen brings it forward unchanged); a new one
+///   starts at Plans.
+/// - A plan asked for: that plan, in `section` or Plans.
+/// - Only a section asked for: that section, with no plan selected.
+public func settingsRoute(open: SettingsRoute?, section: SettingsSection?, planID: UUID?) -> SettingsRoute {
+    if section == nil, planID == nil { return open ?? .initial }
+    return SettingsRoute(section: section ?? .plans, planID: planID)
 }
 
 // MARK: Open at login

@@ -136,16 +136,17 @@ diagnostics go to `diagnostics/` beside it.
 
 ### Menus and windows
 
-The app has its own main menu, shown while one of its windows is in front: the app menu (About, Quit), an Edit
-menu (Undo, Redo, Cut, Copy, Paste, Paste and Match Style, Delete, Select All) and a Window menu (Minimise, Close),
-so ⌘Z, ⌘X, ⌘C, ⌘V, ⌘A and ⌘W work in its windows. Each kind of window (setup, Settings, recovery kit, Restore
+Restorey stays a menu bar (accessory) app, so it isn't meant to show a menu bar of its own. It still installs a
+main menu, because key equivalents reach a window's text fields only through menu items: the app menu (About,
+Quit), an Edit menu (Undo, Redo, Cut, Copy, Paste, Paste and Match Style, Delete, Select All) and a Window menu
+(Minimise, Close) make ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V, ⌘A, ⌘W and ⌘Q work in its windows. Each kind of window (setup, Settings, recovery kit, Restore
 Files) opens at most once: asking again brings the open one to the front. None is restored at launch, and closing a
 window releases it, so a recovery kit's secrets go with it. Until their screens are built, these windows hold
 placeholders.
 
-Opening Restorey again while it runs (from Finder, Spotlight or `open`) opens Settings, so the app can still be
-reached when its menu bar icon can't be seen. If the icon is hidden (System Settings → Menu Bar) when Restorey
-starts, it opens Settings at once, in General, with the note "Restorey's menu bar icon is hidden. Show it in System
+Opening Restorey again while it runs (from Finder, Spotlight or `open`) opens Settings, or brings an open Settings
+window forward as it is, so the app can still be reached when its menu bar icon can't be seen. If the icon is hidden (System Settings → Menu Bar) when Restorey
+starts, it opens Settings at once, in General (as does opening it again while the icon is hidden), with the note "Restorey's menu bar icon is hidden. Show it in System
 Settings → Menu Bar." An icon squeezed out of a full menu bar isn't detected (macOS still reports it as visible), so
 opening the app again is the way in. A copy outside `/Applications` opens setup's "Move to Applications" step
 instead. Open at login registers the app itself with `SMAppService.mainApp`, from the installed copy only; its switch

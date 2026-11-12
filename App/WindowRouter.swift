@@ -9,8 +9,8 @@ import SwiftUI
 @MainActor
 @Observable
 final class ShellState {
-    var settingsSection: SettingsSection = .plans
-    var settingsPlanID: UUID?
+    var settingsSection: SettingsSection = SettingsRoute.initial.section
+    var settingsPlanID: UUID? = SettingsRoute.initial.planID
     /// The status item's `isVisible` is false: the user hid it (System Settings → Menu Bar, or dragged it out).
     /// A status item squeezed out of a full menu bar still reads visible (`NSStatusItem.isVisible`).
     var statusItemHidden = false
@@ -34,9 +34,15 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         show(.setup) { NSHostingController(rootView: PlaceholderView(kind: .setup)) }
     }
 
-    func showSettings(section: SettingsSection = .plans, planID: UUID? = nil) {
-        state.settingsSection = section
-        state.settingsPlanID = planID
+    /// Shows Settings. With neither argument, an open window comes forward as it is and a new one starts at
+    /// Plans; a section or plan passed switches to it (`settingsRoute`).
+    func showSettings(section: SettingsSection? = nil, planID: UUID? = nil) {
+        let open = slots.openWindow(for: .settings).map { _ in
+            SettingsRoute(section: state.settingsSection, planID: state.settingsPlanID)
+        }
+        let route = settingsRoute(open: open, section: section, planID: planID)
+        state.settingsSection = route.section
+        state.settingsPlanID = route.planID
         show(.settings) { [state] in NSHostingController(rootView: SettingsPlaceholderView(state: state)) }
     }
 
