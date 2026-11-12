@@ -26,6 +26,8 @@ extension AssistiveInputField {
 /// An `NSTextField` that reports writes to its text.
 final class ForwardingTextField: NSTextField, AssistiveInputField {
     var onTextWritten: (@MainActor (String) -> Void)?
+    /// False for a field showing a secret: its editor then registers no undo actions.
+    var keepsUndoHistory = true
 
     override class var cellClass: AnyClass? {
         get { ForwardingTextFieldCell.self }
@@ -42,11 +44,21 @@ final class ForwardingTextField: NSTextField, AssistiveInputField {
 /// is already served by AppKit's secure one, with no text services.
 @MainActor
 final class LiteralFieldEditor: NSTextView {
-    static func make() -> LiteralFieldEditor {
+    /// NSTextField switches `allowsUndo` on whenever it takes a field editor, so a secret's editor answers
+    /// `false` here whatever it is told. Typing may still register an action, so `UndoPurge` is what guarantees
+    /// that none is left behind when the field is left or retired.
+    private var undoPermitted = true
+    override var allowsUndo: Bool {
+        get { undoPermitted && super.allowsUndo }
+        set { super.allowsUndo = newValue }
+    }
+
+    static func make(allowsUndo: Bool) -> LiteralFieldEditor {
         let editor = LiteralFieldEditor(frame: .zero)
+        editor.undoPermitted = allowsUndo
         editor.isFieldEditor = true
         editor.isRichText = false
-        editor.allowsUndo = true
+        editor.allowsUndo = allowsUndo
         editor.isContinuousSpellCheckingEnabled = false
         editor.isGrammarCheckingEnabled = false
         editor.isAutomaticSpellingCorrectionEnabled = false
@@ -61,6 +73,21 @@ final class LiteralFieldEditor: NSTextView {
         editor.inlinePredictionType = .no
         return editor
     }
+
+    /// Cut, Copy, Paste and Select All, nothing else: no Spelling and Grammar, Substitutions, Transformations,
+    /// Speech, Writing Tools or Services. (AppKit asks the field editor, which is the view that is clicked.)
+    override func menu(for event: NSEvent) -> NSMenu? { LiteralFieldEditor.minimalMenu() }
+
+    static func minimalMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = true
+        menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "")
+        return menu
+    }
 }
 
 final class ForwardingTextFieldCell: NSTextFieldCell {
@@ -68,7 +95,9 @@ final class ForwardingTextFieldCell: NSTextFieldCell {
 
     override func fieldEditor(for controlView: NSView) -> NSTextView? {
         if let literalEditor { return literalEditor }
-        let editor = MainActor.assumeIsolated { LiteralFieldEditor.make() }
+        // A revealed secret keeps no undo history (`UndoPurge`): it would hold the secret, and outlive the editor.
+        let allowsUndo = (controlView as? ForwardingTextField)?.keepsUndoHistory ?? true
+        let editor = MainActor.assumeIsolated { LiteralFieldEditor.make(allowsUndo: allowsUndo) }
         literalEditor = editor
         return editor
     }
@@ -120,6 +149,34 @@ final class ForwardingSecureTextFieldCell: NSSecureTextFieldCell {
     }
 }
 
+/// Undo actions point at the editor (and its text storage) and the cell that typed them, none of which the undo
+/// manager keeps alive. When SwiftUI releases a field, an action left behind is a dangling target the next
+/// Undo invokes (EXC_BAD_ACCESS in `-[NSUndoManager undoNestedGroup]`). Retiring a field removes every action
+/// aimed at its parts, from every manager that could hold one, and empties a cell undo manager outright (it is
+/// the field editor's own, never shared with other fields' text).
+@MainActor
+enum UndoPurge {
+    static func retire(_ field: NSTextField) {
+        let editor = field.currentEditor() as? NSTextView
+        var targets: [AnyObject] = [field]
+        if let cell = field.cell { targets.append(cell) }
+        if let editor {
+            targets.append(editor)
+            if let storage = editor.textStorage { targets.append(storage) }
+            if let layout = editor.layoutManager { targets.append(layout) }
+            if let container = editor.textContainer { targets.append(container) }
+        }
+        var managers: [UndoManager] = []
+        for manager in [field.undoManager, editor?.undoManager, field.window?.undoManager] {
+            if let manager, !managers.contains(where: { $0 === manager }) { managers.append(manager) }
+        }
+        for manager in managers {
+            for target in targets { manager.removeAllActions(withTarget: target) }
+            if NSStringFromClass(type(of: manager)) == "NSCellUndoManager" { manager.removeAllActions() }
+        }
+    }
+}
+
 /// Shared set-up and updating for the text field representables.
 @MainActor
 enum TextFieldSupport {
@@ -137,6 +194,7 @@ enum TextFieldSupport {
         field.allowsWritingToolsAffordance = false
         field.isAutomaticTextCompletionEnabled = false
         field.allowsCharacterPickerTouchBarItem = false
+        field.menu = LiteralFieldEditor.minimalMenu()
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
@@ -183,6 +241,11 @@ struct PlainTextField: NSViewRepresentable {
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView field: ForwardingTextField, context: Context) -> CGSize? {
         TextFieldSupport.fittingSize(of: field, proposal: proposal)
+    }
+
+    static func dismantleNSView(_ field: ForwardingTextField, coordinator: Coordinator) {
+        field.onTextWritten = nil
+        UndoPurge.retire(field)
     }
 
     @MainActor

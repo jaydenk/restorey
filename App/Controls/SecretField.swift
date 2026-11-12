@@ -52,8 +52,27 @@ struct SwappingSecretField: NSViewRepresentable {
         container.field.map { TextFieldSupport.fittingSize(of: $0, proposal: proposal) }
     }
 
+    static func dismantleNSView(_ container: Container, coordinator: Coordinator) {
+        guard let field = container.field else { return }
+        (field as? any AssistiveInputField)?.onTextWritten = nil
+        UndoPurge.retire(field)
+        field.stringValue = ""
+    }
+
     /// Replaces `previous` (if any) with the field for the current `showing`, carrying the focus and caret.
     private func install(in container: Container, coordinator: Coordinator, previous: NSTextField?) {
+        // Focus leaving mid-composition commits what is pending, as it does anywhere else in macOS: a dead key
+        // typed but not completed (⌥U, no vowel yet) keeps its "¨" instead of vanishing with the old field.
+        coordinator.showing = showing  // first: a binding change below must not start a second swap
+        var shown = text
+        if let previous, let marked = previous.currentEditor() as? NSTextView, marked.hasMarkedText() {
+            marked.unmarkText()
+            marked.inputContext?.discardMarkedText()
+            previous.validateEditing()
+            shown = previous.stringValue
+            // The binding can't change while SwiftUI is updating this view.
+            Task { @MainActor [coordinator] in coordinator.take(shown) }
+        }
         let editor = previous?.currentEditor()
         let selection = editor?.selectedRange
         let wasEditing = editor != nil
@@ -61,19 +80,20 @@ struct SwappingSecretField: NSViewRepresentable {
         let field: NSTextField = showing ? ForwardingTextField() : ForwardingSecureTextField()
         TextFieldSupport.configure(field, title: title)
         field.delegate = coordinator
-        field.stringValue = text
+        (field as? ForwardingTextField)?.keepsUndoHistory = false
+        field.stringValue = shown
         (field as? any AssistiveInputField)?.onTextWritten = { [coordinator] in coordinator.take($0) }
 
         if let previous {
             previous.delegate = nil
             // Clear the write hook first: emptying the retired field must not empty the binding.
             (previous as? any AssistiveInputField)?.onTextWritten = nil
+            UndoPurge.retire(previous)
             previous.abortEditing()
             previous.stringValue = ""
             previous.removeFromSuperview()
         }
         container.install(field)
-        coordinator.showing = showing
 
         if wasEditing, let window = container.window {
             window.makeFirstResponder(field)
@@ -107,6 +127,11 @@ struct SwappingSecretField: NSViewRepresentable {
         /// Which kind of field the container holds now.
         var showing: Bool?
         init(text: Binding<String>) { self.text = text }
+
+        /// A secret leaves no undo history behind when the user leaves the field.
+        func controlTextDidEndEditing(_ notification: Notification) {
+            if let field = notification.object as? NSTextField { UndoPurge.retire(field) }
+        }
 
         func controlTextDidChange(_ notification: Notification) {
             guard let field = notification.object as? NSTextField else { return }
