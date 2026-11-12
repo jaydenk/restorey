@@ -30,6 +30,7 @@ because the App Store sandbox rules out the Full Disk Access a backup tool needs
 - [Menu bar and restore window mockup](docs/mockups/menubar-and-restore.html)
 - [Platform spike plan](docs/superpowers/plans/2026-11-10-platform-spike.md)
 - [Platform spike findings](docs/spike-findings.md) (throwaway spike code in [`spike/`](spike/))
+- [v0.1 engine plan](docs/superpowers/plans/2026-11-10-v0.1-engine.md), [measurements](docs/v0.1-measurements.md) and [rulings](docs/v0.1-rulings.md) (R1–R78)
 
 ## Building from source
 
