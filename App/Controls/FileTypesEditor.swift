@@ -8,6 +8,8 @@ struct FileTypesEditor: View {
     @Binding var types: [String]
     @State private var entry = ""
     @State private var problem: String?
+    /// What `add` left in the field; the sentence stays until the text is changed from that.
+    @State private var refused = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -38,6 +40,7 @@ struct FileTypesEditor: View {
             HStack {
                 PlainTextField(title: "File type, such as dmg", text: $entry, onSubmit: add)
                     .frame(maxWidth: 240)
+                    .onChange(of: entry) { if entry != refused { problem = nil } }
                 Button("Add", action: add)
                     .disabled(entry.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -52,7 +55,8 @@ struct FileTypesEditor: View {
         types = result.types
         // Keep what was refused in the field so it can be corrected.
         entry = result.rejected.joined(separator: " ")
-        problem = result.rejected.isEmpty ? nil : FormValidation.fileTypeProblem
+        refused = entry
+        problem = result.rejected.isEmpty ? nil : FormValidation.fileTypeProblem(rejected: result.rejected)
     }
 }
 

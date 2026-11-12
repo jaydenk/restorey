@@ -66,7 +66,9 @@ struct SwappingSecretField: NSViewRepresentable {
 
         if let previous {
             previous.delegate = nil
+            // Clear the write hook first: emptying the retired field must not empty the binding.
             (previous as? any AssistiveInputField)?.onTextWritten = nil
+            previous.abortEditing()
             previous.stringValue = ""
             previous.removeFromSuperview()
         }
@@ -105,10 +107,6 @@ struct SwappingSecretField: NSViewRepresentable {
         /// Which kind of field the container holds now.
         var showing: Bool?
         init(text: Binding<String>) { self.text = text }
-
-        func controlTextDidBeginEditing(_ notification: Notification) {
-            if let field = notification.object as? NSTextField { TextFieldSupport.makeLiteral(field) }
-        }
 
         func controlTextDidChange(_ notification: Notification) {
             guard let field = notification.object as? NSTextField else { return }

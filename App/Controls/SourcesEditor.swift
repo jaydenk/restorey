@@ -1,4 +1,5 @@
 import AppKit
+import RestoreyCore
 import SwiftUI
 
 /// The folders and drives a plan backs up: a bordered list with "Add Folder or Drive…" and "Remove".
@@ -12,7 +13,7 @@ struct SourcesEditor: View {
         VStack(alignment: .leading, spacing: 6) {
             List(selection: $selection) {
                 ForEach(sources, id: \.self) { path in
-                    Text(Self.display(path))
+                    Text(FormValidation.displayPath(path))
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .help(path)
@@ -29,6 +30,7 @@ struct SourcesEditor: View {
                 }
             }
             .accessibilityLabel("Folders and drives to back up")
+            .onChange(of: sources) { selection.formIntersection(sources) }
             HStack {
                 Button("Add Folder or Drive…", action: add)
                 Button("Remove", action: remove)
@@ -47,7 +49,7 @@ struct SourcesEditor: View {
         panel.message = "Choose the folders and drives to back up."
         Task { @MainActor in
             guard await panel.begin() == .OK else { return }
-            sources = Self.adding(panel.urls.map(\.path), to: sources)
+            sources = FormValidation.addingSources(panel.urls.map(\.path), to: sources)
         }
     }
 
@@ -55,13 +57,4 @@ struct SourcesEditor: View {
         sources.removeAll { selection.contains($0) }
         selection = []
     }
-
-    /// `existing` followed by each new path that isn't already in it.
-    static func adding(_ paths: [String], to existing: [String]) -> [String] {
-        var result = existing
-        for path in paths where !result.contains(path) { result.append(path) }
-        return result
-    }
-
-    static func display(_ path: String) -> String { NSString(string: path).abbreviatingWithTildeInPath }
 }

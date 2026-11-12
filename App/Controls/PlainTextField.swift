@@ -5,8 +5,9 @@ import SwiftUI
 /// writes from VoiceOver, Voice Control or Switch Control. SwiftUI's own `TextField` misses the last: the
 /// display changes but its model doesn't (carry list: assistive input). These fields report every write to
 /// the binding, from two places so that whichever route AppKit's Accessibility takes is covered: the
-/// documented `setAccessibilityValue(_:)`, and the cell's `objectValue` setter, which every write to the
-/// field's text ends in. The VoiceOver check is on the hand check list (docs/v0.1-measurements.md).
+/// documented `setAccessibilityValue(_:)`, and the cell's `stringValue` and `objectValue` setters, which
+/// the writes to the field's text end in (`objectValue` is guarded to strings: AppKit also passes it other
+/// values). The VoiceOver check is on the hand check list (docs/v0.1-measurements.md).
 @MainActor
 protocol AssistiveInputField: NSTextField {
     /// Called with the field's text after it was written to other than by the user typing.
@@ -34,12 +35,57 @@ final class ForwardingTextField: NSTextField, AssistiveInputField {
     override func setAccessibilityValue(_ value: Any?) { applyAssistiveValue(value) }
 }
 
+/// Plain fields get their own field editor, set up once as literal, instead of the window's shared one. The
+/// shared editor keeps whatever it was last given (spelling, data detectors, Writing Tools, inline
+/// predictions), none of which belongs on a revealed secret: Writing Tools can send text off the Mac. It also
+/// stops those settings leaking onto the window's other fields. A secure field needs no such editor: it
+/// is already served by AppKit's secure one, with no text services.
+@MainActor
+final class LiteralFieldEditor: NSTextView {
+    static func make() -> LiteralFieldEditor {
+        let editor = LiteralFieldEditor(frame: .zero)
+        editor.isFieldEditor = true
+        editor.isRichText = false
+        editor.allowsUndo = true
+        editor.isContinuousSpellCheckingEnabled = false
+        editor.isGrammarCheckingEnabled = false
+        editor.isAutomaticSpellingCorrectionEnabled = false
+        editor.isAutomaticQuoteSubstitutionEnabled = false
+        editor.isAutomaticDashSubstitutionEnabled = false
+        editor.isAutomaticTextReplacementEnabled = false
+        editor.isAutomaticLinkDetectionEnabled = false
+        editor.isAutomaticDataDetectionEnabled = false
+        editor.isAutomaticTextCompletionEnabled = false
+        editor.enabledTextCheckingTypes = 0
+        editor.writingToolsBehavior = .none
+        editor.inlinePredictionType = .no
+        return editor
+    }
+}
+
 final class ForwardingTextFieldCell: NSTextFieldCell {
+    private var literalEditor: LiteralFieldEditor?
+
+    override func fieldEditor(for controlView: NSView) -> NSTextView? {
+        if let literalEditor { return literalEditor }
+        let editor = MainActor.assumeIsolated { LiteralFieldEditor.make() }
+        literalEditor = editor
+        return editor
+    }
+
+    override var stringValue: String {
+        get { super.stringValue }
+        set {
+            super.stringValue = newValue
+            (controlView as? ForwardingTextField)?.onTextWritten?(newValue)
+        }
+    }
+
     override var objectValue: Any? {
         get { super.objectValue }
         set {
             super.objectValue = newValue
-            (controlView as? ForwardingTextField)?.onTextWritten?(stringValue)
+            if let text = newValue as? String { (controlView as? ForwardingTextField)?.onTextWritten?(text) }
         }
     }
 }
@@ -57,11 +103,19 @@ final class ForwardingSecureTextField: NSSecureTextField, AssistiveInputField {
 }
 
 final class ForwardingSecureTextFieldCell: NSSecureTextFieldCell {
+    override var stringValue: String {
+        get { super.stringValue }
+        set {
+            super.stringValue = newValue
+            (controlView as? ForwardingSecureTextField)?.onTextWritten?(newValue)
+        }
+    }
+
     override var objectValue: Any? {
         get { super.objectValue }
         set {
             super.objectValue = newValue
-            (controlView as? ForwardingSecureTextField)?.onTextWritten?(stringValue)
+            if let text = newValue as? String { (controlView as? ForwardingSecureTextField)?.onTextWritten?(text) }
         }
     }
 }
@@ -78,6 +132,11 @@ enum TextFieldSupport {
         field.isBezeled = true
         field.bezelStyle = .squareBezel
         field.isEditable = true
+        // No Writing Tools, completion or character picker on any of these fields (a secret may be revealed).
+        field.allowsWritingTools = false
+        field.allowsWritingToolsAffordance = false
+        field.isAutomaticTextCompletionEnabled = false
+        field.allowsCharacterPickerTouchBarItem = false
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
@@ -88,21 +147,6 @@ enum TextFieldSupport {
         guard field.stringValue != text else { return }
         if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
         field.stringValue = text
-    }
-
-    /// Names, paths, endpoints and secrets are typed exactly as given: no smart quotes or dashes, no text
-    /// replacement, no spelling or completion. The field editor is shared by every field in the window, so
-    /// this is applied each time editing begins.
-    static func makeLiteral(_ field: NSTextField) {
-        guard let editor = field.currentEditor() as? NSTextView else { return }
-        editor.isAutomaticQuoteSubstitutionEnabled = false
-        editor.isAutomaticDashSubstitutionEnabled = false
-        editor.isAutomaticTextReplacementEnabled = false
-        editor.isAutomaticSpellingCorrectionEnabled = false
-        editor.isContinuousSpellCheckingEnabled = false
-        editor.isAutomaticTextCompletionEnabled = false
-        editor.isAutomaticLinkDetectionEnabled = false
-        editor.isAutomaticDataDetectionEnabled = false
     }
 
     static func fittingSize(of field: NSTextField, proposal: ProposedViewSize) -> CGSize {
@@ -148,10 +192,6 @@ struct PlainTextField: NSViewRepresentable {
         init(text: Binding<String>, onSubmit: (@MainActor () -> Void)?) {
             self.text = text
             self.onSubmit = onSubmit
-        }
-
-        func controlTextDidBeginEditing(_ notification: Notification) {
-            if let field = notification.object as? NSTextField { TextFieldSupport.makeLiteral(field) }
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {

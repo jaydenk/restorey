@@ -13,9 +13,9 @@ public enum FormValidation {
     }
 
     /// S3-style bucket naming, the common ground of AWS S3, Backblaze B2 and the S3-compatible stores:
-    /// 3 to 63 characters of lower case letters, digits, hyphens and dots. Spaces around the text are a
-    /// pasting slip and are ignored (`trimmed` is what gets saved); capitals and inner spaces are the
-    /// usual real mistake and get their own sentence.
+    /// 3 to 63 characters of lower case letters, digits, hyphens and dots, starting and ending with a letter
+    /// or digit, with no `..` and not shaped like an IPv4 address. Spaces around the text are a pasting slip
+    /// and are ignored; capitals and inner spaces are the usual real mistake and get their own sentence.
     public static func bucket(_ text: String) -> String? {
         let bucket = trimmed(text)
         if bucket.isEmpty { return "Enter the bucket name." }
@@ -28,6 +28,13 @@ public enum FormValidation {
         }
         guard allowed, (3...63).contains(bucket.count) else {
             return "Bucket names are 3 to 63 characters of lower case letters, numbers, hyphens and dots."
+        }
+        if "-.".contains(bucket.first!) || "-.".contains(bucket.last!) {
+            return "Bucket names can't start or end with a hyphen or a dot."
+        }
+        if bucket.contains("..") { return "Bucket names can't have two dots in a row." }
+        if bucket.wholeMatch(of: /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/) != nil {
+            return "Bucket names can't look like an IP address."
         }
         return nil
     }
@@ -44,22 +51,53 @@ public enum FormValidation {
         return components.string
     }
 
-    /// An S3 endpoint: a web address, `https://` assumed when no scheme is typed. `http://` is allowed for
-    /// a store on the local network; any other scheme is refused.
+    /// An S3 endpoint: just the server address (and port), `https://` assumed when no scheme is typed.
+    /// `http://` is for a store on this Mac or the local network only. A path, user info, query or fragment
+    /// is refused: a path would be misread as the bucket, and user info would put a secret in `config.json`.
     public static func endpoint(_ text: String) -> String? {
         let typed = trimmed(text)
         if typed.isEmpty { return "Enter the endpoint." }
+        let schemeProblem = "The endpoint must start with https:// or http://."
         if let range = typed.range(of: "://") {
             let scheme = typed[..<range.lowerBound].lowercased()
-            guard scheme == "https" || scheme == "http" else {
-                return "The endpoint must start with https:// or http://."
-            }
+            guard scheme == "https" || scheme == "http" else { return schemeProblem }
+        } else if typed.firstMatch(of: /^[A-Za-z][A-Za-z0-9+.\-]*:(?![0-9]+(?:\/|$))/) != nil {
+            // "https:/host", "ftp:x": a scheme-like start that isn't a host and port ("host:9000").
+            return schemeProblem
         }
-        let address = withScheme(typed)
-        guard let components = URLComponents(string: address), let host = components.host, !host.isEmpty,
+        guard let components = URLComponents(string: withScheme(typed)), let host = components.host, !host.isEmpty,
             !host.contains(where: \.isWhitespace)
         else { return "That endpoint isn't a web address." }
+        if components.user != nil || components.password != nil {
+            return "Leave the user name and password out of the endpoint: the access keys have their own fields."
+        }
+        if components.query != nil || components.fragment != nil {
+            return "The endpoint is just the server address, with no ? or #."
+        }
+        if !components.path.isEmpty, components.path != "/" {
+            return "Leave the folder out of the endpoint: the bucket and prefix have their own fields."
+        }
+        if components.scheme?.lowercased() == "http", !isLocalHost(host) {
+            return "http:// is only for a store on this Mac or your local network. Use https:// for anything else."
+        }
         return nil
+    }
+
+    /// A host that stays on this Mac or the local network: localhost, a loopback or private IPv4 address,
+    /// an IPv6 loopback or local address, a `.local` name, or a name with no dots.
+    static func isLocalHost(_ rawHost: String) -> Bool {
+        let host = rawHost.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if host == "localhost" || host == "::1" || host.hasSuffix(".local") || host.hasSuffix(".localhost") { return true }
+        if host.hasPrefix("fe80:") || host.hasPrefix("fc") && host.contains(":") || host.hasPrefix("fd") && host.contains(":") {
+            return true
+        }
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) }
+        if octets.count == 4, octets.allSatisfy({ $0 != nil && (0...255).contains($0!) }) {
+            let o = octets.map { $0! }
+            return o[0] == 10 || o[0] == 127 || (o[0] == 192 && o[1] == 168) || (o[0] == 172 && (16...31).contains(o[1]))
+                || (o[0] == 169 && o[1] == 254)
+        }
+        return !host.contains(".") && !host.contains(":")
     }
 
     /// The name restic records on every snapshot. Anything on one line will do.
@@ -88,8 +126,13 @@ public enum FormValidation {
         return .success(kiB.intValue)
     }
 
-    /// What is shown when `addingFileTypes` rejects an entry.
-    public static let fileTypeProblem = "Give the extension alone, such as dmg or tar.gz, with no leading dot, slash or wildcard."
+    /// What is shown for entries `addingFileTypes` rejected. The wording the agent uses when it refuses a plan
+    /// with such an entry (`AgentError`), from this one place.
+    public static func fileTypeProblem(rejected: [String]) -> String {
+        let quoted = rejected.map { "\"\($0)\"" }.joined(separator: ", ")
+        let subject = rejected.count == 1 ? "\(quoted) isn't a file type" : "\(quoted) aren't file types"
+        return "\(subject) to exclude: give the extension alone, such as dmg or tar.gz, with no leading dot, slash, wildcard or space"
+    }
 
     /// Adds the file types typed or pasted into the field (separated by commas, spaces or new lines) to the
     /// list: each normalised by `Plan.normalisedFileType`, an entry already listed skipped, and each entry
@@ -102,6 +145,30 @@ public enum FormValidation {
             if !types.contains(type) { types.append(type) }
         }
         return (types, rejected)
+    }
+
+    /// `existing` followed by each new path that isn't already in it. Paths are compared as the same place:
+    /// `/tmp` and `/private/tmp`, a trailing slash and `..` all count as one. A path is stored in its
+    /// standardised form (no trailing slash).
+    public static func addingSources(_ paths: [String], to existing: [String]) -> [String] {
+        var result = existing
+        var seen = Set(existing.map(placeKey))
+        for path in paths {
+            let standard = URL(fileURLWithPath: path).standardizedFileURL.path
+            if seen.insert(placeKey(standard)).inserted { result.append(standard) }
+        }
+        return result
+    }
+
+    /// A source path as shown in the list: `~` for the home folder.
+    public static func displayPath(_ path: String, home: String = NSHomeDirectory()) -> String {
+        if path == home { return "~" }
+        if path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
+        return path
+    }
+
+    private static func placeKey(_ path: String) -> String {
+        URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
     }
 
     private static func trimmed(_ text: String) -> String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
