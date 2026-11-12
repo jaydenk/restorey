@@ -173,8 +173,9 @@ recovery-kit window's job, not setup's. The kit is saved at its step but the age
 The icon and the menu come from one place (`MenuPresentation` in RestoreyCore), so they can't disagree. The icon
 shows the worst state across all plans, from SF Symbols: OK (`externaldrive.badge.timemachine`), backing up (the
 drive with an upload badge), paused (a pause badge), warning (an outlined "!" triangle) and error
-(`externaldrive.fill.badge.xmark` in red, the only filled and only coloured icon). All but error are template
-images, so the menu bar tints and dims them like its own.
+(`externaldrive.fill.badge.xmark`, the only filled icon). All five are template images, monochrome like the rest of
+the menu bar (owner, 12 Nov 2026), so the menu bar tints and dims them like its own; colour is kept for the text
+inside the open menu.
 
 The menu, top to bottom:
 

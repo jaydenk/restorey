@@ -4,9 +4,9 @@ import RestoreyCore
 /// The menu bar icon for each `StatusIconState` (UI design §5), from SF Symbols. Every symbol name here was checked
 /// to exist on macOS 27.2 with `NSImage(systemSymbolName:accessibilityDescription:)` (Task 8 report).
 ///
-/// OK, backing up, paused and warning are template images, so the menu bar tints them for light and dark and dims
-/// them on an inactive display (a custom view or explicit colour would not). Error is the only filled, red,
-/// non-template image, so it stands out at a glance.
+/// Every state is a template image (owner, 12 Nov 2026: a monochrome menu bar), so the menu bar tints them for light
+/// and dark and dims them on an inactive display (a custom view or explicit colour would not). Error is the only
+/// filled drive, which is what sets it apart at a glance.
 @MainActor
 enum StatusIcon {
     static func image(for state: StatusIconState) -> NSImage {
@@ -41,11 +41,7 @@ enum StatusIcon {
             // Not `externaldrive.trianglebadge.exclamationmark`: its triangle is filled, and only error is filled.
             return badged("exclamationmark.triangle", description)
         case .error:
-            let red = NSImage.SymbolConfiguration(hierarchicalColor: .systemRed)
-            let plain = symbol("externaldrive.fill.badge.xmark", description)
-            let image = plain.withSymbolConfiguration(red) ?? plain
-            image.isTemplate = false
-            return image
+            return template("externaldrive.fill.badge.xmark", description)
         }
     }
 
