@@ -44,7 +44,7 @@ struct SwappingSecretField: NSViewRepresentable {
         } else if let field = container.field {
             field.placeholderString = title
             field.setAccessibilityLabel(title)
-            TextFieldSupport.show(text, in: field)
+            context.coordinator.show(text, in: field)
         }
     }
 
@@ -77,6 +77,7 @@ struct SwappingSecretField: NSViewRepresentable {
     /// Replaces `previous` (if any) with the field for the current `showing`, carrying the focus and caret.
     private func install(in container: Container, coordinator: Coordinator, previous: NSTextField?) {
         coordinator.showing = showing  // first: a binding change below must not start a second swap
+        coordinator.agree(on: text)  // the new field shows the binding's value (or, below, what a swap commits)
         var shown = text
         var committed = false
         if let previous {
@@ -140,20 +141,9 @@ struct SwappingSecretField: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSTextFieldDelegate {
-        var text: Binding<String>
+    final class Coordinator: TextBindingCoordinator {
         /// Which kind of field the container holds now.
         var showing: Bool?
-        init(text: Binding<String>) { self.text = text }
-
-        func controlTextDidChange(_ notification: Notification) {
-            guard let field = notification.object as? NSTextField else { return }
-            take(field.stringValue)
-        }
-
-        func take(_ newText: String) {
-            if text.wrappedValue != newText { text.wrappedValue = newText }
-        }
 
         /// The text a swap committed (a pending dead key), written once SwiftUI has finished updating the view: the
         /// binding can't change during the update. Skipped if anything changed meanwhile: the binding (typing in

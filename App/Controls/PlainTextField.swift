@@ -8,6 +8,11 @@ import SwiftUI
 /// documented `setAccessibilityValue(_:)`, and the cell's `stringValue` and `objectValue` setters, which
 /// the writes to the field's text end in (`objectValue` is guarded to strings: AppKit also passes it other
 /// values). The VoiceOver check is on the hand check list (docs/v0.1-measurements.md).
+///
+/// Only writes from outside are reported (`CellWrites`): AppKit also writes a cell when its text is *read* during
+/// editing (`-[NSCell stringValue]` first commits the editor's text), and the field writes it itself when the binding
+/// changes. Reporting those echoed the binding's own value, or an old one, back into it during SwiftUI's update,
+/// which looped forever when the binding changed under a field being edited.
 @MainActor
 protocol AssistiveInputField: NSTextField {
     /// Called with the field's text after it was written to other than by the user typing.
@@ -58,11 +63,8 @@ final class ForwardingTextField: NSTextField, AssistiveInputField {
         fieldUndoManager.removeAllActions()
     }
 
-    /// Text that is put into the field from outside (the binding) replaces what the history describes.
-    func replaceText(_ text: String) {
-        stringValue = text
-        fieldUndoManager.removeAllActions()
-    }
+    /// Text put into the field from the binding replaces what the history describes.
+    func forgetUndoHistory() { fieldUndoManager.removeAllActions() }
 }
 
 /// Plain fields get their own field editor, set up once as literal, instead of the window's shared one. The
@@ -125,19 +127,21 @@ final class ForwardingTextFieldCell: NSTextFieldCell {
     /// Empties this cell's own editor, which keeps the last text it edited once editing has ended.
     @MainActor func emptyEditor() { literalEditor?.string = "" }
 
+    let writes = CellWrites()
+
     override var stringValue: String {
-        get { super.stringValue }
+        get { writes.reading { super.stringValue } }
         set {
             super.stringValue = newValue
-            (controlView as? ForwardingTextField)?.onTextWritten?(newValue)
+            writes.report(newValue, from: controlView)
         }
     }
 
     override var objectValue: Any? {
-        get { super.objectValue }
+        get { writes.reading { super.objectValue } }
         set {
             super.objectValue = newValue
-            if let text = newValue as? String { (controlView as? ForwardingTextField)?.onTextWritten?(text) }
+            writes.report(newValue, from: controlView)
         }
     }
 }
@@ -161,20 +165,46 @@ final class ForwardingSecureTextField: NSSecureTextField, AssistiveInputField {
 }
 
 final class ForwardingSecureTextFieldCell: NSSecureTextFieldCell {
+    let writes = CellWrites()
+
     override var stringValue: String {
-        get { super.stringValue }
+        get { writes.reading { super.stringValue } }
         set {
             super.stringValue = newValue
-            (controlView as? ForwardingSecureTextField)?.onTextWritten?(newValue)
+            writes.report(newValue, from: controlView)
         }
     }
 
     override var objectValue: Any? {
-        get { super.objectValue }
+        get { writes.reading { super.objectValue } }
         set {
             super.objectValue = newValue
-            if let text = newValue as? String { (controlView as? ForwardingSecureTextField)?.onTextWritten?(text) }
+            writes.report(newValue, from: controlView)
         }
+    }
+}
+
+/// Which of a forwarding cell's text writes reach the binding: none made while the cell is being read (AppKit's
+/// commit of the editor's text) or while the field is showing the binding's own value (`quietly`).
+@MainActor
+final class CellWrites {
+    private var quiet = 0
+
+    func reading<T>(_ read: () -> T) -> T {
+        quiet += 1
+        defer { quiet -= 1 }
+        return read()
+    }
+
+    func quietly(_ write: () -> Void) {
+        quiet += 1
+        defer { quiet -= 1 }
+        write()
+    }
+
+    func report(_ value: Any?, from controlView: NSView?) {
+        guard quiet == 0, let text = value as? String else { return }
+        (controlView as? any AssistiveInputField)?.onTextWritten?(text)
     }
 }
 
@@ -206,12 +236,25 @@ enum TextFieldSupport {
         window.makeFirstResponder(field)
     }
 
-    /// Puts the binding's text into the field, unless it already shows it or an input method is part-way
-    /// through composing (replacing the string then would cancel the composition).
+    /// Puts a new value of the binding into the field, without echoing it back. During editing the editor's text is
+    /// replaced (a composition in progress is dropped: it belonged to the old value) with the caret at the end, and a
+    /// plain field's undo history is cleared.
     static func show(_ text: String, in field: NSTextField) {
-        guard field.stringValue != text else { return }
-        if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
-        if let field = field as? ForwardingTextField { field.replaceText(text) } else { field.stringValue = text }
+        let editor = field.currentEditor() as? NSTextView
+        guard (editor?.string ?? field.stringValue) != text else { return }
+        if let editor, editor.hasMarkedText() {
+            editor.unmarkText()
+            editor.inputContext?.discardMarkedText()
+        }
+        writes(of: field)?.quietly { field.stringValue = text }
+        if let editor = field.currentEditor() {
+            editor.selectedRange = NSRange(location: editor.string.utf16.count, length: 0)
+        }
+        (field as? ForwardingTextField)?.forgetUndoHistory()
+    }
+
+    private static func writes(of field: NSTextField) -> CellWrites? {
+        (field.cell as? ForwardingTextFieldCell)?.writes ?? (field.cell as? ForwardingSecureTextFieldCell)?.writes
     }
 
     static func fittingSize(of field: NSTextField, proposal: ProposedViewSize) -> CGSize {
@@ -243,7 +286,7 @@ struct PlainTextField: NSViewRepresentable {
         context.coordinator.onSubmit = onSubmit
         field.placeholderString = title
         field.setAccessibilityLabel(title)
-        TextFieldSupport.show(text, in: field)
+        context.coordinator.show(text, in: field)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView field: ForwardingTextField, context: Context) -> CGSize? {
@@ -255,12 +298,11 @@ struct PlainTextField: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSTextFieldDelegate {
-        var text: Binding<String>
+    final class Coordinator: TextBindingCoordinator {
         var onSubmit: (@MainActor () -> Void)?
         init(text: Binding<String>, onSubmit: (@MainActor () -> Void)?) {
-            self.text = text
             self.onSubmit = onSubmit
+            super.init(text: text)
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
@@ -268,15 +310,47 @@ struct PlainTextField: NSViewRepresentable {
             onSubmit()
             return true
         }
-
-        func controlTextDidChange(_ notification: Notification) {
-            guard let field = notification.object as? NSTextField else { return }
-            take(field.stringValue)
-        }
-
-        /// The field's text changed: the binding takes it, unless it already has it.
-        func take(_ newText: String) {
-            if text.wrappedValue != newText { text.wrappedValue = newText }
-        }
     }
+}
+
+/// Keeps a field and its binding in step in both directions. `known` is the text both last agreed on: the field
+/// sets it when it writes the binding, the binding when it is shown. A binding value that differs from it is a
+/// change from outside (another plan loaded, say) and replaces the field's text, even mid-edit; one that equals it
+/// is the field's own value coming back and leaves the field alone.
+@MainActor
+class TextBindingCoordinator: NSObject, NSTextFieldDelegate {
+    var text: Binding<String>
+    private(set) var known: String
+    /// True while the field is being given the binding's value: what it reports then (an input method's
+    /// composition committed on the way) is the old text, not the user's.
+    private var applyingBinding = false
+
+    init(text: Binding<String>) {
+        self.text = text
+        known = text.wrappedValue
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        guard let field = notification.object as? NSTextField else { return }
+        take(field.stringValue)
+    }
+
+    /// The field's text changed: the binding takes it, unless it already has it.
+    func take(_ newText: String) {
+        guard !applyingBinding else { return }
+        known = newText
+        if text.wrappedValue != newText { text.wrappedValue = newText }
+    }
+
+    /// Called from `updateNSView` with the binding's value.
+    func show(_ value: String, in field: NSTextField) {
+        guard value != known else { return }
+        known = value
+        applyingBinding = true
+        defer { applyingBinding = false }
+        TextFieldSupport.show(value, in: field)
+    }
+
+    /// The field now shows `value` (a new field was set up with it).
+    func agree(on value: String) { known = value }
 }

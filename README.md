@@ -121,7 +121,8 @@ resumes, asks for notification permission, and shows the agent's live status as 
 controls the setup flow and Settings use (`App/Controls/`): `PlainTextField` and `SecretField` (a secure field that
 swaps to a plain one while "Show" is on, so dead keys and input methods work), `SourcesEditor` and
 `FileTypesEditor`, with their checks in `FormValidation` (`RestoreyCore`). A plain field's Undo history belongs to
-the field and lasts while it is being edited; a secret field has no Undo history, shown or hidden.
+the field and lasts while it is being edited; a secret field has no Undo history, shown or hidden. A field shows a
+new value from its model (another plan loaded, say) even while it is being edited, and never writes it back.
 
 ```sh
 launchctl print gui/$(id -u)/com.jaydenkerr.restorey.dev.agent        # spawn type = daemon (3), both Mach services
