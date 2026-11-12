@@ -138,7 +138,9 @@ public struct CheckSummary: Sendable, Equatable {
 /// The result of `stats --mode raw-data --json` (Ruling P2-9). restic 0.19.1 prints one object with no
 /// `message_type`: `{"total_size":62620,"total_uncompressed_size":65889,"compression_ratio":1.05,
 /// "compression_progress":100,"compression_space_saving":4.96,"total_blob_count":12,"snapshots_count":3}`.
-/// `total_size` is the repository's blobs as stored (after compression), which is what the provider bills.
+/// `total_size` is the stored (compressed) size of the blobs the snapshots reference. It leaves out packs
+/// no snapshot references (until a prune removes them), the index and other overhead, so the provider's
+/// figure is somewhat larger.
 public struct StatsSummary: Sendable, Equatable {
     /// Bytes.
     public var totalSize: Int64
@@ -184,16 +186,16 @@ public struct ForgetGroup: Sendable, Equatable {
     }
 
     /// The group's run log line: `Group host mac, paths /a, tags restorey:…: kept 3, removed 2 (1a2b3c4d,
-    /// 5e6f7a8b)`. Parts the grouping doesn't have are left out, and so are the brackets when nothing was
-    /// removed.
-    public var summary: String {
+    /// 5e6f7a8b)`, or `… would remove 2 (…)` for a dry run. Parts the grouping doesn't have are left out,
+    /// and so are the brackets when nothing was removed.
+    public func summary(dryRun: Bool = false) -> String {
         var key: [String] = []
         if let host { key.append("host \(host)") }
         if !paths.isEmpty { key.append("paths \(paths.joined(separator: ", "))") }
         if !tags.isEmpty { key.append("tags \(tags.joined(separator: ", "))") }
         let group = key.isEmpty ? "Group" : "Group \(key.joined(separator: ", "))"
         let removed = removedIDs.isEmpty ? "" : " (\(removedIDs.joined(separator: ", ")))"
-        return "\(group): kept \(kept), removed \(removedIDs.count)\(removed)"
+        return "\(group): kept \(kept), \(dryRun ? "would remove" : "removed") \(removedIDs.count)\(removed)"
     }
 }
 

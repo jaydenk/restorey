@@ -15,8 +15,10 @@ extension PlanRunner {
         return await deps.state.status()
     }
 
-    /// Lists the repository's snapshots for every host, then measures its size (`stats`, Ruling P2-9). Never
-    /// forgets or changes anything. A failed measurement doesn't fail the adopt.
+    /// Lists the repository's snapshots for every host and replies with what it found. Never forgets or
+    /// changes anything. The repository's size (`stats`, Ruling P2-9) is measured afterwards as its own job,
+    /// next in the repository's queue (`measureAfterAdoption`): on a large remote repository with a cold
+    /// cache it can take far longer than the listing, and the adopt mustn't wait for it or fail with it.
     public func adopt(planID: UUID) async throws -> AdoptReport {
         let handle = try await begin(planID)
         let result = await listForAdoption(planID: planID, handle: handle)
@@ -107,9 +109,8 @@ extension PlanRunner {
         let listed = await deps.queues.run(repository: session.key) { [self] () async -> Result<AdoptReport, AgentError>? in
             guard !(await isWindingDown()) else { return nil }
             let listing = await listSnapshots(session: session, handle: handle)
-            if case .success = listing, handle.intent == nil, !(await isWindingDown()) {
-                _ = await measureRepository(session: session, trigger: .manual, handle: handle)
-            }
+            // Queued from inside this turn, so it is next in line, ahead of the plan's first backup.
+            if case .success = listing { await queueMeasurementAfterAdoption(planID: planID, key: session.key) }
             return listing
         }
         return listed ?? .failure(.draining)
@@ -159,6 +160,67 @@ extension PlanRunner {
         } catch {
             return .failure(.operationFailed("Restorey couldn't read restic's list of snapshots"))
         }
+    }
+
+    // MARK: Measuring after an adopt
+
+    /// Queues `measureAfterAdoption` behind everything already in the repository's queue and returns at once.
+    private func queueMeasurementAfterAdoption(planID: UUID, key: String) async {
+        let handle = RunHandle()
+        measurementHandles[planID, default: []].append(handle)
+        let job = await deps.queues.enqueue(repository: key) { [self] () async -> Void in
+            await measureAfterAdoption(planID: planID, key: key, handle: handle)
+        }
+        measurements[planID] = Task {
+            await job.value()
+            measurementEnded(planID: planID, handle: handle)
+        }
+    }
+
+    private func measurementEnded(planID: UUID, handle: RunHandle) {
+        measurementHandles[planID]?.removeAll { $0 === handle }
+        if measurementHandles[planID]?.isEmpty == true { measurementHandles[planID] = nil }
+    }
+
+    /// Waits for the latest measurement queued after an adopt of the plan. For tests.
+    func waitForMeasurement(planID: UUID) async {
+        await measurements[planID]?.value
+    }
+
+    /// Asks the plan's measurements after an adopt to stop: one running is cancelled, one still waiting
+    /// never starts. `AgentState.deletePlan` is the way in.
+    func stopMeasurement(planID: UUID) async {
+        for handle in measurementHandles[planID] ?? [] {
+            guard let process = handle.request(.cancel) else { continue }
+            await process.interrupt(.cancel, killAfter: deps.interruptGracePeriod)
+        }
+    }
+
+    /// The measurement after an adopt, in its own turn of the repository's queue. It isn't a run of the plan
+    /// (the plan stays idle, and Back Up Now isn't refused), but it is registered with the state, so a drain
+    /// waits for it. It doesn't start, and says why in `agent.log`, when the plan was paused, deleted or
+    /// moved to another repository while it waited, or the agent is winding down.
+    private func measureAfterAdoption(planID: UUID, key: String, handle: RunHandle) async {
+        func skipped(_ reason: String) {
+            deps.agentLog("Didn't measure the repository size after adopting it, for plan \(planID.uuidString): \(reason)")
+        }
+        guard handle.intent == nil else { return skipped("the plan was paused or deleted first") }
+        guard !(await isWindingDown()) else { return skipped(AgentError.draining.message) }
+        do {
+            try await deps.state.beginMeasurement(planID: planID)
+        } catch {
+            return skipped((error as? AgentError)?.message ?? "\(error)")
+        }
+        if let until = try? await deps.state.runInputs(planID).history.pausedUntil, until > deps.now() {
+            skipped("the plan is paused")
+        } else {
+            switch await actionSession(planID: planID) {
+            case .failure(let error): skipped(error.message)
+            case .success(let session) where session.key != key: skipped("its repository has changed")
+            case .success(let session): _ = await measureRepository(session: session, trigger: .manual, handle: handle)
+            }
+        }
+        await deps.state.endMeasurement(planID: planID)
     }
 
     private func actionSession(planID: UUID) async -> Result<RunSession, AgentError> {

@@ -81,8 +81,10 @@ public actor SchedulerCore {
     private var pending = Requests()
     /// Wakes (and start-up) waiting for the network.
     private var wakesWaiting = 0
-    /// The loop's sleep between ticks, so stopping can end it at once.
+    /// The loop's sleep between ticks, so stopping can end it at once, and a nudge can end it early.
     private var pause: Task<Void, any Error>?
+    /// A nudge asked the loop to work out its sleep again (`wakeLoop`).
+    private var recomputeWake = false
 
     /// - Parameters:
     ///   - waitForNetwork: returns once the network path is satisfied. It must return when cancelled.
@@ -110,19 +112,27 @@ public actor SchedulerCore {
         await runner.recoverAfterStart()
         recovering = false
         var first = true
+        var tickFirst = true
         while !isStopped && !Task.isCancelled {
             if first {
                 first = false
                 await afterNetwork()
-            } else {
+            } else if tickFirst {
                 await tick()
             }
+            tickFirst = true
             guard !isStopped else { return }
             let clock = clock
+            recomputeWake = false
             let looked = now()
             let delay = Duration.seconds(await nextWake(after: looked).timeIntervalSince(looked))
             // Stopped while the plans were read: there is no sleep yet for `stop()` to cancel.
             guard !isStopped else { return }
+            // A nudge came while the plans were read, so they may be out of date: read them again.
+            if recomputeWake {
+                tickFirst = false
+                continue
+            }
             let pause = Task { try await clock.sleep(for: delay) }
             self.pause = pause
             let slept = await withTaskCancellationHandler {
@@ -131,7 +141,11 @@ public actor SchedulerCore {
                 pause.cancel()
             }
             self.pause = nil
-            if !slept { return }
+            if !slept {
+                // Woken by a nudge (which has ticked already): only the sleep is worked out again.
+                guard recomputeWake, !isStopped, !Task.isCancelled else { return }
+                tickFirst = false
+            }
         }
     }
 
@@ -174,6 +188,15 @@ public actor SchedulerCore {
         case .configChanged, .manual:
             await tick()
         }
+        wakeLoop()
+    }
+
+    /// After a nudge: a plan may now fall due sooner than the loop's sleep (a schedule or pause changed),
+    /// so the loop stops sleeping and works out `nextWake` again, without another tick.
+    private func wakeLoop() {
+        guard !isStopped else { return }
+        recomputeWake = true
+        pause?.cancel()
     }
 
     /// Waits for the network (at most `wakeNetworkTimeout`), holding back other ticks meanwhile, then

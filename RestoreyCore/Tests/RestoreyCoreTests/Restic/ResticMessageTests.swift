@@ -282,8 +282,10 @@ struct ResticMessageTests {
         #expect(group.tags == ["restorey:00000000-0000-0000-0000-000000000001"])
         #expect(group.kept == 1)
         #expect(group.removedIDs == ["a18cb0e4", "6b65c8aa"])
-        #expect(group.summary == "Group host fixturehost, paths /fixture/src, "
+        #expect(group.summary() == "Group host fixturehost, paths /fixture/src, "
             + "tags restorey:00000000-0000-0000-0000-000000000001: kept 1, removed 2 (a18cb0e4, 6b65c8aa)")
+        #expect(group.summary(dryRun: true) == "Group host fixturehost, paths /fixture/src, "
+            + "tags restorey:00000000-0000-0000-0000-000000000001: kept 1, would remove 2 (a18cb0e4, 6b65c8aa)")
     }
 
     /// restic writes `"remove":null` when a group loses nothing, and a short ID is cut from the full one
@@ -291,12 +293,18 @@ struct ResticMessageTests {
     @Test func forgetGroupWithNothingRemoved() throws {
         let line = #"[{"tags":null,"host":"mac","paths":["/a","/b"],"keep":[{"id":"0123456789abcdef"}],"remove":null,"reasons":[]}]"#
         let groups = try ForgetReport.groups(from: line)
-        #expect(groups.map(\.summary) == ["Group host mac, paths /a, /b: kept 1, removed 0"])
+        #expect(groups.map { $0.summary() } == ["Group host mac, paths /a, /b: kept 1, removed 0"])
         let cut = try ForgetReport.groups(
             from: #"[{"host":"mac","keep":[],"remove":[{"id":"0123456789abcdef"}]}]"#)
         #expect(cut.first?.removedIDs == ["01234567"])
-        #expect(cut.first?.summary == "Group host mac: kept 0, removed 1 (01234567)")
+        #expect(cut.first?.summary() == "Group host mac: kept 0, removed 1 (01234567)")
         #expect(try ForgetReport.groups(from: "[]").isEmpty)
+        // Two groups, two lines, in restic's order.
+        let two = try ForgetReport.groups(from: #"[{"host":"mac","paths":["/a"],"keep":[{"id":"aaaaaaaa1"}],"remove":null},"#
+            + #"{"host":"mac","paths":["/b"],"keep":[{"id":"bbbbbbbb1"}],"remove":[{"id":"cccccccc1","short_id":"cccccccc"}]}]"#)
+        #expect(two.map { $0.summary() } == [
+            "Group host mac, paths /a: kept 1, removed 0", "Group host mac, paths /b: kept 1, removed 1 (cccccccc)",
+        ])
         #expect(throws: (any Error).self) { try ForgetReport.groups(from: #"[{"keep":[{"short_id":"x"}]}]"#) }
     }
 }

@@ -245,6 +245,7 @@ struct PlanRunnerTests {
 
         f.clock.advance(60)
         _ = try await f.state.adopt(f.planID)
+        await f.runner.waitForMeasurement(planID: f.planID)
         #expect(Array(await f.operations().suffix(2)) == [.snapshots(allHosts: true), .stats])
         let adopted = try #require(await f.history().repositorySize)
         #expect(adopted.measuredAt == f.clock.now)
@@ -288,6 +289,8 @@ struct PlanRunnerTests {
 
         let report = try await f.state.adopt(f.planID)
         #expect(report.snapshotCount == 1)
+        await f.runner.waitForMeasurement(planID: f.planID)
+        #expect(await f.operations().last == .stats)
         history = await f.history()
         #expect(history.repositorySize == earlier)
         #expect(history.activeAlerts.isEmpty)
@@ -315,6 +318,30 @@ struct PlanRunnerTests {
         for marker in ["\"keep\"", "\"short_id\"", "\"tree\"", "[{"] {
             #expect(!log.contains(marker), "\(marker) in \(log)")
         }
+    }
+
+    /// Two groups (the plan's sources changed, so its snapshots group by two path sets): two summary lines.
+    @Test func forgetLogHasALinePerGroup() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        let extra = f.root.appendingPathComponent("extra")
+        try FileManager.default.createDirectory(at: extra, withIntermediateDirectories: true)
+        try "x".write(to: extra.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
+        try await f.updatePlan { $0.sources = [f.source.path, extra.path] }
+        _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+
+        let forget = try #require(await f.history().recent.first { $0.operation == .forget(dryRun: false) })
+        let log = try String(contentsOf: f.logs.appendingPathComponent(forget.logFile), encoding: .utf8)
+        let summaries = log.split(separator: "\n").filter { $0.contains(": kept ") }
+        #expect(summaries.count == 2, "\(log)")
+        #expect(summaries.contains { $0.hasSuffix("paths \(f.source.path), tags restorey:\(f.planID.uuidString): kept 1, removed 0") })
+        #expect(summaries.contains {
+            $0.hasSuffix("paths \(extra.path), \(f.source.path), tags restorey:\(f.planID.uuidString): kept 1, removed 0")
+                || $0.hasSuffix("paths \(f.source.path), \(extra.path), tags restorey:\(f.planID.uuidString): kept 1, removed 0")
+        })
+        #expect(!log.contains("\"keep\""))
     }
 
     /// A failing maintenance step is its own record and raises its own alert; the backup stays a success.
@@ -1373,7 +1400,138 @@ struct PlanRunnerTests {
         let report = try await f.state.adopt(f.planID)
         #expect(report == AdoptReport(hosts: ["fixturehost", "otherhost"], latestPathsForHost: [f.source.path], snapshotCount: 3))
         #expect(try await f.snapshots().count == 3)
+        await f.runner.waitForMeasurement(planID: f.planID)
         #expect(await f.operations() == [.catConfig, .initRepository, .snapshots(allHosts: true), .stats])
+    }
+
+    // MARK: Measuring after an adopt (Ruling P2-9, fix round 1)
+
+    /// A restic stand-in that, while `hold-<command>` exists in `control`, touches `started-<command>` and
+    /// waits for `go-<command>` before running the real restic (for `snapshots` and `stats`).
+    private static func holdingRestic(control: URL) throws -> URL {
+        let restic = try ResticBinary.require()
+        try FileManager.default.createDirectory(at: control, withIntermediateDirectories: true)
+        let script = control.appendingPathComponent("restic.sh")
+        let c = control.path
+        try """
+            #!/bin/sh
+            for command in snapshots stats; do
+              if [ "$1" = "$command" ] && [ -f '\(c)'/hold-$command ]; then
+                touch '\(c)'/started-$command
+                while [ ! -f '\(c)'/go-$command ]; do sleep 0.05; done
+              fi
+            done
+            exec '\(restic.path)' "$@"
+
+            """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        return script
+    }
+
+    private static func touch(_ control: URL, _ name: String) {
+        FileManager.default.createFile(atPath: control.appendingPathComponent(name).path, contents: nil)
+    }
+
+    private static func exists(_ control: URL, _ name: String) -> Bool {
+        FileManager.default.fileExists(atPath: control.appendingPathComponent(name).path)
+    }
+
+    /// The adopt replies when the listing is done; `stats` follows as its own job in the queue, with the
+    /// plan idle meanwhile, and sets the size once it finishes.
+    @Test func adoptRepliesBeforeItsMeasurement() async throws {
+        let control = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-hold-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: control) }
+        let f = try await RunnerFixture.make(origin: .adopted, executable: try Self.holdingRestic(control: control))
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        #expect(try await f.restic(.backup).exitCode == 0)
+        Self.touch(control, "hold-stats")
+
+        let report = try await f.state.adopt(f.planID)
+        #expect(report.snapshotCount == 1)
+        #expect(await eventually { Self.exists(control, "started-stats") })
+        // Replied while stats is still held: nothing recorded or measured yet, and the plan isn't running.
+        #expect(await f.history().recent.contains { $0.operation == .stats } == false)
+        #expect(await f.history().repositorySize == nil)
+        #expect(await f.status().phase == .idle)
+
+        Self.touch(control, "go-stats")
+        await f.runner.waitForMeasurement(planID: f.planID)
+        let stats = try #require(await f.history().recent.first)
+        #expect(stats.operation == .stats)
+        #expect(stats.outcome == .success(snapshotID: nil))
+        #expect(await f.history().repositorySize?.bytes ?? 0 > 0)
+    }
+
+    /// Pausing or deleting the plan while its measurement runs stops it: no size, and a delete isn't refused.
+    @Test func pauseOrDeleteStopsARunningMeasurement() async throws {
+        for deleting in [false, true] {
+            let control = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-hold-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: control) }
+            let f = try await RunnerFixture.make(
+                origin: .adopted, executable: try Self.holdingRestic(control: control), gracePeriod: .seconds(2))
+            defer { f.remove() }
+            try f.write("a.txt", "one")
+            #expect(try await f.restic(.backup).exitCode == 0)
+            Self.touch(control, "hold-stats")
+            _ = try await f.state.adopt(f.planID)
+            #expect(await eventually { Self.exists(control, "started-stats") })
+
+            if deleting {
+                _ = try await f.state.deletePlan(f.planID)
+                await f.runner.waitForMeasurement(planID: f.planID)
+                #expect(await f.state.status().plans.isEmpty)
+                #expect(!FileManager.default.fileExists(atPath: f.logs.appendingPathComponent("runs/\(f.planID.uuidString)").path))
+            } else {
+                _ = try await f.state.pause(f.planID)
+                await f.runner.waitForMeasurement(planID: f.planID)
+                let stats = try #require(await f.history().recent.first { $0.operation == .stats })
+                #expect(stats.outcome == .paused)
+                #expect(await f.history().repositorySize == nil)
+                #expect(await f.history().activeAlerts.isEmpty)
+            }
+        }
+    }
+
+    /// A measurement still waiting in the queue doesn't start once the plan is paused or deleted, and says
+    /// so in agent.log.
+    @Test func aQueuedMeasurementDoesNotStartOncePausedOrDeleted() async throws {
+        for deleting in [false, true] {
+            let control = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-hold-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: control) }
+            let f = try await RunnerFixture.make(origin: .adopted, executable: try Self.holdingRestic(control: control))
+            defer { f.remove() }
+            try f.write("a.txt", "one")
+            #expect(try await f.restic(.backup).exitCode == 0)
+
+            // Hold the listing, queue a job behind it, then let the listing finish: the measurement queues
+            // behind that job.
+            Self.touch(control, "hold-snapshots")
+            let adopt = Task { try await f.state.adopt(f.planID) }
+            #expect(await eventually { Self.exists(control, "started-snapshots") })
+            let gate = Gate()
+            let blocker = await f.dependencies.queues.enqueue(repository: RepositoryQueues.key(for: await f.plan().repository)) {
+                await gate.wait()
+            }
+            Self.touch(control, "go-snapshots")
+            _ = try await adopt.value
+
+            if deleting {
+                _ = try await f.state.deletePlan(f.planID)
+            } else {
+                _ = try await f.state.pause(f.planID)
+            }
+            gate.open()
+            await blocker.value()
+            await f.runner.waitForMeasurement(planID: f.planID)
+            let reason = deleting ? "There's no plan with that ID" : "the plan was paused or deleted first"
+            #expect(f.agentLog.value == [
+                "Didn't measure the repository size after adopting it, for plan \(f.planID.uuidString): \(reason)",
+            ])
+            if !deleting {
+                #expect(await f.history().recent.contains { $0.operation == .stats } == false)
+            }
+        }
     }
 
     @Test func adoptReportsAWrongPassword() async throws {

@@ -132,6 +132,11 @@ public actor PlanRunner {
     private var networkedUploads: Set<UUID> = []
     /// When `pruneRunLogsIfDue` last pruned the run logs; nil until it has (Ruling R70).
     var lastRunLogPrune: Date?
+    /// The measurements queued after an adopt (PlanRunner+Actions.swift), waiting or running, by plan, so a
+    /// pause, a delete and a system stop reach them as they reach runs.
+    var measurementHandles: [UUID: [RunHandle]] = [:]
+    /// The latest measurement queued after an adopt, by plan, for `waitForMeasurement`.
+    var measurements: [UUID: Task<Void, Never>] = [:]
 
     public init(dependencies: RunnerDependencies) {
         deps = dependencies
@@ -266,8 +271,10 @@ public actor PlanRunner {
     /// Asks the plan's run in progress, if any, to stop. A request repeated while it is pending is
     /// ignored. `AgentState.pause` is the one way in.
     func interrupt(planID: UUID, intent: InterruptIntent) async {
-        guard let process = handles[planID]?.request(intent) else { return }
-        await process.interrupt(intent, killAfter: deps.interruptGracePeriod)
+        for handle in [handles[planID]].compactMap({ $0 }) + (measurementHandles[planID] ?? []) {
+            guard let process = handle.request(intent) else { continue }
+            await process.interrupt(intent, killAfter: deps.interruptGracePeriod)
+        }
     }
 
     /// Asks every run in flight (recovery's unlocks, backups, maintenance, create, adopt) to stop with
@@ -278,7 +285,7 @@ public actor PlanRunner {
     /// SIGINT would outlive launchd's exit timeout and the next start would record a false failure.
     /// `AgentState.stopForSystem` is the way in.
     func interruptAll(_ intent: InterruptIntent, killAfter: Duration) async {
-        for handle in handles.values {
+        for handle in Array(handles.values) + measurementHandles.values.flatMap({ $0 }) {
             if handle.intent == nil {
                 guard let process = handle.request(intent) else { continue }
                 await process.interrupt(intent, killAfter: killAfter)

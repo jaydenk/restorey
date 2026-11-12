@@ -86,9 +86,17 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func backUpNow(_ planID: String?, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        // `AgentState.backUpNow` logs its own refusals (final review M5), where they are tested.
+        // `AgentState.backUpNow` logs its own refusals (final review M5), where they are tested; only a
+        // malformed plan ID, refused before the state sees the call, is logged here.
         respond(reply, "Back Up Now", logsRefusal: false) { [state, log] in
-            let status = try await state.backUpNow(try planID.map(Self.planID))
+            let id: UUID?
+            do {
+                id = try planID.map(Self.planID)
+            } catch let error as AgentError {
+                log.info("Refused Back Up Now: \(error.message)")
+                throw error
+            }
+            let status = try await state.backUpNow(id)
             log.info("Back up now: \(planID.map { "plan \($0)" } ?? "every plan")")
             return status
         }

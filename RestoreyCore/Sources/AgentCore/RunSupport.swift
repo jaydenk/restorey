@@ -64,11 +64,11 @@ final class StepLog: Sendable {
     /// days, the raw reply made an hourly plan's logs grow by gigabytes. A reply that can't be read is
     /// noted by its size, still without the JSON.
     static func lines(for message: ResticMessage, operation: ResticOperation) -> [String] {
-        if case .forget = operation, case .unparseable(let line) = message, ForgetReport.isReport(line) {
+        if case .forget(let dryRun) = operation, case .unparseable(let line) = message, ForgetReport.isReport(line) {
             guard let groups = try? ForgetReport.groups(from: line) else {
                 return ["restic's forget reply couldn't be read, so it is left out of this log (\(line.utf8.count) bytes)"]
             }
-            return groups.isEmpty ? ["Forget: no snapshots of this plan to keep or remove"] : groups.map(\.summary)
+            return groups.isEmpty ? ["Forget: no snapshots of this plan to keep or remove"] : groups.map { $0.summary(dryRun: dryRun) }
         }
         return text(for: message).map { [$0] } ?? []
     }

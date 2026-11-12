@@ -51,6 +51,12 @@ public actor AgentState {
     private var running: [UUID: RunProgress] = [:]
     /// Plans `deletePlan` has started removing. No run may begin on them.
     private var deleting: Set<UUID> = []
+    /// Plans whose repository is being measured after an adopt (`beginMeasurement`). Not a run: the plan
+    /// stays idle and can back up (its backup waits in the repository's queue), but a drain waits for it
+    /// and a delete stops it first.
+    private var measuring: Set<UUID> = []
+    /// `deletePlan` callers waiting for a measurement they stopped to end.
+    private var measuringWaiters: [CheckedContinuation<Void, Never>] = []
     /// `prepareForRestart` callers, woken whenever the agent may have become idle.
     private var drainWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -424,6 +430,13 @@ public actor AgentState {
         // Marked before the first await, so beginRun can't slip in while this waits on the stores.
         deleting.insert(id)
         defer { deleting.remove(id) }
+        // A measurement after an adopt is stopped rather than refusing the delete (setup's Cancel deletes the
+        // plan it just adopted). restic has `interruptGracePeriod` to stop; its record is written before the
+        // plan goes. One still waiting in the queue finds the plan gone and doesn't start.
+        if measuring.contains(id) {
+            await runner?.stopMeasurement(planID: id)
+            while measuring.contains(id) { await withCheckedContinuation { measuringWaiters.append($0) } }
+        }
 
         return try await serialisedWrite {
             var updated = config
@@ -639,6 +652,23 @@ public actor AgentState {
         pushStatus(deliveringAlerts: false)
     }
 
+    /// Registers the measurement after an adopt (`PlanRunner`), as it reaches its turn in the queue.
+    /// Refused while draining, in the config-error state, for an unknown plan or one being deleted.
+    func beginMeasurement(planID: UUID) throws {
+        try requireRunnable(planID)
+        let plan = try requirePlan(planID)
+        guard !deleting.contains(planID) else { throw AgentError.planDeleting(name: plan.name) }
+        measuring.insert(planID)
+    }
+
+    func endMeasurement(planID: UUID) {
+        guard measuring.remove(planID) != nil else { return }
+        let waiters = measuringWaiters
+        measuringWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+        wakeDrainersIfIdle()
+    }
+
     public func endRun(planID: UUID) {
         guard running.removeValue(forKey: planID) != nil else { return }
         pushStatus()
@@ -830,7 +860,7 @@ public actor AgentState {
         }
     }
 
-    private var isIdle: Bool { running.isEmpty && !writeInFlight && writeWaiters.isEmpty }
+    private var isIdle: Bool { running.isEmpty && measuring.isEmpty && !writeInFlight && writeWaiters.isEmpty }
 
     /// Wakes every drainer; each re-checks `isIdle` and waits again if something is still going on.
     private func wakeDrainersIfIdle() {

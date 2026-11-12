@@ -598,6 +598,35 @@ struct SchedulerCoreTests {
         await loop.value
     }
 
+    /// A nudge (a plan saved, say) ends the loop's sleep so it works out `nextWake` again: a plan made due in
+    /// 20 s during a minute's sleep runs after 20 s.
+    @Test func aNudgeShortensTheSleep() async throws {
+        let w = World()
+        let now = w.now.value
+        w.network.open()
+        let loop = Task { await w.core.run() }
+        @Sendable func reads() async -> Int { await w.runner.events.filter { $0 == "entries" }.count }
+        #expect(await eventually { await reads() >= 2 && w.clock.sleeperCount == 1 })  // tick, then nextWake
+
+        let plan = Self.plan("Home", now: now)
+        guard case .interval(let seconds) = plan.schedule else { return }
+        await w.runner.set([(plan, Self.history(attempted: TimeInterval(seconds) - 20, before: now, planID: plan.id))])
+        let before = await reads()
+        await w.core.nudge(reason: .configChanged)
+        // The nudge's tick and the loop's fresh nextWake, and a new sleep in place of the old one.
+        #expect(await eventually { await reads() >= before + 2 && w.clock.sleeperCount == 1 })
+        #expect(await w.runner.events.filter { $0 == "refresh" }.count == 2)
+
+        w.clock.advance(by: .seconds(19))
+        for _ in 0..<20 { await Task.yield() }
+        #expect(await w.runner.runCount == 0)
+        w.now.set(now.addingTimeInterval(20))
+        w.clock.advance(by: .seconds(1))
+        #expect(await eventually { await w.runner.runCount == 1 })
+        loop.cancel()
+        await loop.value
+    }
+
     @Test func everyTickRefreshesTheStatusFirst() async throws {
         let w = World()
         await w.core.tick()
