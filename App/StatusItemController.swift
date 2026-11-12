@@ -77,7 +77,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     private func refreshIcon() {
         let symbol = switch iconState {
-        case .neutral: "externaldrive.badge.timemachine"
+        // Task 8 draws all five states; until then backing up and paused share the idle icon.
+        case .ok, .backingUp, .paused: "externaldrive.badge.timemachine"
         case .warning: "externaldrive.trianglebadge.exclamationmark"
         case .error: "externaldrive.badge.xmark"
         }

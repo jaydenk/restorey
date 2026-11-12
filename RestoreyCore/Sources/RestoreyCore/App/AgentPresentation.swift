@@ -30,8 +30,12 @@ public func showsPlanLines(_ health: AgentHealthState) -> Bool { health == .heal
 /// "Back Up Now" only while healthy: a draining agent refuses it.
 public func allowsBackUpNow(_ health: AgentHealthState) -> Bool { health == .healthy }
 
-public enum StatusIconState: Sendable, Equatable {
-    case neutral
+/// The menu bar icon's states, least to most severe: the worst state across all plans is the largest
+/// (`max`). Error is the only filled icon.
+public enum StatusIconState: Sendable, Comparable {
+    case ok
+    case backingUp
+    case paused
     case warning
     case error
 }
@@ -39,14 +43,14 @@ public enum StatusIconState: Sendable, Equatable {
 /// The menu bar icon (spec §6.2, anti-goal 3: never green over a fault).
 /// - error: the agent unreachable, switched off or broken; a config error; a stopped plan; a failure alert
 /// - warning: a skipped plan, or an alert that monitoring or recent success is missing
-/// - neutral otherwise, and while checking or updating, when the status is from before the change
+/// - ok otherwise, and while checking or updating, when the status is from before the change
 public func statusIconState(health: AgentHealthState, status: AgentStatus?) -> StatusIconState {
     switch health {
     case .switchedOff, .notRunning, .damaged, .failed: return .error
-    case .checking, .updating, .waitingForUpdate: return .neutral
+    case .checking, .updating, .waitingForUpdate: return .ok
     case .healthy: break
     }
-    guard let status else { return .neutral }
+    guard let status else { return .ok }
     if status.configError != nil { return .error }
     let errorAlerts: Set<AlertCondition> = [.backupFailed, .checkFailed, .fullDiskAccessMissing, .configurationError]
     let warningAlerts: Set<AlertCondition> = [.notificationsOff, .checkInRejected, .noRecentSuccess]
@@ -57,5 +61,5 @@ public func statusIconState(health: AgentHealthState, status: AgentStatus?) -> S
         if case .skipped = plan.phase { warning = true }
         if !warningAlerts.isDisjoint(with: plan.alerts) { warning = true }
     }
-    return warning ? .warning : .neutral
+    return warning ? .warning : .ok
 }

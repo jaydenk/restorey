@@ -47,10 +47,10 @@ struct AgentPresentationTests {
     }
 
     @Test func neutralWhenAllIsWell() {
-        #expect(statusIconState(health: .healthy, status: Self.status([.idle, .running(nil, retrying: nil)])) == .neutral)
-        #expect(statusIconState(health: .healthy, status: Self.status([])) == .neutral)
-        #expect(statusIconState(health: .healthy, status: nil) == .neutral)
-        #expect(statusIconState(health: .healthy, status: Self.status([.paused(until: Self.now)])) == .neutral)
+        #expect(statusIconState(health: .healthy, status: Self.status([.idle, .running(nil, retrying: nil)])) == .ok)
+        #expect(statusIconState(health: .healthy, status: Self.status([])) == .ok)
+        #expect(statusIconState(health: .healthy, status: nil) == .ok)
+        #expect(statusIconState(health: .healthy, status: Self.status([.paused(until: Self.now)])) == .ok)
     }
 
     @Test func errorForAStoppedPlanOrAConfigError() {
@@ -88,7 +88,7 @@ struct AgentPresentationTests {
     @Test func neutralWhileTransitioning() {
         let broken = Self.status([.stopped(reason: "x")], configError: "corrupt")
         for state in [AgentHealthState.checking, .updating, .waitingForUpdate] {
-            #expect(statusIconState(health: state, status: broken) == .neutral, "\(state)")
+            #expect(statusIconState(health: state, status: broken) == .ok, "\(state)")
         }
     }
 }
