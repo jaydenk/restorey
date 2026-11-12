@@ -77,13 +77,29 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
     public var pausedUntil: Date?
     /// Nil until the repository has been measured, and in state written before it existed.
     public var repositorySize: RepositorySize?
+    /// The newest backup that saved the data (`savedData`), kept apart from `recent` so a run of skips or
+    /// failures longer than `recentLimit` can't push it out. Set by `record(_:)`. State written before it
+    /// existed decodes it from `recent`.
+    public var lastBackupRecord: RunRecord?
 
     public static let recentLimit = 50
 
-    /// Puts `record` at the front of `recent` and drops the oldest beyond `recentLimit`.
+    /// Puts `record` at the front of `recent` and drops the oldest beyond `recentLimit`. A backup that saved
+    /// the data also becomes `lastBackupRecord`.
     public mutating func record(_ record: RunRecord) {
+        if Self.savedData(record) { lastBackupRecord = record }
         recent.insert(record, at: 0)
         if recent.count > Self.recentLimit { recent.removeLast(recent.count - Self.recentLimit) }
+    }
+
+    /// A backup whose outcome is success, unchanged or warning (Ruling P2-4): a skip, failure, pause or
+    /// maintenance step doesn't count.
+    public static func savedData(_ record: RunRecord) -> Bool {
+        guard record.operation == .backup else { return false }
+        switch record.outcome {
+        case .success, .unchanged, .warning: return true
+        default: return false
+        }
     }
 
     public init() {
@@ -94,6 +110,7 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case lastSuccessAt, lastAttemptAt, lastSnapshotAt, lastForgetAt, lastPruneAt, lastCheckAt
         case runningRecordID, runningRecord, recent, activeAlerts, stoppedReason, pausedUntil, repositorySize
+        case lastBackupRecord
     }
 
     public init(from decoder: any Decoder) throws {
@@ -123,6 +140,15 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
         stoppedReason = try c.decodeIfPresent(String.self, forKey: .stoppedReason)
         pausedUntil = try c.decodeIfPresent(Date.self, forKey: .pausedUntil)
         repositorySize = try c.decodeIfPresent(RepositorySize.self, forKey: .repositorySize)
+        // Dropped like `runningRecord` if it names a case this build doesn't know; then, as in state written
+        // before the field existed, the newest such record still in `recent` stands in.
+        var lastBackup: RunRecord?
+        do {
+            lastBackup = try c.decodeIfPresent(RunRecord.self, forKey: .lastBackupRecord)
+        } catch where UnknownCase.isUnknownCase(error) {
+            lastBackup = nil
+        }
+        lastBackupRecord = lastBackup ?? recent.first(where: Self.savedData)
     }
 }
 

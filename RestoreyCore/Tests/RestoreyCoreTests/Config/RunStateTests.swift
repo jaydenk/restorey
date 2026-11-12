@@ -32,7 +32,7 @@ struct RunStateTests {
         history.lastPruneAt = date(1_800_000_080)
         history.lastCheckAt = date(1_800_000_090)
         history.runningRecordID = recordID
-        history.recent = [makeRecord()]
+        history.record(makeRecord())
         history.activeAlerts = [
             .backupFailed: AlertNotificationState(raisedAt: date(1_800_000_100), lastNotifiedAt: nil, count: 1),
             .noRecentSuccess: AlertNotificationState(
@@ -201,6 +201,46 @@ struct RunStateTests {
         let data = try JSONEncoder().encode(history)
         #expect(try JSONDecoder().decode(PlanRunHistory.self, from: data) == history)
         #expect(try JSONDecoder().decode(PlanRunHistory.self, from: Data("{}".utf8)).repositorySize == nil)
+    }
+
+    /// Review fix 1: more skips than `recentLimit` push the backup out of `recent`, not out of
+    /// `lastBackupRecord`, and that survives the state file.
+    @Test func lastBackupOutlivesMoreThanFiftySkips() throws {
+        var history = PlanRunHistory()
+        let backup = makeRecord()
+        history.record(backup)
+        for index in 0...PlanRunHistory.recentLimit {
+            var skip = makeRecord()
+            skip.id = UUID()
+            skip.startedAt = date(1_800_000_100 + Double(index) * 3600)
+            skip.endedAt = skip.startedAt
+            skip.outcome = .skipped(.volumeNotMounted("Backup"))
+            skip.summary = nil
+            history.record(skip)
+        }
+        #expect(!history.recent.contains(backup))
+        #expect(history.lastBackupRecord == backup)
+        let decoded = try JSONDecoder().decode(PlanRunHistory.self, from: JSONEncoder().encode(history))
+        #expect(decoded.lastBackupRecord == backup)
+        #expect(decoded == history)
+    }
+
+    /// State written before `lastBackupRecord` existed: the newest data-saving backup still in `recent`.
+    @Test func oldStateTakesTheLastBackupFromRecent() throws {
+        var history = PlanRunHistory()
+        let backup = makeRecord()
+        var forget = makeRecord()
+        forget.id = UUID()
+        forget.operation = .forget(dryRun: false)
+        history.record(backup)
+        history.record(forget)
+        var old = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(history)) as? [String: Any])
+        #expect(old["lastBackupRecord"] != nil)
+        old["lastBackupRecord"] = nil
+        let decoded = try JSONDecoder().decode(PlanRunHistory.self, from: JSONSerialization.data(withJSONObject: old))
+        #expect(decoded.lastBackupRecord == backup)
+        // No such record at all: nil.
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: Data("{}".utf8)).lastBackupRecord == nil)
     }
 
     @Test func runningRecordRoundTrips() throws {

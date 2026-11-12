@@ -98,6 +98,9 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
 
     /// `config.json` always has `offMacNoteDismissed` (schema 3), but a plan in a status or save request from
     /// a build before it doesn't: it decodes as false.
+    ///
+    /// Hand-written: a new field must be added to the properties, `CodingKeys` and this decoder (encoding is
+    /// synthesised from `CodingKeys`), and `PlanCodingTests.roundTripsThroughJSON` should set it.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)

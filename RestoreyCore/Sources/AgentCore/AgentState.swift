@@ -266,17 +266,8 @@ public actor AgentState {
         return PlanStatus(
             plan: plan, phase: phase, lastRecord: history.recent.first,
             nextRunAt: next == .distantFuture ? nil : next, alerts: alerts,
-            lastBackup: history.recent.first(where: Self.savedData), repositorySize: history.repositorySize,
+            lastBackup: history.lastBackupRecord, repositorySize: history.repositorySize,
             setupState: PlanSetupState(plan: plan))
-    }
-
-    /// A backup that saved the data (Ruling P2-4): a skip, failure, pause or maintenance step doesn't.
-    private static func savedData(_ record: RunRecord) -> Bool {
-        guard record.operation == .backup else { return false }
-        switch record.outcome {
-        case .success, .unchanged, .warning: return true
-        default: return false
-        }
     }
 
     /// Pushes the status and, unless `deliveringAlerts` is false, has the alerts delivered for it: every

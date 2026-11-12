@@ -388,6 +388,16 @@ struct AgentStateTests {
             history.record(paused)
         }
         #expect(after.plans.first?.lastBackup == warning)
+
+        // A weekend of hourly skips, more than `recent` holds, leaves it in place.
+        let skips = (0...PlanRunHistory.recentLimit).map {
+            record(.backup, .skipped(.volumeNotMounted("Backup")), minutesAgo: -Double($0) * 60)
+        }
+        let weekend = try await state.updateHistory(plan.id) { history in
+            for skip in skips { history.record(skip) }
+        }
+        #expect(weekend.plans.first?.lastRecord?.outcome == .skipped(.volumeNotMounted("Backup")))
+        #expect(weekend.plans.first?.lastBackup == warning)
     }
 
     @Test func statusCarriesTheNetworkSettings() async throws {
