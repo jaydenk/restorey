@@ -117,7 +117,10 @@ shows "Move Restorey to Applications". The app's log is `~/Library/Logs/Restorey
 
 A Debug build adds a "Developer…" menu item. Its window saves plans (S3, B2 or a raw local repository path such
 as `/tmp/restorey-dev-repo`), creates or adopts repositories, confirms the recovery details, backs up, pauses,
-resumes, asks for notification permission, and shows the agent's live status as JSON.
+resumes, asks for notification permission, and shows the agent's live status as JSON. Its fields are the real
+controls the setup flow and Settings use (`App/Controls/`): `PlainTextField` and `SecretField` (a secure field that
+swaps to a plain one while "Show" is on, so dead keys and input methods work), `SourcesEditor` and
+`FileTypesEditor`, with their checks in `FormValidation` (`RestoreyCore`).
 
 ```sh
 launchctl print gui/$(id -u)/com.jaydenkerr.restorey.dev.agent        # spawn type = daemon (3), both Mach services

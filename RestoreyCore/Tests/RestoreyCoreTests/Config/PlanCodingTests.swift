@@ -61,6 +61,18 @@ struct PlanCodingTests {
         #expect(p.validationErrors().isEmpty)
     }
 
+    @Test func aPlansUploadLimitMustBePositiveWhenSet() {
+        var p = plan(.s3(Self.s3), .created)
+        for limit in [0, -1, -1024] {
+            p.uploadLimitKiB = limit
+            #expect(p.validationErrors() == [.uploadLimitNotPositive(kiB: limit)])
+        }
+        p.uploadLimitKiB = 1
+        #expect(p.validationErrors().isEmpty)
+        p.uploadLimitKiB = nil
+        #expect(p.validationErrors().isEmpty)
+    }
+
     @Test func newHotPlansGetDistinctIDs() {
         #expect(plan(.s3(Self.s3), .created).id != plan(.s3(Self.s3), .created).id)
     }

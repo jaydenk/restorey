@@ -69,6 +69,7 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
         case .intervalTooShort: "Backups can't run more often than every 5 minutes"
         case .invalidFileType(let entry):
             "\"\(entry)\" isn't a file type to exclude: give the extension alone, such as dmg or tar.gz, with no leading dot, slash, wildcard or space"
+        case .uploadLimitNotPositive: "The upload limit must be more than 0 KiB/s"
         }
     }
 }

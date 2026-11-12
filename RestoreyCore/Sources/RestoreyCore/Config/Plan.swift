@@ -179,6 +179,8 @@ public enum PlanValidationError: Error, Equatable, Sendable {
     /// A file-type exclusion that isn't a bare extension once trimmed and lower-cased: empty, with a
     /// leading dot, a `/`, a glob character (`*?[]\`) or whitespace inside.
     case invalidFileType(String)
+    /// A per-plan upload limit of 0 or less. None is nil, not 0 (the Mac-wide limit has the same rule).
+    case uploadLimitNotPositive(kiB: Int)
 }
 
 extension Plan {
@@ -198,6 +200,7 @@ extension Plan {
         for type in fileTypeExclusions where Self.normalisedFileType(type) == nil {
             errors.append(.invalidFileType(type))
         }
+        if let uploadLimitKiB, uploadLimitKiB <= 0 { errors.append(.uploadLimitNotPositive(kiB: uploadLimitKiB)) }
         return errors
     }
 

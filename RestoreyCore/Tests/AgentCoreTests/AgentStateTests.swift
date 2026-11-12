@@ -209,6 +209,8 @@ struct AgentStateTests {
         ("emptyHostLabel", "The host label can't be empty"),
         ("noSources", "Choose at least one source folder"),
         ("intervalTooShort", "Backups can't run more often than every 5 minutes"),
+        ("uploadLimitZero", "The upload limit must be more than 0 KiB/s"),
+        ("uploadLimitNegative", "The upload limit must be more than 0 KiB/s"),
     ])
     func savePlanRejectsEveryValidationError(_ kind: String, _ expected: String) async throws {
         let dir = try TempDirectory()
@@ -218,6 +220,8 @@ struct AgentStateTests {
         switch kind {
         case "emptyHostLabel": plan.hostLabel = "  "
         case "noSources": plan.sources = []
+        case "uploadLimitZero": plan.uploadLimitKiB = 0
+        case "uploadLimitNegative": plan.uploadLimitKiB = -5
         default: plan.schedule = .interval(seconds: 299)
         }
         await #expect {
