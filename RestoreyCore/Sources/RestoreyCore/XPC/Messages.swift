@@ -70,10 +70,13 @@ public struct AgentStatus: Codable, Sendable, Equatable {
     /// Counts up with every status one agent process builds, so the app can order pushes and replies
     /// without trusting the clock.
     public var sequence: UInt64?
+    /// The Mac-wide network rules from `config.json`. Nil when `config.json` couldn't be read, and from an
+    /// agent older than schema 3.
+    public var network: NetworkSettings?
 
     public init(
         plans: [PlanStatus], configError: String?, fdaMissing: Bool?, generatedAt: Date,
-        agentRun: UUID? = nil, sequence: UInt64? = nil
+        agentRun: UUID? = nil, sequence: UInt64? = nil, network: NetworkSettings? = nil
     ) {
         self.plans = plans
         self.configError = configError
@@ -81,6 +84,7 @@ public struct AgentStatus: Codable, Sendable, Equatable {
         self.generatedAt = generatedAt
         self.agentRun = agentRun
         self.sequence = sequence
+        self.network = network
     }
 
     /// Whether the app should show `self` in place of `current`: a status from another agent process (a
@@ -99,18 +103,71 @@ public struct AgentStatus: Codable, Sendable, Equatable {
 public struct PlanStatus: Codable, Sendable, Equatable {
     public var plan: Plan
     public var phase: PlanPhase
+    /// The newest record of any kind: a backup, a skip, or a maintenance step such as forget.
     public var lastRecord: RunRecord?
     /// Nil when the plan will not run on its own (stopped, invalid, or no confirmed recovery kit).
     public var nextRunAt: Date?
     /// Sorted by raw value.
     public var alerts: [AlertCondition]
+    /// The newest backup that saved the data: outcome success, unchanged or warning (Ruling P2-4), so the
+    /// menu can say "Backed up at <time>" whatever has run since. Nil if none is in the recent history.
+    public var lastBackup: RunRecord?
+    /// `PlanRunHistory.repositorySize`.
+    public var repositorySize: RepositorySize?
+    public var setupState: PlanSetupState
 
-    public init(plan: Plan, phase: PlanPhase, lastRecord: RunRecord?, nextRunAt: Date?, alerts: [AlertCondition]) {
+    /// `setupState` nil derives it from the plan (`PlanSetupState(plan:)`).
+    public init(
+        plan: Plan, phase: PlanPhase, lastRecord: RunRecord?, nextRunAt: Date?, alerts: [AlertCondition],
+        lastBackup: RunRecord? = nil, repositorySize: RepositorySize? = nil, setupState: PlanSetupState? = nil
+    ) {
         self.plan = plan
         self.phase = phase
         self.lastRecord = lastRecord
         self.nextRunAt = nextRunAt
         self.alerts = alerts
+        self.lastBackup = lastBackup
+        self.repositorySize = repositorySize
+        self.setupState = setupState ?? PlanSetupState(plan: plan)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case plan, phase, lastRecord, nextRunAt, alerts, lastBackup, repositorySize, setupState
+    }
+
+    /// A status from an agent before schema 3 has no `lastBackup`, `repositorySize` or `setupState`: the
+    /// first two decode as nil and the setup state is derived from the plan.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        plan = try c.decode(Plan.self, forKey: .plan)
+        phase = try c.decode(PlanPhase.self, forKey: .phase)
+        lastRecord = try c.decodeIfPresent(RunRecord.self, forKey: .lastRecord)
+        nextRunAt = try c.decodeIfPresent(Date.self, forKey: .nextRunAt)
+        alerts = try c.decode([AlertCondition].self, forKey: .alerts)
+        lastBackup = try c.decodeIfPresent(RunRecord.self, forKey: .lastBackup)
+        repositorySize = try c.decodeIfPresent(RepositorySize.self, forKey: .repositorySize)
+        setupState = try c.decodeIfPresent(PlanSetupState.self, forKey: .setupState) ?? PlanSetupState(plan: plan)
+    }
+}
+
+/// Where a plan is in setup (Ruling P2-3). JSON: the case name as a string.
+public enum PlanSetupState: String, Codable, Sendable {
+    /// The recovery kit has never been confirmed: "Setup not finished".
+    case unfinished
+    /// Setup finished, but the kit must be confirmed again (the repository or a secret changed): "New
+    /// recovery kit needed".
+    case needsNewKit
+    /// The current recovery kit is confirmed.
+    case complete
+
+    /// Confirmed kit → complete; unconfirmed and never finished setup → unfinished; unconfirmed after
+    /// setup → needs a new kit.
+    public init(plan: Plan) {
+        if plan.recoveryKitConfirmedAt != nil {
+            self = .complete
+        } else {
+            self = plan.setupCompletedAt == nil ? .unfinished : .needsNewKit
+        }
     }
 }
 

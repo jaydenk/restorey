@@ -44,6 +44,18 @@ public struct AlertNotificationState: Codable, Sendable, Equatable {
     }
 }
 
+/// The repository's size as `restic stats --mode raw-data` last measured it (Ruling P2-9).
+/// JSON: `{"bytes":…,"measuredAt":"…"}`.
+public struct RepositorySize: Codable, Sendable, Equatable {
+    public var bytes: Int64
+    public var measuredAt: Date
+
+    public init(bytes: Int64, measuredAt: Date) {
+        self.bytes = bytes
+        self.measuredAt = measuredAt
+    }
+}
+
 /// What the agent remembers about one plan between launches.
 public struct PlanRunHistory: Codable, Sendable, Equatable {
     public var lastSuccessAt: Date?
@@ -63,6 +75,8 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
     public var activeAlerts: [AlertCondition: AlertNotificationState]
     public var stoppedReason: String?
     public var pausedUntil: Date?
+    /// Nil until the repository has been measured, and in state written before it existed.
+    public var repositorySize: RepositorySize?
 
     public static let recentLimit = 50
 
@@ -79,7 +93,7 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case lastSuccessAt, lastAttemptAt, lastSnapshotAt, lastForgetAt, lastPruneAt, lastCheckAt
-        case runningRecordID, runningRecord, recent, activeAlerts, stoppedReason, pausedUntil
+        case runningRecordID, runningRecord, recent, activeAlerts, stoppedReason, pausedUntil, repositorySize
     }
 
     public init(from decoder: any Decoder) throws {
@@ -108,6 +122,7 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
         })
         stoppedReason = try c.decodeIfPresent(String.self, forKey: .stoppedReason)
         pausedUntil = try c.decodeIfPresent(Date.self, forKey: .pausedUntil)
+        repositorySize = try c.decodeIfPresent(RepositorySize.self, forKey: .repositorySize)
     }
 }
 

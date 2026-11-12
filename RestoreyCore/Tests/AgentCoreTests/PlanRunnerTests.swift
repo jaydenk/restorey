@@ -418,6 +418,36 @@ struct PlanRunnerTests {
         }
     }
 
+    /// Ruling P2-6: the constrained-network rule is the Mac-wide one in `config.json`, not the plan's.
+    @Test func theConstrainedNetworkRuleComesFromTheConfigsNetworkSettings() async throws {
+        // Fails at once instead of trying the unreachable repository.
+        let stub = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-exit1-\(UUID().uuidString).sh")
+        try "#!/bin/sh\nexit 1\n".write(to: stub, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+        defer { try? FileManager.default.removeItem(at: stub) }
+        let networked: (inout Plan) -> Void = {
+            $0.repository = .raw(repository: "rest:http://127.0.0.1:9/repo", environmentNames: [])
+        }
+
+        let skipping = try await RunnerFixture.make(executable: stub, createRepository: false, change: networked)
+        defer { skipping.remove() }
+        skipping.network.set(.satisfied(constrained: true, expensive: false))
+        let skipped = try await skipping.runner.runBackup(planID: skipping.planID, trigger: .scheduled)
+        #expect(skipped.outcome == .skipped(.constrainedNetwork))
+
+        var off = NetworkSettings.defaults
+        off.skipOnConstrainedNetwork = false
+        let running = try await RunnerFixture.make(
+            executable: stub, createRepository: false, networkSettings: off, change: networked)
+        defer { running.remove() }
+        running.network.set(.satisfied(constrained: true, expensive: true))
+        let ran = try await running.runner.runBackup(planID: running.planID, trigger: .scheduled)
+        guard case .failed = ran.outcome else {
+            Issue.record("expected restic to run (and the stub to fail), got \(ran.outcome)")
+            return
+        }
+    }
+
     @Test func preflightSkipSendsNoPing() async throws {
         let f = try await RunnerFixture.make()
         defer { f.remove() }

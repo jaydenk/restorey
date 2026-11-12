@@ -202,6 +202,19 @@ so Restorey doesn't try. Plans saved by an earlier build get the file types and 
 rewritten by an upgrade, the old one is kept beside it as `config.json.v1.bak` (`<file>.v<schema>.bak`, readable
 only by you). If an upgrade fails, the agent says so and leaves the file alone.
 
+## `config.json`
+
+`config.json` (schema 3) holds the plans and, beside them, the Mac-wide network settings (`network`): an upload
+limit shared by the backups to networked repositories (none by default), whether to skip a backup on a
+constrained or expensive network (on by default), and Wi-Fi network names to skip backups on (none by default).
+These rules apply only to a repository on another machine; a backup to a folder or an external drive ignores them.
+Each plan also records when its setup finished (`setupCompletedAt`, set when its recovery kit is first confirmed
+and never cleared), so a plan whose kit must be confirmed again is told apart from one whose setup was never
+finished, and whether the "No off-Mac monitoring" note was dismissed. The agent owns both setup dates; a saved
+plan can't change them. Upgrading from schema 2 moves the per-plan "skip on a constrained network" setting to
+the Mac-wide one, which stays on if any plan had it on (an upgrade with every plan's setting off turns it off),
+and marks every plan whose recovery kit was already confirmed as having finished setup.
+
 ## Alerts
 
 **Check-in pings.** If a plan has a check-in URL (a Healthchecks-style dead-man's switch, kept in the
@@ -262,7 +275,8 @@ daylight saving change never moves a run. It also looks again straight away:
 - when a plan is saved, its recovery kit is confirmed, or it is resumed.
 
 A skipped run (on battery below the plan's threshold, a constrained or expensive network such as a phone
-hotspot or Low Data Mode, no network, an unmounted volume) is recorded and tried again at the next interval, or
+hotspot or Low Data Mode while the Mac-wide "skip on a constrained network" setting is on, no network, an
+unmounted volume) is recorded and tried again at the next interval, or
 sooner when the network comes back or the volume mounts, as above. A backup that met another client's lock, was
 stopped by the system at logout or shutdown, or was interrupted because the agent stopped mid-run, is retried 15
 minutes after it started (not at once, so

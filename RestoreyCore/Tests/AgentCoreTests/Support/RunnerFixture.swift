@@ -90,6 +90,8 @@ final class RunnerFixture: Sendable {
     let checkIn: RecordingCheckIn
     let fda: Locked<FDAProbeResult>
     let power: Locked<PowerState>
+    /// The network path the preflight sees; unconstrained by default.
+    let network: Locked<NetworkState>
     let supervisor: SupervisedProcesses
     let state: AgentState
     let runner: PlanRunner
@@ -105,8 +107,8 @@ final class RunnerFixture: Sendable {
 
     private init(
         root: URL, restic: URL, clock: FixtureClock, secrets: InMemorySecretStore, checkIn: RecordingCheckIn,
-        fda: Locked<FDAProbeResult>, power: Locked<PowerState>, supervisor: SupervisedProcesses,
-        state: AgentState, runner: PlanRunner, dependencies: RunnerDependencies, agentLog: Locked<[String]>,
+        fda: Locked<FDAProbeResult>, power: Locked<PowerState>, network: Locked<NetworkState>,
+        supervisor: SupervisedProcesses, state: AgentState, runner: PlanRunner, dependencies: RunnerDependencies, agentLog: Locked<[String]>,
         sleepAssertions: Locked<[String]>, sleepPrevention: SleepPrevention, binaryReplaced: Locked<Bool>,
         planID: UUID
     ) {
@@ -125,6 +127,7 @@ final class RunnerFixture: Sendable {
         self.checkIn = checkIn
         self.fda = fda
         self.power = power
+        self.network = network
         self.supervisor = supervisor
         self.state = state
         self.runner = runner
@@ -142,6 +145,7 @@ final class RunnerFixture: Sendable {
     ///   - confirmKit: confirms the recovery kit, which every scheduled backup requires.
     ///   - stableAncestors: keeps the files in /Users/Shared rather than the shared temporary folder,
     ///     whose metadata other tests (and other processes) keep changing (see `PlanRunnerTests.Unchanged`).
+    ///   - networkSettings: the Mac-wide network settings in `config.json` when the agent loads it.
     static func make(
         origin: RepositoryOrigin = .created,
         executable: URL? = nil,
@@ -150,6 +154,7 @@ final class RunnerFixture: Sendable {
         gracePeriod: Duration = .seconds(10),
         stableAncestors: Bool = false,
         pingDelay: Duration = .zero,
+        networkSettings: NetworkSettings = .defaults,
         change: (inout Plan) -> Void = { _ in }
     ) async throws -> RunnerFixture {
         let fm = FileManager.default
@@ -158,7 +163,8 @@ final class RunnerFixture: Sendable {
         do {
             return try await make(
                 root: root, origin: origin, executable: executable, createRepository: createRepository,
-                confirmKit: confirmKit, gracePeriod: gracePeriod, pingDelay: pingDelay, change: change)
+                confirmKit: confirmKit, gracePeriod: gracePeriod, pingDelay: pingDelay,
+                networkSettings: networkSettings, change: change)
         } catch {
             // The caller's `defer { remove() }` isn't in place yet.
             try? fm.removeItem(at: root)
@@ -168,7 +174,7 @@ final class RunnerFixture: Sendable {
 
     private static func make(
         root: URL, origin: RepositoryOrigin, executable: URL?, createRepository: Bool, confirmKit: Bool,
-        gracePeriod: Duration, pingDelay: Duration, change: (inout Plan) -> Void
+        gracePeriod: Duration, pingDelay: Duration, networkSettings: NetworkSettings, change: (inout Plan) -> Void
     ) async throws -> RunnerFixture {
         let fm = FileManager.default
         for name in ["source", "cache", "home", "logs", "support"] {
@@ -188,6 +194,7 @@ final class RunnerFixture: Sendable {
         let agentLog = Locked<[String]>([])
         let fda = Locked<FDAProbeResult>(.granted)
         let power = Locked(PowerState(onBattery: false, percent: 100))
+        let network = Locked(NetworkState.satisfied(constrained: false, expensive: false))
         let supervisor = SupervisedProcesses()
         let sleepAssertions = Locked<[String]>([])
         let binaryReplaced = Locked(false)
@@ -195,6 +202,7 @@ final class RunnerFixture: Sendable {
             create: { _ in sleepAssertions.mutate { $0.append("create") }; return 1 },
             release: { _ in sleepAssertions.mutate { $0.append("release") } }))
         let support = root.appendingPathComponent("support")
+        try await AgentState.configStore(in: support).save(ConfigFile(plans: [], network: networkSettings))
         let state = await AgentState(directory: support, secrets: secrets, now: { clock.now })
 
         var plan = Plan.newHotPlan(
@@ -216,7 +224,7 @@ final class RunnerFixture: Sendable {
             fdaProbe: { fda.value },
             preflightEnvironment: {
                 PreflightEnvironment(
-                    power: power.value, network: .satisfied(constrained: false, expensive: false),
+                    power: power.value, network: network.value,
                     isMountPoint: { _ in false },
                     fileExists: { FileManager.default.fileExists(atPath: $0) })
             },
@@ -231,7 +239,7 @@ final class RunnerFixture: Sendable {
 
         let fixture = RunnerFixture(
             root: root, restic: restic, clock: clock, secrets: secrets, checkIn: checkIn, fda: fda,
-            power: power, supervisor: supervisor, state: state, runner: runner, dependencies: dependencies,
+            power: power, network: network, supervisor: supervisor, state: state, runner: runner, dependencies: dependencies,
             agentLog: agentLog, sleepAssertions: sleepAssertions, sleepPrevention: sleepPrevention,
             binaryReplaced: binaryReplaced, planID: plan.id)
         if createRepository { _ = try await runner.createRepository(planID: plan.id) }

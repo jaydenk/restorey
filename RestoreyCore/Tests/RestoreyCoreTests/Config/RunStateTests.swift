@@ -194,6 +194,15 @@ struct RunStateTests {
         #expect(try JSONDecoder().decode(RunRecord.self, from: data) == record)
     }
 
+    /// Ruling P2-9: the measured size is kept with the history; state written before it existed has none.
+    @Test func repositorySizeRoundTrips() throws {
+        var history = PlanRunHistory()
+        history.repositorySize = RepositorySize(bytes: 5_000_000_000, measuredAt: Date(timeIntervalSince1970: 1_800_000_000))
+        let data = try JSONEncoder().encode(history)
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: data) == history)
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: Data("{}".utf8)).repositorySize == nil)
+    }
+
     @Test func runningRecordRoundTrips() throws {
         var history = PlanRunHistory()
         let record = makeRecord()

@@ -235,12 +235,15 @@ public actor AgentState {
                 : []
             return AgentStatus(
                 plans: plans, configError: loadError, fdaMissing: nil, generatedAt: now,
-                agentRun: statusRun, sequence: statusSequence)
+                agentRun: statusRun, sequence: statusSequence, network: onlyStateUnreadable ? config.network : nil)
         }
         return AgentStatus(
             plans: config.plans.map { planStatus($0, now: now) }, configError: nil, fdaMissing: fdaMissing,
-            generatedAt: now, agentRun: statusRun, sequence: statusSequence)
+            generatedAt: now, agentRun: statusRun, sequence: statusSequence, network: config.network)
     }
+
+    /// The Mac-wide network rules the preflight applies (Ruling P2-6).
+    var networkSettings: NetworkSettings { config.network }
 
     private func planStatus(_ plan: Plan, now: Date) -> PlanStatus {
         let history = runState.plans[plan.id] ?? PlanRunHistory()
@@ -262,7 +265,18 @@ public actor AgentState {
             .sorted { $0.rawValue < $1.rawValue }
         return PlanStatus(
             plan: plan, phase: phase, lastRecord: history.recent.first,
-            nextRunAt: next == .distantFuture ? nil : next, alerts: alerts)
+            nextRunAt: next == .distantFuture ? nil : next, alerts: alerts,
+            lastBackup: history.recent.first(where: Self.savedData), repositorySize: history.repositorySize,
+            setupState: PlanSetupState(plan: plan))
+    }
+
+    /// A backup that saved the data (Ruling P2-4): a skip, failure, pause or maintenance step doesn't.
+    private static func savedData(_ record: RunRecord) -> Bool {
+        guard record.operation == .backup else { return false }
+        switch record.outcome {
+        case .success, .unchanged, .warning: return true
+        default: return false
+        }
     }
 
     /// Pushes the status and, unless `deliveringAlerts` is false, has the alerts delivered for it: every
@@ -312,6 +326,8 @@ public actor AgentState {
     /// `recoveryKitConfirmedAt` is agent-owned. A new plan starts unconfirmed. An existing plan keeps its
     /// confirmation only if the repository is the same and every submitted secret equals the keychain's
     /// current value; otherwise the recovery details the user saved no longer match, so it is cleared.
+    /// `setupCompletedAt` is agent-owned too: a new plan starts without it and an existing plan keeps the
+    /// stored value, whatever the request says (Ruling P2-3).
     ///
     /// The same change also clears a stop (`stoppedReason`, e.g. after a wrong password) and refreshes the
     /// plan's alerts: the user has changed what restic opens the repository with, so the next run tries it
@@ -349,9 +365,11 @@ public actor AgentState {
                 let unchanged = stored.repository == plan.repository && !planSecrets.changesAnyValue
                 credentialsChanged = !unchanged
                 plan.recoveryKitConfirmedAt = unchanged ? stored.recoveryKitConfirmedAt : nil
+                plan.setupCompletedAt = stored.setupCompletedAt
                 updated.plans[index] = plan
             } else {
                 plan.recoveryKitConfirmedAt = nil
+                plan.setupCompletedAt = nil
                 updated.plans.append(plan)
             }
 
@@ -424,14 +442,16 @@ public actor AgentState {
     }
 
     /// Records that the user has saved the plan's recovery details. Until then the plan never runs
-    /// on its own.
+    /// on its own. The first confirmation also finishes setup (`setupCompletedAt`, Ruling P2-3).
     public func confirmRecoveryKit(_ id: UUID) async throws -> AgentStatus {
         try requireMutable()
         _ = try requirePlan(id)
         return try await serialisedWrite {
             var updated = config
             guard let index = updated.plans.firstIndex(where: { $0.id == id }) else { throw AgentError.unknownPlan }
-            updated.plans[index].recoveryKitConfirmedAt = now()
+            let now = now()
+            updated.plans[index].recoveryKitConfirmedAt = now
+            if updated.plans[index].setupCompletedAt == nil { updated.plans[index].setupCompletedAt = now }
             try await saveConfig(updated)
             return pushStatus()
         }

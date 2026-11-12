@@ -369,7 +369,9 @@ public actor PlanRunner {
         case nil:
             break
         }
-        switch preflight(plan: plan, env: await deps.preflightEnvironment()) {
+        var environment = await deps.preflightEnvironment()
+        environment.networkSettings = await deps.state.networkSettings
+        switch preflight(plan: plan, env: environment) {
         case .skip(let reason): return await refuse(.skipped(reason))
         case .fail(let message): return await refuse(failed(message), failPing: true)
         case .run: break

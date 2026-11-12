@@ -3,7 +3,8 @@ import Testing
 @testable import AgentCore
 import RestoreyCore
 
-/// `config.json` schema 1 → 2 (Ruling R64): plans gain `fileTypeExclusions` and `oneFileSystem`.
+/// `config.json` schema 1 → 2 (Ruling R64): plans gain `fileTypeExclusions` and `oneFileSystem`; 2 → 3 (Ruling
+/// P2-6): the constrained-network rule moves to the Mac-wide `network` settings.
 struct ConfigMigrationTests {
     private static let now = Date(timeIntervalSince1970: 1_800_000_000)
 
@@ -13,20 +14,32 @@ struct ConfigMigrationTests {
             hostLabel: "mac", sources: ["/Users/me"], exclusions: exclusions, now: now)
     }
 
-    /// Writes a schema-1 file as v0.1 alpha builds wrote it: saved by today's store (its date format and
-    /// layout), then taken back to version 1 by removing the two new keys.
-    private static func writeVersion1File(_ plans: [Plan], in dir: AgentStateTests.TempDirectory) async throws {
+    /// Writes a file at an older schema as earlier builds wrote it: saved by today's store (its date format
+    /// and layout), then taken back. Schema 2 had no `network` and kept `skipOnConstrainedNetwork` in each
+    /// plan's conditions (`skips` gives each plan's value, default true), and no `setupCompletedAt` or
+    /// `offMacNoteDismissed`; schema 1 also lacked `fileTypeExclusions` and `oneFileSystem`.
+    private static func writeOldFile(
+        _ plans: [Plan], version: Int, skips: [Bool]? = nil, in dir: AgentStateTests.TempDirectory
+    ) async throws {
         try await AgentState.configStore(in: dir.url).save(ConfigFile(plans: plans))
         var root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: dir.config)) as? [String: Any])
         var payload = try #require(root["payload"] as? [String: Any])
         var list = try #require(payload["plans"] as? [[String: Any]])
         for index in list.indices {
-            list[index]["fileTypeExclusions"] = nil
-            list[index]["oneFileSystem"] = nil
+            list[index]["setupCompletedAt"] = nil
+            list[index]["offMacNoteDismissed"] = nil
+            var conditions = try #require(list[index]["conditions"] as? [String: Any])
+            conditions["skipOnConstrainedNetwork"] = skips?[index] ?? true
+            list[index]["conditions"] = conditions
+            if version < 2 {
+                list[index]["fileTypeExclusions"] = nil
+                list[index]["oneFileSystem"] = nil
+            }
         }
         payload["plans"] = list
+        payload["network"] = nil
         root["payload"] = payload
-        root["schemaVersion"] = 1
+        root["schemaVersion"] = version
         try JSONSerialization.data(withJSONObject: root).write(to: dir.config)
     }
 
@@ -38,15 +51,11 @@ struct ConfigMigrationTests {
         "vmx", "vmxf", "vmsn", "vmsd", "vmem", "nvram", "mem", "vsv",
     ]
 
-    @Test func currentVersionIsTwo() {
-        #expect(ConfigMigrations.currentVersion == 2)
-    }
-
     @Test func aVersion1ConfigMigratesAndKeepsThePersonsFolderExclusions() async throws {
         let dir = try AgentStateTests.TempDirectory()
         let own = ["/Users/me/Movies/Rendered", "**/scratch"]
         let original = Self.plan(exclusions: own)
-        try await Self.writeVersion1File([original], in: dir)
+        try await Self.writeOldFile([original], version: 1, in: dir)
 
         let loaded = try #require(try await AgentState.configStore(in: dir.url).load())
         let migrated = try #require(loaded.plans.first)
@@ -58,9 +67,9 @@ struct ConfigMigrationTests {
         expected.oneFileSystem = true
         #expect(migrated == expected)
 
-        // Rewritten at version 2, and a second load reads it as is.
+        // Rewritten at the current version, and a second load reads it as is.
         let root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: dir.config)) as? [String: Any])
-        #expect(root["schemaVersion"] as? Int == 2)
+        #expect(root["schemaVersion"] as? Int == ConfigMigrations.currentVersion)
         #expect(try await AgentState.configStore(in: dir.url).load() == loaded)
     }
 
@@ -90,28 +99,56 @@ struct ConfigMigrationTests {
         #expect(try await AgentState.configStore(in: dir.url).load() == ConfigFile(plans: [plan]))
     }
 
-    /// An older agent (schema 1) meeting a file this version wrote refuses it as newer and leaves it alone,
+    /// An older agent (schema 2) meeting a file this version wrote refuses it as newer and leaves it alone,
     /// the existing rule; the agent then sits in the config-error state (`configErrorBlocksEverything`).
-    @Test func anOlderAgentRefusesAVersion2FileAndLeavesItAlone() async throws {
+    @Test func anOlderAgentRefusesAVersion3FileAndLeavesItAlone() async throws {
         let dir = try AgentStateTests.TempDirectory()
         try await AgentState.configStore(in: dir.url).save(ConfigFile(plans: [Self.plan(exclusions: [])]))
         let before = try Data(contentsOf: dir.config)
-        let older = VersionedStore<ConfigFile>(fileURL: dir.config, currentVersion: 1, migrations: [:])
-        await #expect(throws: VersionedStoreError.newerSchema(found: 2, supported: 1)) { try await older.load() }
-        await #expect(throws: VersionedStoreError.newerSchema(found: 2, supported: 1)) {
+        let older = VersionedStore<ConfigFile>(fileURL: dir.config, currentVersion: 2, migrations: [:])
+        await #expect(throws: VersionedStoreError.newerSchema(found: 3, supported: 2)) { try await older.load() }
+        await #expect(throws: VersionedStoreError.newerSchema(found: 3, supported: 2)) {
             try await older.save(ConfigFile())
         }
         #expect(try Data(contentsOf: dir.config) == before)
+    }
+
+    /// Schema 2 → 3 (Ruling P2-6) through the real store: the constrained-network rule moves to the Mac-wide
+    /// `network` settings, on if any plan had it on, and a plan whose kit was confirmed has finished setup.
+    @Test func aVersion2ConfigMigratesToVersion3() async throws {
+        let dir = try AgentStateTests.TempDirectory()
+        var confirmed = Self.plan(exclusions: ["/Users/me/x"])
+        confirmed.recoveryKitConfirmedAt = Self.now.addingTimeInterval(-86_400)
+        let unconfirmed = Self.plan(exclusions: [])
+        try await Self.writeOldFile([confirmed, unconfirmed], version: 2, skips: [false, true], in: dir)
+
+        let loaded = try #require(try await AgentState.configStore(in: dir.url).load())
+        #expect(loaded.network == .defaults)
+        var expectedConfirmed = confirmed
+        expectedConfirmed.setupCompletedAt = confirmed.recoveryKitConfirmedAt
+        #expect(loaded.plans == [expectedConfirmed, unconfirmed])
+        #expect(loaded.plans[1].setupCompletedAt == nil)
+        #expect(loaded.plans.allSatisfy { !$0.offMacNoteDismissed })
+
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: dir.config)) as? [String: Any])
+        #expect(root["schemaVersion"] as? Int == 3)
+        #expect(FileManager.default.fileExists(atPath: dir.url.appendingPathComponent("config.json.v2.bak").path))
+
+        // Every plan had it off: so does the Mac.
+        let off = try AgentStateTests.TempDirectory()
+        try await Self.writeOldFile([confirmed, unconfirmed], version: 2, skips: [false, false], in: off)
+        #expect(try await AgentState.configStore(in: off.url).load()?.network.skipOnConstrainedNetwork == false)
     }
 
     /// The agent itself: a version-1 config.json loads with the plan migrated, no config error.
     @Test func theAgentLoadsAVersion1Config() async throws {
         let dir = try AgentStateTests.TempDirectory()
         let original = Self.plan(exclusions: ["/Users/me/x"])
-        try await Self.writeVersion1File([original], in: dir)
+        try await Self.writeOldFile([original], version: 1, in: dir)
         let state = await AgentState(directory: dir.url, secrets: InMemorySecretStore(), now: { Self.now })
         let status = await state.status()
         #expect(status.configError == nil)
+        #expect(status.network == .defaults)
         #expect(status.plans.first?.plan.fileTypeExclusions == Self.schema2FileTypes)
         #expect(status.plans.first?.plan.exclusions == ["/Users/me/x"])
         // The schema-1 file is kept beside the migrated one (Ruling R72).

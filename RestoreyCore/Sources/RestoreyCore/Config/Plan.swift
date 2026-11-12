@@ -33,6 +33,12 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
     /// Whether a check-in URL exists in the keychain. The URL itself is a secret and is not stored here.
     public var hasCheckInURL: Bool
     public var recoveryKitConfirmedAt: Date?
+    /// When the plan's recovery kit was first confirmed, which finishes setup (Ruling P2-3). Set by the
+    /// agent's first `confirmRecoveryKit` and never cleared, so a plan whose kit needs confirming again
+    /// (`recoveryKitConfirmedAt` nil) can be told apart from one whose setup was never finished.
+    public var setupCompletedAt: Date?
+    /// Whether the user has dismissed the "No off-Mac monitoring" note for this plan.
+    public var offMacNoteDismissed: Bool
     public var createdAt: Date
 
     public init(
@@ -55,6 +61,8 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         noSuccessAlertDays: Int,
         hasCheckInURL: Bool,
         recoveryKitConfirmedAt: Date?,
+        setupCompletedAt: Date? = nil,
+        offMacNoteDismissed: Bool = false,
         createdAt: Date
     ) {
         self.id = id
@@ -76,7 +84,44 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         self.noSuccessAlertDays = noSuccessAlertDays
         self.hasCheckInURL = hasCheckInURL
         self.recoveryKitConfirmedAt = recoveryKitConfirmedAt
+        self.setupCompletedAt = setupCompletedAt
+        self.offMacNoteDismissed = offMacNoteDismissed
         self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, repository, origin, hostLabel, sources, exclusions, fileTypeExclusions, oneFileSystem
+        case schedule, conditions, retention, pruneEnabled, forgetCadence, uploadLimitKiB, packSizeMiB
+        case noSuccessAlertDays, hasCheckInURL, recoveryKitConfirmedAt, setupCompletedAt, offMacNoteDismissed
+        case createdAt
+    }
+
+    /// `config.json` always has `offMacNoteDismissed` (schema 3), but a plan in a status or save request from
+    /// a build before it doesn't: it decodes as false.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        repository = try c.decode(Repository.self, forKey: .repository)
+        origin = try c.decode(RepositoryOrigin.self, forKey: .origin)
+        hostLabel = try c.decode(String.self, forKey: .hostLabel)
+        sources = try c.decode([String].self, forKey: .sources)
+        exclusions = try c.decode([String].self, forKey: .exclusions)
+        fileTypeExclusions = try c.decode([String].self, forKey: .fileTypeExclusions)
+        oneFileSystem = try c.decode(Bool.self, forKey: .oneFileSystem)
+        schedule = try c.decode(Schedule.self, forKey: .schedule)
+        conditions = try c.decode(Conditions.self, forKey: .conditions)
+        retention = try c.decode(Retention.self, forKey: .retention)
+        pruneEnabled = try c.decode(Bool.self, forKey: .pruneEnabled)
+        forgetCadence = try c.decode(ForgetCadence.self, forKey: .forgetCadence)
+        uploadLimitKiB = try c.decodeIfPresent(Int.self, forKey: .uploadLimitKiB)
+        packSizeMiB = try c.decodeIfPresent(Int.self, forKey: .packSizeMiB)
+        noSuccessAlertDays = try c.decode(Int.self, forKey: .noSuccessAlertDays)
+        hasCheckInURL = try c.decode(Bool.self, forKey: .hasCheckInURL)
+        recoveryKitConfirmedAt = try c.decodeIfPresent(Date.self, forKey: .recoveryKitConfirmedAt)
+        setupCompletedAt = try c.decodeIfPresent(Date.self, forKey: .setupCompletedAt)
+        offMacNoteDismissed = try c.decodeIfPresent(Bool.self, forKey: .offMacNoteDismissed) ?? false
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
     }
 
     /// A new plan with every spec default applied. Callers pass the folder exclusion list
@@ -104,7 +149,7 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
             fileTypeExclusions: fileTypeExclusions,
             oneFileSystem: true,
             schedule: .interval(seconds: 3600),
-            conditions: Conditions(battery: .minimumPercent(20), skipOnConstrainedNetwork: true),
+            conditions: Conditions(battery: .minimumPercent(20)),
             retention: Retention(),
             // An adopted repository is someone else's: never prune it, and forget daily rather
             // than after every backup.
@@ -237,13 +282,12 @@ public enum BatteryRule: Codable, Sendable, Equatable {
     }
 }
 
+/// The plan's own pre-run conditions. The network rules are Mac-wide (`NetworkSettings`) since schema 3.
 public struct Conditions: Codable, Sendable, Equatable {
     public var battery: BatteryRule
-    public var skipOnConstrainedNetwork: Bool
 
-    public init(battery: BatteryRule = .minimumPercent(20), skipOnConstrainedNetwork: Bool = true) {
+    public init(battery: BatteryRule = .minimumPercent(20)) {
         self.battery = battery
-        self.skipOnConstrainedNetwork = skipOnConstrainedNetwork
     }
 }
 

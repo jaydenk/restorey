@@ -25,17 +25,21 @@ public struct PreflightEnvironment: Sendable {
     /// Whether the path is the root of a mounted volume.
     public var isMountPoint: @Sendable (String) -> Bool
     public var fileExists: @Sendable (String) -> Bool
+    /// The Mac-wide network rules (`ConfigFile.network`). The plan runner sets them from the config.
+    public var networkSettings: NetworkSettings
 
     public init(
         power: PowerState,
         network: NetworkState,
         isMountPoint: @escaping @Sendable (String) -> Bool,
-        fileExists: @escaping @Sendable (String) -> Bool
+        fileExists: @escaping @Sendable (String) -> Bool,
+        networkSettings: NetworkSettings = .defaults
     ) {
         self.power = power
         self.network = network
         self.isMountPoint = isMountPoint
         self.fileExists = fileExists
+        self.networkSettings = networkSettings
     }
 }
 
@@ -49,7 +53,8 @@ public enum PreflightResult: Equatable, Sendable {
 /// Decides whether a due run should start. The checks run in a fixed order and the first that trips
 /// wins: network, then battery, then volumes and sources. So no network on a low battery is
 /// `.noNetwork`. The network checks apply only to a repository that needs the network
-/// (`Repository.needsNetwork`); `skipOnConstrainedNetwork` is the plan's toggle for the constrained one.
+/// (`Repository.needsNetwork`); the Mac-wide `skipOnConstrainedNetwork` (`env.networkSettings`) is the
+/// toggle for the constrained one.
 ///
 /// Every source on `/Volumes/<name>` (the path itself or anything below it) requires `/Volumes/<name>`
 /// to be a mount point, whether or not the path exists. When the drive is unplugged, macOS can leave
@@ -66,7 +71,7 @@ public func preflight(plan: Plan, env: PreflightEnvironment) -> PreflightResult 
         case .unsatisfied:
             return .skip(.noNetwork)
         case .satisfied(let constrained, let expensive):
-            if plan.conditions.skipOnConstrainedNetwork && (constrained || expensive) {
+            if env.networkSettings.skipOnConstrainedNetwork && (constrained || expensive) {
                 return .skip(.constrainedNetwork)
             }
         }

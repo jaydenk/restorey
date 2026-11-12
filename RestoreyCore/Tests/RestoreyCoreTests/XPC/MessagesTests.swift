@@ -74,6 +74,69 @@ struct MessagesTests {
             generatedAt: Self.now))
     }
 
+    @Test func agentStatusRoundTripsNewFields() throws {
+        let backup = RunRecord(
+            id: UUID(), planID: Self.planID, operation: .backup, trigger: .scheduled,
+            startedAt: Self.now, endedAt: Self.now.addingTimeInterval(61), outcome: .unchanged,
+            summary: nil, logFile: "2026/11/x.log")
+        var plan = Self.plan()
+        plan.setupCompletedAt = Self.now
+        plan.offMacNoteDismissed = true
+        let size = RepositorySize(bytes: 9_876_543_210, measuredAt: Self.now)
+        let status = AgentStatus(
+            plans: [PlanSetupState.unfinished, .needsNewKit, .complete].map {
+                PlanStatus(plan: plan, phase: .idle, lastRecord: nil, nextRunAt: nil, alerts: [],
+                           lastBackup: backup, repositorySize: size, setupState: $0)
+            },
+            configError: nil, fdaMissing: false, generatedAt: Self.now, agentRun: UUID(), sequence: 3,
+            network: NetworkSettings(uploadLimitKiB: 2048, skipOnConstrainedNetwork: false, skippedWiFiNames: ["Café"]))
+        try roundTrip(status)
+        try roundTrip(AgentStatus(plans: [], configError: "x", fdaMissing: nil, generatedAt: Self.now))
+    }
+
+    @Test func newShapesArePinned() throws {
+        #expect(try json(NetworkSettings.defaults) == #"{"skipOnConstrainedNetwork":true,"skippedWiFiNames":[]}"#)
+        #expect(try json(RepositorySize(bytes: 42, measuredAt: Date(timeIntervalSince1970: 1_800_000_000)))
+            == #"{"bytes":42,"measuredAt":"2027-01-15T08:00:00.000Z"}"#)
+        #expect(try json([PlanSetupState.unfinished, .needsNewKit, .complete])
+            == #"["unfinished","needsNewKit","complete"]"#)
+    }
+
+    /// A status as a v0.1 build 11 agent sent it: plans with `skipOnConstrainedNetwork` in their conditions
+    /// and none of the new keys. It decodes, with the new fields nil or derived from the plan.
+    @Test func aBuild11StatusDecodes() throws {
+        func plan(id: String, confirmed: String?) -> String {
+            #"{"conditions":{"battery":{"percent":20,"type":"minimumPercent"},"skipOnConstrainedNetwork":true},"#
+                + #""createdAt":"2027-01-15T08:00:00.123Z","exclusions":[],"fileTypeExclusions":["dmg"],"#
+                + #""forgetCadence":"afterEachBackup","hasCheckInURL":false,"hostLabel":"mac","id":"\#(id)","#
+                + #""name":"Home","noSuccessAlertDays":3,"oneFileSystem":true,"origin":"created","packSizeMiB":64,"#
+                + #""pruneEnabled":true,"#
+                + (confirmed.map { #""recoveryKitConfirmedAt":"\#($0)","# } ?? "")
+                + #""repository":{"location":{"bucket":"bucket","endpoint":"https://s3.us-west-004.backblazeb2.com","#
+                + #""prefix":"mac","provider":"b2"},"type":"s3"},"#
+                + #""retention":{"daily":30,"hourly":24,"monthly":120,"weekly":52},"#
+                + #""schedule":{"seconds":3600,"type":"interval"},"sources":["/Users/me"]}"#
+        }
+        let unconfirmed = plan(id: "6F1C2E1A-0000-4000-8000-000000000001", confirmed: nil)
+        let confirmed = plan(id: "6F1C2E1A-0000-4000-8000-000000000002", confirmed: "2027-01-15T09:00:00.000Z")
+        let json = #"{"agentRun":"6F1C2E1A-0000-4000-8000-0000000000AA","fdaMissing":false,"#
+            + #""generatedAt":"2027-01-15T10:00:00.000Z","plans":["#
+            + #"{"alerts":[],"nextRunAt":"2027-01-15T11:00:00.000Z","phase":{"type":"idle"},"plan":\#(unconfirmed)},"#
+            + #"{"alerts":[],"phase":{"type":"idle"},"plan":\#(confirmed)}"#
+            + #"],"sequence":4}"#
+        let status = try XPCCoding.decode(AgentStatus.self, from: Data(json.utf8))
+        #expect(status.network == nil)
+        #expect(status.plans.count == 2)
+        for plan in status.plans {
+            #expect(plan.plan.setupCompletedAt == nil)
+            #expect(!plan.plan.offMacNoteDismissed)
+            #expect(plan.lastBackup == nil)
+            #expect(plan.repositorySize == nil)
+        }
+        #expect(status.plans[0].setupState == .unfinished)
+        #expect(status.plans[1].setupState == .complete)
+    }
+
     // MARK: Ordering statuses (final review M1)
 
     private func status(at seconds: TimeInterval, run: UUID?, sequence: UInt64?) -> AgentStatus {

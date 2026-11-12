@@ -3,10 +3,11 @@ import Foundation
 /// Schema history for `config.json`. `VersionedStore` runs `migrations[n]` to take a payload from
 /// version `n` to `n + 1`, working on the decoded dictionary so old shapes never need old Swift types.
 public enum ConfigMigrations {
-    public static let currentVersion = 2
+    public static let currentVersion = 3
 
     public static let migrations: [Int: @Sendable (inout [String: Any]) throws -> Void] = [
         1: addFileTypeExclusionsAndOneFileSystem,
+        2: moveNetworkRulesToConfig,
     ]
 
     public enum MigrationError: Error, Equatable {
@@ -34,5 +35,39 @@ public enum ConfigMigrations {
             if list[index]["oneFileSystem"] == nil { list[index]["oneFileSystem"] = true }
         }
         payload["plans"] = list
+    }
+
+    /// 2 → 3 (Ruling P2-6, P2-3): the constrained-network rule becomes Mac-wide. The payload gets `network`
+    /// (no Mac-wide upload limit, no Wi-Fi names, and `skipOnConstrainedNetwork` true if any plan had it
+    /// on, as is the default, or there are no plans; false only when every plan had turned it off), and each plan's
+    /// `conditions.skipOnConstrainedNetwork` is removed. Each plan also gets `setupCompletedAt`, set to its
+    /// `recoveryKitConfirmedAt` (a plan whose kit was confirmed finished setup; one without stays
+    /// unfinished), and `offMacNoteDismissed = false`. Values a plan or the payload already has are kept.
+    @Sendable public static func moveNetworkRulesToConfig(_ payload: inout [String: Any]) throws {
+        var list: [[String: Any]] = []
+        if let plans = payload["plans"] {
+            guard let typed = plans as? [[String: Any]] else { throw MigrationError.notAPlanList }
+            list = typed
+        }
+        var skips: [Bool] = []
+        for index in list.indices {
+            if var conditions = list[index]["conditions"] as? [String: Any] {
+                // A plan without the key had the default, on.
+                skips.append(conditions["skipOnConstrainedNetwork"] as? Bool ?? true)
+                conditions["skipOnConstrainedNetwork"] = nil
+                list[index]["conditions"] = conditions
+            }
+            if list[index]["setupCompletedAt"] == nil, let confirmed = list[index]["recoveryKitConfirmedAt"] {
+                list[index]["setupCompletedAt"] = confirmed
+            }
+            if list[index]["offMacNoteDismissed"] == nil { list[index]["offMacNoteDismissed"] = false }
+        }
+        if payload["plans"] != nil { payload["plans"] = list }
+        if payload["network"] == nil {
+            payload["network"] = [
+                "skipOnConstrainedNetwork": skips.isEmpty || skips.contains(true),
+                "skippedWiFiNames": [String](),
+            ] as [String: Any]
+        }
     }
 }

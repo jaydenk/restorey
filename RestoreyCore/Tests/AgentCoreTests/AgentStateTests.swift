@@ -314,6 +314,88 @@ struct AgentStateTests {
         #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == nil)
     }
 
+    // MARK: Setup state (Ruling P2-3, Review Focus 2)
+
+    @Test func firstKitConfirmationSetsSetupCompleted() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        var plan = Self.plan(now: clock.now)
+        // The agent owns it: a client can't send a plan that has already finished setup.
+        plan.setupCompletedAt = clock.now
+        _ = try await state.savePlan(Self.request(plan))
+        var status = try #require(await state.status().plans.first)
+        #expect(status.setupState == .unfinished)
+        #expect(status.plan.setupCompletedAt == nil)
+
+        clock.advance(60)
+        status = try #require(try await state.confirmRecoveryKit(plan.id).plans.first)
+        let completedAt = clock.now
+        #expect(status.setupState == .complete)
+        #expect(status.plan.setupCompletedAt == completedAt)
+
+        // A changed secret means a new recovery kit, but setup stays finished.
+        clock.advance(60)
+        plan.setupCompletedAt = nil
+        status = try #require(try await state.savePlan(Self.request(plan, password: "a new password")).plans.first)
+        #expect(status.setupState == .needsNewKit)
+        #expect(status.plan.setupCompletedAt == completedAt)
+
+        // Confirming the new kit doesn't move when setup finished.
+        clock.advance(60)
+        status = try #require(try await state.confirmRecoveryKit(plan.id).plans.first)
+        #expect(status.setupState == .complete)
+        #expect(status.plan.setupCompletedAt == completedAt)
+        // And it survives a reload from disk.
+        let reloaded = await Self.makeState(dir, clock: clock)
+        #expect(await reloaded.status().plans.first?.plan.setupCompletedAt == completedAt)
+    }
+
+    @Test func lastBackupSkipsMaintenanceRecords() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        #expect(await state.status().plans.first?.lastBackup == nil)
+
+        func record(_ operation: ResticOperation, _ outcome: RunOutcome, minutesAgo: Double) -> RunRecord {
+            let start = clock.now.addingTimeInterval(-minutesAgo * 60)
+            return RunRecord(
+                id: UUID(), planID: plan.id, operation: operation, trigger: .scheduled, startedAt: start,
+                endedAt: start.addingTimeInterval(30), outcome: outcome, summary: nil, logFile: "")
+        }
+        let failed = record(.backup, .failed(exitCode: 1, reason: "boom"), minutesAgo: 40)
+        let unchanged = record(.backup, .unchanged, minutesAgo: 30)
+        let skipped = record(.backup, .skipped(.onBattery), minutesAgo: 20)
+        let forget = record(.forget(dryRun: false), .success(snapshotID: nil), minutesAgo: 10)
+        let size = RepositorySize(bytes: 12_345_678_901, measuredAt: clock.now.addingTimeInterval(-600))
+        let status = try await state.updateHistory(plan.id) { history in
+            // Oldest first, so `recent` reads newest first: forget, skipped, unchanged, failed.
+            for item in [failed, unchanged, skipped, forget] { history.record(item) }
+            history.repositorySize = size
+        }
+        let planStatus = try #require(status.plans.first)
+        #expect(planStatus.lastRecord == forget)
+        #expect(planStatus.lastBackup == unchanged)
+        #expect(planStatus.repositorySize == size)
+
+        // A warning counts as backed up; a newer failure or pause doesn't replace it.
+        let warning = record(.backup, .warning(unreadable: 2), minutesAgo: 5)
+        let paused = record(.backup, .paused, minutesAgo: 1)
+        let after = try await state.updateHistory(plan.id) { history in
+            history.record(warning)
+            history.record(paused)
+        }
+        #expect(after.plans.first?.lastBackup == warning)
+    }
+
+    @Test func statusCarriesTheNetworkSettings() async throws {
+        let dir = try TempDirectory()
+        let state = await Self.makeState(dir)
+        #expect(await state.status().network == .defaults)
+    }
+
     @Test func configWriteFailureRestoresTheOldSecrets() async throws {
         let dir = try TempDirectory()
         let clock = TestClock()
@@ -564,6 +646,7 @@ struct AgentStateTests {
         #expect(status.configError != nil)
         #expect(status.configError?.contains("newer") == true)
         #expect(status.plans.isEmpty)
+        #expect(status.network == nil, "config.json couldn't be read")
 
         let refused = "Restorey can't change its settings until the problem with them is fixed"
         await #expect { try await state.savePlan(Self.request(plan)) } throws: { Self.message($0) == refused }
@@ -598,6 +681,7 @@ struct AgentStateTests {
         #expect(status.configError?.contains("state.json") == true)
         // The plans are still listed, each stopped with the reason.
         #expect(status.plans.map(\.plan) == [plan])
+        #expect(status.network == .defaults, "config.json was read")
         guard case .stopped(let reason)? = status.plans.first?.phase else {
             Issue.record("expected a stopped phase, got \(String(describing: status.plans.first?.phase))")
             return

@@ -7,7 +7,6 @@ struct PreflightTests {
     private func plan(
         sources: [String] = ["/Users/me"],
         battery: BatteryRule = .minimumPercent(20),
-        skipConstrained: Bool = true,
         repository: Repository = .raw(repository: "sftp:backup@nas:/srv/restic", environmentNames: [])
     ) -> Plan {
         var plan = Plan.newHotPlan(
@@ -15,7 +14,7 @@ struct PreflightTests {
             repository: repository,
             origin: .created, hostLabel: "mac", sources: sources, exclusions: [],
             now: Date(timeIntervalSince1970: 1_800_000_000))
-        plan.conditions = Conditions(battery: battery, skipOnConstrainedNetwork: skipConstrained)
+        plan.conditions = Conditions(battery: battery)
         return plan
     }
 
@@ -24,11 +23,13 @@ struct PreflightTests {
         power: PowerState = PowerState(onBattery: false, percent: 100),
         network: NetworkState = .satisfied(constrained: false, expensive: false),
         mounted: Set<String> = [],
-        existing: Set<String> = ["/Users/me"]
+        existing: Set<String> = ["/Users/me"],
+        networkSettings: NetworkSettings = .defaults
     ) -> PreflightEnvironment {
         PreflightEnvironment(
             power: power, network: network,
-            isMountPoint: { mounted.contains($0) }, fileExists: { existing.contains($0) })
+            isMountPoint: { mounted.contains($0) }, fileExists: { existing.contains($0) },
+            networkSettings: networkSettings)
     }
 
     @Test func allSourcesPresentRuns() {
@@ -49,9 +50,20 @@ struct PreflightTests {
         #expect(preflight(plan: plan(), env: e) == .skip(.constrainedNetwork))
     }
 
+    /// The rule is Mac-wide (Ruling P2-6): it comes from the environment's network settings.
     @Test func constrainedNetworkRunsWhenTheOptionIsOff() {
-        let e = env(network: .satisfied(constrained: true, expensive: true))
-        #expect(preflight(plan: plan(skipConstrained: false), env: e) == .run)
+        var off = NetworkSettings.defaults
+        off.skipOnConstrainedNetwork = false
+        let e = env(network: .satisfied(constrained: true, expensive: true), networkSettings: off)
+        #expect(preflight(plan: plan(), env: e) == .run)
+    }
+
+    @Test func theEnvironmentDefaultsToTheDefaultNetworkSettings() {
+        let e = PreflightEnvironment(
+            power: PowerState(onBattery: false, percent: 100), network: .satisfied(constrained: true, expensive: false),
+            isMountPoint: { _ in false }, fileExists: { _ in true })
+        #expect(e.networkSettings == .defaults)
+        #expect(preflight(plan: plan(), env: e) == .skip(.constrainedNetwork))
     }
 
     @Test func neverOnBatterySkipsOnBattery() {
