@@ -239,9 +239,10 @@ developer window's "Request Location" button sends the request and shows the rep
 Each plan also records when its setup finished (`setupCompletedAt`, set when its recovery kit is first confirmed
 and never cleared), so a plan whose kit must be confirmed again is told apart from one whose setup was never
 finished, and whether the "No off-Mac monitoring" note was dismissed. The agent owns both setup dates and the
-dismissed note; a saved plan can't change them (only confirming the recovery kit and `dismissOffMacNote` do). Upgrading from schema 2 moves the per-plan "skip on a constrained network" setting to
-the Mac-wide one, which stays on if any plan had it on (an upgrade with every plan's setting off turns it off),
-and marks every plan whose recovery kit was already confirmed as having finished setup.
+dismissed note; a saved plan can't change them (only confirming the recovery kit and `dismissOffMacNote` do).
+Upgrading from schema 2 moves the per-plan "skip on a constrained network" setting to the Mac-wide one, which
+stays on if any plan had it on (an upgrade with every plan's setting off turns it off), and marks every plan
+whose recovery kit was already confirmed as having finished setup.
 
 ## Alerts
 

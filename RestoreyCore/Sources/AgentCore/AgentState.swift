@@ -260,9 +260,13 @@ public actor AgentState {
             phase = .idle
         }
         let next = nextRunDate(plan: plan, history: history, now: now)
-        let alerts = activeConditions(history: history, plan: plan, now: now)
-            .union(history.activeAlerts.keys)
-            .sorted { $0.rawValue < $1.rawValue }
+        var raised = activeConditions(history: history, plan: plan, now: now).union(history.activeAlerts.keys)
+        // A probe since the run that raised it found access granted: the alert is gone now, not after the
+        // next delivery round clears it from `activeAlerts` (or never, with no notifier attached).
+        if !fullDiskAccessAlertStands(history: history, fullDiskAccessMissing: fdaMissing) {
+            raised.remove(.fullDiskAccessMissing)
+        }
+        let alerts = raised.sorted { $0.rawValue < $1.rawValue }
         return PlanStatus(
             plan: plan, phase: phase, lastRecord: history.recent.first,
             nextRunAt: next == .distantFuture ? nil : next, alerts: alerts,

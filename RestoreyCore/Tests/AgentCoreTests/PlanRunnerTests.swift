@@ -1327,6 +1327,28 @@ struct PlanRunnerTests {
         #expect(await f.state.status().fdaMissing == false)
     }
 
+    /// A probe that finds access granted clears the plan's alert in its own reply and push. No notifier is
+    /// attached, so no delivery round runs to clear `activeAlerts`: the status alone must not show it.
+    @Test func probeFindingAccessGrantedDropsThePlansAlertAtOnce() async throws {
+        let f = try await RunnerFixture.make(createRepository: false)
+        defer { f.remove() }
+        f.fda.set(.missing)
+        _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        #expect(await f.history().activeAlerts[.fullDiskAccessMissing] != nil)
+        #expect(await f.status().alerts.contains(.fullDiskAccessMissing))
+        let pushed = Locked<[[AlertCondition]]>([])
+        await f.state.setStatusObserver { status in pushed.mutate { $0.append(status.plans.first?.alerts ?? []) } }
+
+        f.fda.set(.granted)
+        let reply = try await f.state.probeFullDiskAccess()
+        #expect(reply.fdaMissing == false)
+        #expect(reply.plans.first?.alerts.contains(.fullDiskAccessMissing) == false)
+        #expect(pushed.value.count == 1)
+        #expect(pushed.value.first?.contains(.fullDiskAccessMissing) == false)
+        // Still in `activeAlerts` (no delivery round ran), which the status no longer reports.
+        #expect(await f.history().activeAlerts[.fullDiskAccessMissing] != nil)
+    }
+
     @Test func actionsAreRefusedWhileDraining() async throws {
         let f = try await RunnerFixture.make()
         defer { f.remove() }
