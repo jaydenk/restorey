@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>@AGENT_LABEL@</string>
+    <key>BundleProgram</key>
+    <string>Contents/Helpers/@AGENT_PRODUCT@.app/Contents/MacOS/@AGENT_PRODUCT@</string>
+    <key>MachServices</key>
+    <dict>
+        <key>@AGENT_LABEL@</key>
+        <true/>
+        <key>@HELPER_SERVICE@</key>
+        <true/>
+    </dict>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Standard</string>
+</dict>
+</plist>

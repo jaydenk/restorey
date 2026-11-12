@@ -1,0 +1,230 @@
+import Foundation
+import Testing
+@testable import RestoreyCore
+
+struct RunStateTests {
+    private let planID = UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!
+    private let recordID = UUID(uuidString: "00000000-0000-0000-0000-0000000000B2")!
+
+    /// Whole milliseconds, so values survive the store's date format exactly.
+    private func date(_ seconds: Double) -> Date { Date(timeIntervalSince1970: seconds) }
+
+    private func makeRecord() -> RunRecord {
+        RunRecord(
+            id: recordID, planID: planID, operation: .backup, trigger: .catchUp,
+            startedAt: date(1_800_000_000.123), endedAt: date(1_800_000_060.5),
+            outcome: .success(snapshotID: "abc"),
+            summary: BackupSummary(
+                filesNew: 1, filesChanged: 2, filesUnmodified: 3, dataAdded: 4, dataAddedPacked: 5,
+                totalFilesProcessed: 6, totalBytesProcessed: 7, totalDuration: 1.5,
+                backupStart: date(1_800_000_000.25), backupEnd: date(1_800_000_001.75), snapshotID: "abc"
+            ),
+            logFile: "plan/run.log"
+        )
+    }
+
+    private func makeState() -> RunState {
+        var history = PlanRunHistory()
+        history.lastSuccessAt = date(1_800_000_060.5)
+        history.lastAttemptAt = date(1_800_000_060.5)
+        history.lastSnapshotAt = date(1_800_000_001.75)
+        history.lastForgetAt = date(1_800_000_070)
+        history.lastPruneAt = date(1_800_000_080)
+        history.lastCheckAt = date(1_800_000_090)
+        history.runningRecordID = recordID
+        history.recent = [makeRecord()]
+        history.activeAlerts = [
+            .backupFailed: AlertNotificationState(raisedAt: date(1_800_000_100), lastNotifiedAt: nil, count: 1),
+            .noRecentSuccess: AlertNotificationState(
+                raisedAt: date(1_800_000_200), lastNotifiedAt: date(1_800_000_300), count: 2),
+        ]
+        history.stoppedReason = "Repository password rejected."
+        history.pausedUntil = date(1_800_003_600)
+        return RunState(plans: [planID: history])
+    }
+
+    @Test func runStateRoundTripsThroughVersionedStore() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-runstate-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = VersionedStore<RunState>(
+            fileURL: dir.appendingPathComponent("state.json"), currentVersion: 1, migrations: [:])
+
+        #expect(try await store.load() == nil)
+        let state = makeState()
+        try await store.save(state)
+        let loaded = try #require(try await store.load())
+        #expect(loaded == state)
+        #expect(loaded.plans[planID]?.recent.first?.summary?.snapshotID == "abc")
+    }
+
+    @Test func stateFileIsAnObjectKeyedByPlanIDWithRawAlertKeys() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-runstate-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("state.json")
+        let store = VersionedStore<RunState>(fileURL: file, currentVersion: 1, migrations: [:])
+        try await store.save(makeState())
+
+        let root = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        #expect(root["schemaVersion"] as? Int == 1)
+        let plans = try #require((root["payload"] as? [String: Any])?["plans"] as? [String: Any])
+        let history = try #require(plans[planID.uuidString] as? [String: Any])
+        let alerts = try #require(history["activeAlerts"] as? [String: Any])
+        #expect(Set(alerts.keys) == ["backupFailed", "noRecentSuccess"])
+        #expect(history["lastSuccessAt"] as? String == "2027-01-15T08:01:00.500Z")
+    }
+
+    @Test func activeAlertsGoldenJSON() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        var history = PlanRunHistory()
+        history.activeAlerts = [
+            .fullDiskAccessMissing: AlertNotificationState(raisedAt: Date(timeIntervalSince1970: 1), lastNotifiedAt: nil, count: 3),
+        ]
+        let text = String(decoding: try encoder.encode(history), as: UTF8.self)
+        #expect(text == #"{"activeAlerts":{"fullDiskAccessMissing":{"count":3,"raisedAt":1000}},"recent":[]}"#)
+
+        let decoded = try JSONDecoder().decode(PlanRunHistory.self, from: Data(#"{"activeAlerts":{"noRecentSuccess":{"count":1,"raisedAt":1.5}},"recent":[]}"#.utf8))
+        #expect(decoded.activeAlerts.keys.contains(.noRecentSuccess))
+    }
+
+    @Test func everyAlertConditionKeyRoundTrips() throws {
+        let all = AlertCondition.allCases
+        #expect(all.map(\.rawValue) == [
+            "backupFailed", "checkFailed", "checkInRejected", "configurationError", "fullDiskAccessMissing",
+            "noRecentSuccess", "notificationsOff",
+        ])
+        var history = PlanRunHistory()
+        for c in all { history.activeAlerts[c] = AlertNotificationState(raisedAt: Date(timeIntervalSince1970: 0), lastNotifiedAt: nil, count: 1) }
+        let data = try JSONEncoder().encode(history)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(Set((object["activeAlerts"] as? [String: Any])?.keys.map { $0 } ?? []) == Set(all.map(\.rawValue)))
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: data) == history)
+    }
+
+    /// A condition from a newer build is dropped, not fatal: after a downgrade the rest of the history
+    /// still loads (Ruling R48).
+    @Test func unknownAlertKeysAreDropped() throws {
+        let text = #"{"activeAlerts":{"bogus":{"count":1,"raisedAt":1},"backupFailed":{"count":2,"raisedAt":1}},"recent":[]}"#
+        let decoded = try JSONDecoder().decode(PlanRunHistory.self, from: Data(text.utf8))
+        #expect(decoded.activeAlerts.keys.map(\.rawValue) == ["backupFailed"])
+        #expect(decoded.activeAlerts[.backupFailed]?.count == 2)
+    }
+
+    @Test func aStateFileWithAnUnknownAlertKeyLoads() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-runstate-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("state.json")
+        let store = VersionedStore<RunState>(fileURL: url, currentVersion: 1, migrations: [:])
+        var state = RunState()
+        var history = PlanRunHistory()
+        history.activeAlerts[.checkFailed] = AlertNotificationState(raisedAt: date(1_800_000_000), lastNotifiedAt: nil, count: 1)
+        state.plans[planID] = history
+        try await store.save(state)
+        // As a newer build would write it: one more condition this build doesn't know.
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        func addingUnknownAlert(_ value: Any) -> Any {
+            guard var dictionary = value as? [String: Any] else { return value }
+            if var alerts = dictionary["activeAlerts"] as? [String: Any], let known = alerts["checkFailed"] {
+                alerts["fromTheFuture"] = known
+                dictionary["activeAlerts"] = alerts
+                return dictionary
+            }
+            return dictionary.mapValues(addingUnknownAlert)
+        }
+        let newer = try JSONSerialization.data(withJSONObject: addingUnknownAlert(object))
+        #expect(String(decoding: newer, as: UTF8.self).contains("fromTheFuture"))
+        try newer.write(to: url)
+
+        let loaded = try #require(try await store.load())
+        #expect(loaded.plans[planID]?.activeAlerts.keys.map(\.rawValue) == ["checkFailed"])
+    }
+
+    /// A record whose outcome, skip reason or operation only a newer build knows is dropped, so a
+    /// downgrade keeps the rest of the history (as for alert keys). Real corruption still fails.
+    @Test func recordsWithCasesFromANewerBuildAreDropped() throws {
+        let known = String(decoding: try JSONEncoder().encode(makeRecord()), as: UTF8.self)
+        func record(outcome: String = #"{"type":"paused"}"#, operation: String = #"{"type":"backup"}"#) -> String {
+            #"{"id":"\#(UUID().uuidString)","planID":"\#(planID.uuidString)","operation":\#(operation),"trigger":"manual","startedAt":1,"endedAt":2,"outcome":\#(outcome),"logFile":""}"#
+        }
+        let newer = [
+            record(outcome: #"{"type":"fromTheFuture"}"#),
+            record(outcome: #"{"type":"skipped","reason":{"type":"fromTheFuture"}}"#),
+            record(operation: #"{"type":"fromTheFuture"}"#),
+        ]
+        let text = #"{"runningRecord":\#(newer[0]),"recent":[\#(newer.joined(separator: ",")),\#(known)]}"#
+        let decoded = try JSONDecoder().decode(PlanRunHistory.self, from: Data(text.utf8))
+        #expect(decoded.recent == [makeRecord()])
+        #expect(decoded.runningRecord == nil)
+
+        let corrupt = #"{"recent":[{"id":"not-a-uuid"},\#(known)]}"#
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(PlanRunHistory.self, from: Data(corrupt.utf8)) }
+    }
+
+    @Test func emptyHistoryEncodesOnlyRequiredKeys() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        #expect(String(decoding: try encoder.encode(PlanRunHistory()), as: UTF8.self) == #"{"activeAlerts":{},"recent":[]}"#)
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: Data("{}".utf8)) == PlanRunHistory())
+    }
+
+    @Test func runRecordJSONIsExplicit() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        let record = RunRecord(
+            id: recordID, planID: planID, operation: .forget(dryRun: true), trigger: .retry,
+            startedAt: Date(timeIntervalSince1970: 1), endedAt: Date(timeIntervalSince1970: 2),
+            outcome: .warning(unreadable: 2), summary: nil, logFile: "l.log")
+        let text = String(decoding: try encoder.encode(record), as: UTF8.self)
+        #expect(text == #"{"endedAt":2000,"id":"00000000-0000-0000-0000-0000000000B2","logFile":"l.log","operation":{"dryRun":true,"type":"forget"},"outcome":{"type":"warning","unreadable":2},"planID":"00000000-0000-0000-0000-0000000000A1","startedAt":1000,"trigger":"retry"}"#)
+    }
+
+    /// Older state files have no `droppedLogLines`; a record with none dropped leaves the key out.
+    @Test func droppedLogLinesDefaultsToZeroAndIsOmittedWhenZero() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        var record = makeRecord()
+        #expect(record.droppedLogLines == 0)
+        #expect(!String(decoding: try encoder.encode(record), as: UTF8.self).contains("droppedLogLines"))
+        record.droppedLogLines = 3
+        let data = try encoder.encode(record)
+        #expect(String(decoding: data, as: UTF8.self).contains(#""droppedLogLines":3"#))
+        #expect(try JSONDecoder().decode(RunRecord.self, from: data) == record)
+    }
+
+    @Test func runningRecordRoundTrips() throws {
+        var history = PlanRunHistory()
+        let record = makeRecord()
+        history.runningRecord = record
+        history.runningRecordID = record.id
+        let data = try JSONEncoder().encode(history)
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: data) == history)
+    }
+
+    @Test func backupSummaryJSONUsesResticFieldNames() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        let s = BackupSummary(filesNew: 1, totalDuration: 2, backupStart: Date(timeIntervalSince1970: 1), snapshotID: "x")
+        #expect(String(decoding: try encoder.encode(s), as: UTF8.self) ==
+            #"{"backup_start":1000,"data_added":0,"data_added_packed":0,"files_changed":0,"files_new":1,"files_unmodified":0,"snapshot_id":"x","total_bytes_processed":0,"total_duration":2,"total_files_processed":0}"#)
+    }
+
+    @Test func recordPutsNewestFirstAndCapsAtFifty() {
+        var history = PlanRunHistory()
+        var ids: [UUID] = []
+        for i in 0..<60 {
+            var r = makeRecord()
+            r.id = UUID()
+            r.startedAt = date(Double(i))
+            ids.append(r.id)
+            history.record(r)
+        }
+        #expect(PlanRunHistory.recentLimit == 50)
+        #expect(history.recent.count == 50)
+        #expect(history.recent.first?.id == ids[59])
+        #expect(history.recent.last?.id == ids[10])
+    }
+}

@@ -7,3 +7,8 @@ build/
 spike/vendor/
 spike/*.xcodeproj
 spike/Config/Local.xcconfig
+vendor/
+*.xcodeproj
+Config/Local.xcconfig
+RestoreyCore/.build/
+.build/

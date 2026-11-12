@@ -1,0 +1,41 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  build-and-test:
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v7
+      - name: Select Xcode 27
+        run: sudo xcode-select -s /Applications/Xcode_27.0.app
+      # Pinned to the plan's XcodeGen 2.46.0, from the release asset, checked against the SHA-256 digest
+      # GitHub publishes for it (gh api repos/yonaskolb/XcodeGen/releases/tags/2.46.0).
+      - name: Install XcodeGen 2.46.0
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" \
+            https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" \
+            | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/xcodegen/bin/xcodegen" --version
+      - name: Run the CI checks
+        run: scripts/ci.sh
+      # fullDiskFails' disk image has vanished mid-test on this runner (six failed runs, once since R71),
+      # never on a Mac at a desk (30 of 30 passed). Keep what the disk services logged, so the next
+      # failure shows what unmounted it.
+      - name: Save the disk and mount log
+        if: failure()
+        run: |
+          sudo /usr/bin/log show --last 30m --info --debug --style compact --predicate \
+            'process IN {"diskarbitrationd","diskimagesiod","diskimages-helper","hdiutil","fsck_hfs","mds","umount","mount_hfs"}
+             OR (process == "kernel" AND (eventMessage CONTAINS[c] "hfs" OR eventMessage CONTAINS[c] "mount"
+                 OR eventMessage CONTAINS[c] "RestoreyTest"))' > "$RUNNER_TEMP/disk-log.txt" || true
+      - name: Upload the disk and mount log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: disk-log
+          path: ${{ runner.temp }}/disk-log.txt
+          retention-days: 14

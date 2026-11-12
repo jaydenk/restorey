@@ -10,14 +10,30 @@ Answers the open questions in spec §12.1. Times are UTC, with Adelaide local ti
 | **H1** One FDA grant covers the agent and restic | **Confirmed**, under both Apple Development and Developer ID, and it survives a Developer ID N→N+1 update | One grant to Restorey.app. No two-item fallback is needed. Treat "operation not permitted" on sources as *FDA missing* (an error), not a warning |
 | **H2** Keychain password helper from launchd, no prompt | **Confirmed**: also while the screen is locked, and across a signing change | The helper is the agent app's own executable, which must embed a provisioning profile. **Confused deputy:** the owner chose to verify the parent chain plus a README statement |
 | **H3** Agent process shape | **Helper app (LSUIElement) confirmed.** Notifications need the *agent's* own permission, and fail silently without it | Request notification permission from the agent only. Warn when it's not authorised |
-| **H4** Backend credentials | **Environment variables are readable by same-user processes.** S3 `credential_process` is supported (from source; not run end to end) | The owner chose restic's S3 backend for S3 and B2, with `credential_process` and no `AWS_*` variables. Test against real B2 first |
+| **H4** Backend credentials | **Environment variables are readable by same-user processes.** S3 `credential_process` **works end to end against B2's S3 endpoint** (v0.1 Task 1): one helper call per restic command | The owner chose restic's S3 backend for S3 and B2, with `credential_process` and no `AWS_*` variables. `Expiration` is required. A failing helper costs about 31 s and surfaces only as exit 1 "no credentials found" |
 | **H6** Manual N→N+1 update | **Confirmed**: the handshake drains the running backup, launchd relaunches the new agent, and no grants are lost | Ship the handshake. **Gate it on running from /Applications** |
 | Not in §12.1 | `ProcessType=Adaptive` throttles self-scheduled runs to priority 4 (954 s versus 69 s) | The owner chose `ProcessType=Standard` |
 | Not in §12.1 | A copy run from a DMG re-points the registration. The agent is then killed by a launch-constraint violation and launchd **removes the job**, while `SMAppService.status` still says `enabled` | Heartbeat-driven self-repair: unregister then register. No agent-affecting actions from a translocated or non-/Applications copy |
 | Not in §12.1 | A plist change in an update is ignored until re-registration | Re-register when the embedded plist's hash changes |
 | Not in §12.1 | A crashed run leaves a stale lock that blocks `check` (exit 11) | Plain `restic unlock` (never `--remove-all`) before maintenance and after an agent restart |
 
-**Still open:** SIGINT lock removal during a real backup, whole-home EPERM paths under FDA, telling "user switched the agent off" apart from a fault, the self-move quarantine strip, the Homebrew and Sparkle install paths, the end-to-end `credential_process` run against B2's S3 endpoint, and a measurement of restic's CPU use during a real first backup under `Standard`.
+**Still open:** whole-home EPERM paths under FDA, telling "user switched the agent off" apart from a fault (interim rule in H3a below), the self-move quarantine strip, the Homebrew and Sparkle install paths, and a measurement of restic's CPU use during a real first backup under `Standard`.
+
+### Two restic 0.19.1 behaviours that shape the plan runner (v0.1 Task 14, 10 Nov 2026 17:15 UTC (03:45))
+
+Found while writing `PlanRunnerTests` against real restic and local repositories.
+
+- **`--skip-if-unchanged` compares the whole snapshot tree, including the metadata of every folder above each source.** A run made a new snapshot with `0 new, 0 changed` files because a sibling had been created in an ancestor (`restic diff --metadata` showed only `/var/folders/…/T/`, then only `/private/` and `/private/tmp/`, as `U`). Task 5's capture saw the same thing from a repository placed under an ancestor. **Consequence:** a plan sees `.unchanged` only while nothing is created, removed or renamed directly in any folder above its sources. For a source like `~/Documents`, any file created or atomically saved in `~` (shell history, app dotfiles) makes the next hourly run a new, identical snapshot. Nothing is lost and retention thins them, but the "no snapshot when nothing changed" promise in spec §5.5 holds only for sources with quiet ancestors. Not yet addressed; noted for the owner.
+- **`forget` keeps a group's oldest snapshot while the group has fewer buckets than the policy asks for** (the reason column says `oldest hourly snapshot`, and so on). With the default `24 hourly, 30 daily, 52 weekly, 120 monthly`, a young repository loses nothing to `forget`. The scoping test (Ruling R9) therefore uses `--keep-hourly 1` and nothing else, so that an unscoped `forget` would visibly remove a snapshot from every foreign group.
+
+### SIGINT during a real backup removes restic's lock (v0.1 Task 6, 10 Nov 2026 08:50 UTC (19:20))
+
+Closes the open item "SIGINT lock removal during a real backup". `ResticUnhappyPathTests.sigintDuringRealBackupLock` backs up 300 MB of random data (10 files of 30 MB) to a local repository, throttled to 20,000 KiB/s so the signal lands mid-backup. The repository, cache and home directory are siblings of the source tree, not inside it. restic 0.19.1 was sent SIGINT on the first `status` message.
+
+- **When the signal was sent, `locks/` held exactly one lock file** (restic's own non-exclusive backup lock).
+- **restic exited with code 130 on its own**, not killed, and printed no summary. `classify` gives `.paused`.
+- **`locks/` was empty afterwards.** restic removes its lock when it is interrupted with SIGINT.
+- **Consequence for Task 14:** a pause or cancel that restic honours needs no `unlock`. A plain `unlock` is still needed after a `kill -9` or a crash (`staleLockBlocksCheckThenPlainUnlockClears` shows `check` then exits 11 until `unlock` clears it), and after the agent has to SIGKILL restic because it ignored SIGINT for 10 s. Run `unlock` on recovery from either, never after an ordinary pause.
 
 ## Environment
 
@@ -106,6 +122,87 @@ Recommendation: option 2 in v0.1, plus the README statement from option 1. Optio
 - **Background Task Management stores a SHA-256 of the agent executable** (`BTMConfigSHA256Checksum` in `backgroundtaskmanagementd` logs). Task 7 checks whether a changed binary after an update triggers re-approval.
   - **Caveat:** restic compares `os.Hostname()`, which on this Mac is the network-dependent `pepper.home.kerr.host`. After a network change, the Mac's own crashed-run locks look foreign until they are 30 minutes old.
 
+### "Switched off" versus a fault (v0.1 Task 17, checked 10 Nov 2026 21:41–21:45 UTC (11 Nov 08:11–08:15))
+
+**Verdict: the two cases are told apart by `SMAppService.status`, so an `enabled` agent that doesn't answer is
+repaired automatically (Ruling R54).** RestoreyDev 0.1.0 (1) from /Applications, macOS 27.2.
+
+- **Switched off in Login Items** (21:41:12 UTC):
+  - `smd` asked launchd to remove the job: "removing job: caller = smd", SIGTERM to the agent, "removing service".
+    `launchctl print gui/501/com.jaydenkerr.restorey.dev.agent` then reads "Could not find service".
+  - **loginwindow also force-quit the menu bar app** ("RestoreyDev [12266] force quit (caller responsible for
+    termination)"), so the app never sees the change live. It shows on the next launch.
+  - BTM keeps the item as `disposition=[enabled, disallowed, notified]`.
+  - The relaunched app read **`requiresApproval`**, with the heartbeat unreachable → "switched off"
+    (`app.log` 21:42:52).
+- **Switched back on** (21:43:22): launchd loaded the job and started the agent at once (`runs = 1`, never exited).
+  The running app read `enabled` and healthy at the next heartbeat (21:43:23).
+- **`kill -9` of the agent:** launchd's `KeepAlive` started a new one within 1 s (`runs = 2`, new pid,
+  `state = running`). `SMAppService.status` stayed `enabled`, and the app's `hello` retry covered the gap, so it
+  logged nothing.
+- **Not done here:** a copy run from an unsigned DMG breaking the registration. That falls under the Task 17 manual
+  check (d).
+
+So the table is now:
+
+| `SMAppService.status` | Heartbeat | App does |
+|---|---|---|
+| `notFound`, `notRegistered` | any | `register()` |
+| `enabled` | agent binary outside this app's bundle, or plist hash changed | drain without exiting (`prepareForReregistration`), `unregister()`, `register()`; no unregister if the drain call fails |
+| `enabled` | agent already draining | wait, then `prepareForRestart` so it can't stay drained |
+| `enabled` | different agent version or build, or a binary replaced since the agent started | drain, launchd's `KeepAlive` starts the new binary (before any plist re-registration) |
+| `enabled` | unreachable for under 30 s | "Background agent isn't running", with "Restart Agent" and "Open Login Items" |
+| `enabled` | unreachable for 30 s or more | `unregister()`, `register()` (no drain: it can't be asked); at most once an hour, then as above |
+| `requiresApproval` | any | "Background agent is switched off", with "Open Login Items" |
+
+The 30-second grace (`AgentHealthPolicy.unreachableGrace`, three heartbeats) is there because `unregister()` kills
+a running restic. One missed heartbeat from an agent that is busy or briefly stopped, like the one at 19:54:54 UTC,
+must not cost a backup.
+
+**Checked live after the change** (21:49:31–21:50:15 UTC): the agent was frozen with `kill -STOP`. A `hello` to a
+stopped process fails only at its 5 s timeout, so the start of the run of failures is stamped when the failing
+heartbeat begins. The app re-registered it at 21:50:13, 42 s after the freeze. launchd killed the frozen process
+and started a new agent, which answered 2 s later.
+
+**Found on the first real launch (fix round 3, 10 Nov 2026 19:44 UTC (11 Nov 06:14)):** an install replaced the
+bundle while an agent from an earlier install kept running (spike H6), with the same version and build (0.1.0,
+1). It didn't know the new `prepareForReregistration` call, so NSXPC dropped the message ("Exception caught during
+decoding of received selector prepareForReregistrationWithReply:") and failed the call. The agent now reports a
+fingerprint of its executable (device, inode, size, modification time) taken at launch, and the app restarts an
+agent whose fingerprint differs from the file on disk, or that reports none, before anything else.
+
+Automatic repairs run at most once an hour for each kind (restart, re-register), recorded in the app's `UserDefaults` so a relaunch doesn't repair
+again (a record from another version or build is ignored). A fault that survives one shows "Restart Agent".
+
+**Update during a run (Task 17 Step 5 (b), 10 Nov 2026 22:25 UTC (11 Nov 08:55)).** Build 3 → 4 was installed
+with `BUILD_NUMBER=4 scripts/install-dev.sh` while a backup ran. The drain was ordered correctly (the build 3 agent
+waited for restic, then exited), but the backup failed with `Fatal: Resolving password failed: exit status 1`.
+restic runs the helper from the bundle path, which now held build 4. The new helper connects to the old, still
+running agent and checks the agent against its connection's code requirement (`Agent/HelperMode.swift`). The old
+process's signature seals an Info.plist no longer on disk, so validation fails in the helper (`xpc_support_check_token: status: -67030`, `errSecCSInfoPlistFailed`;
+"Received message forbidden due to code signing requirement"; the helper logged "The agent gave the helper
+nothing: XPC error: Couldn't communicate with a helper application."). Every new restic process an old agent
+starts after its bundle is replaced fails this way: the maintenance after a backup, a run waiting in the
+repository's queue, and every scheduled run of an agent nobody asked to drain. **Fix (Ruling R55):** the helper's
+requirement is unchanged. A draining agent starts no new restic step (a backup not yet started is recorded
+`skipped(agentUpdating)` with no ping, and is due at once for the next agent), and an agent checks before every
+restic step and on every scheduler tick whether the file at its executable path still matches its launch
+fingerprint. If not, it drains itself and exits 0 so launchd's `KeepAlive` starts the new binary.
+
+**Checked live after the fix** (23:26:10–23:26:44 UTC): build 5 → 6 installed while a backup ran (paused with
+SIGSTOP after it had fetched its password, then resumed). The build 6 app asked for a restart at 23:26:20; the
+backup finished with success (snapshot `6decfdb3`) at 23:26:40; the agent started no forget or check and exited;
+build 6 was running at 23:26:42, and its recovery `unlock` succeeded through the new helper. No failure, no
+`/fail`, no alert. Two earlier `unlock` failures ("The file “restic” doesn't exist", 22:43 and 22:50 UTC) came
+from pre-fix build 4 agents attempting a step while `install-dev.sh` had the bundle removed mid-copy; the fix
+treats an unreadable executable as replaced, so it drains instead.
+
+**Translocation detection on macOS 27.2 (26B123).** `SecTranslocateIsTranslocatedURL` is still exported by
+Security.framework, resolves through `dlsym` and returns success with `false` for non-translocated paths. A
+translocated path could not be made from a command-line process (`SecTranslocateCreateSecureDirectoryForURL`
+fails with EPERM), so the positive case is unverified. The app therefore also refuses any bundle path with an
+`AppTranslocation` component, the check the spike used successfully in phase B.
+
 ### H3b — Notifications from the agent (Task 5), 9 Nov 2026 22:58–23:01 UTC (10 Nov 09:28–09:31)
 
 **Verdict: the agent needs its own notification permission, and the system hides that it doesn't have one.**
@@ -164,7 +261,43 @@ The bundled, hardened-runtime restic was started with `SPIKE_FAKE_SECRET=…` in
 - **Other backends** (raw repository string plus variables, spec §5.3): child environment only, and the README says plainly that the environment is readable by other processes running as the user while a run is in progress.
 - README wording (spec §7): "Repository passwords, and keys for S3 (including Backblaze B2 through its S3 endpoint), are read from your Keychain by Restorey's background agent and handed to restic through a pipe. They are never written to disk or put in environment variables. Credentials for other backends, including repositories that use restic's native `b2:` backend, are passed to restic as environment variables while it runs. Other programs running as you can read those."
 
-### Not done
+### H4 addendum: `credential_process` against B2, 10 Nov 2026 07:29–07:33 UTC (17:59–18:03)
+
+**Verdict: confirmed.** restic 0.19.1 (upstream darwin_arm64, SHA-256 checked) reaches a real B2 bucket through its S3 endpoint with keys from `credential_process` only.
+
+- **Setup.**
+  - Bucket `restorey-test`, endpoint `https://s3.us-west-001.backblazeb2.com`, with an application key scoped to that bucket (`b2_authorize_account` reports the `bucketId` restriction).
+  - Repository `s3:https://s3.us-west-001.backblazeb2.com/restorey-test/cp-test`.
+  - Every run used `env -i HOME=… PATH=/usr/bin:/bin` plus only `AWS_SHARED_CREDENTIALS_FILE`, `AWS_PROFILE=restorey-test`, `RESTIC_PASSWORD_FILE`, `RESTIC_REPOSITORY` and `RESTIC_CACHE_DIR`. There were no `AWS_*` key variables and no `~/.mc/config.json`. The shared-credentials file held only `[restorey-test]` and `credential_process = <scratch path, no spaces>/helper.sh s3-credentials --plan test`.
+  - The helper is a shell script that logs each call and prints `{"Version":1,"AccessKeyId","SecretAccessKey","Expiration":<now+12 h>}`.
+- **Positive control:**
+
+  | Command | Exit | Helper calls |
+  |---|---|---|
+  | `init` | 0 | 1 |
+  | `backup` (202 files, 50 MB, 17 s) | 0 | 1 |
+  | second `backup` (no changes) | 0 | 1 |
+  | `snapshots --json` (2) | 0 | 1 |
+  | `check` | 0 | 1 |
+
+  So Restorey's helper runs **once per restic process**. The per-run log count to expect in v0.1 is 1 per command.
+- **Negative controls.**
+  - A profile pointing at a helper that exits 1 with no output makes `snapshots` fail: **exit 1** after **31 s**, with `exit_error` "s3.getCredentials: no credentials found". The failing helper was called once.
+  - A profile name with no matching section fails the same way, also after 31 s.
+
+  So nothing else on this Mac answered the chain (`~/.aws/credentials` exists but is bypassed by `AWS_SHARED_CREDENTIALS_FILE`). The 31 s delay is consistent with minio-go's IAM provider waiting on the EC2 metadata endpoint, which is not verified.
+- **Expiration control.**
+  - A backup adding 20 MB with `Expiration` **omitted**: exit 0, but **16 helper calls**.
+  - The same size backup with `Expiration`: **1 call**.
+
+  This confirms the reading of minio-go's source: without `Expiration`, the credentials count as always expired.
+- **Consequences for v0.1:**
+  - The helper must always print `Expiration`. A test pins it (plan 1, Task 13).
+  - A helper failure looks like a generic exit 1 to restic. The agent must record its own helper failures (os_log plus a per-plan flag). It should report "Couldn't read the backup keys from the Keychain" rather than restic's "no credentials found", and treat the message `s3.getCredentials: no credentials found` as a credentials error that stops the plan and alerts at once (like exit 12), not as an hourly-retry failure.
+  - Expect about 31 s of latency before that failure. It's harmless, but timeouts in tests must allow for it.
+- The test repository `cp-test` was left in the bucket for later v0.1 tasks. The owner will delete the bucket and key when v0.1 testing is done.
+
+### Not done (as of the spike; the B2 run above has since been done)
 
 The end-to-end `credential_process` run against a local S3 server. MinIO's community images are no longer published, and auto mode blocked running `moto` from PyPI. **To do in v0.1** (corrected after review) — test against the owner's real B2 bucket through its S3 endpoint, with three checks:
 - a **positive control**: the helper logs each call, and the count per run is recorded

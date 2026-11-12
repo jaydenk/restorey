@@ -1,0 +1,208 @@
+import Foundation
+import Testing
+@testable import AgentCore
+import RestoreyCore
+
+/// Ruling R67: launchd's SIGTERM (logout, restart, shutdown) is routine. `AgentState.stopForSystem` is
+/// what the agent's SIGTERM handler calls; these drive it with the real restic.
+///
+/// No test asserts launchd's real deadline (the 4 s budget under a 5 s exit timeout) against the wall
+/// clock: a parallel suite on a 3-core CI runner starves trivial work for over a second, which failed
+/// such checks at 1.45 s (an idle stop) and 5.6 s (a run's teardown). The tests prove the mechanism
+/// instead: what was logged when a bounded wait gave up, and contrasts with deadlines far apart (a stub
+/// restic that would run for 2 min, a pause grace of 1 min). The budget itself is checked live with a
+/// mid-run SIGTERM on a development build (the alpha: the agent exited 95 ms after SIGTERM).
+@Suite(.timeLimit(.minutes(3)))
+struct SystemStopTests {
+    /// The restart exit and the agent log lines, as `main.swift` attaches them.
+    struct ExitRecorder {
+        let exits = Locked(0)
+        let lines = Locked<[String]>([])
+
+        func attach(to state: AgentState) async {
+            let exits = exits
+            let lines = lines
+            await state.attach(
+                restartExit: { exits.mutate { $0 += 1 } },
+                log: { line in lines.mutate { $0.append(line) } })
+        }
+    }
+
+    @Test func sigtermMidBackupStopsTheRunWithoutAVerdictAndRetriesSoon() async throws {
+        let f = try await RunnerFixture.make { $0.uploadLimitKiB = 20_000 } // keeps the backup running
+        defer { f.remove() }
+        let recorder = ExitRecorder()
+        await recorder.attach(to: f.state)
+        try await f.writeRandomFiles(count: 6, megabytes: 30)
+
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress != nil }
+        let shouldExit = await f.state.stopForSystem(runner: f.runner)
+        let record = try await run.value
+
+        #expect(shouldExit)
+        #expect(record.outcome == .stoppedBySystem)
+        #expect(await f.pings() == [], "no /fail and no success ping")
+        let history = await f.history()
+        #expect(history.activeAlerts[.backupFailed] == nil)
+        #expect(history.runningRecordID == nil && history.runningRecord == nil, "committed, not left to recovery")
+        #expect(history.lastAttemptAt == record.startedAt)
+        // restic got our SIGINT (not a SIGKILL), so it removed its own lock and said why it stopped.
+        #expect(f.lockFiles().isEmpty)
+        let log = try String(contentsOf: f.logs.appendingPathComponent(record.logFile), encoding: .utf8)
+        #expect(log.contains("signal interrupt received"), "\(log)")
+        #expect(log.contains("Finished: Stopped because the Mac was logging out, restarting or shutting down"))
+        #expect(await f.operations() == [.catConfig, .initRepository, .backup], "no maintenance after the stop")
+        // The short retry (R58's isShortRetry), not the plan's hour.
+        #expect(isShortRetry(history))
+        #expect(nextRunDate(plan: await f.plan(), history: history, now: f.clock.now)
+            == record.startedAt.addingTimeInterval(15 * 60))
+        #expect(SchedulerCore.trigger(plan: await f.plan(), history: history, now: f.clock.now) == .retry)
+        // No new work from now on, and the restart exit was never used.
+        #expect(await f.state.isDraining)
+        await #expect(throws: AgentError.draining) {
+            try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        }
+        #expect(recorder.exits.value == 0)
+
+        // The next agent finds nothing to recover: no interrupted record, no alert, no ping.
+        let (state, runner) = await f.reloaded()
+        await runner.recoverAfterStart()
+        let after = try await state.runInputs(f.planID).history
+        #expect(!after.recent.contains { $0.outcome == .interrupted })
+        #expect(after.activeAlerts[.backupFailed] == nil)
+        await runner.pingsFlushed()
+        #expect(await f.checkIn.pings == [])
+    }
+
+    /// How long `stubbornRestic`'s backup runs unless it is killed.
+    static let stubbornResticRuns: Duration = .seconds(120)
+
+    /// A restic whose backup ignores SIGINT (as a hung network call would) and runs for
+    /// `stubbornResticRuns`; every other command is the real restic. The caller removes the returned
+    /// directory.
+    static func stubbornRestic() throws -> (directory: URL, wrapper: URL) {
+        let restic = try ResticBinary.require()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restorey-stubborn-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let wrapper = directory.appendingPathComponent("restic.sh")
+        try """
+            #!/bin/sh
+            if [ "$1" = backup ]; then
+              trap '' INT
+              echo '{"message_type":"status","percent_done":0.1,"total_files":1,"files_done":0,"total_bytes":1,"bytes_done":0}'
+              exec /bin/sleep \(Int(stubbornResticRuns.components.seconds))
+            fi
+            exec '\(restic.path)' "$@"
+
+            """.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+        return (directory, wrapper)
+    }
+
+    /// restic ignores SIGINT: our SIGKILL after the system-stop grace ends it, the stop's bounded wait
+    /// doesn't wait for the stub's own 2 minutes, and it is still the system's stop (its lock is left for
+    /// the next start's plain unlock).
+    @Test func aResticIgnoringSIGINTIsKilled() async throws {
+        let (directory, wrapper) = try Self.stubbornRestic()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let f = try await RunnerFixture.make(executable: wrapper)
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress != nil }
+        let started = ContinuousClock.now
+        #expect(await f.state.stopForSystem(runner: f.runner))
+        #expect(ContinuousClock.now - started < Self.stubbornResticRuns / 2, "the stop waited for restic")
+        let outcome = try await run.value.outcome
+        #expect(ContinuousClock.now - started < Self.stubbornResticRuns / 2, "restic wasn't killed")
+        #expect(outcome == .stoppedBySystem)
+        #expect(await f.pings() == [])
+    }
+
+    /// A pause already stopping restic when SIGTERM arrives keeps its request (no second SIGINT), but
+    /// its SIGKILL comes forward from the pause's grace to the system stop's (Ruling R74), so the run
+    /// ends inside launchd's exit timeout rather than being left for recovery to call interrupted.
+    ///
+    /// The pause's grace is set to a minute so the assertion tells the two deadlines apart however
+    /// loaded the machine is: a wall-clock check against the 4 s budget failed on a 3-core CI runner
+    /// running the suite in parallel (the run ended 5.6 s after SIGTERM, all of it teardown after the
+    /// SIGKILL at 2.5 s). The budget on a real Mac is the live mid-run SIGTERM check.
+    @Test func aPauseInFlightGetsTheSystemStopsSIGKILL() async throws {
+        let (directory, wrapper) = try Self.stubbornRestic()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let pauseGrace: Duration = .seconds(60)
+        let f = try await RunnerFixture.make(executable: wrapper, gracePeriod: pauseGrace)
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress != nil }
+        await f.runner.interrupt(planID: f.planID, intent: .pause)
+        let started = ContinuousClock.now
+        #expect(await f.state.stopForSystem(runner: f.runner))
+        // The stop's own wait is bounded, so it returns in time either way: time the run to its end.
+        let record = try await run.value
+        let took = ContinuousClock.now - started
+        #expect(took < pauseGrace / 2, "the run ended \(took) after SIGTERM: the pause's SIGKILL wasn't brought forward")
+        #expect(record.outcome == .paused, "the pause's own non-verdict outcome")
+        #expect(await f.pings() == [])
+        #expect((await f.history()).runningRecordID == nil, "committed, not left to recovery")
+    }
+
+    @Test func sigtermWhileIdleExitsPromptlyAndOnlyOnce() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        let recorder = ExitRecorder()
+        await recorder.attach(to: f.state)
+
+        #expect(await f.state.stopForSystem(runner: f.runner))
+        // Nothing to wait for, so neither bounded wait ran out: these are the lines it logs when one does.
+        #expect(!recorder.lines.value.contains { $0.contains("hadn't ended") }, "\(recorder.lines.value)")
+        #expect(!recorder.lines.value.contains { $0.contains("Exiting before every queued check-in ping") })
+        #expect(await f.state.drainPurpose == .systemStop)
+        // A second SIGTERM doesn't exit again.
+        #expect(!(await f.state.stopForSystem(runner: f.runner)))
+        #expect(recorder.lines.value.contains("Exiting because the system asked the agent to stop"))
+    }
+
+    /// A restart (R55/R56) that has already exited the agent: SIGTERM must not exit a second time.
+    @Test func sigtermAfterARestartExitDoesNotExitAgain() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        let recorder = ExitRecorder()
+        await recorder.attach(to: f.state)
+        await f.state.restartForReplacedBinary(pingBudget: .seconds(1))
+        try await AgentReplacementTests.until { recorder.exits.value == 1 }
+
+        #expect(!(await f.state.stopForSystem(runner: f.runner)))
+        #expect(recorder.exits.value == 1)
+    }
+
+    /// A restart drain waiting for a long backup: SIGTERM stops the backup, the agent exits through the
+    /// system stop, and the restart exit that the drain then wants never fires as well.
+    @Test func sigtermDuringARestartDrainExitsOnce() async throws {
+        let f = try await RunnerFixture.make { $0.uploadLimitKiB = 20_000 }
+        defer { f.remove() }
+        let recorder = ExitRecorder()
+        await recorder.attach(to: f.state)
+        try await f.writeRandomFiles(count: 6, megabytes: 30)
+
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress != nil }
+        await f.state.restartForReplacedBinary(pingBudget: .seconds(1))
+        #expect(await f.state.drainPurpose == .restart)
+
+        #expect(await f.state.stopForSystem(runner: f.runner))
+        #expect(try await run.value.outcome == .stoppedBySystem)
+        #expect(await f.state.drainPurpose == .systemStop)
+        // Give the restart drain time to see the agent idle and try its exit.
+        await f.runner.pingsFlushed()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(recorder.exits.value == 0)
+        // And a re-registration drain is refused: the agent is about to exit on its own.
+        await #expect(throws: AgentError.restarting) { try await f.state.prepareForReregistration(pingBudget: .seconds(1)) }
+    }
+}
