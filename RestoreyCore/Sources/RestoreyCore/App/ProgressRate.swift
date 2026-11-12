@@ -1,6 +1,6 @@
 import Foundation
 
-/// Upload speed for one running backup, as a moving average over the last ten seconds of progress samples.
+/// Upload speed for one running backup: the rate over the last ten seconds (first to last sample in that window).
 /// restic reports bytes done twice a second (`RESTIC_PROGRESS_FPS=2`), which is too jumpy to show as is.
 public struct ProgressRate: Sendable, Equatable {
     /// How far back the average reaches.

@@ -415,6 +415,37 @@ struct MenuPresentationTests {
         #expect(late.plans.isEmpty)
     }
 
+    @Test func nothingRunningMeansNoGraceEvenForAFreshStatus() {
+        let idle = Self.status([Self.line(Self.plan())], generatedAt: Self.at(14, 19))
+        let paused = Self.status(
+            [Self.line(Self.plan(), phase: .paused(until: Self.at(15, 0)), next: nil)], generatedAt: Self.at(14, 19))
+        for status in [idle, paused] {
+            let content = Self.make(status, health: .notRunning(reachable: false))
+            #expect(content.icon == .error)
+            #expect(content.banners.map(\.title) == ["The background agent isn't running"])
+            #expect(content.plans.isEmpty)
+        }
+    }
+
+    @Test func aStatusFromTheFutureGetsNoGrace() {
+        let running = Self.status(
+            [Self.line(Self.plan(), phase: .running(nil, retrying: nil))], generatedAt: Self.at(14, 25))
+        let content = Self.make(running, health: .notRunning(reachable: false))
+        #expect(content.icon == .error)
+        #expect(content.banners.map(\.title) == ["The background agent isn't running"])
+    }
+
+    @Test func noRecentSuccessKeepsTheSkipReasonAsDetail() {
+        let plan = Self.plan()
+        let skipped = Self.line(
+            plan, phase: .skipped(.volumeNotMounted("Photos")), backedUpAt: Self.at(14, 16, daysAgo: 4),
+            alerts: [.noRecentSuccess])
+        let content = Self.make(Self.status([skipped]))
+        #expect(content.plans[0].status == "No successful backup in 3 days")
+        #expect(content.plans[0].detail == "Skipped: Photos isn't connected")
+        #expect(content.plans[0].severity == .error)
+    }
+
     @Test func anAgentThatAnswersButIsBrokenIsAnErrorAtOnce() {
         let running = Self.status([Self.line(Self.plan(), phase: .running(nil, retrying: nil))], generatedAt: Self.at(14, 19))
         let content = Self.make(running, health: .notRunning(reachable: true))

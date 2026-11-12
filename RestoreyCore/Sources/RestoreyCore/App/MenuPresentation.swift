@@ -132,7 +132,11 @@ public enum MenuPresentation {
                 detail: "No backups will happen.", action: .openLoginItems)
             return MenuContent(icon: .error, banners: [banner], message: lastKnown(status, format))
         case .notRunning(let reachable):
-            if !reachable, let status, now.timeIntervalSince(status.generatedAt) <= notAnsweringGrace {
+            // Only a backup that was running makes the silence plausible (R68). A status from the future (clock
+            // skew) is not trusted either.
+            if !reachable, let status, status.plans.contains(where: { $0.phase.isRunning }),
+                (0...notAnsweringGrace).contains(now.timeIntervalSince(status.generatedAt))
+            {
                 return notAnswering(status: status, rates: rates, format: format)
             }
             let banner = MenuBanner(
@@ -293,6 +297,8 @@ public enum MenuPresentation {
             let days = status.plan.noSuccessAlertDays
             line.status = "No successful backup in \(days) \(days == 1 ? "day" : "days")"
             line.severity = .error
+            // A skipped run is usually why nothing has succeeded.
+            if case .skipped(let reason) = status.phase { line.detail = reason.summary }
             return
         }
         if case .stopped(let reason) = status.phase {

@@ -21,6 +21,15 @@ struct DisplayFormatTests {
         #expect(DisplayFormat.size(2_500_000_000_000, locale: Self.locale) == "2.5 TB")
     }
 
+    @Test func theUnitIsChosenAfterRounding() {
+        #expect(DisplayFormat.size(999_999, locale: Self.locale) == "1 MB")
+        #expect(DisplayFormat.size(999_999_999, locale: Self.locale) == "1 GB")
+        #expect(DisplayFormat.size(999_960_000_000, locale: Self.locale) == "1 TB")
+        #expect(DisplayFormat.size(999_400, locale: Self.locale) == "999 kB")
+        #expect(DisplayFormat.size(999, locale: Self.locale) == "999 B")
+        #expect(DisplayFormat.progress(done: 1, of: 999_999, locale: Self.locale) == "0 of 1 MB")
+    }
+
     @Test func progressSharesTheTotalsUnit() {
         #expect(DisplayFormat.progress(done: 1_200_000_000, of: 2_900_000_000, locale: Self.locale) == "1.2 of 2.9 GB")
         #expect(DisplayFormat.progress(done: 400_000, of: 2_900_000_000, locale: Self.locale) == "0 of 2.9 GB")

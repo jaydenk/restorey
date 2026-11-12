@@ -7,19 +7,31 @@ public enum DisplayFormat {
         ("TB", 1e12), ("GB", 1e9), ("MB", 1e6), ("kB", 1e3),
     ]
 
+    /// The unit to show `value` in, chosen after rounding so 999.96 GB reads "1 TB", not "1000 GB". Nil means bytes.
+    private static func unit(for value: Double) -> (name: String, size: Double)? {
+        guard let index = units.firstIndex(where: { value >= $0.size }) else {
+            return value.rounded() >= 1000 ? units.last : nil
+        }
+        if index > 0, rounded(value / units[index].size) >= 1000 { return units[index - 1] }
+        return units[index]
+    }
+
+    /// Rounded as `number` rounds: to a whole number from 10 up, otherwise one decimal.
+    private static func rounded(_ value: Double) -> Double {
+        value >= 10 ? value.rounded(.toNearestOrAwayFromZero) : (value * 10).rounded(.toNearestOrAwayFromZero) / 10
+    }
+
     /// "486 GB", "1.2 GB", "18 MB", "0 B".
     public static func size(_ bytes: Int64, locale: Locale) -> String {
         let value = Double(max(bytes, 0))
-        guard let unit = units.first(where: { value >= $0.size }) else {
-            return "\(number(value, locale: locale)) B"
-        }
+        guard let unit = unit(for: value) else { return "\(number(value, locale: locale)) B" }
         return "\(number(value / unit.size, locale: locale)) \(unit.name)"
     }
 
     /// "1.2 of 2.9 GB": both numbers in the total's unit.
     public static func progress(done: Int, of total: Int, locale: Locale) -> String {
         let total = Double(max(total, 0))
-        guard let unit = units.first(where: { total >= $0.size }) else {
+        guard let unit = unit(for: total) else {
             return "\(number(Double(max(done, 0)), locale: locale)) of \(number(total, locale: locale)) B"
         }
         let doneText = number(Double(max(done, 0)) / unit.size, locale: locale)
