@@ -40,10 +40,14 @@ public struct HelloReply: Codable, Sendable, Equatable {
     /// Whether the agent may use Location Services, which macOS requires before it reveals the Wi-Fi
     /// network's name: nil until the user has been asked, and from an agent older than Task 3.
     public var locationAuthorised: Bool?
+    /// The same `agentRun` the agent stamps on its statuses. A new one means the agent was relaunched, so
+    /// statuses from the run before are stale (Ruling R76). Nil from an agent older than Task 8.
+    public var agentRun: UUID?
 
     public init(
         agentVersion: String, agentBuild: String, executablePath: String, draining: Bool,
-        notificationsAuthorised: Bool?, executableFingerprint: String? = nil, locationAuthorised: Bool? = nil
+        notificationsAuthorised: Bool?, executableFingerprint: String? = nil, locationAuthorised: Bool? = nil,
+        agentRun: UUID? = nil
     ) {
         self.agentVersion = agentVersion
         self.agentBuild = agentBuild
@@ -52,6 +56,7 @@ public struct HelloReply: Codable, Sendable, Equatable {
         self.notificationsAuthorised = notificationsAuthorised
         self.executableFingerprint = executableFingerprint
         self.locationAuthorised = locationAuthorised
+        self.agentRun = agentRun
     }
 }
 

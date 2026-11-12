@@ -17,6 +17,21 @@ public enum BannerAction: Sendable, Equatable {
     case finishSetup(UUID)
     case saveRecoveryKit(UUID)
     case showDetails(UUID)
+
+    /// The words on the banner's (or line's) button.
+    public var buttonTitle: String {
+        switch self {
+        case .openFullDiskAccess: "Fix…"
+        case .restartAgent: "Restart Agent"
+        case .openLoginItems: "Open Login Items…"
+        case .turnOnNotifications: "Turn On…"
+        case .addCheckInURL: "Add…"
+        case .dismissOffMacNote: "Don't Show This Again"
+        case .finishSetup: "Finish Setup…"
+        case .saveRecoveryKit: "Save Recovery Kit…"
+        case .showDetails: "Show Details…"
+        }
+    }
 }
 
 /// A problem shown at the top of the menu, with its fix.
@@ -50,10 +65,12 @@ public struct PlanLine: Sendable, Equatable {
     public var severity: Severity?
     /// A button under the line ("Show details…" after a failed backup).
     public var action: BannerAction?
+    /// Paused: the status is drawn grey (UI design §5), never as a failure.
+    public var isPaused: Bool
 
     public init(
         id: UUID, name: String, status: String, detail: String? = nil, progress: Double? = nil,
-        destination: String, severity: Severity? = nil, action: BannerAction? = nil
+        destination: String, severity: Severity? = nil, action: BannerAction? = nil, isPaused: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -63,6 +80,24 @@ public struct PlanLine: Sendable, Equatable {
         self.destination = destination
         self.severity = severity
         self.action = action
+        self.isPaused = isPaused
+    }
+}
+
+/// One plan in the menu's per-plan submenus, and what can be done to it now.
+public struct PlanChoice: Sendable, Equatable {
+    public var id: UUID
+    public var name: String
+    public var canBackUp: Bool
+    public var canPause: Bool
+    public var canResume: Bool
+
+    public init(id: UUID, name: String, canBackUp: Bool, canPause: Bool, canResume: Bool) {
+        self.id = id
+        self.name = name
+        self.canBackUp = canBackUp
+        self.canPause = canPause
+        self.canResume = canResume
     }
 }
 
@@ -73,12 +108,15 @@ public struct MenuActions: Sendable, Equatable {
     public var resume: Bool
     /// More than one plan: Back Up Now and Pause also get a submenu to act on one plan.
     public var perPlanSubmenus: Bool
+    /// Every plan, in the status's order. Empty when the agent can't be asked to act (anything but healthy).
+    public var plans: [PlanChoice]
 
-    public init(backUpNow: Bool, pause: Bool, resume: Bool, perPlanSubmenus: Bool) {
+    public init(backUpNow: Bool, pause: Bool, resume: Bool, perPlanSubmenus: Bool, plans: [PlanChoice] = []) {
         self.backUpNow = backUpNow
         self.pause = pause
         self.resume = resume
         self.perPlanSubmenus = perPlanSubmenus
+        self.plans = plans
     }
 
     public static let none = MenuActions(backUpNow: false, pause: false, resume: false, perPlanSubmenus: false)
@@ -149,7 +187,8 @@ public enum MenuPresentation {
         case .failed(let sentence):
             return MenuContent(icon: .error, message: sentence)
         case .healthy:
-            guard let status else { return MenuContent(icon: .ok) }
+            // Healthy again, with the fresh status still on its way (`shouldRefetchStatus`).
+            guard let status else { return MenuContent(icon: .ok, message: "Connecting to the background agent…") }
             return healthy(status: status, notificationsAuthorised: notificationsAuthorised, rates: rates, format: format)
         }
     }
@@ -166,7 +205,7 @@ public enum MenuPresentation {
         let lines = status.plans.map { line(for: $0, rates: rates, format: format) }
         return MenuContent(
             icon: icon(banners: banners, plans: status.plans, lines: lines), banners: banners, plans: lines,
-            actions: actions(status.plans))
+            actions: actions(status.plans), message: status.plans.isEmpty ? "No backup plans yet" : nil)
     }
 
     private static func icon(banners: [MenuBanner], plans: [PlanStatus], lines: [PlanLine]) -> StatusIconState {
@@ -184,12 +223,17 @@ public enum MenuPresentation {
     }
 
     private static func actions(_ plans: [PlanStatus]) -> MenuActions {
-        let ready = plans.filter { $0.setupState == .complete }
+        let choices = plans.map { plan in
+            let ready = plan.setupState == .complete
+            return PlanChoice(
+                id: plan.plan.id, name: plan.plan.name,
+                canBackUp: ready && !plan.phase.isRunning,
+                canPause: ready && !plan.phase.isPaused && !plan.phase.isStopped,
+                canResume: ready && plan.phase.isPaused)
+        }
         return MenuActions(
-            backUpNow: ready.contains { !$0.phase.isRunning },
-            pause: ready.contains { !$0.phase.isPaused && !$0.phase.isStopped },
-            resume: ready.contains { $0.phase.isPaused },
-            perPlanSubmenus: plans.count > 1)
+            backUpNow: choices.contains(where: \.canBackUp), pause: choices.contains(where: \.canPause),
+            resume: choices.contains(where: \.canResume), perPlanSubmenus: plans.count > 1, plans: choices)
     }
 
     // MARK: Banners
@@ -258,6 +302,7 @@ public enum MenuPresentation {
             line.detail = retrying.map { "Retrying: \($0)" } ?? runningDetail(progress, rate: rates[plan.id], format)
         case .paused(let until):
             line.status = "Paused"
+            line.isPaused = true
             line.detail = "Resumes by itself at \(format.time(until))"
         case .idle, .skipped, .stopped:
             settled(status, into: &line, format)

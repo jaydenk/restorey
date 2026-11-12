@@ -30,3 +30,28 @@ public struct ProgressRate: Sendable, Equatable {
             && zip(lhs.samples, rhs.samples).allSatisfy { $0.bytesDone == $1.bytesDone && $0.at == $1.at }
     }
 }
+
+/// The upload speed of every running backup, fed from each status as it arrives.
+public struct ProgressRates: Sendable, Equatable {
+    private var rates: [UUID: ProgressRate] = [:]
+
+    public init() {}
+
+    /// A sample for each running plan that has reported progress. A plan that is no longer running (or no longer
+    /// exists) is forgotten, so its next run starts from nothing.
+    public mutating func add(_ status: AgentStatus, at now: Date) {
+        var next: [UUID: ProgressRate] = [:]
+        for plan in status.plans {
+            guard case .running(let progress?, _) = plan.phase else { continue }
+            var rate = rates[plan.plan.id] ?? ProgressRate()
+            rate.add(bytesDone: progress.bytesDone, at: now)
+            next[plan.plan.id] = rate
+        }
+        rates = next
+    }
+
+    /// For `MenuPresentation.make`: only the plans with a rate.
+    public var bytesPerSecond: [UUID: Double] {
+        rates.compactMapValues(\.bytesPerSecond)
+    }
+}

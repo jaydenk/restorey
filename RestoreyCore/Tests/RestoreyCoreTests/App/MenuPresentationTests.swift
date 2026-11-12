@@ -88,7 +88,10 @@ struct MenuPresentationTests {
         #expect(line.destination == "B2 · my-backups · 486 GB, 3 days ago")
         #expect(line.progress == nil)
         #expect(line.severity == nil)
-        #expect(content.actions == MenuActions(backUpNow: true, pause: true, resume: false, perPlanSubmenus: false))
+        #expect(!line.isPaused)
+        #expect(content.actions == MenuActions(
+            backUpNow: true, pause: true, resume: false, perPlanSubmenus: false,
+            plans: [PlanChoice(id: plan.id, name: "MacBook", canBackUp: true, canPause: true, canResume: false)]))
     }
 
     @Test func destinationHasNoSizeBeforeTheFirstMeasurement() {
@@ -157,6 +160,21 @@ struct MenuPresentationTests {
         #expect(content.plans[0].progress == nil)
         #expect(content.actions.perPlanSubmenus)
         #expect(content.actions.backUpNow)
+        // Per plan for the submenus: the running one can't be backed up again, but can be paused.
+        #expect(content.actions.plans == [
+            PlanChoice(id: idle.id, name: "MacBook", canBackUp: true, canPause: true, canResume: false),
+            PlanChoice(id: photos.id, name: "Photos drive", canBackUp: false, canPause: true, canResume: false),
+        ])
+    }
+
+    /// An unfinished plan is listed (for Restore Files…) but can't be backed up, paused or resumed.
+    @Test func anUnfinishedPlanCanOnlyBeListed() {
+        let plan = Self.plan(setup: false)
+        let content = Self.make(Self.status([Self.line(plan, backedUpAt: nil, next: nil)]))
+        #expect(content.actions.plans == [
+            PlanChoice(id: plan.id, name: "MacBook", canBackUp: false, canPause: false, canResume: false),
+        ])
+        #expect(!content.actions.backUpNow)
     }
 
     @Test func runningWithoutProgressOrRateYet() {
@@ -187,7 +205,10 @@ struct MenuPresentationTests {
         #expect(content.plans[0].status == "Paused")
         #expect(content.plans[0].detail == "Resumes by itself at 15:20")
         #expect(content.plans[0].severity == nil)
-        #expect(content.actions == MenuActions(backUpNow: true, pause: false, resume: true, perPlanSubmenus: false))
+        #expect(content.plans[0].isPaused, "drawn grey, never as a failure")
+        #expect(content.actions == MenuActions(
+            backUpNow: true, pause: false, resume: true, perPlanSubmenus: false,
+            plans: [PlanChoice(id: plan.id, name: "MacBook", canBackUp: true, canPause: false, canResume: true)]))
         #expect(!Self.text(of: content).contains("Failed"))
         #expect(!Self.text(of: content).contains("failed"))
     }
@@ -463,6 +484,15 @@ struct MenuPresentationTests {
         let healthyWithoutStatus = Self.make(nil)
         #expect(healthyWithoutStatus.plans.isEmpty)
         #expect(healthyWithoutStatus.icon == .ok)
+        // Healthy again, with the fresh status still on its way.
+        #expect(healthyWithoutStatus.message == "Connecting to the background agent…")
+    }
+
+    @Test func noPlansYet() {
+        let content = Self.make(Self.status([]))
+        #expect(content.icon == .ok)
+        #expect(content.message == "No backup plans yet")
+        #expect(content.actions.plans.isEmpty)
     }
 
     @Test func aDamagedInstallationAndARegistrationFailure() {
@@ -480,6 +510,17 @@ struct MenuPresentationTests {
         let content = Self.make(status)
         #expect(content.icon == .error)
         #expect(content.message == "Restorey can't read its settings: config.json is from a newer version")
+    }
+
+    /// Carried from the old `statusIconState` tests: a plan the agent stopped (a configuration problem) is an
+    /// error even before any failure alert is raised.
+    @Test func aStoppedPlanIsAnError() {
+        let plan = Self.plan()
+        let content = Self.make(Self.status([Self.line(plan, phase: .stopped(reason: "Wrong password"), next: nil)]))
+        #expect(content.icon == .error)
+        #expect(content.plans[0].status == "Stopped")
+        #expect(content.plans[0].detail == "Wrong password")
+        #expect(content.plans[0].severity == .error)
     }
 
     @Test func worstStateWins() {

@@ -24,42 +24,12 @@ public func shouldRefetchStatus(previous: AgentHealthState, next: AgentHealthSta
     next == .healthy && previous != .healthy
 }
 
-/// Plan lines are shown only while healthy: in any other state the last status may be stale.
-public func showsPlanLines(_ health: AgentHealthState) -> Bool { health == .healthy }
-
-/// "Back Up Now" only while healthy: a draining agent refuses it.
-public func allowsBackUpNow(_ health: AgentHealthState) -> Bool { health == .healthy }
-
 /// The menu bar icon's states, least to most severe: the worst state across all plans is the largest
-/// (`max`). Error is the only filled icon.
+/// (`max`). Error is the only filled icon. `MenuPresentation.make` is the only thing that decides it.
 public enum StatusIconState: Sendable, Comparable {
     case ok
     case backingUp
     case paused
     case warning
     case error
-}
-
-/// The menu bar icon (spec §6.2, anti-goal 3: never green over a fault).
-/// - error: the agent unreachable, switched off or broken; a config error; a stopped plan; a failure alert
-/// - warning: a skipped plan, or an alert that monitoring or recent success is missing
-/// - ok otherwise, and while checking or updating, when the status is from before the change
-public func statusIconState(health: AgentHealthState, status: AgentStatus?) -> StatusIconState {
-    switch health {
-    case .switchedOff, .notRunning, .damaged, .failed: return .error
-    case .checking, .updating, .waitingForUpdate: return .ok
-    case .healthy: break
-    }
-    guard let status else { return .ok }
-    if status.configError != nil { return .error }
-    let errorAlerts: Set<AlertCondition> = [.backupFailed, .checkFailed, .fullDiskAccessMissing, .configurationError]
-    let warningAlerts: Set<AlertCondition> = [.notificationsOff, .checkInRejected, .noRecentSuccess]
-    var warning = false
-    for plan in status.plans {
-        if case .stopped = plan.phase { return .error }
-        if !errorAlerts.isDisjoint(with: plan.alerts) { return .error }
-        if case .skipped = plan.phase { warning = true }
-        if !warningAlerts.isDisjoint(with: plan.alerts) { warning = true }
-    }
-    return warning ? .warning : .ok
 }

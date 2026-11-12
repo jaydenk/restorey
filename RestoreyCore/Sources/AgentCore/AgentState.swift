@@ -108,8 +108,9 @@ public actor AgentState {
     /// An authorisation call was abandoned and no answer has come since: notifications aren't working.
     var authorisationAbandoned = false
 
-    /// This process's statuses, in the order they were built (`AgentStatus.supersedes`).
-    private let statusRun = UUID()
+    /// This process's statuses, in the order they were built (`AgentStatus.supersedes`). The run is also sent in
+    /// every hello, so the app can tell this process from the one before it (Ruling R76).
+    let statusRun = UUID()
     private var statusSequence: UInt64 = 0
 
     private var observer: (@Sendable (AgentStatus) -> Void)?

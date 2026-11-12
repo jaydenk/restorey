@@ -269,4 +269,109 @@ struct AgentHealthTests {
         #expect(AgentHealthPolicy.repairInterval == 3600)
         #expect(AgentHealthPolicy.heartbeatInterval == 10)
     }
+
+    // MARK: Switched off mid-session
+
+    /// `SMAppService.status` is read at every heartbeat, so switching the agent off in Login Items while the
+    /// app runs shows at the next one, and switching it back on recovers at the next one after that.
+    @Test func switchingOffMidSessionShowsAtTheNextHeartbeat() {
+        let beats: [(AgentServiceStatus, AgentHeartbeat, AgentHealthAction)] = [
+            (.enabled, .ok(Self.reply()), .none),
+            (.requiresApproval, .unreachable, .showSwitchedOff),
+            // launchd removed the job, but a hello may still be answered on the way out: still switched off.
+            (.requiresApproval, .ok(Self.reply()), .showSwitchedOff),
+            (.enabled, .ok(Self.reply()), .none),
+        ]
+        for (index, (smStatus, beat, expected)) in beats.enumerated() {
+            #expect(decideAgentHealth(Self.input(smStatus, heartbeat: beat)) == expected, "heartbeat \(index)")
+        }
+    }
+
+    // MARK: Retired agent runs (R76)
+
+    private static let runA = UUID()
+    private static let runB = UUID()
+
+    private static func status(run: UUID?, sequence: UInt64?, at seconds: TimeInterval = 0) -> AgentStatus {
+        AgentStatus(
+            plans: [], configError: nil, fdaMissing: false, generatedAt: now.addingTimeInterval(seconds),
+            agentRun: run, sequence: sequence)
+    }
+
+    @Test func aStatusFromARetiredRunIsDropped() {
+        let current = Self.status(run: Self.runB, sequence: 1)
+        let late = Self.status(run: Self.runA, sequence: 90)
+        #expect(!shouldAccept(status: late, current: current, retired: [Self.runA]))
+        // With nothing shown yet, a retired run is still dropped.
+        #expect(!shouldAccept(status: late, current: nil, retired: [Self.runA]))
+    }
+
+    @Test func otherwiseOrderingIsBySupersedes() {
+        let shown = Self.status(run: Self.runA, sequence: 5)
+        #expect(shouldAccept(status: Self.status(run: Self.runA, sequence: 6), current: shown, retired: []))
+        #expect(!shouldAccept(status: Self.status(run: Self.runA, sequence: 4), current: shown, retired: []))
+        #expect(shouldAccept(status: Self.status(run: Self.runB, sequence: 1), current: shown, retired: [Self.runC]))
+        // An agent older than run IDs is ordered by time, and never counted as retired.
+        let old = Self.status(run: nil, sequence: nil, at: 10)
+        #expect(shouldAccept(status: old, current: Self.status(run: nil, sequence: nil), retired: [Self.runA]))
+    }
+
+    private static let runC = UUID()
+
+    /// A hello naming a new run retires the one seen before it, so a late reply from the old process can't
+    /// replace the new agent's status.
+    @Test func aHelloFromANewRunRetiresTheOldOne() {
+        var tracker = AgentRunTracker()
+        tracker.observe(Self.runA)
+        #expect(tracker.current == Self.runA)
+        #expect(tracker.retired.isEmpty)
+        tracker.observe(Self.runA)
+        #expect(tracker.retired.isEmpty, "the same run again changes nothing")
+        tracker.observe(Self.runB)
+        #expect(tracker.current == Self.runB)
+        #expect(tracker.retired == [Self.runA])
+        let shown = Self.status(run: Self.runB, sequence: 1)
+        #expect(!tracker.shouldAccept(Self.status(run: Self.runA, sequence: 99), over: shown))
+        #expect(tracker.shouldAccept(Self.status(run: Self.runB, sequence: 2), over: shown))
+    }
+
+    /// The first status from a new run retires the old one too, whichever arrives first.
+    @Test func aStatusFromANewRunRetiresTheOldOne() {
+        var tracker = AgentRunTracker()
+        let fromA = Self.status(run: Self.runA, sequence: 3)
+        #expect(tracker.shouldAccept(fromA, over: nil))
+        tracker.observe(fromA.agentRun)
+        let fromB = Self.status(run: Self.runB, sequence: 1)
+        #expect(tracker.shouldAccept(fromB, over: fromA))
+        tracker.observe(fromB.agentRun)
+        #expect(tracker.retired == [Self.runA])
+        #expect(!tracker.shouldAccept(Self.status(run: Self.runA, sequence: 4), over: fromB))
+    }
+
+    /// A retired run never becomes current again, and an agent without run IDs leaves the tracker alone.
+    @Test func aRetiredRunNeverComesBack() {
+        var tracker = AgentRunTracker()
+        tracker.observe(Self.runA)
+        tracker.observe(Self.runB)
+        tracker.observe(Self.runA)
+        #expect(tracker.current == Self.runB)
+        #expect(tracker.retired == [Self.runA])
+        tracker.observe(nil)
+        #expect(tracker.current == Self.runB)
+    }
+
+    // MARK: Which status the menu shows
+
+    /// While healthy only a status fetched since the return to healthy is shown. Otherwise the last one
+    /// received stands in, so "Last known: …" and R68's "(agent not answering)" have something to show.
+    @Test func theMenuShowsTheLastKnownStatusOnlyWhileUnhealthy() {
+        let live = Self.status(run: Self.runB, sequence: 2)
+        let last = Self.status(run: Self.runB, sequence: 1)
+        #expect(menuStatus(health: .healthy, live: live, lastKnown: last) == live)
+        #expect(menuStatus(health: .healthy, live: nil, lastKnown: last) == nil)
+        for health: AgentHealthState in [.notRunning(reachable: false), .switchedOff, .updating, .checking] {
+            #expect(menuStatus(health: health, live: nil, lastKnown: last) == last, "\(health)")
+            #expect(menuStatus(health: health, live: live, lastKnown: last) == live, "\(health)")
+        }
+    }
 }

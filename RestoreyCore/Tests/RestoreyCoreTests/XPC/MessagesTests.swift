@@ -38,6 +38,9 @@ struct MessagesTests {
         try roundTrip(HelloReply(
             agentVersion: "0.1.0", agentBuild: "12", executablePath: "/x", draining: false,
             notificationsAuthorised: true, executableFingerprint: "1:2:3:4.5", locationAuthorised: false))
+        try roundTrip(HelloReply(
+            agentVersion: "0.1.0", agentBuild: "13", executablePath: "/x", draining: false,
+            notificationsAuthorised: true, agentRun: UUID()))
     }
 
     /// An agent from before fix round 3 sends no fingerprint; its reply must still decode (as nil), so the
@@ -48,6 +51,7 @@ struct MessagesTests {
         #expect(reply.executableFingerprint == nil)
         #expect(reply.agentBuild == "1")
         #expect(reply.locationAuthorised == nil, "an agent older than Task 3 sends no Location field")
+        #expect(reply.agentRun == nil, "an agent older than Task 8 sends no run")
     }
 
     @Test func statusRoundTripsWithEveryPhase() throws {

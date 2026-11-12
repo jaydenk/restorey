@@ -46,4 +46,45 @@ struct ProgressRateTests {
         rate.add(bytesDone: 10, at: Self.t0)
         #expect(rate.bytesPerSecond == nil)
     }
+
+    // MARK: Per plan
+
+    private static func status(_ phases: [(UUID, PlanPhase)]) -> AgentStatus {
+        let plans = phases.map { id, phase in
+            var plan = Plan.newHotPlan(
+                name: "P", repository: .raw(repository: "/tmp/r", environmentNames: []), origin: .created,
+                hostLabel: "mac", sources: ["/Users/me"], exclusions: [], now: t0)
+            plan.id = id
+            return PlanStatus(plan: plan, phase: phase, lastRecord: nil, nextRunAt: nil, alerts: [])
+        }
+        return AgentStatus(plans: plans, configError: nil, fdaMissing: false, generatedAt: t0)
+    }
+
+    private static func running(_ bytes: Int) -> PlanPhase {
+        .running(BackupStatus(percentDone: 0.5, totalBytes: 100_000_000, bytesDone: bytes), retrying: nil)
+    }
+
+    /// Every status adds a sample for each running plan with progress; a plan that stops running is forgotten,
+    /// so its next run starts from nothing.
+    @Test func ratesFollowEachRunningPlan() {
+        let a = UUID(), b = UUID()
+        var rates = ProgressRates()
+        rates.add(Self.status([(a, Self.running(0)), (b, .running(nil, retrying: nil))]), at: Self.t0)
+        rates.add(Self.status([(a, Self.running(4_000_000)), (b, .idle)]), at: Self.t0.addingTimeInterval(2))
+        #expect(rates.bytesPerSecond == [a: 2_000_000])
+        rates.add(Self.status([(a, .idle)]), at: Self.t0.addingTimeInterval(3))
+        #expect(rates.bytesPerSecond.isEmpty)
+        rates.add(Self.status([(a, Self.running(50_000_000))]), at: Self.t0.addingTimeInterval(4))
+        #expect(rates.bytesPerSecond.isEmpty, "a new run has a single sample")
+    }
+
+    /// A plan deleted mid-run is forgotten too.
+    @Test func aPlanThatGoesIsForgotten() {
+        let a = UUID()
+        var rates = ProgressRates()
+        rates.add(Self.status([(a, Self.running(0))]), at: Self.t0)
+        rates.add(Self.status([(a, Self.running(1_000_000))]), at: Self.t0.addingTimeInterval(1))
+        rates.add(Self.status([]), at: Self.t0.addingTimeInterval(2))
+        #expect(rates.bytesPerSecond.isEmpty)
+    }
 }

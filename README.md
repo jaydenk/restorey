@@ -4,8 +4,8 @@ A free, open-source macOS menu bar app that puts an Arq/Backblaze-style front en
 [restic](https://restic.net).
 
 > **Status: engine in alpha on the owner's Mac.** There is no app to download yet. The v0.1 engine (background
-> agent, scheduler, plans, Keychain secrets, check-ins and notifications) runs from a development build, driven by a
-> Debug-only Developer window; the menu bar and setup screens come next. The alpha's results are in
+> agent, scheduler, plans, Keychain secrets, check-ins and notifications) runs from a development build, with the
+> menu bar and a Debug-only Developer window; the setup and Settings screens come next. The alpha's results are in
 > [docs/v0.1-measurements.md](docs/v0.1-measurements.md). Nothing here is ready to protect your data.
 
 ## What it will do
@@ -85,10 +85,13 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
   updating the agent" meanwhile, or "Updating the background agent…" when it finds the agent already draining
 - the app's own bundle is missing the agent's plist: "Restorey's installation is damaged — reinstall it from the
   download", with no repair offered
-- switched off in Login Items: "Background agent is switched off", with "Open Login Items". Never switched
-  back on by Restorey. (macOS also quits Restorey when you switch the agent off, so this shows on the next launch.)
-- registered but not answering: "Background agent isn't running", with "Restart Agent" and "Open Login
-  Items". After 30 seconds without an answer it unregisters and registers the agent again on its own, unless
+- switched off in Login Items: "The background agent is switched off", with "Open Login Items…". Never switched
+  back on by Restorey. The registration's status is read at every heartbeat, so a change shows within 10 seconds
+  while Restorey runs; on macOS 27.2 switching the agent off also quits Restorey (loginwindow force-quits it, see
+  `docs/spike-findings.md`), so in practice it shows on the next launch.
+- registered but not answering: "The background agent isn't running", with "Restart Agent". While a backup
+  was running at the agent's last status (under 30 minutes old), the menu instead keeps that status with
+  "(agent not answering)" and a warning. After 30 seconds without an answer it unregisters and registers the agent again on its own, unless
   a restic from Restorey's own bundle is still running under the agent: unregistering would kill that backup,
   so it waits and looks again at each heartbeat. The agent's answer never waits on the notification centre, so a
   stuck `usernoted` doesn't make a working agent look dead. A switched-off agent reads differently (see
@@ -103,9 +106,10 @@ isn't running.
 A stale agent is restarted before any re-registration, since an older agent may not know the newer
 `prepareForReregistration` call. Automatic repairs happen at most once an hour for each kind (restart,
 re-register), also across relaunches (a new version or build may repair at
-once). Plan lines are shown only while the agent is healthy, and are fetched afresh each time it becomes healthy.
-The icon shows an error for a stopped plan, a settings error, a failure alert or an agent that isn't running, a
-warning for a skipped run or missing notifications, check-in or recent success, and is plain otherwise.
+once). Plan lines are shown live only while the agent is healthy, and are fetched afresh each time it becomes
+healthy; otherwise the last status received is used only for "Last known: …" and the lines above. Each agent
+process stamps its hellos and statuses with its own run ID, and once a newer run has been seen, a late status from
+an older one is ignored (Ruling R76).
 **A copy anywhere else does nothing to the agent**: no XPC, no
 registration and not even a status read, which on its own can re-point the registration at the copy. It only
 shows "Move Restorey to Applications". The app's log is `~/Library/Logs/Restorey-Dev/app.log`.
@@ -151,6 +155,36 @@ Settings → Menu Bar." An icon squeezed out of a full menu bar isn't detected (
 opening the app again is the way in. A copy outside `/Applications` opens setup's "Move to Applications" step
 instead. Open at login registers the app itself with `SMAppService.mainApp`, from the installed copy only; its switch
 comes with Settings → General.
+
+### The menu bar
+
+The icon and the menu come from one place (`MenuPresentation` in RestoreyCore), so they can't disagree. The icon
+shows the worst state across all plans, from SF Symbols: OK (`externaldrive.badge.timemachine`), backing up (the
+drive with an upload badge), paused (a pause badge), warning (an outlined "!" triangle) and error
+(`externaldrive.fill.badge.xmark` in red, the only filled and only coloured icon). All but error are template
+images, so the menu bar tints and dims them like its own.
+
+The menu, top to bottom:
+
+- **Banners** for each problem, errors first, each with its fix: choosing the banner runs it. "Full Disk Access is
+  missing — Fix…" opens Privacy & Security → Full Disk Access; "Notifications are off — Restorey can't alert you —
+  Turn On…" opens the agent's page in Notifications; "The background agent isn't running — Restart Agent";
+  "The background agent is switched off — Open Login Items…"; "Setup not finished — Finish Setup…"; "New recovery
+  kit needed — Save Recovery Kit…"; "No off-Mac monitoring — Add…" (opens the plan in Settings), with "Don't Show
+  This Again" under it.
+- **One entry per plan**: its name, status ("Backed up at 14:16", "Backing up", grey "Paused" with "Resumes by
+  itself at 15:20", "Backup failed at 14:16" in red, a skip reason in orange), a detail line (progress, time left
+  and upload speed while backing up, or the next run) and its destination with the repository size. A running
+  backup has a progress bar under it. Choosing a plan opens it in Settings; a failed one has "Show Details…" (its
+  history).
+- **Resume**, **Back Up Now** and **Pause**. With one plan they act on it; with several, each opens a submenu whose
+  first item, "All Plans", acts on every plan, then one item per plan (an AppKit item with a submenu can't also
+  have its own action). They appear only while the agent is healthy.
+- **Restore Files…** (a submenu of plans when there are several), **Settings…** (⌘,), the Debug-only
+  **Developer…**, and **Quit Restorey** (⌘Q).
+
+The menu updates while it is open: progress, speed and status change in place under the pointer. When rows come or
+go (a backup starts and its progress bar appears, a banner is raised) the items are replaced instead.
 
 ## What a backup run does
 

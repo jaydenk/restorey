@@ -145,6 +145,15 @@ struct AgentStateAlertTests {
         await state.helloReply(agentVersion: "1", agentBuild: "2", executablePath: "/x", executableFingerprint: nil)
     }
 
+    /// R76: hello names the same agent run as the statuses, so the app can retire the run before a relaunch.
+    @Test func helloNamesTheRunItsStatusesCarry() async throws {
+        let world = try await world()
+        let reply = await hello(world.state)
+        let status = await world.state.status()
+        #expect(reply.agentRun != nil)
+        #expect(reply.agentRun == status.agentRun)
+    }
+
     /// The notification centre has stopped answering: `hello` still replies at once, from what it knows.
     @Test func helloRepliesPromptlyWhileTheNotifierHangs() async throws {
         let world = try await world()

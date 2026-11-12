@@ -261,7 +261,7 @@ extension AgentState {
         HelloReply(
             agentVersion: agentVersion, agentBuild: agentBuild, executablePath: executablePath,
             draining: isDraining, notificationsAuthorised: knownNotificationAuthorisation,
-            executableFingerprint: executableFingerprint)
+            executableFingerprint: executableFingerprint, agentRun: statusRun)
     }
 
     private func noteAuthorisation(_ answer: Bool?) {
