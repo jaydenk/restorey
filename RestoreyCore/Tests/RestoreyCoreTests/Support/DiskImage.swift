@@ -10,6 +10,10 @@ import Foundation
 /// volume would be at `/Volumes/<name>`; CI logs show restic then failing to `mkdir /Volumes/<name>`
 /// (no volume there, and `/Volumes` belongs to root) or losing files mid-run. Here the mount point is
 /// read from hdiutil and checked to be a mount before any test uses it.
+///
+/// That fixed the attach race but not the vanishing volume: on GitHub's runner the image has still been
+/// unmounted seconds after a successful attach (ed5975c), while 30 runs at a desk all passed. CI now
+/// keeps the disk services' log when it fails, to find what unmounts it.
 final class DiskImage: Sendable {
     let device: String
     let mountPoint: URL

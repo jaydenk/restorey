@@ -22,3 +22,20 @@ jobs:
           "$RUNNER_TEMP/xcodegen/bin/xcodegen" --version
       - name: Run the CI checks
         run: scripts/ci.sh
+      # fullDiskFails' disk image has vanished mid-test on this runner (six failed runs, once since R71),
+      # never on a Mac at a desk (30 of 30 passed). Keep what the disk services logged, so the next
+      # failure shows what unmounted it.
+      - name: Save the disk and mount log
+        if: failure()
+        run: |
+          sudo /usr/bin/log show --last 30m --info --debug --style compact --predicate \
+            'process IN {"diskarbitrationd","diskimagesiod","diskimages-helper","hdiutil","fsck_hfs","mds","umount","mount_hfs"}
+             OR (process == "kernel" AND (eventMessage CONTAINS[c] "hfs" OR eventMessage CONTAINS[c] "mount"
+                 OR eventMessage CONTAINS[c] "RestoreyTest"))' > "$RUNNER_TEMP/disk-log.txt" || true
+      - name: Upload the disk and mount log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: disk-log
+          path: ${{ runner.temp }}/disk-log.txt
+          retention-days: 14
