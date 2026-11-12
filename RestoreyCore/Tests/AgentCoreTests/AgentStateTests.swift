@@ -406,6 +406,59 @@ struct AgentStateTests {
         #expect(await state.status().network == .defaults)
     }
 
+    // MARK: Network settings (Ruling P2-6)
+
+    @Test func saveNetworkSettingsPersistsAndPushes() async throws {
+        let dir = try TempDirectory()
+        let state = await Self.makeState(dir)
+        let pushes = Mutex<[AgentStatus]>([])
+        await state.setStatusObserver { status in pushes.withLock { $0.append(status) } }
+        let settings = NetworkSettings(uploadLimitKiB: 750, skipOnConstrainedNetwork: false, skippedWiFiNames: [" Café ", "Home"])
+
+        let status = try await state.saveNetworkSettings(settings)
+
+        let saved = NetworkSettings(uploadLimitKiB: 750, skipOnConstrainedNetwork: false, skippedWiFiNames: ["Café", "Home"])
+        #expect(status.network == saved, "names are trimmed")
+        #expect(await state.networkSettings == saved)
+        #expect(pushes.withLock { $0 }.map(\.network) == [saved])
+        let reloaded = await Self.makeState(dir)
+        #expect(await reloaded.status().network == saved)
+    }
+
+    @Test(arguments: [
+        (NetworkSettings(uploadLimitKiB: 0, skipOnConstrainedNetwork: true, skippedWiFiNames: []),
+         "The upload limit must be more than 0 KiB/s"),
+        (NetworkSettings(uploadLimitKiB: nil, skipOnConstrainedNetwork: true, skippedWiFiNames: ["  "]),
+         "A Wi-Fi network name can't be empty"),
+        (NetworkSettings(uploadLimitKiB: -5, skipOnConstrainedNetwork: true, skippedWiFiNames: ["Home", "home"]),
+         "The upload limit must be more than 0 KiB/s. The Wi-Fi network “home” is in the list more than once"),
+    ])
+    func saveNetworkSettingsRefusesInvalidSettings(settings: NetworkSettings, sentence: String) async throws {
+        let dir = try TempDirectory()
+        let state = await Self.makeState(dir)
+        let pushes = Mutex(0)
+        await state.setStatusObserver { _ in pushes.withLock { $0 += 1 } }
+
+        await #expect { try await state.saveNetworkSettings(settings) } throws: { Self.message($0) == sentence }
+        #expect(await state.networkSettings == .defaults)
+        #expect(!FileManager.default.fileExists(atPath: dir.config.path), "nothing written")
+        #expect(pushes.withLock { $0 } == 0)
+    }
+
+    @Test func saveNetworkSettingsKeepsThePlans() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        _ = try await state.confirmRecoveryKit(plan.id)
+        let before = await state.status().plans.map(\.plan)
+
+        let status = try await state.saveNetworkSettings(
+            NetworkSettings(uploadLimitKiB: 100, skipOnConstrainedNetwork: true, skippedWiFiNames: []))
+        #expect(status.plans.map(\.plan) == before)
+    }
+
     @Test func configWriteFailureRestoresTheOldSecrets() async throws {
         let dir = try TempDirectory()
         let clock = TestClock()
@@ -669,6 +722,7 @@ struct AgentStateTests {
         await #expect { try await state.createRepository(plan.id) } throws: { Self.message($0) == refused }
         await #expect { _ = try await state.adopt(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.beginRun(planID: plan.id) } throws: { Self.message($0) == refused }
+        await #expect { try await state.saveNetworkSettings(.defaults) } throws: { Self.message($0) == refused }
 
         #expect(try Data(contentsOf: dir.config) == configBefore)
         #expect(try Data(contentsOf: dir.state) == stateBefore)
@@ -812,6 +866,7 @@ struct AgentStateTests {
         await #expect { try await state.confirmRecoveryKit(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.resume(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.beginRun(planID: plan.id) } throws: { Self.message($0) == refused }
+        await #expect { try await state.saveNetworkSettings(.defaults) } throws: { Self.message($0) == refused }
         let other = Self.plan(now: clock.now)
         await #expect { try await state.beginRun(planID: other.id) } throws: { Self.message($0) == refused }
         // Pause is allowed, so the user can still stop a long first backup.

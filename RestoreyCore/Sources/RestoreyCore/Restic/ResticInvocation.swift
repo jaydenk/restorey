@@ -24,19 +24,28 @@ public struct ResticContext: Sendable {
     /// Environment values for raw plans, read from the keychain by the caller. Ignored for S3 plans.
     public var rawEnvironment: [String: String]
     public var homeDirectory: URL
+    /// The Mac-wide upload limit (`NetworkSettings.uploadLimitKiB`), KiB/s. A backup to a networked
+    /// repository gets its share (`effectiveUploadLimitKiB`); every other command and repository ignores it.
+    public var macWideUploadLimitKiB: Int?
+    /// The backups to networked repositories uploading as this one starts, counting itself.
+    public var networkedBackupsRunning: Int
 
     public init(
         cacheDirectory: URL,
         helperExecutable: URL,
         credentialsFile: URL?,
         rawEnvironment: [String: String],
-        homeDirectory: URL
+        homeDirectory: URL,
+        macWideUploadLimitKiB: Int? = nil,
+        networkedBackupsRunning: Int = 1
     ) {
         self.cacheDirectory = cacheDirectory
         self.helperExecutable = helperExecutable
         self.credentialsFile = credentialsFile
         self.rawEnvironment = rawEnvironment
         self.homeDirectory = homeDirectory
+        self.macWideUploadLimitKiB = macWideUploadLimitKiB
+        self.networkedBackupsRunning = networkedBackupsRunning
     }
 }
 
@@ -135,7 +144,13 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
                "--skip-if-unchanged", "--exclude-cloud-files", "--exclude-caches"]
             + packSize(plan)
         if plan.oneFileSystem { args.append("--one-file-system") }
-        if let limit = plan.uploadLimitKiB { args += ["--limit-upload", String(limit)] }
+        // The Mac-wide limit is for the network (Ruling P2-7): a folder or drive gets the plan's own alone.
+        let limit = plan.repository.needsNetwork
+            ? effectiveUploadLimitKiB(
+                plan: plan.uploadLimitKiB, macWide: context.macWideUploadLimitKiB,
+                networkedBackupsRunning: context.networkedBackupsRunning)
+            : plan.uploadLimitKiB
+        if let limit { args += ["--limit-upload", String(limit)] }
         for pattern in plan.exclusions { args.append("--exclude=\(pattern)") }
         // A relative pattern matches a whole path component at any depth (restic 0.19.1
         // internal/filter/filter.go), so `*.pvm` also excludes a `.pvm` bundle directory; `--iexclude`

@@ -235,6 +235,7 @@ struct RunOutcomeTests {
         try roundTrip(SkipReason.noNetwork, #"{"type":"noNetwork"}"#)
         try roundTrip(SkipReason.volumeNotMounted("Backup"), #"{"type":"volumeNotMounted","volume":"Backup"}"#)
         try roundTrip(SkipReason.agentUpdating, #"{"type":"agentUpdating"}"#)
+        try roundTrip(SkipReason.skippedWiFi("Home"), #"{"name":"Home","type":"skippedWiFi"}"#)
     }
 
     /// The one wording of each skip, shared by the menu and the run log and alerts.
@@ -245,6 +246,7 @@ struct RunOutcomeTests {
         #expect(SkipReason.noNetwork.summary == "Skipped: no network")
         #expect(SkipReason.volumeNotMounted("Backup").summary == "Skipped: Backup isn't connected")
         #expect(SkipReason.agentUpdating.summary == "Skipped: Restorey was updating")
+        #expect(SkipReason.skippedWiFi("Café").summary == "Skipped on Wi-Fi “Café”")
     }
 
     @Test func triggerJSONIsAString() throws {

@@ -7,7 +7,7 @@ import Foundation
 /// error a sentence in Australian English to show as is. Plan IDs are UUID strings.
 ///
 /// Mutating calls (`savePlan`, `deletePlan`, `pause`, `resume`, `confirmRecoveryKit`, `backUpNow`,
-/// `createRepository`) reply with the new `AgentStatus`. While a config error is reported, all of them
+/// `createRepository`, `saveNetworkSettings`) reply with the new `AgentStatus`. While a config error is reported, all of them
 /// are refused. While draining, all of them and `adopt` are refused, except `pause`: the user can still
 /// pause a long first backup, the run then ends paused, the drain completes and the next agent honours
 /// `pausedUntil`.
@@ -20,6 +20,9 @@ import Foundation
     /// `plan.hasCheckInURL == false` deletes any stored check-in URL, so callers carry it over from the
     /// stored plan like any other field and set it false only when the user removes the URL.
     func savePlan(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
+    /// `NetworkSettings` → `AgentStatus`. The Mac-wide network rules, saved with Wi-Fi names trimmed; settings
+    /// with a problem (`NetworkSettings.validationErrors`) are refused with every reason.
+    func saveNetworkSettings(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// Removes the plan, its secrets, credentials file and history. Never touches the repository.
     func deletePlan(_ id: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// One plan, or every plan when `planID` is nil.

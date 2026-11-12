@@ -67,6 +67,11 @@ final class AgentConnection {
         return await statusCall(timeout: .seconds(60)) { $0.savePlan(data, withReply: $1) }
     }
 
+    func saveNetworkSettings(_ settings: NetworkSettings) async -> Result<AgentStatus, AgentCallError> {
+        guard let data = try? XPCCoding.encode(settings) else { return .failure(.badReply("network settings")) }
+        return await statusCall(timeout: .seconds(60)) { $0.saveNetworkSettings(data, withReply: $1) }
+    }
+
     func deletePlan(_ planID: UUID) async -> Result<AgentStatus, AgentCallError> {
         await statusCall(timeout: .seconds(60)) { $0.deletePlan(planID.uuidString, withReply: $1) }
     }

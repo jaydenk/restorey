@@ -3,7 +3,8 @@ import Foundation
 /// Why a run did not start. Produced by the conditions gate (Task 8), and by the runner for a backup
 /// that an agent being replaced won't start (`agentUpdating`, Ruling R55).
 /// JSON: `{"type":"onBattery"}`, `{"type":"batteryBelow","percent":20}`,
-/// `{"type":"volumeNotMounted","volume":"Backup"}`, `{"type":"agentUpdating"}`.
+/// `{"type":"volumeNotMounted","volume":"Backup"}`, `{"type":"agentUpdating"}`,
+/// `{"type":"skippedWiFi","name":"Home"}`.
 public enum SkipReason: Codable, Sendable, Equatable {
     case onBattery
     case batteryBelow(Int)
@@ -13,6 +14,9 @@ public enum SkipReason: Codable, Sendable, Equatable {
     /// The agent was draining before an update (or found its binary replaced), so it started no new
     /// restic step. The next agent runs the backup at once (`nextRunDate`).
     case agentUpdating
+    /// The Mac is on a Wi-Fi network in the Mac-wide skip list (`NetworkSettings.skippedWiFiNames`). Carries
+    /// the network's name as the Mac reports it, not the list's spelling.
+    case skippedWiFi(String)
 
     /// The sentence shown for a skipped run, in the menu, run logs and alerts.
     public var summary: String {
@@ -24,10 +28,11 @@ public enum SkipReason: Codable, Sendable, Equatable {
         case .noNetwork: "Skipped: no network"
         case .volumeNotMounted(let volume): "Skipped: \(volume) isn't connected"
         case .agentUpdating: "Skipped: Restorey was updating"
+        case .skippedWiFi(let name): "Skipped on Wi-Fi “\(name)”"
         }
     }
 
-    private enum CodingKeys: String, CodingKey { case type, percent, volume }
+    private enum CodingKeys: String, CodingKey { case type, percent, volume, name }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -38,6 +43,7 @@ public enum SkipReason: Codable, Sendable, Equatable {
         case "noNetwork": self = .noNetwork
         case "volumeNotMounted": self = .volumeNotMounted(try c.decode(String.self, forKey: .volume))
         case "agentUpdating": self = .agentUpdating
+        case "skippedWiFi": self = .skippedWiFi(try c.decode(String.self, forKey: .name))
         case let other: throw UnknownCase.error(kind: "skip reason", name: other, in: c, forKey: .type)
         }
     }
@@ -55,6 +61,9 @@ public enum SkipReason: Codable, Sendable, Equatable {
             try c.encode("volumeNotMounted", forKey: .type)
             try c.encode(volume, forKey: .volume)
         case .agentUpdating: try c.encode("agentUpdating", forKey: .type)
+        case .skippedWiFi(let name):
+            try c.encode("skippedWiFi", forKey: .type)
+            try c.encode(name, forKey: .name)
         }
     }
 }

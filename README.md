@@ -208,6 +208,14 @@ only by you). If an upgrade fails, the agent says so and leaves the file alone.
 limit shared by the backups to networked repositories (none by default), whether to skip a backup on a
 constrained or expensive network (on by default), and Wi-Fi network names to skip backups on (none by default).
 These rules apply only to a repository on another machine; a backup to a folder or an external drive ignores them.
+A backup to a networked repository gets restic's `--limit-upload` set to the smaller of the plan's own limit and
+its share of the Mac-wide one: the Mac-wide limit divided by the backups to networked repositories uploading when
+it starts, counting itself (never below 1 KiB/s). restic can't change the limit mid-run, so a backup keeps the
+share it started with. A backup to a folder or drive gets the plan's own limit alone. Wi-Fi names are matched
+ignoring case and surrounding spaces (not accents), and a backup on a listed network is recorded as "Skipped on
+Wi-Fi “<name>”". The app saves these settings through the agent, which refuses an upload limit of 0 or less, an
+empty Wi-Fi name and a name listed twice, with the reason, and saves the names trimmed. Until the agent can read
+the Wi-Fi name (it needs Location permission), a name it can't read never skips a backup.
 Each plan also records when its setup finished (`setupCompletedAt`, set when its recovery kit is first confirmed
 and never cleared), so a plan whose kit must be confirmed again is told apart from one whose setup was never
 finished, and whether the "No off-Mac monitoring" note was dismissed. The agent owns both setup dates; a saved
@@ -275,8 +283,8 @@ daylight saving change never moves a run. It also looks again straight away:
 - when a plan is saved, its recovery kit is confirmed, or it is resumed.
 
 A skipped run (on battery below the plan's threshold, a constrained or expensive network such as a phone
-hotspot or Low Data Mode while the Mac-wide "skip on a constrained network" setting is on, no network, an
-unmounted volume) is recorded and tried again at the next interval, or
+hotspot or Low Data Mode while the Mac-wide "skip on a constrained network" setting is on, a Wi-Fi network in
+the Mac-wide skip list, no network, an unmounted volume) is recorded and tried again at the next interval, or
 sooner when the network comes back or the volume mounts, as above. A backup that met another client's lock, was
 stopped by the system at logout or shutdown, or was interrupted because the agent stopped mid-run, is retried 15
 minutes after it started (not at once, so

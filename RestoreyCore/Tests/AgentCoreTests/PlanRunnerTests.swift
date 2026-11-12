@@ -448,6 +448,94 @@ struct PlanRunnerTests {
         }
     }
 
+    /// Ruling P2-7: the Mac-wide limit is shared by the backups to networked repositories uploading when
+    /// one starts, counting itself; a backup to a folder doesn't count. Each restic keeps the limit it
+    /// started with. The stub records each backup's arguments and holds it until released.
+    @Test func networkedBackupsShareTheMacWideUploadLimit() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-share-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let release = dir.appendingPathComponent("release")
+        let stub = dir.appendingPathComponent("restic.sh")
+        try """
+            #!/bin/sh
+            if [ "$1" = backup ]; then
+              for arg in "$@"; do echo "$arg"; done > '\(dir.path)'/args-$$.tmp
+              mv '\(dir.path)'/args-$$.tmp '\(dir.path)'/args-$$
+              while [ ! -f '\(release.path)' ]; do /bin/sleep 0.05; done
+            fi
+            exit 1
+
+            """.write(to: stub, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+
+        let settings = NetworkSettings(uploadLimitKiB: 1000, skipOnConstrainedNetwork: true, skippedWiFiNames: [])
+        let f = try await RunnerFixture.make(executable: stub, createRepository: false, networkSettings: settings) {
+            $0.repository = .raw(repository: "rest:http://127.0.0.1:9/one", environmentNames: [])
+        }
+        defer { f.remove() }
+        func addPlan(_ name: String, repository: String, limit: Int? = nil) async throws -> UUID {
+            var plan = Plan.newHotPlan(
+                name: name, repository: .raw(repository: repository, environmentNames: []), origin: .created,
+                hostLabel: "fixturehost", sources: [f.source.path], exclusions: [], now: f.clock.now)
+            plan.uploadLimitKiB = limit
+            _ = try await f.state.savePlan(SavePlanRequest(
+                plan: plan, secrets: [SecretEntry(key: .repositoryPassword(plan.id), value: RunnerFixture.password)]))
+            _ = try await f.state.confirmRecoveryKit(plan.id)
+            return plan.id
+        }
+        let two = try await addPlan("Two", repository: "rest:http://127.0.0.1:9/two", limit: 300)
+        let three = try await addPlan("Three", repository: "sftp:me@127.0.0.1:/three")
+        let folder = try await addPlan("Folder", repository: f.root.appendingPathComponent("folder").path)
+
+        /// The `--limit-upload` value of each backup started so far, by plan.
+        func limits() throws -> [UUID: String?] {
+            var result: [UUID: String?] = [:]
+            for file in try FileManager.default.contentsOfDirectory(atPath: dir.path) where file.hasPrefix("args-")
+                && !file.hasSuffix(".tmp")
+            {
+                let args = try String(contentsOf: dir.appendingPathComponent(file), encoding: .utf8)
+                    .split(separator: "\n").map(String.init)
+                let tag = try #require(args.first { $0.hasPrefix("--tag=restorey:") })
+                let id = try #require(UUID(uuidString: String(tag.dropFirst("--tag=restorey:".count))))
+                // Not `result[id] =`: assigning a nil `String?` through the subscript would remove the key.
+                result.updateValue(args.firstIndex(of: "--limit-upload").map { args[$0 + 1] }, forKey: id)
+            }
+            return result
+        }
+        func waitForBackups(_ count: Int) async throws {
+            let deadline = ContinuousClock.now + .seconds(30)
+            while try limits().count < count, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            try #require(try limits().count == count)
+        }
+
+        let runFolder = Task { try await f.runner.runBackup(planID: folder, trigger: .scheduled) }
+        try await waitForBackups(1)
+        #expect(try limits()[folder] == .some(nil), "a folder gets no Mac-wide limit")
+        let runOne = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await waitForBackups(2)
+        #expect(try limits()[f.planID] == "1000", "the folder backup doesn't count")
+        let runTwo = Task { try await f.runner.runBackup(planID: two, trigger: .scheduled) }
+        try await waitForBackups(3)
+        #expect(try limits()[two] == "300", "its own limit is smaller than half")
+        let runThree = Task { try await f.runner.runBackup(planID: three, trigger: .scheduled) }
+        try await waitForBackups(4)
+        #expect(try limits()[three] == "333")
+        #expect(try limits()[f.planID] == "1000", "a running backup keeps the limit it started with")
+
+        try "".write(to: release, atomically: true, encoding: .utf8)
+        for run in [runFolder, runOne, runTwo, runThree] { _ = try await run.value }
+
+        // Once they have ended, the next backup has the whole limit again.
+        for file in try FileManager.default.contentsOfDirectory(atPath: dir.path) where file.hasPrefix("args-") {
+            try FileManager.default.removeItem(at: dir.appendingPathComponent(file))
+        }
+        _ = try await f.runner.runBackup(planID: three, trigger: .scheduled)
+        #expect(try limits()[three] == "1000")
+    }
+
     @Test func preflightSkipSendsNoPing() async throws {
         let f = try await RunnerFixture.make()
         defer { f.remove() }

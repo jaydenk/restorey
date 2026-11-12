@@ -46,7 +46,10 @@ final class SystemObservers: Sendable {
             power: SystemConditions.currentPowerState(),
             network: network.forPreflight,
             isMountPoint: { SystemConditions.isMountPoint($0) },
-            fileExists: { FileManager.default.fileExists(atPath: $0) })
+            fileExists: { FileManager.default.fileExists(atPath: $0) },
+            // Task 3 reads the name with CoreWLAN once the agent has Location permission. Until then
+            // it's unknown, which never skips (Ruling P2-8).
+            currentWiFiName: { nil })
     }
 
     /// Calls `handler` on the monitor's queue each time the network comes back (unsatisfied to satisfied,

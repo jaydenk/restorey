@@ -448,6 +448,22 @@ public actor AgentState {
         }
     }
 
+    /// Saves the Mac-wide network rules (Ruling P2-6) beside the plans in `config.json`, Wi-Fi names
+    /// trimmed, and pushes the status. Settings with any problem are refused with every reason and nothing
+    /// is saved (Review Focus 5). They apply from the next restic step: a backup already uploading keeps
+    /// the limit it started with, since restic can't change it mid-run (Ruling P2-7).
+    public func saveNetworkSettings(_ settings: NetworkSettings) async throws -> AgentStatus {
+        try requireMutable()
+        let errors = settings.validationErrors()
+        guard errors.isEmpty else { throw AgentError.invalidNetworkSettings(errors) }
+        return try await serialisedWrite {
+            var updated = config
+            updated.network = settings.normalised()
+            try await saveConfig(updated)
+            return pushStatus()
+        }
+    }
+
     /// Pauses for `pauseDuration`, after which the plan is due at once, and asks the runner to stop a
     /// run in progress (SIGINT, then SIGKILL; the run ends `.paused`). Allowed while draining.
     public func pause(_ id: UUID) async throws -> AgentStatus {

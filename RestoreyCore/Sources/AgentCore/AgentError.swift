@@ -10,6 +10,8 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
     /// is about to exit on its own, so the app must not unregister the agent launchd starts next.
     case restarting
     case invalidPlan([PlanValidationError])
+    /// `saveNetworkSettings` was sent settings with these problems; nothing was saved.
+    case invalidNetworkSettings([NetworkSettingsError])
     case unknownPlan
     case planRunning(name: String)
     case alreadyRunning(name: String)
@@ -38,6 +40,7 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
         case .invalidPlan(let errors):
             errors.map(Self.message(for:)).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
                 .joined(separator: ". ")
+        case .invalidNetworkSettings(let errors): errors.map(\.message).joined(separator: ". ")
         case .unknownPlan: "There's no plan with that ID"
         case .planRunning(let name): "\(name) is backing up. Wait for it to finish, then delete it"
         case .alreadyRunning(let name): "\(name) is already backing up"

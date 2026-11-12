@@ -126,6 +126,9 @@ public actor PlanRunner {
     private var needsUnlock: Set<String> = []
     /// `recoverAfterStart`, while it runs and after: runs wait for it.
     private var recovery: Task<Void, Never>?
+    /// The backup steps to networked repositories whose restic is uploading now, by record ID: they share
+    /// the Mac-wide upload limit (Ruling P2-7).
+    private var networkedUploads: Set<UUID> = []
     /// When `pruneRunLogsIfDue` last pruned the run logs; nil until it has (Ruling R70).
     var lastRunLogPrune: Date?
 
@@ -502,7 +505,16 @@ public actor PlanRunner {
             if op == .backup { Self.noteAttempt(at: startedAt, in: &history) }
         }
 
-        let invocation = makeInvocation(op, plan: plan, context: session.context)
+        var context = session.context
+        let uploadsToTheNetwork = op == .backup && plan.repository.needsNetwork
+        if uploadsToTheNetwork {
+            context.macWideUploadLimitKiB = await deps.state.networkSettings.uploadLimitKiB
+            // Counted and registered with no suspension in between, so backups starting together each see
+            // the others. restic can't change its limit mid-run, so each keeps the share it started with.
+            context.networkedBackupsRunning = networkedUploads.count + 1
+            networkedUploads.insert(id)
+        }
+        let invocation = makeInvocation(op, plan: plan, context: context)
         log.line("Restorey \(op.logSlug) for \(plan.name), \(trigger.rawValue)")
         log.line(displayCommand(invocation))
         let process = ResticProcess(
@@ -538,6 +550,8 @@ public actor PlanRunner {
                 exitCode: Self.startFailureExitCode, reason: "Restorey couldn't start restic: \(error.localizedDescription)")
         }
         handle?.detach()
+        // restic has exited (or never started): it no longer takes a share of the limit.
+        networkedUploads.remove(id)
         await feed?.finish()
         if op == .unlock, outcome == .success(snapshotID: nil) { needsUnlock.remove(session.key) }
 

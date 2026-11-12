@@ -66,6 +66,51 @@ struct ResticInvocationTests {
         #expect(!inv(.backup, plan()).arguments.contains("--limit-upload"))
     }
 
+    private func limitUpload(_ args: [String]) -> String? {
+        args.firstIndex(of: "--limit-upload").map { args[$0 + 1] }
+    }
+
+    private func sharing(_ macWide: Int?, running: Int) -> ResticContext {
+        var context = Self.context
+        context.macWideUploadLimitKiB = macWide
+        context.networkedBackupsRunning = running
+        return context
+    }
+
+    /// Ruling P2-7: a backup to a networked repository gets the smaller of the plan's limit and its share
+    /// of the Mac-wide one.
+    @Test func backupPassesEffectiveLimit() {
+        var p = plan()
+        #expect(limitUpload(inv(.backup, p, sharing(1000, running: 2)).arguments) == "500")
+        p.uploadLimitKiB = 300
+        #expect(limitUpload(inv(.backup, p, sharing(1000, running: 2)).arguments) == "300")
+        #expect(limitUpload(inv(.backup, p, sharing(nil, running: 1)).arguments) == "300")
+        let raw = plan(.raw(repository: "sftp:me@nas:/srv/restic", environmentNames: []))
+        #expect(limitUpload(inv(.backup, raw, sharing(1000, running: 3)).arguments) == "333")
+    }
+
+    /// The Mac-wide limit is for the network: a folder or drive repository gets only the plan's own.
+    @Test func aLocalRepositoryGetsOnlyThePlansOwnLimit() {
+        for location in ["/Volumes/Backup/restic", "local:/Volumes/Backup/restic"] {
+            var p = plan(.raw(repository: location, environmentNames: []))
+            #expect(limitUpload(inv(.backup, p, sharing(1000, running: 1)).arguments) == nil)
+            p.uploadLimitKiB = 2000
+            #expect(limitUpload(inv(.backup, p, sharing(1000, running: 2)).arguments) == "2000")
+        }
+    }
+
+    /// Only `backup` uploads: no other command takes the limit.
+    @Test func onlyBackupGetsTheMacWideLimit() {
+        for op in [ResticOperation.prune, .check, .forget(dryRun: false), .initRepository] {
+            #expect(limitUpload(inv(op, plan(), sharing(1000, running: 1)).arguments) == nil)
+        }
+    }
+
+    @Test func theContextDefaultsToNoMacWideLimitAndOneBackup() {
+        #expect(Self.context.macWideUploadLimitKiB == nil)
+        #expect(Self.context.networkedBackupsRunning == 1)
+    }
+
     @Test func sourcesAfterSeparatorEvenWhenTheyLookLikeFlags() {
         let args = inv(.backup).arguments
         let sep = args.firstIndex(of: "--")!
