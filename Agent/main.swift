@@ -84,8 +84,10 @@ do {
         let scheduler = Scheduler(log: log)
         Task { @MainActor in
             let secrets = KeychainSecretStore(service: identity.rootID, accessGroup: identity.keychainAccessGroup)
+            // One store for the runner's writes and the state's deletes of a plan's logs.
+            let runLogs = RunLogStore(identity: identity)
             let state = await AgentState(
-                directory: identity.applicationSupportDirectory(), secrets: secrets, now: { Date() })
+                directory: identity.applicationSupportDirectory(), secrets: secrets, runLogs: runLogs, now: { Date() })
             systemStop.attach(state: state)
             if let configError = await state.status().configError {
                 log.error("Not running any plan until the settings are fixed: \(configError)")
@@ -99,6 +101,8 @@ do {
                 log: { log.info($0) })
             let notifier = Notifier()
             await state.attach(notifier: notifier, log: { log.info($0) })
+            // Refused run actions (final review M5). Info, as before: a refusal is an answer, not a fault.
+            await state.attach(agentLog: { log.info($0) })
             // Made here, on the main thread, whose run loop delivers Core Location's reports.
             let location = LocationPermission()
             let service = AgentService(
@@ -124,7 +128,7 @@ do {
             }
             let runner = PlanRunner(dependencies: RunnerDependencies(
                 state: state, secrets: secrets, queues: RepositoryQueues(), supervisor: .shared,
-                logStore: RunLogStore(identity: identity),
+                logStore: runLogs,
                 checkIn: CheckInService(
                     secrets: secrets, session: CheckInService.makeSession(),
                     log: { line, level in level == .error ? log.error(line) : log.info(line) },

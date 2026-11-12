@@ -58,6 +58,7 @@ import Testing
             (.forget(dryRun: true), "forget-dry-run"), (.prune, "prune"), (.check, "check"),
             (.snapshots(allHosts: false), "snapshots"),
             (.snapshots(allHosts: true), "snapshots-all-hosts"), (.unlock, "unlock"), (.catConfig, "cat-config"),
+            (.stats, "stats"),
         ]
         for (operation, slug) in slugs { #expect(operation.logSlug == slug) }
         #expect(Set(slugs.map(\.1)).count == slugs.count)
@@ -360,5 +361,50 @@ import Testing
         #expect(removed == 1)
         #expect(fm.fileExists(atPath: files[0].path))
         #expect(!fm.fileExists(atPath: files[1].path))
+    }
+
+    /// Deleting a plan removes its run logs at once, not 400 days later; other plans' logs stay.
+    @Test func removePlanDeletesOnlyThatPlansLogs() async throws {
+        let root = Self.tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = RunLogStore(root: root, subsystem: "test.restorey")
+        let doomed = UUID()
+        let kept = UUID()
+        for plan in [doomed, kept] {
+            let writer = try await store.begin(
+                planID: plan, operation: .backup, startedAt: Date(), redactor: Redactor(secrets: []))
+            writer.line("hello")
+            writer.close()
+        }
+        let runs = root.appendingPathComponent("runs")
+        try await store.removePlan(doomed)
+        #expect(!FileManager.default.fileExists(atPath: runs.appendingPathComponent(doomed.uuidString).path))
+        #expect(FileManager.default.fileExists(atPath: runs.appendingPathComponent(kept.uuidString).path))
+        // Nothing there (never ran, or already removed) is not an error.
+        try await store.removePlan(doomed)
+        try await store.removePlan(UUID())
+    }
+
+    /// A plan folder that is a symlink is removed as a link: whatever it points at is never touched.
+    @Test func removePlanNeverFollowsASymlink() async throws {
+        let root = Self.tempRoot()
+        let outside = Self.tempRoot()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let precious = outside.appendingPathComponent("precious.txt")
+        try "keep".write(to: precious, atomically: true, encoding: .utf8)
+        let plan = UUID()
+        let runs = root.appendingPathComponent("runs")
+        try FileManager.default.createDirectory(at: runs, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: runs.appendingPathComponent(plan.uuidString), withDestinationURL: outside)
+
+        try await RunLogStore(root: root, subsystem: "test.restorey").removePlan(plan)
+        #expect(FileManager.default.fileExists(atPath: precious.path))
+        #expect((try? FileManager.default.destinationOfSymbolicLink(
+            atPath: runs.appendingPathComponent(plan.uuidString).path)) == nil)
     }
 }

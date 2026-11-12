@@ -34,9 +34,9 @@ public protocol SchedulerRunner: Sendable {
     func pruneRunLogsIfDue() async
 }
 
-/// Decides when each plan backs up (spec §5.5). Every minute, and on every nudge, it starts each plan
-/// that `nextRunDate` says is due. A tick never waits for a run: each run is its own task. A plan never
-/// has two runs from the scheduler at once; different plans run at the same time, and the repository
+/// Decides when each plan backs up (spec §5.5). When the earliest plan falls due (at most a minute
+/// apart, `nextWake`), and on every nudge, it starts each plan that `nextRunDate` says is due. A tick
+/// never waits for a run: each run is its own task. A plan never has two runs from the scheduler at once; different plans run at the same time, and the repository
 /// queue serialises those that share a repository.
 ///
 /// Missed runs, runs after a pause, and runs after waking, the network coming back or a volume mounting
@@ -102,7 +102,7 @@ public actor SchedulerCore {
     }
 
     /// Calls `recoverAfterStart()`, then waits for the network as a wake does (at most
-    /// `wakeNetworkTimeout`), then ticks every `tickInterval` until stopped or cancelled. Without the
+    /// `wakeNetworkTimeout`), then ticks at each `nextWake` until stopped or cancelled. Without the
     /// wait, the first tick after login would skip every due plan for no network while the path is
     /// still unknown or coming up, and move its first backup an hour on.
     public func run() async {
@@ -119,7 +119,11 @@ public actor SchedulerCore {
             }
             guard !isStopped else { return }
             let clock = clock
-            let pause = Task { try await clock.sleep(for: Self.tickInterval) }
+            let looked = now()
+            let delay = Duration.seconds(await nextWake(after: looked).timeIntervalSince(looked))
+            // Stopped while the plans were read: there is no sleep yet for `stop()` to cancel.
+            guard !isStopped else { return }
+            let pause = Task { try await clock.sleep(for: delay) }
             self.pause = pause
             let slept = await withTaskCancellationHandler {
                 (try? await pause.value) != nil
@@ -129,6 +133,21 @@ public actor SchedulerCore {
             self.pause = nil
             if !slept { return }
         }
+    }
+
+    /// When the loop next ticks: the earliest time after `now` that a plan falls due, but never later than
+    /// `tickInterval` on, so a changed clock, a refused run or a pause running out is still seen within the
+    /// minute. Sleeping until the due time, rather than finding it on a fixed minute, is what keeps an hourly
+    /// plan on the hour: each start was up to a minute late and the next counted from it (12 s a run, seen
+    /// over 24 h). A plan due already at `now` was just looked at by the tick and is no reason to look sooner.
+    public func nextWake(after now: Date) async -> Date {
+        Self.nextWake(after: now, entries: await runner.scheduleEntries())
+    }
+
+    static func nextWake(after now: Date, entries: [(plan: Plan, history: PlanRunHistory)]) -> Date {
+        let latest = now.addingTimeInterval(Double(tickInterval.components.seconds))
+        let due = entries.lazy.map { nextRunDate(plan: $0.plan, history: $0.history, now: now) }.filter { $0 > now }
+        return min(due.min() ?? latest, latest)
     }
 
     /// Starts every due plan that isn't already running.

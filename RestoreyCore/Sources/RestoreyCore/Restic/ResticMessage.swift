@@ -135,6 +135,99 @@ public struct CheckSummary: Sendable, Equatable {
     }
 }
 
+/// The result of `stats --mode raw-data --json` (Ruling P2-9). restic 0.19.1 prints one object with no
+/// `message_type`: `{"total_size":62620,"total_uncompressed_size":65889,"compression_ratio":1.05,
+/// "compression_progress":100,"compression_space_saving":4.96,"total_blob_count":12,"snapshots_count":3}`.
+/// `total_size` is the repository's blobs as stored (after compression), which is what the provider bills.
+public struct StatsSummary: Sendable, Equatable {
+    /// Bytes.
+    public var totalSize: Int64
+
+    public init(totalSize: Int64) {
+        self.totalSize = totalSize
+    }
+
+    /// True for the line that carries the result. The stream parser keeps it as `.unparseable`, because it
+    /// has no `message_type`.
+    public static func isStats(_ line: String) -> Bool {
+        line.hasPrefix("{") && line.contains(#""total_size""#)
+    }
+
+    /// Throws unless `line` is a stats object with an integer `total_size`.
+    public static func parse(_ line: String) throws -> StatsSummary {
+        StatsSummary(totalSize: try JSONDecoder().decode(Wire.self, from: Data(line.utf8)).totalSize)
+    }
+
+    private struct Wire: Decodable {
+        let totalSize: Int64
+        private enum CodingKeys: String, CodingKey { case totalSize = "total_size" }
+    }
+}
+
+/// One group of `forget --json`'s reply, reduced to what a run log needs. restic 0.19.1 prints the whole
+/// reply as one JSON array, each group carrying every kept and removed snapshot in full and a reason per
+/// kept one (about 2.35 KB per kept snapshot), which a run log kept 400 days doesn't need.
+public struct ForgetGroup: Sendable, Equatable {
+    public var host: String?
+    public var paths: [String]
+    public var tags: [String]
+    public var kept: Int
+    /// Short snapshot IDs, in restic's order.
+    public var removedIDs: [String]
+
+    public init(host: String?, paths: [String], tags: [String], kept: Int, removedIDs: [String]) {
+        self.host = host
+        self.paths = paths
+        self.tags = tags
+        self.kept = kept
+        self.removedIDs = removedIDs
+    }
+
+    /// The group's run log line: `Group host mac, paths /a, tags restorey:…: kept 3, removed 2 (1a2b3c4d,
+    /// 5e6f7a8b)`. Parts the grouping doesn't have are left out, and so are the brackets when nothing was
+    /// removed.
+    public var summary: String {
+        var key: [String] = []
+        if let host { key.append("host \(host)") }
+        if !paths.isEmpty { key.append("paths \(paths.joined(separator: ", "))") }
+        if !tags.isEmpty { key.append("tags \(tags.joined(separator: ", "))") }
+        let group = key.isEmpty ? "Group" : "Group \(key.joined(separator: ", "))"
+        let removed = removedIDs.isEmpty ? "" : " (\(removedIDs.joined(separator: ", ")))"
+        return "\(group): kept \(kept), removed \(removedIDs.count)\(removed)"
+    }
+}
+
+/// Reads `forget --json`'s reply (one JSON array on one line, on stdout) into its groups.
+public enum ForgetReport {
+    /// True for the line that carries the reply; restic prints nothing else starting with `[`.
+    public static func isReport(_ line: String) -> Bool { line.hasPrefix("[") }
+
+    /// Throws when `line` is not a forget reply.
+    public static func groups(from line: String) throws -> [ForgetGroup] {
+        try JSONDecoder().decode([Group].self, from: Data(line.utf8)).map { group in
+            ForgetGroup(
+                host: group.host, paths: group.paths ?? [], tags: group.tags ?? [], kept: group.keep?.count ?? 0,
+                removedIDs: (group.remove ?? []).map(\.shortID))
+        }
+    }
+
+    private struct Group: Decodable {
+        let host: String?
+        let paths: [String]?
+        let tags: [String]?
+        let keep: [Snapshot]?
+        let remove: [Snapshot]?
+    }
+
+    private struct Snapshot: Decodable {
+        let id: String
+        /// restic's own short form; cut from `id` the same way (eight characters) when it is missing.
+        let short: String?
+        var shortID: String { short ?? String(id.prefix(8)) }
+        private enum CodingKeys: String, CodingKey { case id, short = "short_id" }
+    }
+}
+
 /// A non-fatal problem reported on stderr. During a backup it names the file (`during` and `item`
 /// are set). `check` reports a flat message with neither.
 public struct ResticItemError: Sendable, Equatable {

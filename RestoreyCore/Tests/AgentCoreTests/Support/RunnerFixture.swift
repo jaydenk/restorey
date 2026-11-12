@@ -203,7 +203,8 @@ final class RunnerFixture: Sendable {
             release: { _ in sleepAssertions.mutate { $0.append("release") } }))
         let support = root.appendingPathComponent("support")
         try await AgentState.configStore(in: support).save(ConfigFile(plans: [], network: networkSettings))
-        let state = await AgentState(directory: support, secrets: secrets, now: { clock.now })
+        let logStore = RunLogStore(root: root.appendingPathComponent("logs"), subsystem: "test.restorey")
+        let state = await AgentState(directory: support, secrets: secrets, runLogs: logStore, now: { clock.now })
 
         var plan = Plan.newHotPlan(
             name: "Fixture",
@@ -216,7 +217,7 @@ final class RunnerFixture: Sendable {
 
         let dependencies = RunnerDependencies(
             state: state, secrets: secrets, queues: RepositoryQueues(), supervisor: supervisor,
-            logStore: RunLogStore(root: root.appendingPathComponent("logs"), subsystem: "test.restorey"),
+            logStore: logStore,
             checkIn: checkIn,
             resticExecutable: executable ?? restic, helperExecutable: helper,
             cacheDirectory: root.appendingPathComponent("cache"), credentialsDirectory: support,

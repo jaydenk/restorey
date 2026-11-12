@@ -179,6 +179,13 @@ struct ResticInvocationTests {
         #expect(inv(.check).arguments == ["check", "--json", "--cache-dir", Self.cache, "--retry-lock", "5m"])
     }
 
+    /// Ruling P2-9: the repository's size, repository-wide (no `--host`), waiting for a lock like maintenance.
+    @Test func statsArguments() {
+        let args = inv(.stats).arguments
+        #expect(args == ["stats", "--json", "--cache-dir", Self.cache, "--mode", "raw-data", "--retry-lock", "5m"])
+        #expect(!args.contains { $0.hasPrefix("--host") })
+    }
+
     @Test func pruneUsesPackSizeWhenSet() {
         let args = inv(.prune).arguments
         let i = args.firstIndex(of: "--pack-size")
@@ -195,7 +202,7 @@ struct ResticInvocationTests {
     @Test func everyOperationPassesJSONAndCacheDirectory() {
         let ops: [ResticOperation] = [
             .initRepository, .backup, .forget(dryRun: false), .forget(dryRun: true), .prune, .check,
-            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig,
+            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig, .stats,
         ]
         for op in ops {
             let args = inv(op).arguments
@@ -309,12 +316,13 @@ struct ResticInvocationTests {
         #expect(try json(.snapshots(allHosts: false)) == #"{"allHosts":false,"type":"snapshots"}"#)
         #expect(try json(.unlock) == #"{"type":"unlock"}"#)
         #expect(try json(.catConfig) == #"{"type":"catConfig"}"#)
+        #expect(try json(.stats) == #"{"type":"stats"}"#)
     }
 
     @Test func operationRoundTripsAndRejectsUnknown() throws {
         let ops: [ResticOperation] = [
             .initRepository, .backup, .forget(dryRun: false), .forget(dryRun: true), .prune, .check,
-            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig,
+            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig, .stats,
         ]
         for op in ops {
             let data = try JSONEncoder().encode(op)

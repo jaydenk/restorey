@@ -78,8 +78,9 @@ public struct RunnerDependencies: Sendable {
 /// 5. the backup, classified (there is no check-in `/start` ping, Ruling R57);
 /// 6. history and alerts (written after every step, so an agent that dies mid-run loses nothing);
 /// 7. the check-in end ping, as soon as the backup's record is committed (Ruling R37);
-/// 8. in the same queue slot, after a successful backup: `forget`, `prune` and a plain `unlock`
-///    followed by `check`, when each is due (`maintenance`).
+/// 8. in the same queue slot, after a successful backup: `forget`, `prune` (then `stats`, for the
+///    repository size, when it succeeded) and a plain `unlock` followed by `check`, when each is due
+///    (`maintenance`).
 ///
 /// No restic step starts while the agent is winding down (`isWindingDown`: draining, or its executable
 /// replaced), because restic would run the replaced helper, which this agent refuses (Ruling R55). The
@@ -443,7 +444,12 @@ public actor PlanRunner {
             guard handle.intent == nil, !(await isWindingDown()) else { break }
             let step = await runStep(op, trigger: trigger, session: session, handle: handle)
             await commit(step.record, plan: plan)
-            switch step.record.outcome {
+            var outcome = step.record.outcome
+            // The size changes mostly when a prune frees space, so it is measured then (Ruling P2-9).
+            if op == .prune, case .success = outcome, handle.intent == nil, !(await isWindingDown()) {
+                outcome = await measureRepository(session: session, trigger: trigger, handle: handle)
+            }
+            switch outcome {
             case .paused, .cancelled, .locked, .stoppedBySystem:
                 // Interrupted, or another client holds the lock: try the rest at the next backup.
                 return backup
@@ -452,6 +458,34 @@ public actor PlanRunner {
             }
         }
         return backup
+    }
+
+    /// `restic stats --mode raw-data`, recorded, and its total kept as the plan's repository size with the
+    /// time it was measured (Ruling P2-9). Runs inside the caller's turn of the repository's queue. A failure
+    /// fails nothing else and raises no alert (only backups and checks do): the size measured before stays,
+    /// and the reason goes to `agent.log`. Returns the step's outcome, so an interrupted one stops what follows.
+    func measureRepository(session: RunSession, trigger: RunTrigger, handle: RunHandle) async -> RunOutcome {
+        let plan = session.plan
+        let collector = LineCollector(matching: StatsSummary.isStats)
+        let step = await runStep(.stats, trigger: trigger, session: session, handle: handle, collector: collector)
+        await commit(step.record, plan: plan)
+        let problem: String
+        switch step.record.outcome {
+        case .success:
+            do {
+                let stats = try StatsSummary.parse(collector.last ?? "")
+                let size = RepositorySize(bytes: stats.totalSize, measuredAt: step.record.endedAt)
+                await write(plan.id) { $0.repositorySize = size }
+                return step.record.outcome
+            } catch {
+                problem = "restic's stats reply couldn't be read"
+            }
+        case let outcome:
+            problem = Self.explain(outcome, stoppedReason: step.stoppedReason)
+        }
+        deps.agentLog(
+            "Couldn't measure the repository size for plan \(plan.id.uuidString), so the last size measured is kept: \(problem)")
+        return step.record.outcome
     }
 
     // MARK: Winding down (Ruling R55)
@@ -531,7 +565,7 @@ public actor PlanRunner {
         do {
             defer { deps.sleepPrevention?.end() }
             let finished = try await process.run { message in
-                if let text = StepLog.text(for: message) { log.line(text) }
+                for text in StepLog.lines(for: message, operation: op) { log.line(text) }
                 feed?.send(message)
                 collector?.collect(message)
             }

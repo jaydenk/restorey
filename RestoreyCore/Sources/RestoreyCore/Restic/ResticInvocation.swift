@@ -50,7 +50,8 @@ public struct ResticContext: Sendable {
 }
 
 /// One restic operation. Persisted in run records, so the JSON is explicit:
-/// `{"type":"forget","dryRun":true}`, `{"type":"snapshots","allHosts":false}`, `{"type":"backup"}`.
+/// `{"type":"forget","dryRun":true}`, `{"type":"snapshots","allHosts":false}`, `{"type":"backup"}`,
+/// `{"type":"stats"}`. A build that doesn't know a type drops that record rather than the history.
 public enum ResticOperation: Codable, Sendable, Equatable {
     case initRepository
     case backup
@@ -63,6 +64,9 @@ public enum ResticOperation: Codable, Sendable, Equatable {
     /// `cat config`: reads the repository's config, which exists only once a repository has been
     /// initialised. `createRepository` uses it to tell "exists" (0) from "nothing there" (10).
     case catConfig
+    /// `stats --mode raw-data`: the size of the whole repository as stored (Ruling P2-9), every host's
+    /// data included. Run after a successful prune and after an adopt.
+    case stats
 
     /// A short, stable, file-name-safe name for this operation, used in run log file names.
     /// Never change an existing value: it would orphan the names of logs already on disk.
@@ -76,6 +80,7 @@ public enum ResticOperation: Codable, Sendable, Equatable {
         case .snapshots(let allHosts): allHosts ? "snapshots-all-hosts" : "snapshots"
         case .unlock: "unlock"
         case .catConfig: "cat-config"
+        case .stats: "stats"
         }
     }
 
@@ -92,6 +97,7 @@ public enum ResticOperation: Codable, Sendable, Equatable {
         case "snapshots": self = .snapshots(allHosts: try c.decode(Bool.self, forKey: .allHosts))
         case "unlock": self = .unlock
         case "catConfig": self = .catConfig
+        case "stats": self = .stats
         case let other: throw UnknownCase.error(kind: "restic operation", name: other, in: c, forKey: .type)
         }
     }
@@ -111,6 +117,7 @@ public enum ResticOperation: Codable, Sendable, Equatable {
             try c.encode(allHosts, forKey: .allHosts)
         case .unlock: try c.encode("unlock", forKey: .type)
         case .catConfig: try c.encode("catConfig", forKey: .type)
+        case .stats: try c.encode("stats", forKey: .type)
         }
     }
 }
@@ -178,6 +185,10 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
         args = ["unlock"] + common(context)
     case .catConfig:
         args = ["cat", "config"] + common(context)
+    case .stats:
+        // No `--host`: the size is the repository's, whichever Macs back up to it. A shared lock, so it waits
+        // like the maintenance commands rather than failing at once while another client prunes.
+        args = ["stats"] + common(context) + ["--mode", "raw-data", "--retry-lock", maintenanceRetryLock]
     }
 
     return ResticInvocation(arguments: args, environment: environment(plan: plan, context: context))

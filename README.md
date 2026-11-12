@@ -154,8 +154,10 @@ The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`) runs
    success or `/fail` ping straight away, so maintenance never delays it.
 5. After a successful backup, in the same turn of the queue: `forget` (after every backup that made a
    snapshot, or daily for an adopted repository), `prune` weekly when it is switched on, and a plain
-   `unlock` followed by `check` weekly. Each is its own run with its own log; a failed `check` raises its own
-   alert and never turns the backup into a failure.
+   `unlock` followed by `check` weekly. A successful prune is followed by `restic stats --mode raw-data`,
+   whose total is the repository size the menu shows with its age. Each is its own run with its own log; a
+   failed `check` raises its own alert and never turns the backup into a failure, and a failed `stats` raises
+   none and keeps the size measured before (the reason goes to the agent log).
 6. Records every step in `state.json` as it ends and raises or clears the alerts.
 
 A wrong repository password, a missing repository or unreadable backup keys (including a password the helper
@@ -169,11 +171,13 @@ is already there it refuses ("A repository already exists there"), and it initia
 nothing at the address. Restorey makes no separate bucket call, but `restic init` creates the bucket if it
 doesn't exist and the key is allowed to create buckets (a key scoped to one bucket can't); with a scoped key,
 create the bucket in your provider's console first. Restorey never runs `init` on its own. Adopting a repository
-only lists its snapshots.
+only lists its snapshots and then measures its size with `restic stats`.
 
 Every restic run has its own log in `~/Library/Logs/Restorey/runs/<plan ID>/` (`Restorey-Dev` for Debug builds),
-with secrets redacted. Run logs are kept for 400 days: the agent removes older ones when it starts and once a
-day after that. Logging out, restarting or shutting down the Mac stops the agent with SIGTERM: it gives each restic
+with secrets redacted. A log starts with the restic command (values hidden) and ends with the outcome; a
+`forget` log holds one line per snapshot group, `Group host <host>, paths <paths>, tags <tags>: kept N, removed M
+(<short IDs>)`, rather than restic's JSON reply. Run logs are kept for 400 days: the agent removes older ones
+when it starts and once a day after that, and deleting a plan removes its folder at once. Logging out, restarting or shutting down the Mac stops the agent with SIGTERM: it gives each restic
 in progress SIGINT (so restic removes its own lock), records the run as stopped by the system, which is not a
 failure (no alert, no check-in ping; the backup is tried again 15 minutes after it started), and exits within
 4 seconds, before launchd's 5-second limit (restic gets 2.5 seconds to honour SIGINT). A run already being paused
@@ -290,7 +294,8 @@ executable instead (`RestoreyAgent`, or `RestoreyDevAgent`).
 ## When backups run
 
 The agent's scheduler (`RestoreyCore/Sources/AgentCore/SchedulerCore.swift`, wired up in
-`Agent/Scheduler.swift`) checks every minute for plans that are due. It starts after recovery has finished,
+`Agent/Scheduler.swift`) wakes when the next plan falls due, and at least once a minute, so an hourly plan
+starts on its hour rather than drifting later each run. It starts after recovery has finished,
 and its first check waits for the network as a wake does (at most 2 minutes), so a backup due at login isn't
 skipped for a network that is still coming up. A plan is
 due an interval (an hour for hot plans) after its last attempt, counted in elapsed time, so a time zone or

@@ -15,7 +15,8 @@ extension PlanRunner {
         return await deps.state.status()
     }
 
-    /// Lists the repository's snapshots for every host. Never forgets or changes anything.
+    /// Lists the repository's snapshots for every host, then measures its size (`stats`, Ruling P2-9). Never
+    /// forgets or changes anything. A failed measurement doesn't fail the adopt.
     public func adopt(planID: UUID) async throws -> AdoptReport {
         let handle = try await begin(planID)
         let result = await listForAdoption(planID: planID, handle: handle)
@@ -105,7 +106,11 @@ extension PlanRunner {
         }
         let listed = await deps.queues.run(repository: session.key) { [self] () async -> Result<AdoptReport, AgentError>? in
             guard !(await isWindingDown()) else { return nil }
-            return await listSnapshots(session: session, handle: handle)
+            let listing = await listSnapshots(session: session, handle: handle)
+            if case .success = listing, handle.intent == nil, !(await isWindingDown()) {
+                _ = await measureRepository(session: session, trigger: .manual, handle: handle)
+            }
+            return listing
         }
         return listed ?? .failure(.draining)
     }

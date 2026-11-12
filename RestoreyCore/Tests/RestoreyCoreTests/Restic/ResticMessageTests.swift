@@ -248,4 +248,55 @@ struct ResticMessageTests {
         let base = calendar.date(from: DateComponents(year: y, month: mo, day: d, hour: h, minute: mi))!
         return base.timeIntervalSince1970 + s
     }
+
+    // MARK: stats (Ruling P2-9)
+
+    /// Captured from restic 0.19.1 `stats --mode raw-data --json` on a throwaway repository.
+    @Test func decodesStatsFromRestic0191() throws {
+        let line = try Fixtures.text("stats-raw-data.json").trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(StatsSummary.isStats(line))
+        #expect(try StatsSummary.parse(line) == StatsSummary(totalSize: 62_620))
+        // It has no message_type, so the stream parser keeps it as a plain line for the collector.
+        #expect(ResticMessageParser.parse(line) == .unparseable(line))
+    }
+
+    @Test func statsWithoutATotalIsRefused() {
+        #expect(throws: (any Error).self) { try StatsSummary.parse(#"{"total_blob_count":12}"#) }
+        #expect(throws: (any Error).self) { try StatsSummary.parse(#"{"total_size":"big"}"#) }
+        #expect(throws: (any Error).self) { try StatsSummary.parse("{\"total_size\":1") }
+        #expect(!StatsSummary.isStats("[]"))
+        #expect(!StatsSummary.isStats(#"{"message_type":"summary"}"#))
+    }
+
+    // MARK: forget
+
+    /// Captured from restic 0.19.1 `forget --json --keep-last 1` (paths, host and user replaced).
+    @Test func forgetReportIsSummarisedPerGroup() throws {
+        let line = try Fixtures.text("forget.json").trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(ForgetReport.isReport(line))
+        let groups = try ForgetReport.groups(from: line)
+        #expect(groups.count == 1)
+        let group = try #require(groups.first)
+        #expect(group.host == "fixturehost")
+        #expect(group.paths == ["/fixture/src"])
+        #expect(group.tags == ["restorey:00000000-0000-0000-0000-000000000001"])
+        #expect(group.kept == 1)
+        #expect(group.removedIDs == ["a18cb0e4", "6b65c8aa"])
+        #expect(group.summary == "Group host fixturehost, paths /fixture/src, "
+            + "tags restorey:00000000-0000-0000-0000-000000000001: kept 1, removed 2 (a18cb0e4, 6b65c8aa)")
+    }
+
+    /// restic writes `"remove":null` when a group loses nothing, and a short ID is cut from the full one
+    /// when it is missing.
+    @Test func forgetGroupWithNothingRemoved() throws {
+        let line = #"[{"tags":null,"host":"mac","paths":["/a","/b"],"keep":[{"id":"0123456789abcdef"}],"remove":null,"reasons":[]}]"#
+        let groups = try ForgetReport.groups(from: line)
+        #expect(groups.map(\.summary) == ["Group host mac, paths /a, /b: kept 1, removed 0"])
+        let cut = try ForgetReport.groups(
+            from: #"[{"host":"mac","keep":[],"remove":[{"id":"0123456789abcdef"}]}]"#)
+        #expect(cut.first?.removedIDs == ["01234567"])
+        #expect(cut.first?.summary == "Group host mac: kept 0, removed 1 (01234567)")
+        #expect(try ForgetReport.groups(from: "[]").isEmpty)
+        #expect(throws: (any Error).self) { try ForgetReport.groups(from: #"[{"keep":[{"short_id":"x"}]}]"#) }
+    }
 }

@@ -32,6 +32,8 @@ public actor AgentState {
     private let stateStore: any PayloadStore<RunState>
     private let secrets: any SecretStore
     private let credentialsDirectory: URL
+    /// The plans' run logs, removed with a deleted plan. Nil: nothing to remove (tests without logs).
+    private let runLogs: RunLogStore?
     let now: @Sendable () -> Date
 
     private(set) var config: ConfigFile
@@ -66,6 +68,10 @@ public actor AgentState {
 
     private var writeInFlight = false
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Writes a line to the agent's own log (`agent.log`) for the run actions it refuses
+    /// (`attach(agentLog:)`), so a Back Up Now that did nothing leaves a trace (final review M5).
+    var agentLog: @Sendable (String) -> Void = { _ in }
 
     /// Per plan, why the last helper request failed to read the keychain (the runner reports it).
     private var helperFailures: [UUID: String] = [:]
@@ -121,21 +127,25 @@ public actor AgentState {
     /// Loads both stores. A load failure is kept as the config error rather than thrown.
     /// - Parameters:
     ///   - credentialsDirectory: where `CredentialsFile` keeps the plans' `s3/<id>.ini` files.
+    ///   - runLogs: the run logs `deletePlan` removes with a plan; the runner's store.
     public init(
         configStore: any PayloadStore<ConfigFile>,
         stateStore: any PayloadStore<RunState>,
         secrets: any SecretStore,
         credentialsDirectory: URL,
+        runLogs: RunLogStore? = nil,
         now: @escaping @Sendable () -> Date
     ) async {
         await self.init(
             configStore: configStore, stateStore: stateStore, secrets: secrets,
-            credentialsDirectory: credentialsDirectory, now: now, startupError: nil)
+            credentialsDirectory: credentialsDirectory, runLogs: runLogs, now: now, startupError: nil)
     }
 
     /// The agent's layout: `config.json`, `state.json` and the credentials files all in `directory`
     /// (`Identity.applicationSupportDirectory()`), which is created with mode 0700.
-    public init(directory: URL, secrets: any SecretStore, now: @escaping @Sendable () -> Date) async {
+    public init(
+        directory: URL, secrets: any SecretStore, runLogs: RunLogStore? = nil, now: @escaping @Sendable () -> Date
+    ) async {
         var startupError: String?
         do {
             try FileManager.default.createDirectory(
@@ -147,7 +157,8 @@ public actor AgentState {
         }
         await self.init(
             configStore: Self.configStore(in: directory), stateStore: Self.stateStore(in: directory),
-            secrets: secrets, credentialsDirectory: directory, now: now, startupError: startupError)
+            secrets: secrets, credentialsDirectory: directory, runLogs: runLogs, now: now,
+            startupError: startupError)
     }
 
     public static func configStore(in directory: URL) -> VersionedStore<ConfigFile> {
@@ -167,6 +178,7 @@ public actor AgentState {
         stateStore: any PayloadStore<RunState>,
         secrets: any SecretStore,
         credentialsDirectory: URL,
+        runLogs: RunLogStore?,
         now: @escaping @Sendable () -> Date,
         startupError: String?
     ) async {
@@ -191,6 +203,7 @@ public actor AgentState {
         self.stateStore = stateStore
         self.secrets = secrets
         self.credentialsDirectory = credentialsDirectory
+        self.runLogs = runLogs
         self.now = now
         self.config = config ?? ConfigFile()
         self.runState = runState ?? RunState()
@@ -400,7 +413,7 @@ public actor AgentState {
         }
     }
 
-    /// Removes the plan from the config, then its secrets, credentials file and history. The
+    /// Removes the plan from the config, then its secrets, credentials file, history and run logs. The
     /// repository is never touched. A running plan cannot be deleted, and from the moment this is called
     /// no run can begin on the plan.
     public func deletePlan(_ id: UUID) async throws -> AgentStatus {
@@ -429,6 +442,10 @@ public actor AgentState {
                 var state = runState
                 state.plans[id] = nil
                 do { try await saveState(state) } catch { failures.append("its history (\(error))") }
+            }
+            // Gone now rather than at the 400-day prune: they would only be found by browsing the folder.
+            if let runLogs {
+                do { try await runLogs.removePlan(id) } catch { failures.append("its run logs (\(error.localizedDescription))") }
             }
             let status = pushStatus()
             if !failures.isEmpty {
@@ -649,6 +666,11 @@ public actor AgentState {
         restartRepliesOwed -= 1
         exitWanted = true
         exitIfDone()
+    }
+
+    /// Called once at startup with where the refused run actions are logged (`agent.log`).
+    public func attach(agentLog: @escaping @Sendable (String) -> Void) {
+        self.agentLog = agentLog
     }
 
     /// Called once at startup with how the agent exits for a restart and where it logs why.

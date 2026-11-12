@@ -102,6 +102,7 @@ struct ResticInvocationAcceptanceTests {
             ("forget", .forget(dryRun: false)),
             ("prune", .prune),
             ("check", .check),
+            ("stats", .stats),
             ("unlock", .unlock),
         ]
         for (name, op) in sequence {
@@ -127,6 +128,9 @@ struct ResticInvocationAcceptanceTests {
                 #expect(snaps.contains { $0.hostname == "testhost" && ($0.tags ?? []) == [otherTag] }, "(c) lost")
                 #expect(snaps.filter { $0.hostname == "testhost" && ($0.tags ?? []) == [own] }.count == 1,
                         "own group should be reduced to one snapshot")
+            }
+            if name == "stats" {
+                #expect(try StatsSummary.parse(r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)).totalSize > 0)
             }
             if name == "snapshots" || name == "snapshots-all" {
                 #expect(r.stdout.contains("\"hostname\":\"testhost\""), "\(name): \(r.stdout)")

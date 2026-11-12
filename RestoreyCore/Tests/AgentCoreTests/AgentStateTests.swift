@@ -642,6 +642,48 @@ struct AgentStateTests {
         } throws: { Self.message($0) == "There's no plan with that ID" }
     }
 
+    /// The plan's run logs go with it, not 400 days later; other plans' logs stay.
+    @Test func deletePlanRemovesRunLogs() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let runLogs = RunLogStore(root: dir.url.appendingPathComponent("logs"), subsystem: "test.restorey")
+        let state = await AgentState(directory: dir.url, secrets: InMemorySecretStore(), runLogs: runLogs, now: clock.function)
+        let doomed = Self.plan(now: clock.now)
+        let kept = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(doomed))
+        _ = try await state.savePlan(Self.request(kept))
+        let runs = dir.url.appendingPathComponent("logs/runs")
+        for plan in [doomed, kept] {
+            try await runLogs.begin(planID: plan.id, operation: .backup, startedAt: clock.now, redactor: Redactor(secrets: [])).close()
+        }
+
+        _ = try await state.deletePlan(doomed.id)
+        #expect(!FileManager.default.fileExists(atPath: runs.appendingPathComponent(doomed.id.uuidString).path))
+        #expect(FileManager.default.fileExists(atPath: runs.appendingPathComponent(kept.id.uuidString).path))
+    }
+
+    /// Logs that can't be removed don't stop the rest of the clean-up, and the reply says what was left.
+    @Test func deletePlanReportsRunLogsItCouldNotRemove() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let runLogs = RunLogStore(root: dir.url.appendingPathComponent("logs"), subsystem: "test.restorey")
+        let secrets = InMemorySecretStore()
+        let state = await AgentState(directory: dir.url, secrets: secrets, runLogs: runLogs, now: clock.function)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        try await runLogs.begin(planID: plan.id, operation: .backup, startedAt: clock.now, redactor: Redactor(secrets: [])).close()
+        let planLogs = dir.url.appendingPathComponent("logs/runs/\(plan.id.uuidString)")
+        // A read-only plan folder: its log file can't be removed.
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: planLogs.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: planLogs.path) }
+
+        await #expect {
+            try await state.deletePlan(plan.id)
+        } throws: { Self.message($0)?.hasPrefix("Home was deleted, but Restorey couldn't remove its run logs") == true }
+        #expect(await state.status().plans.isEmpty)
+        #expect(try secrets.read(.repositoryPassword(plan.id)) == nil)
+    }
+
     @Test func deletePlanRefusesARunningPlan() async throws {
         let dir = try TempDirectory()
         let clock = TestClock()

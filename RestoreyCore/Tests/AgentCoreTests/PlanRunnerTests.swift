@@ -212,10 +212,109 @@ struct PlanRunnerTests {
         try f.write("a.txt", "three")
         _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
         let ops = await f.operations()
-        #expect(Array(ops.suffix(5)) == [.backup, .forget(dryRun: false), .prune, .unlock, .check])
+        #expect(Array(ops.suffix(6)) == [.backup, .forget(dryRun: false), .prune, .stats, .unlock, .check])
         #expect(ops.filter { $0 == .check }.count == 2)
         #expect(await f.history().lastPruneAt != nil)
         #expect(await f.history().activeAlerts.isEmpty)
+    }
+
+    /// Ruling P2-9: `stats` follows a successful prune (about weekly) and an adopt, and its total becomes
+    /// the plan's repository size, dated when it was measured.
+    @Test func statsRunsAfterPruneAndAdopt() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        // No prune yet (a week from the plan's creation), so nothing measured.
+        #expect(!(await f.operations()).contains(.stats))
+        #expect(await f.history().repositorySize == nil)
+
+        f.clock.advance(7 * 86_400)
+        try f.write("a.txt", "two")
+        _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        #expect(Array(await f.operations().suffix(5)) == [.forget(dryRun: false), .prune, .stats, .unlock, .check])
+        let history = await f.history()
+        let stats = try #require(history.recent.first { $0.operation == .stats })
+        #expect(stats.outcome == .success(snapshotID: nil))
+        #expect(stats.logFile.hasSuffix("-stats.log"))
+        let size = try #require(history.repositorySize)
+        #expect(size.bytes > 0)
+        #expect(size.measuredAt == stats.endedAt)
+        #expect(history.activeAlerts.isEmpty)
+        #expect(await f.status().repositorySize == size)
+
+        f.clock.advance(60)
+        _ = try await f.state.adopt(f.planID)
+        #expect(Array(await f.operations().suffix(2)) == [.snapshots(allHosts: true), .stats])
+        let adopted = try #require(await f.history().repositorySize)
+        #expect(adopted.measuredAt == f.clock.now)
+        #expect(adopted.bytes == size.bytes)
+    }
+
+    /// A stats failure fails neither the prune nor the adopt and raises no alert: the size measured before
+    /// stays, and the reason goes to agent.log.
+    @Test func statsFailureKeepsTheSizeAndRaisesNothing() async throws {
+        let restic = try ResticBinary.require()
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restorey-wrapper-\(UUID().uuidString).sh")
+        try ("#!/bin/sh\nif [ \"$1\" = stats ]; then echo '{\"message_type\":\"exit_error\",\"code\":1,\"message\":\"Fatal: stats broke\"}' >&2; exit 1; fi\nexec '\(restic.path)' \"$@\"\n")
+            .write(to: scratch, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scratch.path)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+
+        let f = try await RunnerFixture.make(executable: scratch)
+        defer { f.remove() }
+        let earlier = RepositorySize(bytes: 1234, measuredAt: f.clock.now)
+        try await f.state.updateHistory(f.planID) { $0.repositorySize = earlier }
+        try f.write("a.txt", "one")
+        f.clock.advance(7 * 86_400)
+        let backup = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        guard case .success = backup.outcome else {
+            Issue.record("a stats failure must not fail the backup, got \(backup.outcome)")
+            return
+        }
+        var history = await f.history()
+        #expect(history.recent.first { $0.operation == .prune }?.outcome == .success(snapshotID: nil))
+        #expect(history.lastPruneAt != nil)
+        let stats = try #require(history.recent.first { $0.operation == .stats })
+        #expect(stats.outcome == .failed(exitCode: 1, reason: "Fatal: stats broke"))
+        // The steps after it still ran.
+        #expect(Array(await f.operations().suffix(3)) == [.stats, .unlock, .check])
+        #expect(history.repositorySize == earlier)
+        #expect(history.activeAlerts.isEmpty)
+        #expect(f.agentLog.value.contains {
+            $0.contains("Couldn't measure the repository size for plan \(f.planID.uuidString)") && $0.contains("Fatal: stats broke")
+        })
+
+        let report = try await f.state.adopt(f.planID)
+        #expect(report.snapshotCount == 1)
+        history = await f.history()
+        #expect(history.repositorySize == earlier)
+        #expect(history.activeAlerts.isEmpty)
+    }
+
+    /// A forget log holds one summary line per group, never restic's JSON reply (about 2.35 KB per kept
+    /// snapshot, kept 400 days).
+    @Test func forgetLogHoldsASummaryPerGroupAndNoJSON() async throws {
+        let f = try await RunnerFixture.make { $0.retention = Retention(hourly: 1, daily: 1, weekly: 1, monthly: 1) }
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        let first = try #require(try await f.snapshots().first)
+        try f.write("a.txt", "two")
+        _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+
+        let forget = try #require(await f.history().recent.first { $0.operation == .forget(dryRun: false) })
+        let log = try String(contentsOf: f.logs.appendingPathComponent(forget.logFile), encoding: .utf8)
+        let summaries = log.split(separator: "\n").filter { $0.contains(": kept ") }
+        #expect(summaries.count == 1, "\(log)")
+        let shortID = String(first.id.prefix(8))
+        #expect(summaries.first?.hasSuffix(
+            "Group host fixturehost, paths \(f.source.path), tags restorey:\(f.planID.uuidString): kept 1, removed 1 (\(shortID))") == true,
+            "\(log)")
+        for marker in ["\"keep\"", "\"short_id\"", "\"tree\"", "[{"] {
+            #expect(!log.contains(marker), "\(marker) in \(log)")
+        }
     }
 
     /// A failing maintenance step is its own record and raises its own alert; the backup stays a success.
@@ -1094,6 +1193,53 @@ struct PlanRunnerTests {
         #expect(await f.pings() == [])
     }
 
+    /// Final review M5: a refused Back Up Now leaves a line in agent.log, written by the state itself.
+    @Test func refusedBackUpNowIsWrittenToTheAgentLog() async throws {
+        let f = try await RunnerFixture.make(confirmKit: false)
+        defer { f.remove() }
+        let lines = Locked<[String]>([])
+        await f.state.attach(agentLog: { line in lines.mutate { $0.append(line) } })
+
+        await #expect(throws: AgentError.self) { try await f.state.backUpNow(f.planID) }
+        #expect(lines.value == [
+            "Refused Back Up Now of plan \(f.planID.uuidString): Confirm you've saved the recovery kit for Fixture before its first backup",
+        ])
+        let unknown = UUID()
+        await #expect(throws: AgentError.self) { try await f.state.backUpNow(unknown) }
+        #expect(lines.value.last == "Refused Back Up Now of plan \(unknown.uuidString): There's no plan with that ID")
+
+        await f.state.prepareForRestart()
+        await #expect(throws: AgentError.self) { try await f.state.backUpNow(nil) }
+        #expect(lines.value.last
+            == "Refused Back Up Now of every plan: Restorey is finishing the current backup before updating the agent")
+        #expect(lines.value.count == 3)
+    }
+
+    /// Final review M6: Back Up Now for every plan still succeeds when one plan can't start, and says
+    /// why in agent.log. Here the plan is being deleted while the call runs.
+    @Test func backUpNowForEveryPlanLogsAPlanThatCouldNotStart() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        let store = AgentStateTests.ControlledStore(AgentState.configStore(in: f.support))
+        let clock = f.clock
+        let state = await AgentState(
+            configStore: store, stateStore: AgentState.stateStore(in: f.support), secrets: f.secrets,
+            credentialsDirectory: f.support, now: { clock.now })
+        var dependencies = f.dependencies
+        dependencies.state = state
+        let runner = PlanRunner(dependencies: dependencies)
+        await state.attach(runner: runner)
+
+        await store.holdNextSave()
+        let delete = Task { try await state.deletePlan(f.planID) }
+        await store.waitUntilHeld()
+        _ = try await state.backUpNow(nil)
+        #expect(f.agentLog.value == ["Back Up Now couldn't start plan \(f.planID.uuidString): Fixture is being deleted"])
+        #expect(await runner.waitForBackgroundRun(planID: f.planID) == nil)
+        await store.release()
+        _ = try await delete.value
+    }
+
     @Test func createRepositoryRefusesAnExistingRepository() async throws {
         let f = try await RunnerFixture.make() // has already created it once
         defer { f.remove() }
@@ -1227,7 +1373,7 @@ struct PlanRunnerTests {
         let report = try await f.state.adopt(f.planID)
         #expect(report == AdoptReport(hosts: ["fixturehost", "otherhost"], latestPathsForHost: [f.source.path], snapshotCount: 3))
         #expect(try await f.snapshots().count == 3)
-        #expect(await f.operations() == [.catConfig, .initRepository, .snapshots(allHosts: true)])
+        #expect(await f.operations() == [.catConfig, .initRepository, .snapshots(allHosts: true), .stats])
     }
 
     @Test func adoptReportsAWrongPassword() async throws {

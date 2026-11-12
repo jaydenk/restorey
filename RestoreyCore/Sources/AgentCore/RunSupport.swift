@@ -59,6 +59,20 @@ final class StepLog: Sendable {
 
     func close() { writer?.close() }
 
+    /// The lines written for one restic message in a step running `operation`. `forget`'s reply (one JSON
+    /// line holding every kept and removed snapshot in full) becomes one summary line per group: kept 400
+    /// days, the raw reply made an hourly plan's logs grow by gigabytes. A reply that can't be read is
+    /// noted by its size, still without the JSON.
+    static func lines(for message: ResticMessage, operation: ResticOperation) -> [String] {
+        if case .forget = operation, case .unparseable(let line) = message, ForgetReport.isReport(line) {
+            guard let groups = try? ForgetReport.groups(from: line) else {
+                return ["restic's forget reply couldn't be read, so it is left out of this log (\(line.utf8.count) bytes)"]
+            }
+            return groups.isEmpty ? ["Forget: no snapshots of this plan to keep or remove"] : groups.map(\.summary)
+        }
+        return text(for: message).map { [$0] } ?? []
+    }
+
     /// The text written for one restic message. Progress lines are left out: they arrive twice a second
     /// and the UI already shows them.
     static func text(for message: ResticMessage) -> String? {

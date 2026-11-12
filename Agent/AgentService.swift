@@ -86,7 +86,8 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func backUpNow(_ planID: String?, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply, "Back Up Now") { [state, log] in
+        // `AgentState.backUpNow` logs its own refusals (final review M5), where they are tested.
+        respond(reply, "Back Up Now", logsRefusal: false) { [state, log] in
             let status = try await state.backUpNow(try planID.map(Self.planID))
             log.info("Back up now: \(planID.map { "plan \($0)" } ?? "every plan")")
             return status
@@ -246,19 +247,22 @@ final class AgentService: NSObject, AgentXPC, Sendable {
 
     // MARK: Helpers
 
-    /// - Parameter call: names the call in `agent.log` when it is refused.
+    /// - Parameters:
+    ///   - call: names the call in `agent.log` when it is refused.
+    ///   - logsRefusal: false when the state already logs the call's refusals.
     private func respond<T: Encodable & SendableMetatype>(
         _ reply: @escaping @Sendable (Data?, String?) -> Void,
         _ call: String,
+        logsRefusal: Bool = true,
         _ work: @escaping @Sendable () async throws -> T
     ) {
         Task { [log] in
             do {
                 reply(try XPCCoding.encode(try await work()), nil)
             } catch let error as AgentError {
-                // A refusal is an answer, not a fault, but it must leave a trace: a Back Up Now that did
-                // nothing is otherwise invisible (final review M5). The message never names a secret.
-                log.info("Refused \(call): \(error.message)")
+                // A refusal is an answer, not a fault, but it must leave a trace (final review M5). The
+                // message never names a secret.
+                if logsRefusal { log.info("Refused \(call): \(error.message)") }
                 reply(nil, error.message)
             } catch {
                 log.error("Unexpected error handling an XPC request: \(error)")
