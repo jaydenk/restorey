@@ -107,7 +107,7 @@ import Testing
 
     @Test func anUnfinishedPlanWithSavedProgressResumesAtTheSavedStep() {
         let plan = Self.status("a", .unfinished)
-        let saved = SetupProgress(planID: plan.plan.id, step: .sources, addingPlan: false)
+        let saved = SetupProgress(planID: plan.plan.id, step: .sources, addingPlan: false, kitSaved: true)
         #expect(SetupFlow.resume(saved: saved, plans: [plan], installed: true) == saved)
     }
 
@@ -152,7 +152,7 @@ import Testing
         #expect(SetupFlow.resume(saved: beforePlanExists, plans: [complete], installed: true) == beforePlanExists)
 
         let adding = Self.status("b", .unfinished)
-        let midway = SetupProgress(planID: adding.plan.id, step: .sources, addingPlan: true)
+        let midway = SetupProgress(planID: adding.plan.id, step: .sources, addingPlan: true, kitSaved: true)
         #expect(SetupFlow.resume(saved: midway, plans: [complete, adding], installed: true) == midway)
     }
 
@@ -167,9 +167,38 @@ import Testing
         #expect(SetupFlow.resume(saved: saved, plans: [], installed: true) == saved)
     }
 
+    @Test func aFirstRunSavedAtMoveToApplicationsResumesThere() {
+        let saved = SetupProgress(planID: nil, step: .moveToApplications, addingPlan: false)
+        #expect(SetupFlow.resume(saved: saved, plans: [], installed: false) == saved)
+        #expect(SetupFlow.resume(saved: saved, plans: [], installed: true)?.step == .permissions)
+    }
+
+    @Test func stepsPastTheKitNeedItSaved() {
+        let plan = Self.status("a", .unfinished)
+        func resumed(_ step: SetupStep, kit: Bool, adding: Bool = false) -> SetupStep? {
+            let saved = SetupProgress(planID: plan.plan.id, step: step, addingPlan: adding, kitSaved: kit)
+            return SetupFlow.resume(saved: saved, plans: [plan], installed: true)?.step
+        }
+        #expect(resumed(.sources, kit: false) == .recoveryKit)
+        #expect(resumed(.schedule, kit: false) == .recoveryKit)
+        #expect(resumed(.done, kit: false) == .recoveryKit)
+        #expect(resumed(.sources, kit: false, adding: true) == .recoveryKit)
+        #expect(resumed(.sources, kit: true) == .sources)
+        #expect(resumed(.done, kit: true) == .done)
+        #expect(resumed(.recoveryKit, kit: false) == .recoveryKit)
+        #expect(resumed(.password, kit: false) == .password)
+    }
+
+    @Test func progressWithoutKitSavedStillDecodes() throws {
+        let id = UUID()
+        let json = #"{"planID":"\#(id.uuidString)","step":"password","addingPlan":true}"#
+        let decoded = try JSONDecoder().decode(SetupProgress.self, from: Data(json.utf8))
+        #expect(decoded == SetupProgress(planID: id, step: .password, addingPlan: true, kitSaved: false))
+    }
+
     @Test func progressAheadOfAnUninstalledAppGoesBackToMoveToApplications() {
         let plan = Self.status("a", .unfinished)
-        let saved = SetupProgress(planID: plan.plan.id, step: .sources, addingPlan: false)
+        let saved = SetupProgress(planID: plan.plan.id, step: .sources, addingPlan: false, kitSaved: true)
         #expect(SetupFlow.resume(saved: saved, plans: [plan], installed: false)?.step == .moveToApplications)
         let moved = SetupProgress(planID: plan.plan.id, step: .moveToApplications, addingPlan: false)
         #expect(SetupFlow.resume(saved: moved, plans: [plan], installed: true)?.step == .permissions)
@@ -187,7 +216,7 @@ import Testing
     @Test func theStoreRoundTripsAndClears() {
         Self.withStore { store, _ in
             #expect(store.load() == nil)
-            let progress = SetupProgress(planID: UUID(), step: .password, addingPlan: true)
+            let progress = SetupProgress(planID: UUID(), step: .password, addingPlan: true, kitSaved: true)
             store.save(progress)
             #expect(store.load() == progress)
             store.clear()

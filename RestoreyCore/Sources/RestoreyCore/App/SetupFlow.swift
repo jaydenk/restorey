@@ -21,11 +21,26 @@ public struct SetupProgress: Codable, Sendable, Equatable {
     public var planID: UUID?
     public var step: SetupStep
     public var addingPlan: Bool
+    /// The recovery kit has been saved or printed at `.recoveryKit`. The agent's confirmation is deferred
+    /// to Done (see `SetupFlow`), so this, not the plan, is what lets setup go past `.recoveryKit`.
+    public var kitSaved: Bool
 
-    public init(planID: UUID?, step: SetupStep, addingPlan: Bool) {
+    public init(planID: UUID?, step: SetupStep, addingPlan: Bool, kitSaved: Bool = false) {
         self.planID = planID
         self.step = step
         self.addingPlan = addingPlan
+        self.kitSaved = kitSaved
+    }
+
+    private enum CodingKeys: String, CodingKey { case planID, step, addingPlan, kitSaved }
+
+    /// Progress stored before `kitSaved` existed still decodes, as not saved.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        planID = try c.decodeIfPresent(UUID.self, forKey: .planID)
+        step = try c.decode(SetupStep.self, forKey: .step)
+        addingPlan = try c.decode(Bool.self, forKey: .addingPlan)
+        kitSaved = try c.decodeIfPresent(Bool.self, forKey: .kitSaved) ?? false
     }
 }
 
@@ -39,7 +54,8 @@ public struct SetupFacts: Sendable, Equatable {
     public var probe: RepositoryProbe?
     /// The repository exists and the password opens it: created, or adopted with the password accepted.
     public var repositoryReady: Bool
-    /// The owner has confirmed the recovery kit.
+    /// Gates leaving `.recoveryKit`. During setup it reflects `SetupProgress.kitSaved` (the kit has been
+    /// saved or printed), not the agent's confirmation, which only happens at Done.
     public var kitConfirmed: Bool
 
     public init(installed: Bool, fdaGranted: Bool, probe: RepositoryProbe?, repositoryReady: Bool, kitConfirmed: Bool) {
@@ -52,6 +68,13 @@ public struct SetupFacts: Sendable, Equatable {
 }
 
 /// The setup step machine the setup window drives.
+///
+/// Ordering that the window must keep: the recovery kit is saved at `.recoveryKit` (recorded as
+/// `SetupProgress.kitSaved`), but the agent's `confirmRecoveryKit` is deferred. Confirming makes the plan
+/// `.complete` and runnable, and sources and schedule come after the kit, so confirming early would let the
+/// scheduler back up the default sources mid-setup. On Done ("Start first backup") the window calls
+/// `confirmRecoveryKit` and then `backUpNow`. Until then the plan stays `.unfinished`, which is what lets
+/// `resume` bring the owner back to sources, schedule or done.
 public enum SetupFlow {
     public static func firstStep(installed: Bool, addingPlan: Bool) -> SetupStep {
         if addingPlan { return .storage }
@@ -65,11 +88,13 @@ public enum SetupFlow {
         case .storage: facts.probe != nil
         case .password: facts.repositoryReady
         case .recoveryKit: facts.kitConfirmed
+        // Their form controls validate as the owner edits, so Continue is always allowed.
         case .sources, .schedule: true
         case .done: false
         }
     }
 
+    /// Callers check `canContinue` first. `facts` is unused because the order is fixed.
     public static func next(after step: SetupStep, facts: SetupFacts) -> SetupStep {
         switch step {
         case .moveToApplications: .permissions
@@ -88,6 +113,8 @@ public enum SetupFlow {
     /// window's job, so it is treated like `.complete` here. Saved progress for a plan that no longer
     /// exists, or is no longer unfinished, is discarded. With several unfinished plans the saved one wins,
     /// otherwise the first in `plans`. "+ Add plan…" progress resumes as adding a plan, at its saved step.
+    /// A saved step past `.recoveryKit` needs `kitSaved`, otherwise it resumes at `.recoveryKit`. `.done` is
+    /// valid while the plan is unfinished: "Start first backup" hasn't been pressed yet.
     public static func resume(saved: SetupProgress?, plans: [PlanStatus], installed: Bool) -> SetupProgress? {
         let unfinished = plans.filter { $0.setupState == .unfinished }
         if let saved, isStillValid(saved, plans: plans, unfinished: unfinished) {
@@ -110,8 +137,13 @@ public enum SetupFlow {
 
     /// The app may have been moved in or out of /Applications since the progress was saved.
     private static func reconciled(_ progress: SetupProgress, installed: Bool) -> SetupProgress {
-        guard !progress.addingPlan else { return progress }
         var progress = progress
+        if let index = SetupStep.allCases.firstIndex(of: progress.step),
+            index > SetupStep.allCases.firstIndex(of: .recoveryKit)!, !progress.kitSaved
+        {
+            progress.step = .recoveryKit
+        }
+        guard !progress.addingPlan else { return progress }
         if !installed {
             progress.step = .moveToApplications
         } else if progress.step == .moveToApplications {

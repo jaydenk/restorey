@@ -157,12 +157,14 @@ window forward as it is, so the app can still be reached when its menu bar icon 
 starts, it opens Settings at once, in General (as does opening it again while the icon is hidden), with the note "Restorey's menu bar icon is hidden. Show it in System
 Settings → Menu Bar." An icon squeezed out of a full menu bar isn't detected (macOS still reports it as visible), so
 opening the app again is the way in. A copy outside `/Applications` opens setup's "Move to Applications" step
-instead. The setup window's step order and rules live in `SetupFlow` (`RestoreyCore`): Move to Applications,
+instead. Open at login registers the app itself with `SMAppService.mainApp`, from the installed copy only; its switch
+comes with Settings → General.
+
+The setup window's step order and rules live in `SetupFlow` (`RestoreyCore`): Move to Applications,
 permissions (Full Disk Access required, notifications optional), storage, password, recovery kit, sources, schedule,
 then the first backup. "Check" saves the plan with its kit unconfirmed, so it never runs. `SetupProgressStore` keeps the
 step in `UserDefaults` (`setupProgress`) so quitting resumes an unfinished setup; a plan needing a new kit is the
-recovery-kit window's job, not setup's. Open at login registers the app itself with `SMAppService.mainApp`, from the installed copy only; its switch
-comes with Settings → General.
+recovery-kit window's job, not setup's. The kit is saved at its step but the agent confirms it only at "Start first backup", so a plan stays unfinished (and never runs) until then.
 
 ### The menu bar
 
