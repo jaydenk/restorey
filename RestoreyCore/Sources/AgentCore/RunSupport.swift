@@ -12,7 +12,17 @@ final class RunHandle: Sendable {
 
     private let state = Mutex(State())
 
+    /// The run is a backup (scheduled or Back Up Now), not a one-off action (create, adopt, probe) or an unlock.
+    let isBackup: Bool
+
+    init(isBackup: Bool = false) {
+        self.isBackup = isBackup
+    }
+
     var intent: InterruptIntent? { state.withLock { $0.intent } }
+
+    /// A backup that hasn't been asked to stop (pause, delete, system stop, update): it will carry on.
+    var isLiveBackup: Bool { isBackup && intent == nil }
 
     /// The restic process the run currently has, if any.
     var process: ResticProcess? { state.withLock { $0.process } }

@@ -17,6 +17,13 @@ import Testing
         #expect(PasswordStep.decide(probe: nil, progress: Self.progress()) == .probing)
     }
 
+    @Test func aFailedProbeIsItsOwnStateNotAWaitingSpinner() {
+        #expect(PasswordStep.decide(probe: nil, progress: Self.progress(), probeFailed: true) == .probeFailed)
+        // What is recorded still wins, and a probe that has answered is used as it is.
+        #expect(PasswordStep.decide(probe: nil, progress: Self.progress(created: true), probeFailed: true) == .ready)
+        #expect(PasswordStep.decide(probe: .empty, progress: Self.progress(), probeFailed: true) == .create)
+    }
+
     @Test func emptyAddressOffersCreate() {
         #expect(PasswordStep.decide(probe: .empty, progress: Self.progress()) == .create)
     }

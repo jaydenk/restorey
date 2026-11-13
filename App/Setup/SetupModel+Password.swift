@@ -4,20 +4,28 @@ import RestoreyCore
 /// Setup step "Repository password" (UI design §4 step 3). What it shows is `PasswordStep.decide`'s, from the
 /// probe and the facts the progress records (`repositoryCreated`, `adoption`), never from the plan's origin.
 extension SetupModel {
-    var passwordStep: PasswordStep { PasswordStep.decide(probe: draft.probe?.state, progress: draft.progress) }
+    var passwordStep: PasswordStep {
+        PasswordStep.decide(probe: draft.probe?.state, progress: draft.progress, probeFailed: probeFailed)
+    }
 
     /// Created or adopted by this setup (`SetupFacts.repositoryReady`).
     var repositoryReady: Bool { passwordStep == .ready }
 
     /// The password step shows what "Check" found; a resumed step probes again with the saved password, unless
     /// the progress already says this setup created or adopted the repository.
+    /// A failed probe leaves the step on `.probeFailed`, whose "Try Again" calls this again.
     func probeIfNeeded() async {
-        guard step == .password, passwordStep == .probing, let plan = draft.plan, let supervisor else { return }
+        guard step == .password, passwordStep == .probing || passwordStep == .probeFailed, let plan = draft.plan,
+            let supervisor
+        else { return }
+        probeFailed = false
         await act {
             switch await supervisor.connection.probeRepository(plan.id) {
-            case .failure(let error): return error.description
+            case .failure(let error):
+                probeFailed = true
+                return error.description
             case .success(let probe):
-                draft.probe = probe
+                setProbe(probe)
                 if case .existing(let report) = probe.state {
                     // Opened with the password typed before the quit: still to be adopted. A plan already saved
                     // as adopted (the quit came during "Use This Repository") keeps the host label chosen then.
@@ -31,18 +39,18 @@ extension SetupModel {
     /// The generated password offered for a new repository, made the first time the step shows it.
     func offerGeneratedPassword() {
         let key = SecretKey.repositoryPassword(planID)
-        if draft.secret(key) == nil { draft.setSecret(PasswordGenerator.make(), for: key) }
+        if secret(key).isEmpty { setSecret(PasswordGenerator.make(), for: key) }
     }
 
     func newGeneratedPassword() {
-        draft.setSecret(PasswordGenerator.make(), for: .repositoryPassword(planID))
+        setSecret(PasswordGenerator.make(), for: .repositoryPassword(planID))
     }
 
     /// Switching between the generated password and the user's own starts the field afresh. The recovery kit,
     /// next, shows the password as saved, so a mistyped one is seen there before anything is backed up.
     func chooseOwnPassword(_ own: Bool) {
         ownPassword = own
-        draft.setSecret(own ? nil : PasswordGenerator.make(), for: .repositoryPassword(planID))
+        setSecret(own ? "" : PasswordGenerator.make(), for: .repositoryPassword(planID))
     }
 
     var passwordProblem: String? {
@@ -61,8 +69,7 @@ extension SetupModel {
             switch await supervisor.connection.createRepository(saved.id) {
             case .failure(let error): return error.description
             case .success:
-                draft.setRepositoryCreated()
-                store.save(draft.progress)
+                recordRepositoryCreated()
                 go(to: .recoveryKit)
                 return nil
             }
@@ -75,11 +82,11 @@ extension SetupModel {
         guard step == .password, let saved = draft.plan, let supervisor, !secret(key).isEmpty else { return }
         await act {
             if let problem = await save(saved, secrets: [SecretEntry(key: key, value: secret(key))]) { return problem }
-            draft.setSecret(nil, for: key)
+            setSecret("", for: key)
             switch await supervisor.connection.probeRepository(saved.id) {
             case .failure(let error): return error.description
             case .success(let probe):
-                draft.probe = probe
+                setProbe(probe)
                 switch probe.state {
                 case .existing(let report):
                     hostLabel = defaultHostLabel(report)
@@ -113,11 +120,12 @@ extension SetupModel {
             switch await supervisor.connection.adopt(saved.id) {
             case .failure(let error): return error.description
             case .success(let report):
-                draft.setAdoption(report)
-                store.save(draft.progress)
                 var prefilled = draft.plan ?? adopted
                 prefilled.sources = SetupAdoption.prefilledSources(report, current: prefilled.sources)
+                // Recorded only once the pre-filled sources are saved too: until then the step stays on the
+                // adopt path, and pressing the button again runs all of it again.
                 if let problem = await save(prefilled) { return problem }
+                recordAdoption(report)
                 go(to: .recoveryKit)
                 return nil
             }
@@ -134,19 +142,12 @@ extension SetupModel {
     /// "Check" saves a different address.
     func backToStorage() {
         guard step == .password, !working else { return }
-        draft.probe = nil
+        setProbe(nil)
+        probeFailed = false
         go(to: .storage)
     }
 
     // MARK: Recovery kit (step 4, Task 13's)
-
-    var kitSaved: Bool {
-        get { draft.progress.kitSaved }
-        set {
-            draft.setKitSaved(newValue)
-            if installed { store.save(draft.progress) }
-        }
-    }
 
     func continueFromRecoveryKit() {
         guard step == .recoveryKit, canContinue else { return }

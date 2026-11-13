@@ -10,7 +10,15 @@ struct SetupWindow: View {
             Text(model.heading)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            if model.planMissing {
+            if let configError = model.configError {
+                // The menu's wording (`MenuPresentation`); setup waits for a status that lists the plan again.
+                Label("Restorey can't read its settings: \(configError)", systemImage: "exclamationmark.octagon")
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Setup carries on when the settings can be read again.")
+                    .foregroundStyle(.secondary)
+                stepView
+            } else if model.planMissing {
                 PlanMissingView(model: model)
             } else {
                 stepView

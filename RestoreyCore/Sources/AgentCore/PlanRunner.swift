@@ -148,7 +148,7 @@ public actor PlanRunner {
     /// Runs one backup now and returns its record. Throws only when the run can't be registered:
     /// draining, the config-error state, an unknown plan, a plan being deleted or already running.
     public func runBackup(planID: UUID, trigger: RunTrigger) async throws -> RunRecord {
-        let handle = try await begin(planID)
+        let handle = try await begin(planID, isBackup: true)
         let record = await backup(planID: planID, trigger: trigger, handle: handle)
         await end(planID, handle)
         return record
@@ -170,11 +170,13 @@ public actor PlanRunner {
             if afterPausedRun, handles[planID]?.intent == .pause {
                 startWhenPausedRunEnds.insert(planID)
             } else {
-                // Already running (the scheduler got there first): the backup asked for is under way.
-                do {
-                    try await startInBackground(planID)
-                } catch AgentError.alreadyRunning {
+                // A backup already running and carrying on (the scheduler got there first) is the backup asked
+                // for. Anything else holding the plan (a run stopping for a pause, an adopt) is refused as
+                // before; only Resume queues a backup behind a stopping run (Ruling R62).
+                if handles[planID]?.isLiveBackup == true {
                     alreadyRunning = true
+                } else {
+                    try await startInBackground(planID)
                 }
             }
         } else {
@@ -307,7 +309,7 @@ public actor PlanRunner {
     }
 
     private func startInBackground(_ planID: UUID) async throws {
-        let handle = try await begin(planID)
+        let handle = try await begin(planID, isBackup: true)
         background[planID] = Task {
             let record = await backup(planID: planID, trigger: .manual, handle: handle)
             await end(planID, handle)
@@ -318,14 +320,14 @@ public actor PlanRunner {
     /// Waits for recovery (unless this is recovery), then registers the run with `AgentState` (which
     /// refuses while draining, for an unknown plan, a plan being deleted or already running) and gives it
     /// a handle `pause` can reach from that moment on.
-    func begin(_ planID: UUID, waitForRecovery: Bool = true) async throws -> RunHandle {
+    func begin(_ planID: UUID, waitForRecovery: Bool = true, isBackup: Bool = false) async throws -> RunHandle {
         if waitForRecovery { await recovery?.value }
         try await deps.state.requireRunnable(planID)
         if handles[planID] != nil {
             let name = (try? await deps.state.runInputs(planID).plan.name) ?? "This plan"
             throw AgentError.alreadyRunning(name: name)
         }
-        let handle = RunHandle()
+        let handle = RunHandle(isBackup: isBackup)
         handles[planID] = handle
         do {
             try await deps.state.beginRun(planID: planID)

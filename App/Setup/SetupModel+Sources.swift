@@ -5,22 +5,22 @@ import RestoreyCore
 extension SetupModel {
     var sources: [String] {
         get { draft.plan?.sources ?? [] }
-        set { draft.plan?.sources = newValue }
+        set { editPlan { $0.sources = newValue } }
     }
 
     var exclusions: [String] {
         get { draft.plan?.exclusions ?? [] }
-        set { draft.plan?.exclusions = newValue }
+        set { editPlan { $0.exclusions = newValue } }
     }
 
     var fileTypeExclusions: [String] {
         get { draft.plan?.fileTypeExclusions ?? [] }
-        set { draft.plan?.fileTypeExclusions = newValue }
+        set { editPlan { $0.fileTypeExclusions = newValue } }
     }
 
     var oneFileSystem: Bool {
         get { draft.plan?.oneFileSystem ?? true }
-        set { draft.plan?.oneFileSystem = newValue }
+        set { editPlan { $0.oneFileSystem = newValue } }
     }
 
     /// The build's identity, for the default exclusions (Restorey's own folders differ per identity).

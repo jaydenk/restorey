@@ -70,6 +70,8 @@ public struct SetupProgress: Codable, Sendable, Equatable {
 public enum PasswordStep: Sendable, Equatable {
     /// Nothing known yet: a resumed step probes again.
     case probing
+    /// A resumed step's probe failed (the step shows why): "Try Again" probes again.
+    case probeFailed
     /// Nothing there: a password and "Create New Repository".
     case create
     /// A repository the saved password doesn't open: ask for its own.
@@ -81,10 +83,14 @@ public enum PasswordStep: Sendable, Equatable {
 
     /// Decided from the recorded facts first (`repositoryCreated`, `adoption`), never from the plan's origin:
     /// a plan saved with a typed password that opens someone else's repository still has its new-plan origin.
-    public static func decide(probe: RepositoryProbe.State?, progress: SetupProgress) -> PasswordStep {
+    /// `probeFailed`: the last probe of the address failed, so nothing is known and the step shouldn't sit on a
+    /// spinner.
+    public static func decide(
+        probe: RepositoryProbe.State?, progress: SetupProgress, probeFailed: Bool = false
+    ) -> PasswordStep {
         if progress.repositoryCreated || progress.adoption != nil { return .ready }
         switch probe {
-        case nil: return .probing
+        case nil: return probeFailed ? .probeFailed : .probing
         case .empty?: return .create
         case .passwordRejected?: return .open
         case .existing(let report)?: return .adopt(report)

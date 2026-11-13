@@ -19,8 +19,8 @@ final class SetupModel {
     /// How often the permissions step asks the agent about Full Disk Access while it is shown (P2-11).
     static let fullDiskAccessPollInterval: Duration = .seconds(2)
 
-    /// Changed by the step extensions too (see `stepError`).
-    var draft: SetupDraft
+    /// Changed only here: the step extensions go through the named mutators under "The plan".
+    private(set) var draft: SetupDraft
     var step: SetupStep { draft.step }
     var heading: String { draft.step.heading(addingPlan: draft.progress.addingPlan) }
 
@@ -64,9 +64,13 @@ final class SetupModel {
     var stepError: String?
     /// A call to the agent is in flight: the step's buttons wait for it.
     var working = false
-    /// The saved plan is no longer in the agent's status (deleted elsewhere): the steps after storage can't go
-    /// on, and the window offers to start again (`startAgain`).
-    var planMissing = false
+    /// Set by `loadPlan` when the first status read has no plan under the saved id (see `planMissing`).
+    var planMissingAtLoad = false
+    /// The agent can't read its settings, so its status lists no plans: the window shows why and waits for a
+    /// status that has them, never offering to start again (that would orphan the plan once the file is fixed).
+    var configError: String?
+    /// The password step's last probe failed (its sentence is `stepError`): "Try Again" probes again.
+    var probeFailed = false
     /// Set when "Start first backup" has started the run: the records it is measured against.
     var firstBackupBaseline: FirstBackupProgress.Baseline?
     /// Closes the setup window (`WindowRouter` supplies it): Done's Close.
@@ -233,6 +237,17 @@ final class SetupModel {
 
     var plan: Plan? { draft.plan }
 
+    /// The plan this setup saved is gone from the agent (deleted elsewhere, while the window was closed or open):
+    /// the steps can't go on, and the window offers to start again (`startAgain`). A status with a settings error
+    /// lists no plans, so it never counts.
+    var planMissing: Bool {
+        if planMissingAtLoad { return true }
+        guard let id = draft.progress.planID, let status = supervisor?.status, status.configError == nil else {
+            return false
+        }
+        return !status.plans.contains { $0.plan.id == id }
+    }
+
     /// The plan's id: the saved plan's, or the one "Check" will save a new plan under.
     var planID: UUID { draft.plan?.id ?? draft.progress.planID ?? newPlanID }
 
@@ -245,7 +260,8 @@ final class SetupModel {
 
     /// A resumed setup gets the plan back from the agent's status (the plan was saved at each Continue).
     /// Waits for the first status when there is none yet. A first run with no plan saved has nothing to load.
-    /// A status without the plan (deleted elsewhere) sets `planMissing`.
+    /// A status without the plan (deleted elsewhere) sets `planMissing`; one with a settings error sets
+    /// `configError` and the wait goes on.
     ///
     /// The wait isn't woken by cancellation: a step view that goes while it waits leaves this task parked until
     /// the next status arrives, when it sees the cancellation and returns without touching anything. Statuses
@@ -254,14 +270,20 @@ final class SetupModel {
         guard draft.plan == nil, let id = draft.progress.planID, let supervisor else { return }
         while !Task.isCancelled, draft.plan == nil {
             if let status = supervisor.lastKnownStatus {
-                guard let saved = status.plans.first(where: { $0.plan.id == id })?.plan else {
-                    planMissing = true
+                if let error = status.configError {
+                    // No plans are listed while the settings can't be read: wait for a status that can say.
+                    configError = error
+                } else if let saved = status.plans.first(where: { $0.plan.id == id })?.plan {
+                    configError = nil
+                    draft.plan = saved
+                    storage = StorageForm(repository: saved.repository)
+                    hostLabel = saved.hostLabel
+                    return
+                } else {
+                    configError = nil
+                    planMissingAtLoad = true
                     return
                 }
-                draft.plan = saved
-                storage = StorageForm(repository: saved.repository)
-                hostLabel = saved.hostLabel
-                return
             }
             await withCheckedContinuation { (resume: CheckedContinuation<Void, Never>) in
                 withObservationTracking {
@@ -276,11 +298,62 @@ final class SetupModel {
     /// After `planMissing`: forget the plan and go back to the storage step with an empty form.
     func startAgain() {
         draft.forgetPlan()
-        planMissing = false
+        planMissingAtLoad = false
+        probeFailed = false
         storage = StorageForm()
         schedule = nil
         stepError = nil
         firstBackupBaseline = nil
+        if installed { store.save(draft.progress) }
+    }
+
+    // Named changes to the draft, for the step extensions. Those that record a fact setup must keep across a quit
+    // save the progress at once.
+
+    func setProbe(_ probe: RepositoryProbe?) {
+        draft.probe = probe
+        if probe != nil { probeFailed = false }
+    }
+
+    /// "Check" saved the plan under `id`.
+    func recordSavedPlan(_ id: UUID) {
+        draft.setPlanID(id)
+        saveProgress()
+    }
+
+    /// "Check" saved a different address: nothing found, created or adopted at the old one holds.
+    func forgetRepository() {
+        draft.forgetRepository()
+        probeFailed = false
+        saveProgress()
+    }
+
+    func recordRepositoryCreated() {
+        draft.setRepositoryCreated()
+        saveProgress()
+    }
+
+    func recordAdoption(_ report: AdoptReport) {
+        draft.setAdoption(report)
+        saveProgress()
+    }
+
+    var kitSaved: Bool {
+        get { draft.progress.kitSaved }
+        set {
+            draft.setKitSaved(newValue)
+            saveProgress()
+        }
+    }
+
+    /// The sources step's edits to the plan, saved at its Continue.
+    func editPlan(_ change: (inout Plan) -> Void) {
+        guard var plan = draft.plan else { return }
+        change(&plan)
+        draft.plan = plan
+    }
+
+    private func saveProgress() {
         if installed { store.save(draft.progress) }
     }
 
@@ -289,6 +362,14 @@ final class SetupModel {
     /// Stores what was typed as it is (the fields' binding rule): empty is no secret.
     func setSecret(_ value: String, for key: SecretKey) {
         draft.setSecret(value.isEmpty ? nil : value, for: key)
+    }
+
+    /// An environment row's typed value, held by row until "Check" names its keychain item.
+    func environmentValue(_ row: UUID) -> String { draft.environmentValue(row) ?? "" }
+
+    /// Stores what was typed as it is (the fields' binding rule): empty is no value.
+    func setEnvironmentValue(_ value: String, for row: UUID) {
+        draft.setEnvironmentValue(value.isEmpty ? nil : value, for: row)
     }
 
     /// Runs `body` as the step's one action: the buttons wait, and a sentence it returns is shown.

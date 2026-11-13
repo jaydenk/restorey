@@ -17,6 +17,10 @@ struct PasswordView: View {
                     ProgressView().controlSize(.small)
                     Text("Checking the repository address…").foregroundStyle(.secondary)
                 }
+            case .probeFailed:
+                Text("Restorey couldn't check the repository address.").font(.headline)
+                Text("Try again, or go back and check the address.")
+                    .fixedSize(horizontal: false, vertical: true)
             case .create:
                 NewRepositoryForm(model: model)
             case .open:
@@ -61,6 +65,10 @@ struct PasswordView: View {
             Button("Use This Repository") { Task { await model.useExistingRepository() } }
                 .keyboardShortcut(.defaultAction)
                 .disabled(model.working || FormValidation.hostLabel(model.hostLabel) != nil)
+        case .probeFailed:
+            Button("Try Again") { Task { await model.probeIfNeeded() } }
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.working)
         case .probing:
             EmptyView()
         }

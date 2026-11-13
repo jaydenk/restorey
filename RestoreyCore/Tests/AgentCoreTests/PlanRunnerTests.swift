@@ -804,6 +804,49 @@ struct PlanRunnerTests {
         #expect(history.recent.filter { $0.operation == .backup }.map(\.id) == [record.id, paused.id])
     }
 
+    /// Back Up Now on a run that is stopping for a pause is refused as before ("already backing up"), not
+    /// reported as already running: that run won't carry on. Unlike Resume (Ruling R62), Back Up Now doesn't
+    /// queue a backup behind it.
+    @Test func backUpNowWhileTheRunIsStoppingForAPauseIsRefused() async throws {
+        let restic = try ResticBinary.require()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restorey-stubborn-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = directory.appendingPathComponent("stubborn")
+        let wrapper = directory.appendingPathComponent("restic.sh")
+        try """
+            #!/bin/sh
+            if [ "$1" = backup ] && [ -f '\(marker.path)' ]; then
+              rm -f '\(marker.path)'
+              trap '' INT
+              echo '{"message_type":"status","percent_done":0.1,"total_files":1,"files_done":0,"total_bytes":1,"bytes_done":0}'
+              exec /bin/sleep 30
+            fi
+            exec '\(restic.path)' "$@"
+
+            """.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+
+        let f = try await RunnerFixture.make(executable: wrapper, gracePeriod: .seconds(2))
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        try "".write(to: marker, atomically: true, encoding: .utf8)
+
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress != nil }
+        // Running and carrying on: reported, not refused.
+        let live = try await f.state.backUpNow(f.planID)
+        #expect(live.alreadyRunning)
+        _ = try await f.state.pause(f.planID)
+        await #expect { try await f.state.backUpNow(f.planID) } throws: {
+            ($0 as? AgentError)?.message == "Fixture is already backing up"
+        }
+        let paused = try await run.value
+        #expect(paused.outcome == .paused)
+        #expect(await f.runner.waitForBackgroundRun(planID: f.planID) == nil)
+    }
+
     /// A Resume on a plan that isn't paused only answers with the status.
     @Test func resumeWhileNotPausedStartsNothing() async throws {
         let f = try await RunnerFixture.make()

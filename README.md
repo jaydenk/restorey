@@ -216,14 +216,20 @@ types; one file system). **Schedule** has the interval (hourly by default; 1, 2,
 rule, retention and the optional check-in URL with why it matters (`ScheduleForm`). **Done**'s "Start First Backup"
 saves anything left, confirms the kit, then backs up: confirming makes the plan due, so the scheduler may start it
 first. `backUpNow` answers with a `BackUpNowReply` whose `alreadyRunning` says so for the plan asked for, instead
-of refusing (an agent from before it answered with a bare status, which still decodes). The progress line
+of refusing (an agent from before it answered with a bare status, which still decodes). Only a backup that will carry
+on counts: a run stopping for a pause (or any other stop), or a one-off action such as an adopt, still gets the "is
+already backing up" refusal, as before; only Resume queues a backup behind a stopping run (Ruling R62). The progress line
 (`FirstBackupProgress`) is the menu's wording, plus "Waiting to start" while the run has no progress yet (queued behind
 an adopt's size measurement, say). Closing the window leaves the backup running. Every agent sentence shown in setup
 gets a closing full stop (`FormValidation.sentence`), as the form's own sentences have. An environment row's value
 is held by the row until "Check" names its keychain item, so renaming the row keeps what was typed, and "Leave a key
 empty to keep the one already saved" shows only while the form still shows the saved address. If the plan a setup
-was building is gone from the agent's status when the window reopens, the window says so and offers "Start Again"
-at the storage step. `SetupModel` keeps the shared state; each step's actions are in their own file
+was building is gone from the agent's status (deleted while the window was closed or open), the window says so and
+offers "Start Again" at the storage step. A status that lists no plans because the agent can't read its settings
+never counts: the window shows "Restorey can't read its settings: …" and waits, so the plan isn't orphaned once the
+file is fixed. A resumed password step whose probe fails says so with "Try Again" rather than a spinner. The adopt
+report is recorded only once the pre-filled sources are saved too, so a failure there leaves the step on the adopt
+path and pressing the button again runs all of it again. `SetupModel` keeps the shared state; each step's actions are in their own file
 (`SetupModel+Storage`, `+Password`, `+Sources`, `+Schedule`, `+Done`).
 
 Applying a plan's retention to snapshots from before it adopted the repository (product spec §5.6's opt-in, with a

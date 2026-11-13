@@ -3,14 +3,6 @@ import RestoreyCore
 
 /// Setup step "Where backups go" (UI design §4 step 2).
 extension SetupModel {
-    /// An environment row's typed value, held by row until "Check" names its keychain item.
-    func environmentValue(_ row: UUID) -> String { draft.environmentValue(row) ?? "" }
-
-    /// Stores what was typed as it is (the fields' binding rule): empty is no value.
-    func setEnvironmentValue(_ value: String, for row: UUID) {
-        draft.setEnvironmentValue(value.isEmpty ? nil : value, for: row)
-    }
-
     /// Whether an empty key field keeps the saved key: only while the form still shows the saved address.
     var keepsSavedSecrets: Bool { storage.keepsSavedSecrets(saved: draft.plan?.repository) }
 
@@ -50,14 +42,13 @@ extension SetupModel {
                 secrets.append(SecretEntry(key: .repositoryPassword(id), value: PasswordGenerator.make()))
             }
             if let problem = await save(plan, secrets: secrets) { return problem }
-            if !sameRepository { draft.forgetRepository() }
-            draft.setPlanID(id)
-            store.save(draft.progress)
+            if !sameRepository { forgetRepository() }
+            recordSavedPlan(id)
             switch await supervisor.connection.probeRepository(id) {
             case .failure(let error):
                 return error.description
             case .success(let probe):
-                draft.probe = probe
+                setProbe(probe)
                 if case .existing(let report) = probe.state { hostLabel = defaultHostLabel(report) }
                 go(to: .password)
                 return nil

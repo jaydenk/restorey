@@ -95,8 +95,11 @@ private struct OtherLocationFields: View {
                     PlainTextField(title: "Name", text: $row.name).frame(width: 190)
                     SecretField(title: "Value", text: value(row))
                     Button {
-                        model.setEnvironmentValue("", for: row.id)
-                        model.storage.environment.removeAll { $0.id == row.id }
+                        // `row` reads through the binding into `model.storage`: take the id first, or the
+                        // removal's predicate reads `storage` while it is being changed (an exclusivity trap).
+                        let id = row.id
+                        model.setEnvironmentValue("", for: id)
+                        model.storage.environment.removeAll { $0.id == id }
                     } label: {
                         Image(systemName: "minus.circle")
                     }
