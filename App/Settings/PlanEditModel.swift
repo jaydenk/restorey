@@ -68,9 +68,9 @@ final class PlanEditModel {
         saving = true
         saveError = nil
         defer { saving = false }
-        if let password = edit.passwordToCheck {
+        if let credentials = edit.credentialsToCheck {
             checkingPassword = true
-            let probe = await connection.probeRepositoryPassword(planID, password: password)
+            let probe = await connection.probeRepositoryCredentials(planID, secrets: credentials)
             checkingPassword = false
             switch probe {
             case .success(let found):

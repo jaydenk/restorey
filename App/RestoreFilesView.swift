@@ -30,7 +30,8 @@ struct RestoreFilesView: View {
         .padding(20)
         .frame(width: 600, alignment: .topLeading)
         .frame(minHeight: 240, alignment: .topLeading)
-        .background(OptionKeyMonitor(onChange: { model.optionChanged($0) }, onResignKey: { model.resignedKey() }))
+        .background(OptionKeyMonitor(
+            onChange: { model.optionChanged($0) }, onResignKey: { model.resignedKey() }, onBecomeKey: { model.becameKey() }))
     }
 
     @ViewBuilder private var commands: some View {

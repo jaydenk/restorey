@@ -8,6 +8,9 @@ import SwiftUI
 /// stored elsewhere.
 struct RecoveryKitView: View {
     let model: RecoveryKitModel
+    /// Whether this view tells the kit about Option and the window's key state. The kit window does that for its
+    /// whole content instead, so the window's key state is known before the kit has loaded.
+    var watchesKeys = true
     private var showSecrets: Bool { model.reveal.visible }
 
     var body: some View {
@@ -28,8 +31,14 @@ struct RecoveryKitView: View {
                 Button("Try Again") { Task { await model.load() } }
             }
         case .loaded(let document):
-            loaded(document)
-                .background(OptionKeyMonitor(onChange: { model.optionChanged($0) }, onResignKey: { model.resignedKey() }))
+            if watchesKeys {
+                loaded(document)
+                    .background(OptionKeyMonitor(
+                        onChange: { model.optionChanged($0) }, onResignKey: { model.resignedKey() },
+                        onBecomeKey: { model.becameKey() }))
+            } else {
+                loaded(document)
+            }
         }
     }
 

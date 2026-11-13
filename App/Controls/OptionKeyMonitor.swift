@@ -9,17 +9,21 @@ struct OptionKeyMonitor: NSViewRepresentable {
     let onChange: @MainActor (Bool) -> Void
     /// The window stopped being key (the secrets it shows go back to dots, `SecretReveal`).
     var onResignKey: @MainActor () -> Void = {}
+    /// The window became key, or was key when the monitor started.
+    var onBecomeKey: @MainActor () -> Void = {}
 
     func makeNSView(context: Context) -> MonitorView {
         let view = MonitorView()
         view.onChange = onChange
         view.onResignKey = onResignKey
+        view.onBecomeKey = onBecomeKey
         return view
     }
 
     func updateNSView(_ view: MonitorView, context: Context) {
         view.onChange = onChange
         view.onResignKey = onResignKey
+        view.onBecomeKey = onBecomeKey
     }
 
     static func dismantleNSView(_ view: MonitorView, coordinator: ()) {
@@ -29,6 +33,7 @@ struct OptionKeyMonitor: NSViewRepresentable {
     final class MonitorView: NSView {
         var onChange: (@MainActor (Bool) -> Void)?
         var onResignKey: (@MainActor () -> Void)?
+        var onBecomeKey: (@MainActor () -> Void)?
         private var monitor: Any?
         private var observers: [NSObjectProtocol] = []
         private var held = false
@@ -44,7 +49,10 @@ struct OptionKeyMonitor: NSViewRepresentable {
             let centre = NotificationCenter.default
             observers = [
                 centre.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.report(NSEvent.modifierFlags) }
+                    MainActor.assumeIsolated {
+                        self?.onBecomeKey?()
+                        self?.report(NSEvent.modifierFlags)
+                    }
                 },
                 centre.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self] _ in
                     MainActor.assumeIsolated {
@@ -53,7 +61,10 @@ struct OptionKeyMonitor: NSViewRepresentable {
                     }
                 },
             ]
-            if window.isKeyWindow { report(NSEvent.modifierFlags) }
+            if window.isKeyWindow {
+                onBecomeKey?()
+                report(NSEvent.modifierFlags)
+            }
         }
 
         func stop() {

@@ -58,17 +58,20 @@ public struct HelperResponder: Sendable {
         guard await authoriseHelper(callerPID: callerPID, planID: planID, lookup: lookup, supervised: supervised)
         else { return .failure(.notSupervised) }
         guard await state.isConfiguredPlan(planID) else { return .failure(.unknownPlan) }
-        // A password Settings is checking before it saves it, while that probe runs.
-        let candidate = request.kind == .repositoryPassword ? await state.candidatePassword(for: planID) : nil
+        // Credentials Settings is checking before it saves them, while that check runs (`CandidateSecrets`).
+        let candidates = state.candidates.values(for: planID) ?? [:]
 
         let result = Result { () throws(Refusal) -> Data in
+            func value(_ key: SecretKey) throws(Refusal) -> String {
+                if let typed = candidates[key] { return typed }
+                return try read(key)
+            }
             switch request.kind {
             case .repositoryPassword:
-                if let candidate { return Data(candidate.utf8) }
-                return Data(try read(.repositoryPassword(planID)).utf8)
+                return Data(try value(.repositoryPassword(planID)).utf8)
             case .s3Credentials:
-                let keyID = try read(.s3AccessKeyID(planID))
-                let secret = try read(.s3SecretAccessKey(planID))
+                let keyID = try value(.s3AccessKeyID(planID))
+                let secret = try value(.s3SecretAccessKey(planID))
                 do {
                     return try makeCredentialProcessJSON(accessKeyID: keyID, secret: secret, now: now())
                 } catch {

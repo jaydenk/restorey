@@ -81,9 +81,8 @@ public actor AgentState {
 
     /// Per plan, why the last helper request failed to read the keychain (the runner reports it).
     private var helperFailures: [UUID: String] = [:]
-    /// A password being checked by `probeRepository(_:candidatePassword:)`, served to the helper in place of the
-    /// keychain's while that probe's turn of the repository queue runs. Memory only, never logged.
-    private var candidatePasswords: [UUID: String] = [:]
+    /// Credentials being checked by `probeRepository(_:candidates:)` (`CandidateSecrets`).
+    public nonisolated let candidates = CandidateSecrets()
 
     /// Runs backups, creates and adopts repositories (`attach(runner:)`). Weak: the runner holds this state.
     weak var runner: PlanRunner?
@@ -294,7 +293,8 @@ public actor AgentState {
             plan: plan, phase: phase, lastRecord: history.recent.first,
             nextRunAt: next == .distantFuture ? nil : next, alerts: alerts,
             lastBackup: history.lastBackupRecord, repositorySize: history.repositorySize,
-            setupState: PlanSetupState(plan: plan))
+            setupState: PlanSetupState(plan: plan),
+            latestBackupRecord: history.recent.first { $0.operation == .backup })
     }
 
     /// Pushes the status and, unless `deliveringAlerts` is false, has the alerts delivered for it: every
@@ -886,16 +886,6 @@ public actor AgentState {
     /// True when `id` is a plan in the loaded config.
     public func isConfiguredPlan(_ id: UUID) -> Bool {
         config.plans.contains { $0.id == id }
-    }
-
-    /// Nil clears it. Only the probe sets it, inside its turn of the repository's queue: no other restic of the
-    /// plan (or of its repository) runs then, so only the probe's restic is served it.
-    public func setCandidatePassword(_ password: String?, for planID: UUID) {
-        candidatePasswords[planID] = password
-    }
-
-    public func candidatePassword(for planID: UUID) -> String? {
-        candidatePasswords[planID]
     }
 
     /// Records that a helper request for the plan couldn't read its keys. `reason` names the keychain

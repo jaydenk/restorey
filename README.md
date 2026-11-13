@@ -282,16 +282,21 @@ didn't touch keep its newer values. Changing the folders or the host label shows
 next backup starts a new snapshot group, and that the old group's snapshots are kept as they are (§5.4, §5.6). Typing
 a password, a key or an environment value, or a new host label, shows "Saving pauses backups until you save a new
 recovery kit." before saving: the agent clears the kit's confirmation, so the plan waits for the new kit. A typed
-repository password is first tried on the repository ("Checking the password…"), and nothing is saved unless the
-repository opens with it. The typed secrets go when the save succeeds, on Revert, when another plan is shown and when
+repository password is first tried on the repository with any storage keys or environment values typed with it
+("Checking the password…", `probeRepositoryCredentials`), and nothing is saved unless the repository opens with
+them. The check isn't a run: it leaves nothing in the plan's history or run logs, the plan isn't shown backing up,
+and a Back Up Now meanwhile waits its turn in the repository's queue, as during the size measurement after an
+adopt. The typed secrets go when the save succeeds, on Revert, when another plan is shown and when
 the window closes. Every change of the plan shown (the sidebar, a plan's line in the menu, "Add…", opening the app
 again) goes through one guard (`PlanSelection`): with unsaved edits, a request for another plan waits for "Discard
-your changes…?", and closing the window asks Save, Don't Save or Cancel. The editor belongs to the window, so going
+your changes…?" (a tab the route named, such as Alerts for "Add…", is shown once the switch happens), and closing
+the window or quitting Restorey asks Save, Don't Save or Cancel (a refused save cancels the quit). The editor belongs to the window, so going
 to General and back keeps them. Delete Plan… asks with the developer window's words ("Its
 settings, saved passwords and keys, and history are removed. The repository and its snapshots aren't touched."); the
 agent also removes the plan's run logs.
 
-**History** lists every plan's runs, newest first, with a plan filter (set again by each "Show Details…") and
+**History** lists every plan's runs, newest first, with a plan filter (set again by each "Show Details…", and back to every plan once you pick a section yourself or
+close Settings) and
 Everything, Backups, Problems or Skipped and paused (`HistoryPresentation`): local time, plan, the step (Backup, Tidy,
 Check…), how the run ended in the menu's wording ("Backed up", "Old snapshots
 tidied", "Skipped: Photos isn't connected", "Backup failed" with the menu's reason; never "failed" for a pause, a
@@ -320,7 +325,8 @@ The menu, top to bottom:
   kit needed — Save Recovery Kit…"; "No off-Mac monitoring — Add…" (opens the plan in Settings), with "Don't Show
   This Again" under it.
 - **One entry per plan**: its name, status ("Backed up at 14:16", "Backing up", grey "Paused" with "Resumes by
-  itself at 15:20", "Backup failed at 14:16" in red, a skip reason in orange), a detail line (progress, time left
+  itself at 15:20", "Backup failed at 14:16" in red, with the time and reason of the newest backup record, whatever ran after it; a
+skip reason in orange), a detail line (progress, time left
   and upload speed while backing up, or the next run) and its destination with the repository size. A running
   backup has a progress bar under it. Choosing a plan opens it in Settings; a failed one has "Show Details…" (its
   history).
@@ -559,10 +565,12 @@ How it works (design spec §7; [spike findings](docs/spike-findings.md) H2 and H
   stderr, which restic's S3 library discards.
 - The agent trusts a restic by its process ID and start time together, and stops trusting it the moment it
   exits, so a later process that reuses the same ID is never mistaken for it.
-- Settings tries a changed repository password before saving it (`probeRepositoryPassword`): the agent holds the
-  typed password in memory for the plan only during that probe's turn of the repository's queue, when no other
-  restic of the plan or its repository can run, and the helper hands it to the probe's restic instead of the
-  Keychain's. It is added to the run's redactor, never saved, and dropped when the probe ends.
+- Settings tries a changed repository password, with any storage keys or environment values typed with it, before
+  saving them (`probeRepositoryCredentials`): the agent holds them in memory for the plan (`CandidateSecrets`)
+  only during that check's turn of the repository's queue, when no other restic of the plan or its repository can
+  run, and the helper hands them to the check's restic instead of the Keychain's (a typed environment value goes
+  into its environment). They are added to the redactor, never saved, and cleared when the turn ends, however it
+  ends.
 
 What this doesn't protect against: an attacker who can hijack a restic process Restorey is supervising could
 obtain that plan's secrets; any program running as you can already do a great deal.
@@ -642,7 +650,8 @@ holding Option shows them only while it is held, for a quick look (`SecretReveal
 button that copies the real command. The first reveal or copy of a command that carries secrets (decided from the
 plan, so a copy before any reveal still asks and copies the real values) asks for Touch ID or your login password,
 once per opening, and the secrets are fetched only then and dropped when the window closes or another plan is
-picked. Approving through the button shows them at once. If you decline, holding Option doesn't ask again in that
+picked. Approving through the button shows them at once, provided the window is still the key window when they
+arrive. If you decline, holding Option doesn't ask again in that
 opening; "Show Passwords and Keys…" or a copy does. A Mac that can't ask at all (no login password set, say) says so and why, rather than asking you to try
 Touch ID.
 

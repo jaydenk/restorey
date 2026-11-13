@@ -327,6 +327,19 @@ struct MenuPresentationTests {
         #expect(content.plans[0].detail == "restic exited with code 1")
     }
 
+    /// Fix round 2: the line and its reason come from the newest backup record. A maintenance step or a probe that
+    /// ran since (and failed) doesn't become "Backup failed at <its time>".
+    @Test func aFailedBackupIsTheNewestBackupRecordNotTheNewestRecord() {
+        let plan = Self.plan()
+        let backup = Self.record(plan, .wrongPassword, at: Self.at(13, 0))
+        let probe = Self.record(plan, .failed(exitCode: 1, reason: "a probe's reason"), at: Self.at(14, 16), operation: .catConfig)
+        let status = PlanStatus(
+            plan: plan, phase: .idle, lastRecord: probe, nextRunAt: nil, alerts: [.backupFailed], latestBackupRecord: backup)
+        let content = Self.make(Self.status([status]))
+        #expect(content.plans[0].status == "Backup failed at 13:00")
+        #expect(content.plans[0].detail == "wrong password")
+    }
+
     @Test func noRecentSuccess() {
         let plan = Self.plan()
         let content = Self.make(Self.status([Self.line(plan, backedUpAt: Self.at(14, 16, daysAgo: 4), alerts: [.noRecentSuccess])]))

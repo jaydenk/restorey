@@ -220,11 +220,16 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
         return .success(SavePlanRequest(plan: plan, secrets: entries))
     }
 
-    /// A typed repository password, which Settings tries on the repository before saving it (Ruling R2): the field
-    /// can't change the repository's own password, so a mistyped one would only show at the next backup.
-    public var passwordToCheck: String? { secrets[.repositoryPassword(saved.id)] }
+    /// What Settings tries on the repository before saving (Ruling R2), when a repository password is typed: it and
+    /// every other typed credential (storage keys, environment values), as typed, so a password and keys saved
+    /// together are checked together. The field can't change the repository's own password, so a mistyped one
+    /// would otherwise only show at the next backup. Nil when no password is typed.
+    public var credentialsToCheck: [SecretEntry]? {
+        guard secrets[.repositoryPassword(saved.id)] != nil else { return nil }
+        return credentialKeys.compactMap { key in secrets[key].map { SecretEntry(key: key, value: $0) } }
+    }
 
-    /// What the check of `passwordToCheck` found, as the field's sentence, or nil when the repository opened with it
+    /// What the check of `credentialsToCheck` found, as the field's sentence, or nil when the repository opened with it
     /// and the save can go on.
     public static func passwordProblem(after probe: RepositoryProbe.State) -> String? {
         switch probe {

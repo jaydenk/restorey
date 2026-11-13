@@ -114,6 +114,10 @@ public struct PlanStatus: Codable, Sendable, Equatable {
     public var phase: PlanPhase
     /// The newest record of any kind: a backup, a skip, or a maintenance step such as forget.
     public var lastRecord: RunRecord?
+    /// The newest record of a backup, whatever its outcome (a failure, a skip): what the menu's "Backup failed at
+    /// <time>" and its reason come from, so a step that ran since can't stand in for it. A status from before it
+    /// existed decodes it from `lastRecord` when that is a backup's record.
+    public var latestBackupRecord: RunRecord?
     /// Nil when the plan will not run on its own (stopped, invalid, or no confirmed recovery kit).
     public var nextRunAt: Date?
     /// Sorted by raw value.
@@ -128,11 +132,13 @@ public struct PlanStatus: Codable, Sendable, Equatable {
     /// `setupState` nil derives it from the plan (`PlanSetupState(plan:)`).
     public init(
         plan: Plan, phase: PlanPhase, lastRecord: RunRecord?, nextRunAt: Date?, alerts: [AlertCondition],
-        lastBackup: RunRecord? = nil, repositorySize: RepositorySize? = nil, setupState: PlanSetupState? = nil
+        lastBackup: RunRecord? = nil, repositorySize: RepositorySize? = nil, setupState: PlanSetupState? = nil,
+        latestBackupRecord: RunRecord? = nil
     ) {
         self.plan = plan
         self.phase = phase
         self.lastRecord = lastRecord
+        self.latestBackupRecord = latestBackupRecord ?? Self.backupRecord(lastRecord)
         self.nextRunAt = nextRunAt
         self.alerts = alerts
         self.lastBackup = lastBackup
@@ -141,7 +147,11 @@ public struct PlanStatus: Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case plan, phase, lastRecord, nextRunAt, alerts, lastBackup, repositorySize, setupState
+        case plan, phase, lastRecord, nextRunAt, alerts, lastBackup, repositorySize, setupState, latestBackupRecord
+    }
+
+    private static func backupRecord(_ record: RunRecord?) -> RunRecord? {
+        record?.operation == .backup ? record : nil
     }
 
     /// A status from an agent before schema 3 has no `lastBackup`, `repositorySize` or `setupState`: the
@@ -151,6 +161,8 @@ public struct PlanStatus: Codable, Sendable, Equatable {
         plan = try c.decode(Plan.self, forKey: .plan)
         phase = try c.decode(PlanPhase.self, forKey: .phase)
         lastRecord = try c.decodeIfPresent(RunRecord.self, forKey: .lastRecord)
+        latestBackupRecord = try c.decodeIfPresent(RunRecord.self, forKey: .latestBackupRecord)
+            ?? Self.backupRecord(lastRecord)
         nextRunAt = try c.decodeIfPresent(Date.self, forKey: .nextRunAt)
         alerts = try c.decode([AlertCondition].self, forKey: .alerts)
         lastBackup = try c.decodeIfPresent(RunRecord.self, forKey: .lastBackup)
@@ -277,24 +289,26 @@ public struct SavePlanRequest: Codable, Sendable, Equatable, CustomStringConvert
     }
 }
 
-/// `probeRepositoryPassword`'s request: a repository password to try on the plan's repository without saving it
-/// (Settings' Storage tab checks a changed password before saving). Its descriptions and mirror never include
-/// the password, like `SecretEntry`'s.
-public struct PasswordProbeRequest: Codable, Sendable, Equatable, CustomStringConvertible,
+/// `probeRepositoryCredentials`'s request: typed credentials (the repository password, and any storage keys or
+/// environment values typed with it) to try on the plan's repository without saving them. Settings' Storage tab
+/// checks them before saving. Its descriptions and mirror never include a value, like `SecretEntry`'s.
+public struct CredentialProbeRequest: Codable, Sendable, Equatable, CustomStringConvertible,
     CustomDebugStringConvertible, CustomReflectable
 {
     public var planID: UUID
-    public var password: String
+    public var secrets: [SecretEntry]
 
-    public init(planID: UUID, password: String) {
+    public init(planID: UUID, secrets: [SecretEntry]) {
         self.planID = planID
-        self.password = password
+        self.secrets = secrets
     }
 
-    public var description: String { "PasswordProbeRequest(plan: \(planID.uuidString), password: <redacted>)" }
+    public var description: String {
+        "CredentialProbeRequest(plan: \(planID.uuidString), secrets: [\(secrets.map(\.key.account).joined(separator: ", "))])"
+    }
     public var debugDescription: String { description }
     public var customMirror: Mirror {
-        Mirror(self, children: ["planID": planID, "password": "<redacted>"], displayStyle: .struct)
+        Mirror(self, children: ["planID": planID, "secrets": secrets.map(\.key.account)], displayStyle: .struct)
     }
 }
 

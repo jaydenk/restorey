@@ -128,6 +128,8 @@ final class SettingsToolbar: NSObject, NSToolbarDelegate {
 
     @objc private func choose(_ item: NSToolbarItem) {
         guard let section = SettingsSection(rawValue: item.itemIdentifier.rawValue) else { return }
+        // The user's own choice: a filter a route asked for no longer applies.
+        state.historyFilter = nil
         state.settingsSection = section
     }
 

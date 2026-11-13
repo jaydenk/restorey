@@ -86,6 +86,7 @@ final class RecoveryKitModel {
     func revealByButton() { reveal.approvedByButton() }
     func optionChanged(_ held: Bool) { reveal.optionChanged(held) }
     func resignedKey() { reveal.resignedKey() }
+    func becameKey() { reveal.becameKey() }
 
     func copy(_ field: RecoveryKitDocument.Field) {
         ConcealedPasteboard.copy(field.value, concealed: field.isSecret)

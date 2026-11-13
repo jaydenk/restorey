@@ -1732,21 +1732,71 @@ struct PlanRunnerTests {
         }
     }
 
-    /// Settings' check of a new password: the probe runs as usual (the fixture's helper script prints its own
-    /// password file), and the candidate is gone once it ends, whether it ran or was refused.
-    @Test func aCandidatePasswordLastsOnlyAsLongAsTheProbe() async throws {
+    /// Fix round 2: Settings' check of typed credentials, with the vendored restic. The fixture's helper script prints
+    /// its password file, so an observer of the candidate store stands in for the agent's helper (whose serving is
+    /// `HelperResponderTests`'): if the runner didn't set the candidate during its turn, the wrong one couldn't be
+    /// rejected. A check is not a run: it leaves no history record and no in-progress marker, and the keychain is
+    /// as it was.
+    @Test func aCredentialCheckTriesTheCandidateAndLeavesNoTrace() async throws {
         let f = try await RunnerFixture.make()
         defer { f.remove() }
-        let probe = try await f.state.probeRepository(f.planID, candidatePassword: "candidate")
-        #expect(probe == RepositoryProbe(state: .existing(
-            AdoptReport(hosts: [], latestPathsForHost: [], snapshotCount: 0))))
-        #expect(await f.state.candidatePassword(for: f.planID) == nil)
-
-        await f.state.prepareForRestart()
-        await #expect { _ = try await f.state.probeRepository(f.planID, candidatePassword: "candidate") } throws: {
-            ($0 as? AgentError) == .draining
+        let id = f.planID
+        let passwordFile = f.passwordFile
+        f.state.candidates.observe { _, secrets in
+            let value = secrets?[.repositoryPassword(id)] ?? RunnerFixture.password
+            try? value.write(to: passwordFile, atomically: true, encoding: .utf8)
         }
-        #expect(await f.state.candidatePassword(for: f.planID) == nil)
+        let before = await f.history()
+
+        let wrong = try await f.state.probeRepository(id, candidates: [SecretEntry(key: .repositoryPassword(id), value: "wrong")])
+        #expect(wrong == RepositoryProbe(state: .passwordRejected))
+        let right = try await f.state.probeRepository(
+            id, candidates: [SecretEntry(key: .repositoryPassword(id), value: RunnerFixture.password)])
+        #expect(right == RepositoryProbe(state: .existing(AdoptReport(hosts: [], latestPathsForHost: [], snapshotCount: 0))))
+
+        let after = await f.history()
+        #expect(after.recent == before.recent)
+        #expect(after.runningRecordID == nil)
+        #expect(after.runningRecord == nil)
+        #expect(after.stoppedReason == nil)
+        #expect(f.state.candidates.values(for: id) == nil)
+        #expect(try f.secrets.read(.repositoryPassword(id)) == RunnerFixture.password)
+    }
+
+    /// A check is a short repository action, like the size measurement after an adopt: the plan isn't shown backing
+    /// up, and Back Up Now isn't refused; the backup waits its turn in the repository's queue.
+    @Test func backUpNowDuringACredentialCheckIsNotRefused() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        let id = f.planID
+        let state = f.state
+        let during = Locked<Task<(PlanPhase, Bool), Never>?>(nil)
+        f.state.candidates.observe { _, secrets in
+            guard secrets != nil else { return }
+            during.set(Task {
+                let phase = await state.status().plans.first { $0.plan.id == id }!.phase
+                let started = (try? await state.backUpNow(id)) != nil
+                return (phase, started)
+            })
+        }
+        _ = try await f.state.probeRepository(id, candidates: [SecretEntry(key: .repositoryPassword(id), value: "x")])
+        let (phase, started) = try #require(await during.value?.value)
+        if case .running = phase { Issue.record("the check showed as a backup run") }
+        #expect(started)
+        try await f.waitForPhase { if case .running = $0 { false } else { true } }
+    }
+
+    /// Only the plan's own credentials can be checked, and the check-in URL isn't one.
+    @Test func aCheckRefusesSecretsThatArentThePlansCredentials() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        await #expect(throws: AgentError.foreignSecret) {
+            _ = try await f.state.probeRepository(f.planID, candidates: [SecretEntry(key: .repositoryPassword(UUID()), value: "x")])
+        }
+        await #expect(throws: AgentError.self) {
+            _ = try await f.state.probeRepository(
+                f.planID, candidates: [SecretEntry(key: .checkInURL(f.planID), value: "https://hc-ping.com/x")])
+        }
     }
 
     @Test func probeIsRefusedWhileDraining() async throws {

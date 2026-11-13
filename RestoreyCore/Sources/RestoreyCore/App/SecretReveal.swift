@@ -9,6 +9,9 @@ public struct SecretReveal: Sendable, Equatable {
     public private(set) var kept = false
     /// Option is held while the window is key.
     public private(set) var peeking = false
+    /// The window is key (`becameKey`, `resignedKey`). An approval counts only then: secrets that arrive after the
+    /// owner moved to another window stay as dots.
+    public private(set) var isKey = false
 
     public init() {}
 
@@ -21,7 +24,12 @@ public struct SecretReveal: Sendable, Equatable {
     }
 
     /// The button was pressed and the owner confirmed (or already had been): keep them shown.
-    public mutating func approvedByButton() { kept = true }
+    /// Ignored unless the window is key when the secrets arrive.
+    public mutating func approvedByButton() {
+        if isKey { kept = true }
+    }
+
+    public mutating func becameKey() { isKey = true }
 
     /// The button pressed while shown hides them; pressed while hidden (already confirmed) shows them.
     public mutating func toggle() { kept.toggle() }
@@ -30,6 +38,7 @@ public struct SecretReveal: Sendable, Equatable {
 
     /// The window is no longer key: nobody is looking at it, so back to dots.
     public mutating func resignedKey() {
+        isKey = false
         kept = false
         peeking = false
     }

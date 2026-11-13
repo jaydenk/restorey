@@ -1027,6 +1027,22 @@ struct AgentStateTests {
         #expect(history.activeAlerts[.configurationError] != nil)
     }
 
+    /// A new host label needs a new kit (Ruling R3) but cures nothing a stop is about: the stop stays.
+    @Test func aHostLabelChangeKeepsAStop() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        var plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        try await Self.stop(state, plan.id)
+
+        plan.hostLabel = "studio"
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: []))
+        let history = try await state.runInputs(plan.id).history
+        #expect(history.stoppedReason == "The repository password is wrong")
+        #expect(history.activeAlerts[.configurationError] != nil)
+    }
+
     // MARK: Runs need the runner
 
     /// Runs are the plan runner's (PlanRunnerTests); with none attached they are refused, not dropped.

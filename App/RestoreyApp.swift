@@ -137,6 +137,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Unsaved plan edits in Settings are asked about first (Save, Don't Save, Cancel), as closing the window asks.
+    /// The save is async, so the answer comes later (`reply(toApplicationShouldTerminate:)`).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let asked = router.askBeforeQuitting { proceed in
+            NSApplication.shared.reply(toApplicationShouldTerminate: proceed)
+        }
+        return asked ? .terminateLater : .terminateNow
+    }
+
     /// A status item app: closing the developer window doesn't quit.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }

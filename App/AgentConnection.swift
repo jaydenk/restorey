@@ -111,12 +111,15 @@ final class AgentConnection {
         await call(RepositoryProbe.self, timeout: .seconds(1200)) { $0.probeRepository(planID.uuidString, withReply: $1) }
     }
 
-    /// `probeRepository` with `password` in place of the saved one, which is left as it is. As long as a probe.
-    func probeRepositoryPassword(_ planID: UUID, password: String) async -> Result<RepositoryProbe, AgentCallError> {
-        guard let data = try? XPCCoding.encode(PasswordProbeRequest(planID: planID, password: password)) else {
-            return .failure(.badReply("password probe request"))
+    /// What `probeRepository` would find with these typed credentials in place of the saved ones, which are left
+    /// as they are. 20 minutes, like the probe: restic retries an unreachable backend for up to 15, and the check
+    /// may wait its turn in the repository's queue. An agent without this call can't answer: Ruling P-2's handshake
+    /// restarts any agent whose build differs from the app's, so the two always match.
+    func probeRepositoryCredentials(_ planID: UUID, secrets: [SecretEntry]) async -> Result<RepositoryProbe, AgentCallError> {
+        guard let data = try? XPCCoding.encode(CredentialProbeRequest(planID: planID, secrets: secrets)) else {
+            return .failure(.badReply("credential probe request"))
         }
-        return await call(RepositoryProbe.self, timeout: .seconds(1200)) { $0.probeRepositoryPassword(data, withReply: $1) }
+        return await call(RepositoryProbe.self, timeout: .seconds(1200)) { $0.probeRepositoryCredentials(data, withReply: $1) }
     }
 
     /// One plan's run records, or every plan's when `planID` is nil, newest first.

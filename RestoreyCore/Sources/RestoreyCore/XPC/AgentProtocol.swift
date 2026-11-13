@@ -42,9 +42,9 @@ import Foundation
     /// → `RepositoryProbe`: what is at the plan's repository address (`restic cat config`, then the adopt
     /// listing if a repository is there). Changes nothing. Setup calls it after saving the plan.
     func probeRepository(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
-    /// `PasswordProbeRequest` → `RepositoryProbe`: `probeRepository` with this password in place of the keychain's,
-    /// which is left as it is. Nothing is saved.
-    func probeRepositoryPassword(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
+    /// `CredentialProbeRequest` → `RepositoryProbe`: what `probeRepository` would find with these credentials in place
+    /// of the keychain's, which are left as they are. A check, not a run: nothing is saved or recorded.
+    func probeRepositoryCredentials(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// → `[RunRecord]`, newest first: one plan's records, or every plan's when `planID` is nil.
     func history(_ planID: String?, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// → `RecoveryKitSecrets`: the plan and every secret stored for it, for the recovery kit. The only call

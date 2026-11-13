@@ -11,10 +11,11 @@ import SwiftUI
 final class ShellState {
     var settingsSection: SettingsSection = SettingsRoute.initial.section
     /// The plan Plans shows. Every change goes through `requestPlan`, so unsaved edits are never dropped unasked.
-    private(set) var planSelection = PlanSelection(selected: SettingsRoute.initial.planID)
+    private(set) var planSelection = PlanSelection<PlanTab>(selected: SettingsRoute.initial.planID)
     var settingsPlanID: UUID? { planSelection.selected }
     /// The plan the History section's list was last asked to show (the menu's "Show Details…"); a new request each
-    /// time, so asking again for the same plan resets a filter the user changed.
+    /// time, so asking again for the same plan resets a filter the user changed. Cleared when the user picks a
+    /// section and when Settings closes, so History opened later starts with every plan.
     var historyFilter: HistoryFilterRequest?
     /// The plan's tab shown in Plans; kept as the user switches plans.
     var settingsPlanTab: PlanTab = .what
@@ -25,8 +26,15 @@ final class ShellState {
     /// The one way to change the plan Plans shows: from the sidebar, the menu's routes and a reopen. `editing` is
     /// the plan with unsaved edits, if any (`PlanEditorSlot.unsavedPlanID`); a request for another then waits for
     /// the discard question (`PlanSelection`).
-    func requestPlan(_ planID: UUID?, editing: UUID?) { planSelection.request(planID, editing: editing) }
-    func confirmPlanSwitch() { planSelection.confirm() }
+    /// A tab named with the plan (the menu's "Add…" opens Alerts) shows once the switch happens, now or after
+    /// "Discard Changes".
+    func requestPlan(_ planID: UUID?, tab: PlanTab? = nil, editing: UUID?) {
+        if let tab = planSelection.request(planID, tab: tab, editing: editing) { settingsPlanTab = tab }
+    }
+
+    func confirmPlanSwitch() {
+        if let tab = planSelection.confirm() { settingsPlanTab = tab }
+    }
     func cancelPlanSwitch() { planSelection.cancel() }
     /// The plan shown was deleted.
     func forgetPlan() { planSelection.forget() }
@@ -96,8 +104,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             // A plan asked for in History is the list's filter, not the plan Plans shows.
             if section != nil || planID != nil { state.historyFilter = HistoryFilterRequest(planID: route.planID) }
         } else {
-            state.requestPlan(route.planID, editing: planEditorSlot?.unsavedPlanID)
-            if let tab, state.planSelection.pending == nil { state.settingsPlanTab = tab }
+            state.requestPlan(route.planID, tab: tab, editing: planEditorSlot?.unsavedPlanID)
         }
         guard let supervisor, let loginItem else { return }
         let context = SettingsContext(
@@ -202,11 +209,24 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         guard sender.identifier?.rawValue == AppWindowKind.settings.rawValue, let editor = planEditorSlot?.editor,
             editor.edit.isDirty
         else { return true }
-        askToSave(editor, closing: sender)
+        askToSave(editor, in: sender) { proceed in if proceed { sender.close() } }
         return false
     }
 
-    private func askToSave(_ editor: PlanEditModel, closing window: NSWindow) {
+    /// Fix round 2: quitting with unsaved plan edits asks the same question, over the Settings window. Returns false
+    /// when there is nothing to ask (quit at once); otherwise `reply` gets whether the quit may go on: after a save
+    /// that worked or "Don't Save", not after Cancel or a refused save.
+    func askBeforeQuitting(_ reply: @escaping @MainActor (Bool) -> Void) -> Bool {
+        guard let window = slots.openWindow(for: .settings), let editor = planEditorSlot?.editor, editor.edit.isDirty
+        else { return false }
+        WindowActivation.bringForward(window)
+        askToSave(editor, in: window, then: reply)
+        return true
+    }
+
+    /// Save, Don't Save or Cancel for `editor`'s unsaved edits, as a sheet on `window`. `then` gets true once the
+    /// edits are saved or discarded, false for Cancel or a save that was refused (shown in Plans, where it says why).
+    private func askToSave(_ editor: PlanEditModel, in window: NSWindow, then: @escaping @MainActor (Bool) -> Void) {
         let alert = NSAlert()
         alert.messageText = "Do you want to save the changes to “\(editor.saved.name)”?"
         let lost = "If you don't save, your changes are lost."
@@ -220,17 +240,17 @@ final class WindowRouter: NSObject, NSWindowDelegate {
                 Task { @MainActor in
                     await editor.save()
                     if editor.edit.isDirty {
-                        // Refused: show why, in Plans, and keep the window open.
                         self?.state.settingsSection = .plans
+                        then(false)
                     } else {
-                        window.close()
+                        then(true)
                     }
                 }
             case .alertSecondButtonReturn:
                 editor.revert()
-                window.close()
+                then(true)
             default:
-                break
+                then(false)
             }
         }
     }
@@ -259,6 +279,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             restoreFilesModel?.close()
             restoreFilesModel = nil
         case .settings:
+            state.historyFilter = nil
             planEditorSlot?.close()
             planEditorSlot = nil
             settingsToolbar = nil

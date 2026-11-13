@@ -24,11 +24,12 @@ public struct FirstBackupProgress: Sendable, Equatable {
     /// The plan's newest records when Start was pressed, so the backup's own ending can be told from records
     /// that were already there, or that other steps (an adopt's size measurement) add meanwhile.
     public struct Baseline: Sendable, Equatable {
-        public var lastRecord: UUID?
+        /// The newest backup record of any outcome (`PlanStatus.latestBackupRecord`).
+        public var lastBackupRecord: UUID?
         public var lastBackup: UUID?
 
         public init(_ plan: PlanStatus?) {
-            lastRecord = plan?.lastRecord?.id
+            lastBackupRecord = plan?.latestBackupRecord?.id
             lastBackup = plan?.lastBackup?.id
         }
     }
@@ -70,7 +71,8 @@ public struct FirstBackupProgress: Sendable, Equatable {
         case .paused:
             return FirstBackupProgress(title: line.status, detail: line.detail)
         case .idle, .skipped, .stopped:
-            let backupEnded = plan.lastRecord.map { $0.id != baseline.lastRecord && $0.operation == .backup } ?? false
+            // A newer backup record of any outcome (a failure, a skip), whatever steps ran after it.
+            let backupEnded = plan.latestBackupRecord.map { $0.id != baseline.lastBackupRecord } ?? false
             guard backedUp || backupEnded else { return FirstBackupProgress(title: "Starting the first backup…") }
             return FirstBackupProgress(title: line.status, detail: line.detail, finished: true, severity: line.severity)
         }

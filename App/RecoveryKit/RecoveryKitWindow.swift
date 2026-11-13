@@ -119,6 +119,9 @@ struct RecoveryKitWindow: View {
         .padding(20)
         .frame(width: 560, alignment: .topLeading)
         .frame(minHeight: 260, alignment: .topLeading)
+        .background(OptionKeyMonitor(
+            onChange: { model.kit.optionChanged($0) }, onResignKey: { model.kit.resignedKey() },
+            onBecomeKey: { model.kit.becameKey() }))
         // Again when the first status arrives: before it, the plan (and whether it finished setup) is unknown.
         .task(id: model.plan != nil) { await model.unlock() }
     }
@@ -165,7 +168,7 @@ struct RecoveryKitWindow: View {
             }
         case .open:
             Text(RecoveryKitText.why).fixedSize(horizontal: false, vertical: true)
-            RecoveryKitView(model: model.kit)
+            RecoveryKitView(model: model.kit, watchesKeys: false)
             Text(RecoveryKitText.keepItSafe)
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if plan.setupState == .needsNewKit || model.confirmedHere {

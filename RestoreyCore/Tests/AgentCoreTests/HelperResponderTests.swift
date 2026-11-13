@@ -101,15 +101,19 @@ struct HelperResponderTests {
         #expect(try result.get() == Data("pa ss\"wörd\n".utf8))
     }
 
-    /// While Settings checks a new password (`probeRepository(_:candidatePassword:)`), the probe's restic gets the
-    /// password being checked, not the keychain's; once the check ends, the keychain's again.
-    @Test func aCandidatePasswordIsServedOnlyWhileItIsBeingChecked() async throws {
+    /// While Settings checks typed credentials (`AgentState.probeRepository(_:candidates:)`), the check's restic gets
+    /// them, not the keychain's; once the check ends, the keychain's again.
+    @Test func candidatePasswordAndKeysAreServedOnlyWhileTheyAreBeingChecked() async throws {
         let f = try await Fixture()
         await f.superviseRestic()
-        await f.state.setCandidatePassword("new pässword", for: f.planID)
+        f.state.candidates.set(
+            [.repositoryPassword(f.planID): "new pässword", .s3SecretAccessKey(f.planID): "new-secret"], for: f.planID)
         var result = await f.responder.respond(to: try f.request(.repositoryPassword), callerPID: Self.caller)
         #expect(try result.get() == Data("new pässword".utf8))
-        await f.state.setCandidatePassword(nil, for: f.planID)
+        // A key not typed comes from the keychain, the typed one from the check.
+        result = await f.responder.respond(to: try f.request(.s3Credentials), callerPID: Self.caller)
+        #expect(try result.get() == makeCredentialProcessJSON(accessKeyID: "key-id", secret: "new-secret", now: Self.fixedNow))
+        f.state.candidates.set(nil, for: f.planID)
         result = await f.responder.respond(to: try f.request(.repositoryPassword), callerPID: Self.caller)
         #expect(try result.get() == Data("pa ss\"wörd\n".utf8))
     }
@@ -117,7 +121,7 @@ struct HelperResponderTests {
     /// A candidate is checked like the keychain's value: an unsupervised caller still gets nothing.
     @Test func aCandidatePasswordIsRefusedToAnUnsupervisedCaller() async throws {
         let f = try await Fixture()
-        await f.state.setCandidatePassword("new", for: f.planID)
+        f.state.candidates.set([.repositoryPassword(f.planID): "new"], for: f.planID)
         let result = await f.responder.respond(to: try f.request(.repositoryPassword), callerPID: Self.caller)
         #expect(Self.refusal(result) == .notSupervised)
     }

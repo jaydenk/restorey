@@ -532,28 +532,33 @@ public actor PlanRunner {
     /// (`runningRecord`), so an agent that dies mid-step leaves an `.interrupted` record on recovery.
     func runStep(
         _ op: ResticOperation, trigger: RunTrigger, session: RunSession, handle: RunHandle?,
-        progress: Bool = false, collector: LineCollector? = nil
+        progress: Bool = false, collector: LineCollector? = nil, recorded: Bool = true
     ) async -> StepResult {
         let plan = session.plan
         let id = UUID()
         let startedAt = deps.now()
         var writer: RunLogWriter?
-        do {
-            writer = try await deps.logStore.begin(
-                planID: plan.id, operation: op, startedAt: startedAt, redactor: session.redactor)
-        } catch {
-            logger.error("Couldn't create the \(op.logSlug, privacy: .public) run log: \(error.localizedDescription, privacy: .public)")
+        // `recorded` false (a credential check): no run log and no in-progress marker, since no record follows.
+        if recorded {
+            do {
+                writer = try await deps.logStore.begin(
+                    planID: plan.id, operation: op, startedAt: startedAt, redactor: session.redactor)
+            } catch {
+                logger.error("Couldn't create the \(op.logSlug, privacy: .public) run log: \(error.localizedDescription, privacy: .public)")
+            }
         }
         let log = StepLog(writer: writer)
         let logFile = writer.map { "runs/\(plan.id.uuidString)/\($0.fileURL.lastPathComponent)" } ?? ""
 
-        let provisional = RunRecord(
-            id: id, planID: plan.id, operation: op, trigger: trigger, startedAt: startedAt, endedAt: startedAt,
-            outcome: .interrupted, summary: nil, logFile: logFile)
-        await write(plan.id) { history in
-            history.runningRecord = provisional
-            history.runningRecordID = id
-            if op == .backup { Self.noteAttempt(at: startedAt, in: &history) }
+        if recorded {
+            let provisional = RunRecord(
+                id: id, planID: plan.id, operation: op, trigger: trigger, startedAt: startedAt, endedAt: startedAt,
+                outcome: .interrupted, summary: nil, logFile: logFile)
+            await write(plan.id) { history in
+                history.runningRecord = provisional
+                history.runningRecordID = id
+                if op == .backup { Self.noteAttempt(at: startedAt, in: &history) }
+            }
         }
 
         var context = session.context

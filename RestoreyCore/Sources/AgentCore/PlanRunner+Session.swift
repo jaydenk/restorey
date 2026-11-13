@@ -27,9 +27,11 @@ extension PlanRunner {
     /// Reads the plan's secrets for the redactor (and a raw plan's environment), and writes an S3 plan's
     /// credentials file with the agent as the helper. Only the raw environment is required here: the
     /// password and S3 keys are fetched by restic through the helper, which reports its own failures.
-    /// `extraSecrets`: values to redact besides the keychain's (a password being checked).
-    func prepare(_ plan: Plan, extraSecrets: [String] = []) -> Preparation {
-        let (redactor, environment, problems) = redactorAndEnvironment(for: plan, extraSecrets: extraSecrets)
+    /// `overrides`: typed credentials being checked, used in place of the keychain's (a raw plan's environment
+    /// value) and redacted like them. The password and S3 keys reach restic through the helper, which serves the
+    /// same values (`AgentState.candidates`).
+    func prepare(_ plan: Plan, overrides: [SecretKey: String] = [:]) -> Preparation {
+        let (redactor, environment, problems) = redactorAndEnvironment(for: plan, overrides: overrides)
         if !problems.isEmpty {
             let reason = ([Self.keychainUnreadable] + problems).joined(separator: ". ")
             return .failed(.credentialsUnavailable, reason: reason, redactor: redactor)
@@ -53,9 +55,9 @@ extension PlanRunner {
     }
 
     private func redactorAndEnvironment(
-        for plan: Plan, extraSecrets: [String] = []
+        for plan: Plan, overrides: [SecretKey: String] = [:]
     ) -> (redactor: Redactor, environment: [String: String], problems: [String]) {
-        var known: [String] = extraSecrets
+        var known: [String] = Array(overrides.values)
         for key in [SecretKey.repositoryPassword(plan.id), .s3AccessKeyID(plan.id), .s3SecretAccessKey(plan.id)] {
             if let value = try? deps.secrets.read(key) { known.append(value) }
         }
@@ -65,6 +67,10 @@ extension PlanRunner {
         var problems: [String] = []
         if case .raw(_, let names) = plan.repository {
             for name in names {
+                if let typed = overrides[.environment(plan.id, name: name)] {
+                    environment[name] = typed
+                    continue
+                }
                 do {
                     if let value = try deps.secrets.read(.environment(plan.id, name: name)) {
                         environment[name] = value

@@ -200,11 +200,17 @@ struct PlanEditTests {
     /// Ruling R2: a changed repository password is tried on the repository before anything is saved.
     @Test func aTypedPasswordIsCheckedFirstAndOnlyAnOpenedRepositoryLetsTheSaveGoOn() {
         var edit = PlanEdit(plan: Self.plan())
-        #expect(edit.passwordToCheck == nil)
+        #expect(edit.credentialsToCheck == nil)
         edit.setSecret("new-key", for: .s3AccessKeyID(edit.planID))
-        #expect(edit.passwordToCheck == nil)
+        edit.setSecret("https://hc-ping.com/x", for: .checkInURL(edit.planID))
+        #expect(edit.credentialsToCheck == nil)
         edit.setSecret(" new pass\n", for: .repositoryPassword(edit.planID))
-        #expect(edit.passwordToCheck == " new pass\n")
+        // Every typed credential goes with the password, as typed, so keys and password saved together are checked
+        // together; the check-in URL isn't a credential.
+        #expect(edit.credentialsToCheck == [
+            SecretEntry(key: .repositoryPassword(edit.planID), value: " new pass\n"),
+            SecretEntry(key: .s3AccessKeyID(edit.planID), value: "new-key"),
+        ])
 
         let report = AdoptReport(hosts: ["mac"], latestPathsForHost: [], snapshotCount: 3)
         #expect(PlanEdit.passwordProblem(after: .existing(report)) == nil)

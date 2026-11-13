@@ -6,6 +6,7 @@ import Testing
 struct SecretRevealTests {
     @Test func theButtonKeepsThemShownUntilHidden() {
         var reveal = SecretReveal()
+        reveal.becameKey()
         #expect(!reveal.visible)
         reveal.approvedByButton()
         #expect(reveal.visible)
@@ -24,6 +25,7 @@ struct SecretRevealTests {
 
     @Test func optionIsAPeek() {
         var reveal = SecretReveal()
+        reveal.becameKey()
         reveal.optionChanged(true)
         #expect(reveal.visible)
         reveal.optionChanged(false)
@@ -37,12 +39,29 @@ struct SecretRevealTests {
     /// A window that isn't key isn't being looked at: what was shown goes back to dots.
     @Test func resigningKeyOrClosingHidesThem() {
         var reveal = SecretReveal()
+        reveal.becameKey()
         reveal.approvedByButton()
         reveal.optionChanged(true)
         reveal.resignedKey()
         #expect(!reveal.visible)
+        reveal.becameKey()
         reveal.approvedByButton()
         reveal.reset()
         #expect(!reveal.visible)
+    }
+
+    /// Fix round 2, minor 4: an approval whose secrets arrive while the window isn't key (the owner moved on while
+    /// they were fetched) shows nothing; the window isn't being looked at.
+    @Test func anApprovalWhileTheWindowIsntKeyIsIgnored() {
+        var reveal = SecretReveal()
+        reveal.approvedByButton()
+        #expect(!reveal.visible)
+        reveal.becameKey()
+        reveal.resignedKey()
+        reveal.approvedByButton()
+        #expect(!reveal.visible)
+        reveal.becameKey()
+        reveal.approvedByButton()
+        #expect(reveal.visible)
     }
 }

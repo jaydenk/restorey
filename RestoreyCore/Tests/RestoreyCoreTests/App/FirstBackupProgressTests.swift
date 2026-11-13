@@ -40,6 +40,23 @@ import Testing
             plan: status, baseline: baseline, bytesPerSecond: rate, now: now, calendar: calendar, locale: locale)
     }
 
+    /// Fix round 2: a failed first backup followed by another step (a size measurement, say) still reads as ended:
+    /// the newest backup record decides, not the newest record.
+    @Test func aFailedBackupFollowedByAnotherStepHasEnded() {
+        let before = Self.status(.idle)
+        let failed = Self.record(.backup, .wrongPassword, endedMinute: 18)
+        let stats = Self.record(.stats, .success(snapshotID: nil), endedMinute: 19)
+        let after = PlanStatus(
+            plan: Self.plan, phase: .idle, lastRecord: stats, nextRunAt: nil, alerts: [.backupFailed],
+            latestBackupRecord: failed)
+        let progress = Self.make(after, baseline: .init(before))
+        #expect(progress.finished)
+        #expect(progress.title == "Backup failed at 14:18")
+        // A step other than a backup alone is not the backup ending.
+        let onlyStats = PlanStatus(plan: Self.plan, phase: .idle, lastRecord: stats, nextRunAt: nil, alerts: [])
+        #expect(!Self.make(onlyStats, baseline: .init(before)).finished)
+    }
+
     @Test func beforeAnyStatusItIsStarting() {
         #expect(Self.make(nil) == FirstBackupProgress(title: "Starting the first backup…"))
     }

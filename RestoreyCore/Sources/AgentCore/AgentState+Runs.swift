@@ -38,12 +38,35 @@ extension AgentState {
 
     /// What is at the plan's repository address: nothing, or a repository its password opens (Ruling P2-2).
     /// Setup's "Check" calls it after saving the plan, so it runs before the recovery kit is confirmed.
-    ///
-    /// `candidatePassword`: a password to try instead of the keychain's (Settings checking a changed one before it
-    /// saves it). The helper serves it only while the probe runs (`candidatePassword(for:)`); nothing is saved.
-    public func probeRepository(_ id: UUID, candidatePassword: String? = nil) async throws -> RepositoryProbe {
+    public func probeRepository(_ id: UUID) async throws -> RepositoryProbe {
         try requireRunnable(id)
-        return try await requireRunner().probeRepository(planID: id, candidatePassword: candidatePassword)
+        return try await requireRunner().probeRepository(planID: id)
+    }
+
+    /// What `probeRepository` would find with `candidates` (typed credentials Settings is about to save) in place of
+    /// the keychain's (Ruling R2). A check, not a run: nothing is saved, no record is kept, and the plan isn't shown
+    /// backing up (`PlanRunner.checkCredentials`). Only the plan's own password, storage keys and environment values
+    /// can be sent; the check-in URL isn't a credential.
+    public func probeRepository(_ id: UUID, candidates: [SecretEntry]) async throws -> RepositoryProbe {
+        try requireRunnable(id)
+        let plan = try requirePlan(id)
+        guard candidates.allSatisfy({ $0.key.planID == id }) else { throw AgentError.foreignSecret }
+        let allowed = Self.credentialKeys(of: plan)
+        guard candidates.allSatisfy({ allowed.contains($0.key) }) else {
+            throw AgentError.invalidRequest("only the plan's password, storage keys and environment values can be checked")
+        }
+        let values = Dictionary(candidates.map { ($0.key, $0.value) }, uniquingKeysWith: { _, last in last })
+        return try await requireRunner().checkCredentials(planID: id, candidates: values)
+    }
+
+    /// The secrets that open a plan's repository.
+    static func credentialKeys(of plan: Plan) -> Set<SecretKey> {
+        var keys: Set<SecretKey> = [.repositoryPassword(plan.id)]
+        switch plan.repository {
+        case .s3: keys.formUnion([.s3AccessKeyID(plan.id), .s3SecretAccessKey(plan.id)])
+        case .raw(_, let names): keys.formUnion(names.map { .environment(plan.id, name: $0) })
+        }
+        return keys
     }
 
     /// Runs the Full Disk Access probe now and pushes the status (Ruling P2-11). Changes no file, so it is

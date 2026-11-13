@@ -71,6 +71,7 @@ final class RestoreFilesModel {
     }
 
     func resignedKey() { reveal.resignedKey() }
+    func becameKey() { reveal.becameKey() }
 
     /// Copies the real command, by title, so the caller's copy (which may be the revealed one) isn't held here.
     func copy(_ title: String) async {

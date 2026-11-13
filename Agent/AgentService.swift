@@ -135,16 +135,16 @@ final class AgentService: NSObject, AgentXPC, Sendable {
         }
     }
 
-    func probeRepositoryPassword(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply, "probeRepositoryPassword") { [state, log] in
-            let decoded = try Self.decode(PasswordProbeRequest.self, from: request)
-            let probe = try await state.probeRepository(decoded.planID, candidatePassword: decoded.password)
+    func probeRepositoryCredentials(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "probeRepositoryCredentials") { [state, log] in
+            let decoded = try Self.decode(CredentialProbeRequest.self, from: request)
+            let probe = try await state.probeRepository(decoded.planID, candidates: decoded.secrets)
             let found = switch probe.state {
             case .empty: "nothing at the address"
-            case .existing: "the repository opens with it"
-            case .passwordRejected: "the repository doesn't open with it"
+            case .existing: "the repository opens with them"
+            case .passwordRejected: "the repository doesn't open with them"
             }
-            log.info("Checked a new password for plan \(decoded.planID.uuidString): \(found)")
+            log.info("Checked new credentials for plan \(decoded.planID.uuidString): \(found)")
             return probe
         }
     }

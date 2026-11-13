@@ -102,6 +102,27 @@ struct MessagesTests {
         try roundTrip(AgentStatus(plans: [], configError: "x", fdaMissing: nil, generatedAt: Self.now))
     }
 
+    /// Fix round 2: `latestBackupRecord` round-trips; a status from before it decodes it from `lastRecord` when that
+    /// is a backup's record, and as nil otherwise.
+    @Test func theNewestBackupRecordRoundTripsAndDecodesFromAnOlderStatus() throws {
+        func record(_ operation: ResticOperation) -> RunRecord {
+            RunRecord(
+                id: UUID(), planID: Self.planID, operation: operation, trigger: .scheduled, startedAt: Self.now,
+                endedAt: Self.now, outcome: .wrongPassword, summary: nil, logFile: "")
+        }
+        let backup = record(.backup)
+        let forget = record(.forget(dryRun: false))
+        try roundTrip(PlanStatus(
+            plan: Self.plan(), phase: .idle, lastRecord: forget, nextRunAt: nil, alerts: [], latestBackupRecord: backup))
+        for (last, expected) in [(backup, Optional(backup)), (forget, nil)] {
+            var object = try JSONSerialization.jsonObject(with: XPCCoding.encode(PlanStatus(
+                plan: Self.plan(), phase: .idle, lastRecord: last, nextRunAt: nil, alerts: []))) as! [String: Any]
+            object["latestBackupRecord"] = nil
+            let decoded = try XPCCoding.decode(PlanStatus.self, from: JSONSerialization.data(withJSONObject: object))
+            #expect(decoded.latestBackupRecord == expected)
+        }
+    }
+
     @Test func newShapesArePinned() throws {
         #expect(try json(NetworkSettings.defaults) == #"{"skipOnConstrainedNetwork":true,"skippedWiFiNames":[]}"#)
         #expect(try json(RepositorySize(bytes: 42, measuredAt: Date(timeIntervalSince1970: 1_800_000_000)))
@@ -141,6 +162,8 @@ struct MessagesTests {
             #expect(plan.lastBackup == nil)
             #expect(plan.repositorySize == nil)
         }
+        // Before `latestBackupRecord`, the newest record stands in when it is a backup's.
+        #expect(status.plans.allSatisfy { $0.latestBackupRecord == nil })
         #expect(status.plans[0].setupState == .unfinished)
         #expect(status.plans[1].setupState == .complete)
     }
@@ -295,9 +318,12 @@ struct MessagesTests {
         #expect(String(describing: request).contains(Self.planID.uuidString))
     }
 
-    /// Settings checks a changed repository password before saving it (`probeRepositoryPassword`).
-    @Test func passwordProbeRequestRoundTripsAndNeverPrintsThePassword() throws {
-        let request = PasswordProbeRequest(planID: Self.planID, password: "hunter2 pa ss\"wörd\n")
+    /// Settings checks typed credentials before saving them (`probeRepositoryCredentials`).
+    @Test func credentialProbeRequestRoundTripsAndNeverPrintsASecret() throws {
+        let request = CredentialProbeRequest(planID: Self.planID, secrets: [
+            SecretEntry(key: .repositoryPassword(Self.planID), value: "hunter2 pa ss\"wörd\n"),
+            SecretEntry(key: .s3SecretAccessKey(Self.planID), value: "hunter2-key"),
+        ])
         try roundTrip(request)
         var dumped = ""
         dump(request, to: &dumped)
