@@ -151,7 +151,10 @@ Restorey stays a menu bar (accessory) app, so it isn't meant to show a menu bar 
 main menu, because key equivalents reach a window's text fields only through menu items: the app menu (About,
 Quit), an Edit menu (Undo, Redo, Cut, Copy, Paste, Paste and Match Style, Delete, Select All) and a Window menu
 (Minimise, Close) make ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V, ⌘A, ⌘W and ⌘Q work in its windows. Each kind of window (setup, Settings, recovery kit, Restore
-Files) opens at most once: asking again brings the open one to the front. None is restored at launch, and closing a
+Files) opens at most once: asking again brings the open one to the front. Since macOS 14 an app's request to become
+active can be refused, so a window is ordered front at once and the activation is asked for once any menu has
+finished tracking (`WindowActivation`), so a status-item menu closing doesn't hand the focus back to the app that was
+active before. None is restored at launch, and closing a
 window releases it, so a recovery kit's secrets go with it. The setup window follows its content's size from step to step.
 
 Opening Restorey again while it runs (from Finder, Spotlight or `open`) opens Settings, or brings an open Settings
@@ -617,7 +620,10 @@ so.
 Outside setup the kit window asks for Touch ID or your login password first (`OwnerAuthentication`), once per
 opening, and only then fetches the secrets; closing the window drops them. Only a plan that has finished setup
 opens there (the agent's `setupCompletedAt`, set by the first confirmation and never cleared); an unfinished one
-offers "Finish Setup…". For a plan needing a new kit, the window is headed "Save a new recovery kit — the saved one
+offers "Finish Setup…". The kit's secrets show as dots, with the same "Show Passwords and Keys" / "Hide Passwords and
+Keys" button and Option peek as Restore Files (in setup's kit step too); after a declined prompt, approving through
+"Show Recovery Kit" shows them at once. Whichever way a Touch ID or password prompt ends, the window that asked is
+made key again and Restorey brought back to the front. For a plan needing a new kit, the window is headed "Save a new recovery kit — the saved one
 has the old keys" and its tick "I've saved it somewhere other than this Mac" confirms the kit with the agent, which
 lets backups carry on. Before confirming, the window checks the kit against the agent's current secrets, so a kit
 whose keys changed while it was open is shown again rather than confirmed.
@@ -630,12 +636,14 @@ only a new address or key can cure one. Adding, changing or removing the check-i
 isn't needed to restore, so answering "No off-Mac monitoring — Add…" never stops backups.
 
 **Restore Files…** in the menu opens the same commands for the chosen plan (a plan picker switches between
-plans). Passwords and keys show as dots; holding Option shows them while it is held, and each command has a copy
+plans). Passwords and keys show as dots. "Show Passwords and Keys" shows them and keeps them shown (the button
+becomes "Hide Passwords and Keys") until it is pressed again, the window stops being the key window, or it closes;
+holding Option shows them only while it is held, for a quick look (`SecretReveal`). Each command has a copy
 button that copies the real command. The first reveal or copy of a command that carries secrets (decided from the
 plan, so a copy before any reveal still asks and copies the real values) asks for Touch ID or your login password,
 once per opening, and the secrets are fetched only then and dropped when the window closes or another plan is
-picked. If you decline, holding Option doesn't ask again in that opening; "Show Passwords and Keys…" or a copy
-does. A Mac that can't ask at all (no login password set, say) says so and why, rather than asking you to try
+picked. Approving through the button shows them at once. If you decline, holding Option doesn't ask again in that
+opening; "Show Passwords and Keys…" or a copy does. A Mac that can't ask at all (no login password set, say) says so and why, rather than asking you to try
 Touch ID.
 
 ## Restoring without Restorey

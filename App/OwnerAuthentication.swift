@@ -15,8 +15,16 @@ enum OwnerAuthentication {
         case unavailable(String)
     }
 
-    /// `reason` completes macOS's "Restorey is trying to …", so it starts with a verb in lower case.
-    static func confirm(reason: String) async -> Outcome {
+    /// `reason` completes macOS's "Restorey is trying to …", so it starts with a verb in lower case. When the
+    /// prompt has gone, whichever way it ended, the window of `returningTo` is made key and the app brought to the
+    /// front again: macOS hands the focus back to whichever app was active before the prompt otherwise (O1).
+    static func confirm(reason: String, returningTo window: AppWindowKind) async -> Outcome {
+        let outcome = await ask(reason: reason)
+        WindowActivation.bringForward(window)
+        return outcome
+    }
+
+    private static func ask(reason: String) async -> Outcome {
         let context = LAContext()
         var unavailable: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &unavailable) else {

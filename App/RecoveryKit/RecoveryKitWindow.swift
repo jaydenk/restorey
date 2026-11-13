@@ -54,10 +54,14 @@ final class RecoveryKitWindowModel {
     }
 
     /// Asks for Touch ID or the password, then fetches the kit. Only for a plan that finished setup.
-    func unlock() async {
+    ///
+    /// `revealing`: asked for by the button after a decline, so approving shows the passwords and keys at once
+    /// (owner ruling, 13 Nov); the prompt made on opening shows the kit with them as dots.
+    func unlock(revealing: Bool = false) async {
         guard let plan, plan.setupState != .unfinished, gate != .asking, gate != .open else { return }
         gate = .asking
-        switch await OwnerAuthentication.confirm(reason: "show the recovery kit for “\(plan.plan.name)”") {
+        switch await OwnerAuthentication.confirm(
+            reason: "show the recovery kit for “\(plan.plan.name)”", returningTo: .recoveryKit) {
         case .confirmed: break
         case .declined:
             gate = .declined
@@ -70,6 +74,7 @@ final class RecoveryKitWindowModel {
         guard gate == .asking else { return }
         gate = .open
         await kit.load()
+        if revealing, kit.document != nil { kit.revealByButton() }
     }
 
     /// "I've saved it somewhere other than this Mac": the agent's `confirmRecoveryKit`, which lets backups carry on.
@@ -156,7 +161,7 @@ struct RecoveryKitWindow: View {
             }
             HStack {
                 Spacer()
-                Button("Show Recovery Kit") { Task { await model.unlock() } }.keyboardShortcut(.defaultAction)
+                Button("Show Recovery Kit") { Task { await model.unlock(revealing: true) } }.keyboardShortcut(.defaultAction)
             }
         case .open:
             Text(RecoveryKitText.why).fixedSize(horizontal: false, vertical: true)

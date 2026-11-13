@@ -3,8 +3,8 @@ import SwiftUI
 
 /// "Restore Files…" in v0.1 (UI design §5; the restore window is v0.2): the plan's restic commands, as the
 /// recovery kit's "Restore without Restorey" has them, with a copy button each. Passwords and keys show as dots;
-/// holding Option shows them while held (`OptionKeyMonitor`), after Touch ID or the login password once per
-/// opening (`RestoreFilesModel`).
+/// "Show Passwords and Keys" keeps them shown and holding Option shows them while held (`OptionKeyMonitor`), after
+/// Touch ID or the login password once per opening (`RestoreFilesModel`).
 struct RestoreFilesView: View {
     let model: RestoreFilesModel
 
@@ -30,7 +30,7 @@ struct RestoreFilesView: View {
         .padding(20)
         .frame(width: 600, alignment: .topLeading)
         .frame(minHeight: 240, alignment: .topLeading)
-        .background(OptionKeyMonitor { model.optionChanged($0) })
+        .background(OptionKeyMonitor(onChange: { model.optionChanged($0) }, onResignKey: { model.resignedKey() }))
     }
 
     @ViewBuilder private var commands: some View {
@@ -54,17 +54,18 @@ struct RestoreFilesView: View {
         }
         HStack(spacing: 8) {
             if model.working { ProgressView().controlSize(.small) }
-            Text("Hold Option to show the passwords and keys. Copy puts the real command on the clipboard.")
+            Text("Hold Option for a quick look at the passwords and keys. Copy puts the real command on the clipboard.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            Button(model.reveal.buttonTitle(authenticated: model.authenticated)) {
+                Task { await model.revealButtonPressed() }
+            }
+            .disabled(model.working)
         }
         if let problem = model.problem {
             Label(problem, systemImage: "exclamationmark.triangle")
                 .foregroundStyle(.red)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-        if model.declined, !model.hasSecrets {
-            Button("Show Passwords and Keys…") { Task { await model.askAgain() } }
-                .disabled(model.working)
         }
     }
 }

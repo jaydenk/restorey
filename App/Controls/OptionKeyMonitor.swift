@@ -7,15 +7,19 @@ import SwiftUI
 /// reports false, since a window that isn't key hears no more key events. The monitor goes with the view.
 struct OptionKeyMonitor: NSViewRepresentable {
     let onChange: @MainActor (Bool) -> Void
+    /// The window stopped being key (the secrets it shows go back to dots, `SecretReveal`).
+    var onResignKey: @MainActor () -> Void = {}
 
     func makeNSView(context: Context) -> MonitorView {
         let view = MonitorView()
         view.onChange = onChange
+        view.onResignKey = onResignKey
         return view
     }
 
     func updateNSView(_ view: MonitorView, context: Context) {
         view.onChange = onChange
+        view.onResignKey = onResignKey
     }
 
     static func dismantleNSView(_ view: MonitorView, coordinator: ()) {
@@ -24,6 +28,7 @@ struct OptionKeyMonitor: NSViewRepresentable {
 
     final class MonitorView: NSView {
         var onChange: (@MainActor (Bool) -> Void)?
+        var onResignKey: (@MainActor () -> Void)?
         private var monitor: Any?
         private var observers: [NSObjectProtocol] = []
         private var held = false
@@ -42,7 +47,10 @@ struct OptionKeyMonitor: NSViewRepresentable {
                     MainActor.assumeIsolated { self?.report(NSEvent.modifierFlags) }
                 },
                 centre.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.report([]) }
+                    MainActor.assumeIsolated {
+                        self?.report([])
+                        self?.onResignKey?()
+                    }
                 },
             ]
             if window.isKeyWindow { report(NSEvent.modifierFlags) }

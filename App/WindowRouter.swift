@@ -183,8 +183,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             shownPlan[kind] = planID
         }
         if isNew { window.center() }
-        NSApplication.shared.activate()
-        window.makeKeyAndOrderFront(nil)
+        WindowActivation.bringForward(window)
     }
 
     private func makeWindow(_ kind: AppWindowKind, content: NSViewController) -> NSWindow {

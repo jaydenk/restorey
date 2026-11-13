@@ -2,12 +2,13 @@ import RestoreyCore
 import SwiftUI
 
 /// The recovery kit itself (UI design §7), in setup's step 4 and in the kit window: each field with a copy button
-/// (secrets as dots until "Show"; copied as concealed pasteboard items), then Print… and Save as PDF…, in the
+/// (secrets as dots until "Show Passwords and Keys", or while Option is held; copied as concealed pasteboard items),
+/// then Print… and Save as PDF…, in the
 /// order the spec offers them. Saving to this Mac's own disk shows the warning to delete the copy once the kit is
 /// stored elsewhere.
 struct RecoveryKitView: View {
     let model: RecoveryKitModel
-    @State private var showSecrets = false
+    private var showSecrets: Bool { model.reveal.visible }
 
     var body: some View {
         switch model.state {
@@ -28,6 +29,7 @@ struct RecoveryKitView: View {
             }
         case .loaded(let document):
             loaded(document)
+                .background(OptionKeyMonitor(onChange: { model.optionChanged($0) }, onResignKey: { model.resignedKey() }))
         }
     }
 
@@ -45,8 +47,7 @@ struct RecoveryKitView: View {
             .frame(minHeight: 180, idealHeight: 300, maxHeight: 340)
             .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
             HStack {
-                Toggle("Show passwords and keys", isOn: $showSecrets)
-                    .toggleStyle(.checkbox)
+                Button(model.reveal.buttonTitle(authenticated: true)) { model.toggleReveal() }
                 Spacer()
                 Button("Print…") { model.print() }
                 Button("Save as PDF…") { model.savePDF() }

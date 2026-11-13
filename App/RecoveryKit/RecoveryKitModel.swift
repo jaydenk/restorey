@@ -28,6 +28,10 @@ final class RecoveryKitModel {
     private(set) var exportError: String?
     /// The label of the field just copied, for a moment's "Copied".
     private(set) var copied: String?
+    /// Whether the secrets show (`SecretReveal`): the button keeps them shown, Option peeks, and they go back to
+    /// dots when the window stops being key or the kit closes. Whoever opened the kit has already confirmed the
+    /// owner (or, in setup, needs not), so the button never asks.
+    private(set) var reveal = SecretReveal()
 
     @ObservationIgnored private let connection: AgentConnection
 
@@ -75,7 +79,13 @@ final class RecoveryKitModel {
         state = .idle
         savedOnThisMac = nil
         copied = nil
+        reveal.reset()
     }
+
+    func toggleReveal() { reveal.toggle() }
+    func revealByButton() { reveal.approvedByButton() }
+    func optionChanged(_ held: Bool) { reveal.optionChanged(held) }
+    func resignedKey() { reveal.resignedKey() }
 
     func copy(_ field: RecoveryKitDocument.Field) {
         ConcealedPasteboard.copy(field.value, concealed: field.isSecret)
