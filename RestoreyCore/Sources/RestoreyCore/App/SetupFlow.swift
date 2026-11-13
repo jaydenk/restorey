@@ -127,6 +127,15 @@ public enum SetupFlow {
         return reconciled(SetupProgress(planID: first.plan.id, step: .storage, addingPlan: false), installed: installed)
     }
 
+    /// Where a setup window opened by hand (the menu's "Finish setup…") starts. `plans` nil means the agent hasn't
+    /// sent a status yet: the plans are unknown, so the saved progress is kept (only reconciled with the install
+    /// location) rather than discarded as stale. With nothing to resume it starts at the first step.
+    public static func opening(saved: SetupProgress?, plans: [PlanStatus]?, installed: Bool) -> SetupProgress {
+        let first = SetupProgress(planID: nil, step: firstStep(installed: installed, addingPlan: false), addingPlan: false)
+        guard let plans else { return saved.map { reconciled($0, installed: installed) } ?? first }
+        return resume(saved: saved, plans: plans, installed: installed) ?? first
+    }
+
     private static func isStillValid(_ saved: SetupProgress, plans: [PlanStatus], unfinished: [PlanStatus]) -> Bool {
         guard let planID = saved.planID else {
             // Before "Check" saved a plan: an added plan's draft, or a first run with no plans yet.

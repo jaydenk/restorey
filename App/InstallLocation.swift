@@ -22,6 +22,9 @@ struct InstalledCopy: Sendable {
 }
 
 enum InstallLocation {
+    /// Where the installed copy lives, and where setup's "Move to Applications" puts this one (`AppMover`).
+    static let applications = URL(fileURLWithPath: "/Applications", isDirectory: true)
+
     enum Outcome {
         case installed(InstalledCopy)
         case refused(InstallVerdict)

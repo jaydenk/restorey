@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var supervisor: AgentSupervisor?
     private let router = WindowRouter()
     private var mode = ShellMode.running
+    private let setupStore = SetupProgressStore(defaults: .standard)
+    /// Set once the launch has decided whether setup opens (P2-10), so it opens at most once by itself.
+    private var setupDecidedAtLaunch = false
     #if DEBUG
     private var developerWindow: DeveloperWindowController?
     #endif
@@ -84,7 +87,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .refused(let verdict):
             log.info("Not touching the agent: this copy at \(Bundle.main.bundlePath) is \(verdict)")
             mode = .refused
-            statusItem = StatusItemController(refused: verdict)
+            statusItem = StatusItemController(refused: verdict, router: router)
+            let mover = AppMover(source: Bundle.main.bundleURL, identity: identity)
+            router.makeSetupModel = { [setupStore] in
+                // Always the move screen; the saved progress is the installed copy's and is left alone.
+                SetupModel(
+                    context: .refused(mover),
+                    progress: SetupProgress(planID: nil, step: .moveToApplications, addingPlan: false),
+                    store: setupStore)
+            }
+            // A copy outside /Applications can do nothing else, so its one screen opens at once.
+            router.showSetup()
         case .installed(let copy):
             let supervisor = AgentSupervisor(installed: copy, identity: identity, log: log)
             self.supervisor = supervisor
@@ -95,7 +108,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusItem.setDeveloperAction { developer.show() }
             #endif
             self.statusItem = statusItem
+            let loginItem = LoginItem(installed: copy)
+            router.makeSetupModel = { [setupStore] in
+                SetupModel(
+                    context: .installed(supervisor, loginItem),
+                    progress: SetupFlow.opening(
+                        saved: setupStore.load(), plans: supervisor.lastKnownStatus?.plans, installed: true),
+                    store: setupStore)
+            }
+            supervisor.observe { [weak self, weak supervisor] in
+                guard let self, let supervisor else { return }
+                self.openSetupAtLaunchIfNeeded(status: supervisor.status)
+            }
             supervisor.start()
+        }
+    }
+
+    /// P2-10: setup opens at launch while a plan's setup is unfinished or no plan exists, decided on the agent's
+    /// first status, since only the agent knows the plans.
+    private func openSetupAtLaunchIfNeeded(status: AgentStatus?) {
+        guard !setupDecidedAtLaunch, let status else { return }
+        setupDecidedAtLaunch = true
+        if SetupFlow.resume(saved: setupStore.load(), plans: status.plans, installed: true) != nil {
+            router.showSetup()
         }
     }
 

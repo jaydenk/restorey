@@ -21,17 +21,26 @@ final class ShellState {
 /// state-restored, so a menu bar app doesn't reopen Settings by itself at every launch. Closing a window
 /// releases it and its content, so a recovery kit's secrets go with it.
 ///
-/// Until setup (Task 11), Settings (Task 14), the recovery kit (Task 13) and Restore Files (Task 8) exist,
-/// each window holds a placeholder.
+/// Until Settings (Task 14), the recovery kit (Task 13) and Restore Files exist, each of those windows holds a
+/// placeholder.
 @MainActor
 final class WindowRouter: NSObject, NSWindowDelegate {
     let state = ShellState()
     private let slots = WindowSlots<AppWindowKind, NSWindow>()
     /// The plan a recovery kit or Restore Files window shows.
     private var shownPlan: [AppWindowKind: UUID] = [:]
+    /// Makes the setup window's model when it opens (`AppDelegate` supplies it: refused or installed).
+    var makeSetupModel: (() -> SetupModel)?
+    /// The open setup window's model, told when the window closes so its secrets go at once.
+    private var setupModel: SetupModel?
 
     func showSetup() {
-        show(.setup) { NSHostingController(rootView: PlaceholderView(kind: .setup)) }
+        guard let makeSetupModel else { return }
+        show(.setup) { [weak self] in
+            let model = makeSetupModel()
+            self?.setupModel = model
+            return NSHostingController(rootView: SetupWindow(model: model))
+        }
     }
 
     /// Shows Settings. With neither argument, an open window comes forward as it is and a new one starts at
@@ -92,6 +101,10 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         else { return }
         slots.closed(window, for: kind)
         shownPlan[kind] = nil
+        if kind == .setup {
+            setupModel?.close()
+            setupModel = nil
+        }
         // The content (and anything secret it holds) goes now, not when AppKit lets go of the window.
         window.contentViewController = nil
     }

@@ -168,6 +168,20 @@ then the first backup. "Check" saves the plan with its kit unconfirmed, so it ne
 step in `UserDefaults` (`setupProgress`) so quitting resumes an unfinished setup; a plan needing a new kit is the
 recovery-kit window's job, not setup's. The kit is saved at its step but the agent confirms it only at "Start first backup", so a plan stays unfinished (and never runs) until then.
 
+The setup window opens at launch while a plan's setup is unfinished or no plan exists, decided on the agent's first
+status; a copy outside `/Applications` opens it at once, on "Move to Applications" (also in its menu). That screen
+copies the app into `/Applications` (`AppMover`, file work in `AppInstaller`), removes `com.apple.quarantine` from
+the copy, swaps it in place of any copy the user chose to replace, moves the copy it ran from to the Trash (a
+read-only disk image keeps it), opens the moved copy and quits. If `/Applications` already has a copy, it
+offers to replace it only while that copy's agent isn't registered (read from launchd and from the app's record of
+its last registration, never from `SMAppService`); otherwise it asks for Restorey to be quit and the copy replaced by
+hand. It never asks for an administrator password: `NSWorkspace.requestAuthorization` needs the restricted
+Privileged File Operations entitlement, and administrators can write to `/Applications` anyway; anyone else is told
+to drag the app there in Finder. The permissions step ticks off Applications, checks Full Disk Access through the
+agent's own probe every 2 s while shown and whenever Restorey comes back to the front, asks the agent for notification
+permission, and has "Open at login" (on by default), applied on Continue, which needs Full Disk Access. The step's
+secrets live only in `SetupDraft`, which drops them whenever the step changes and when the window closes.
+
 ### The menu bar
 
 The icon and the menu come from one place (`MenuPresentation` in RestoreyCore), so they can't disagree. The icon

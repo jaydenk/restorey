@@ -8,7 +8,7 @@ import RestoreyCore
 final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
     private enum Mode {
         /// This copy may not touch the agent (`InstallVerdict` other than `.ok`).
-        case refused(InstallVerdict)
+        case refused(InstallVerdict, WindowRouter)
         /// The identity keys are missing from Info.plist: a broken build.
         case broken(String)
         case running(AgentSupervisor, WindowRouter)
@@ -39,8 +39,8 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
     private var openDeveloperWindow: (() -> Void)?
     #endif
 
-    init(refused verdict: InstallVerdict) {
-        mode = .refused(verdict)
+    init(refused verdict: InstallVerdict, router: WindowRouter) {
+        mode = .refused(verdict, router)
         super.init()
         setUp()
     }
@@ -119,9 +119,11 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         switch mode {
-        case .refused(let verdict):
+        case .refused(let verdict, _):
             menu.removeAllItems()
-            menu.addItem(line("Move Restorey to Applications"))
+            let move = NSMenuItem(title: "Move to Applications…", action: #selector(showMoveScreen), keyEquivalent: "")
+            move.target = self
+            menu.addItem(move)
             menu.addItem(line(verdict == .translocated
                 ? "macOS is running this copy from a temporary location."
                 : "Restorey only runs from the Applications folder."))
@@ -162,6 +164,12 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
         let item = NSMenuItem(title: "Quit Restorey", action: #selector(quit), keyEquivalent: "q")
         item.target = self
         return item
+    }
+
+    /// Setup's "Move to Applications" screen, for a refused copy.
+    @objc private func showMoveScreen() {
+        guard case .refused(_, let router) = mode else { return }
+        router.showSetup()
     }
 
     @objc private func quit() {

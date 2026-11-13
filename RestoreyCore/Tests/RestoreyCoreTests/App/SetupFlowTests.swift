@@ -239,3 +239,31 @@ import Testing
         #expect(SetupProgressStore.key == "setupProgress")
     }
 }
+
+@Suite struct SetupFlowOpeningTests {
+    private static let planID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
+
+    @Test func withoutAStatusTheSavedProgressIsKept() {
+        let saved = SetupProgress(planID: Self.planID, step: .sources, addingPlan: false, kitSaved: true)
+        #expect(SetupFlow.opening(saved: saved, plans: nil, installed: true) == saved)
+    }
+
+    @Test func withoutAStatusTheSavedStepIsStillReconciled() {
+        let moving = SetupProgress(planID: nil, step: .moveToApplications, addingPlan: false)
+        #expect(SetupFlow.opening(saved: moving, plans: nil, installed: true).step == .permissions)
+        let pastKit = SetupProgress(planID: Self.planID, step: .schedule, addingPlan: false, kitSaved: false)
+        #expect(SetupFlow.opening(saved: pastKit, plans: nil, installed: true).step == .recoveryKit)
+    }
+
+    @Test func nothingSavedStartsAtTheFirstStep() {
+        #expect(SetupFlow.opening(saved: nil, plans: nil, installed: true).step == .permissions)
+        #expect(SetupFlow.opening(saved: nil, plans: [], installed: true).step == .permissions)
+    }
+
+    @Test func withPlansItFollowsResume() {
+        // Saved progress for a plan that no longer exists, with no plans: a fresh first run.
+        let stale = SetupProgress(planID: Self.planID, step: .schedule, addingPlan: false, kitSaved: true)
+        let opened = SetupFlow.opening(saved: stale, plans: [], installed: true)
+        #expect(opened == SetupProgress(planID: nil, step: .permissions, addingPlan: false))
+    }
+}
