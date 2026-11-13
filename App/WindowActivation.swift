@@ -21,8 +21,10 @@ enum WindowActivation {
     static func bringForward(_ window: NSWindow) {
         window.makeKeyAndOrderFront(nil)
         let number = window.windowNumber
-        // `.default` mode only: never inside a menu's tracking loop.
-        RunLoop.main.perform(inModes: [.default]) {
+        // Never inside a menu's tracking loop (event-tracking mode is left out). Default mode, and modal-panel mode,
+        // which is what runs while AppKit waits for the answer to a quit (`.terminateLater`): a Quit chosen from the
+        // status-item menu then shows its question on an active window (fix round 3, N4).
+        RunLoop.main.perform(inModes: [.default, .modalPanel]) {
             MainActor.assumeIsolated {
                 NSApplication.shared.activate()
                 NSApplication.shared.window(withWindowNumber: number)?.makeKeyAndOrderFront(nil)

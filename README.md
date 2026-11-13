@@ -153,8 +153,9 @@ Quit), an Edit menu (Undo, Redo, Cut, Copy, Paste, Paste and Match Style, Delete
 (Minimise, Close) make ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V, ⌘A, ⌘W and ⌘Q work in its windows. Each kind of window (setup, Settings, recovery kit, Restore
 Files) opens at most once: asking again brings the open one to the front. Since macOS 14 an app's request to become
 active can be refused, so a window is ordered front at once and the activation is asked for once any menu has
-finished tracking (`WindowActivation`), so a status-item menu closing doesn't hand the focus back to the app that was
-active before. None is restored at launch, and closing a
+finished tracking (`WindowActivation`, in the default and modal-panel run-loop modes, not event tracking), so a
+status-item menu closing doesn't hand the focus back to the app that was active before, and a quit's question still
+comes up on an active window. None is restored at launch, and closing a
 window releases it, so a recovery kit's secrets go with it. The setup window follows its content's size from step to step.
 
 Opening Restorey again while it runs (from Finder, Spotlight or `open`) opens Settings, or brings an open Settings
@@ -286,11 +287,13 @@ repository password is first tried on the repository with any storage keys or en
 ("Checking the password…", `probeRepositoryCredentials`), and nothing is saved unless the repository opens with
 them. The check isn't a run: it leaves nothing in the plan's history or run logs, the plan isn't shown backing up,
 and a Back Up Now meanwhile waits its turn in the repository's queue, as during the size measurement after an
-adopt. The typed secrets go when the save succeeds, on Revert, when another plan is shown and when
+adopt. Like that measurement it is registered with the agent only once its turn comes (registrations are counted,
+since the two can overlap), so deleting the plan never waits for whatever is queued ahead of it. The typed secrets go when the save succeeds, on Revert, when another plan is shown and when
 the window closes. Every change of the plan shown (the sidebar, a plan's line in the menu, "Add…", opening the app
 again) goes through one guard (`PlanSelection`): with unsaved edits, a request for another plan waits for "Discard
 your changes…?" (a tab the route named, such as Alerts for "Add…", is shown once the switch happens), and closing
-the window or quitting Restorey asks Save, Don't Save or Cancel (a refused save cancels the quit). The editor belongs to the window, so going
+the window or quitting Restorey asks Save, Don't Save or Cancel (a refused save cancels the quit; a quit while
+Settings already has a question up is cancelled, and the window brought forward so that question is answered first). The editor belongs to the window, so going
 to General and back keeps them. Delete Plan… asks with the developer window's words ("Its
 settings, saved passwords and keys, and history are removed. The repository and its snapshots aren't touched."); the
 agent also removes the plan's run logs.
@@ -325,8 +328,9 @@ The menu, top to bottom:
   kit needed — Save Recovery Kit…"; "No off-Mac monitoring — Add…" (opens the plan in Settings), with "Don't Show
   This Again" under it.
 - **One entry per plan**: its name, status ("Backed up at 14:16", "Backing up", grey "Paused" with "Resumes by
-  itself at 15:20", "Backup failed at 14:16" in red, with the time and reason of the newest backup record, whatever ran after it; a
-skip reason in orange), a detail line (progress, time left
+  itself at 15:20", "Backup failed at 14:16" in red, with the time and reason of the newest backup that had a verdict, the same record
+the "backup failed" alert is decided from, so a skip, pause or lock since doesn't hide them; a skip reason in
+orange), a detail line (progress, time left
   and upload speed while backing up, or the next run) and its destination with the repository size. A running
   backup has a progress bar under it. Choosing a plan opens it in Settings; a failed one has "Show Details…" (its
   history).
@@ -650,8 +654,9 @@ holding Option shows them only while it is held, for a quick look (`SecretReveal
 button that copies the real command. The first reveal or copy of a command that carries secrets (decided from the
 plan, so a copy before any reveal still asks and copies the real values) asks for Touch ID or your login password,
 once per opening, and the secrets are fetched only then and dropped when the window closes or another plan is
-picked. Approving through the button shows them at once, provided the window is still the key window when they
-arrive. If you decline, holding Option doesn't ask again in that
+picked. Approving through the button shows them at once: Restorey waits (up to a second) for the window to be the
+key window again after the prompt, then fetches the secrets, and shows them only if the window is still key, so
+switching away meanwhile leaves dots (`KeyWaiter`, `RevealOrder`). If you decline, holding Option doesn't ask again in that
 opening; "Show Passwords and Keys…" or a copy does. A Mac that can't ask at all (no login password set, say) says so and why, rather than asking you to try
 Touch ID.
 

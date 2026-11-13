@@ -73,8 +73,14 @@ final class RecoveryKitWindowModel {
         // The window may have closed while macOS asked.
         guard gate == .asking else { return }
         gate = .open
-        await kit.load()
-        if revealing, kit.document != nil { kit.revealByButton() }
+        guard revealing else { return await kit.load() }
+        // `RevealOrder` (fix round 3, N1): the window is key again only once macOS grants the activation asked for
+        // after the prompt, so wait for that, then load, then show only if it is still key.
+        let show = await RevealOrder.afterApproval(waiter: kit.keyWaiter, timeout: RestoreFilesModel.keyWait) {
+            await self.kit.load()
+            return self.kit.document != nil
+        }
+        if show { kit.revealByButton() }
     }
 
     /// "I've saved it somewhere other than this Mac": the agent's `confirmRecoveryKit`, which lets backups carry on.

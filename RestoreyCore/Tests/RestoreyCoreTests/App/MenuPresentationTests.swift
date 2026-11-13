@@ -340,6 +340,20 @@ struct MenuPresentationTests {
         #expect(content.plans[0].detail == "wrong password")
     }
 
+    /// Fix round 3, N3: a skip after a failure leaves the alert up (`activeConditions` looks past it), and the line
+    /// keeps the failure's time and reason rather than a bare "Backup failed".
+    @Test func aSkipAfterAFailureKeepsTheFailuresLine() {
+        let plan = Self.plan()
+        let failure = Self.record(plan, .wrongPassword, at: Self.at(13, 0))
+        let skip = Self.record(plan, .skipped(.onBattery), at: Self.at(14, 0))
+        let status = PlanStatus(
+            plan: plan, phase: .skipped(.onBattery), lastRecord: skip, nextRunAt: nil, alerts: [.backupFailed],
+            latestBackupRecord: skip, latestBackupVerdict: failure)
+        let content = Self.make(Self.status([status]))
+        #expect(content.plans[0].status == "Backup failed at 13:00")
+        #expect(content.plans[0].detail == "wrong password")
+    }
+
     @Test func noRecentSuccess() {
         let plan = Self.plan()
         let content = Self.make(Self.status([Self.line(plan, backedUpAt: Self.at(14, 16, daysAgo: 4), alerts: [.noRecentSuccess])]))

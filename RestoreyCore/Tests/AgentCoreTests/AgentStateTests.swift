@@ -1043,6 +1043,50 @@ struct AgentStateTests {
         #expect(history.activeAlerts[.configurationError] != nil)
     }
 
+    /// Fix round 3, N2: two registrations for one plan (an adopt's size measurement and a credential check) can
+    /// overlap; the first to end mustn't end the other's, or deleting the plan wouldn't wait for it.
+    @Test func overlappingMeasurementsAreCounted() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        try await state.beginMeasurement(planID: plan.id)
+        try await state.beginMeasurement(planID: plan.id)
+        await state.endMeasurement(planID: plan.id)
+        #expect(await state.isMeasuring(plan.id))
+        await state.endMeasurement(planID: plan.id)
+        #expect(await !state.isMeasuring(plan.id))
+        // An end with nothing registered changes nothing.
+        await state.endMeasurement(planID: plan.id)
+        #expect(await !state.isMeasuring(plan.id))
+    }
+
+    /// Fix round 3, N3: the status carries the newest backup of any outcome (for Done) and the newest backup with a
+    /// verdict (for the menu's failure line, as `activeConditions` decides `backupFailed`).
+    @Test func theStatusCarriesTheNewestBackupAndTheNewestVerdict() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        func record(_ outcome: RunOutcome, _ minutes: Double) -> RunRecord {
+            RunRecord(
+                id: UUID(), planID: plan.id, operation: .backup, trigger: .scheduled,
+                startedAt: clock.now.addingTimeInterval(minutes * 60), endedAt: clock.now.addingTimeInterval(minutes * 60),
+                outcome: outcome, summary: nil, logFile: "")
+        }
+        let failed = record(.wrongPassword, 1)
+        let skipped = record(.skipped(.onBattery), 2)
+        try await state.updateHistory(plan.id) { history in
+            history.record(failed)
+            history.record(skipped)
+        }
+        let status = try #require(await state.status().plans.first)
+        #expect(status.latestBackupRecord == skipped)
+        #expect(status.latestBackupVerdict == failed)
+    }
+
     // MARK: Runs need the runner
 
     /// Runs are the plan runner's (PlanRunnerTests); with none attached they are refused, not dropped.

@@ -30,6 +30,8 @@ final class RestoreFilesModel {
     /// Observed copy of whether the secrets for the plan shown are here.
     private(set) var hasSecrets = false
     @ObservationIgnored private let supervisor: AgentSupervisor
+    /// The window's key state, fed by `OptionKeyMonitor`, for the reveal's wait.
+    @ObservationIgnored private let keyWaiter = KeyWaiter()
 
     init(planID: UUID, supervisor: AgentSupervisor) {
         self.planID = planID
@@ -60,18 +62,41 @@ final class RestoreFilesModel {
     }
 
     /// "Show Passwords and Keys(…)" / "Hide Passwords and Keys". Showing asks for the owner first if this opening
-    /// hasn't yet; approving keeps them shown.
+    /// hasn't yet; approving keeps them shown. After a prompt the window gets the key back only once macOS grants
+    /// the activation `OwnerAuthentication` asks for, so the order is `RevealOrder`'s: wait for the window to be key
+    /// (up to `keyWait`), then fetch, then show only if it is still key (fix round 3, N1).
     func revealButtonPressed() async {
         if reveal.kept {
             reveal.toggle()
             return
         }
-        guard await fetchSecrets() else { return }
-        reveal.approvedByButton()
+        if hasSecrets {
+            reveal.approvedByButton()
+            return
+        }
+        guard !working else { return }
+        working = true
+        defer { working = false }
+        let prompted = !authenticated
+        guard await authenticate() else { return }
+        let show = await RevealOrder.afterApproval(waiter: keyWaiter, timeout: prompted ? Self.keyWait : .zero) {
+            await self.fetchFromAgent()
+        }
+        if show { reveal.approvedByButton() }
     }
 
-    func resignedKey() { reveal.resignedKey() }
-    func becameKey() { reveal.becameKey() }
+    /// How long a reveal waits for the window to be key again after the prompt.
+    static let keyWait: Duration = .seconds(1)
+
+    func resignedKey() {
+        reveal.resignedKey()
+        keyWaiter.resignedKey()
+    }
+
+    func becameKey() {
+        reveal.becameKey()
+        keyWaiter.becameKey()
+    }
 
     /// Copies the real command, by title, so the caller's copy (which may be the revealed one) isn't held here.
     func copy(_ title: String) async {
@@ -98,10 +123,17 @@ final class RestoreFilesModel {
     @discardableResult
     private func fetchSecrets() async -> Bool {
         if hasSecrets { return true }
-        guard !working, let plan else { return false }
+        guard !working else { return false }
         working = true
-        problem = nil
         defer { working = false }
+        guard await authenticate() else { return false }
+        return await fetchFromAgent()
+    }
+
+    /// Asks for the owner if this opening hasn't yet. True once confirmed.
+    private func authenticate() async -> Bool {
+        guard let plan else { return false }
+        problem = nil
         let asked = generation
         if !authenticated {
             switch await OwnerAuthentication.confirm(
@@ -120,6 +152,14 @@ final class RestoreFilesModel {
             guard asked == generation else { return false }
             authenticated = true
         }
+        return true
+    }
+
+    /// Fetches the plan's secrets from the agent (the owner already confirmed).
+    private func fetchFromAgent() async -> Bool {
+        if hasSecrets { return true }
+        guard let plan else { return false }
+        let asked = generation
         switch await supervisor.connection.recoveryKit(plan.id) {
         case .success(let reply):
             guard asked == generation, reply.plan.id == planID else { return false }

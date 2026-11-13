@@ -1793,10 +1793,38 @@ struct PlanRunnerTests {
         await #expect(throws: AgentError.foreignSecret) {
             _ = try await f.state.probeRepository(f.planID, candidates: [SecretEntry(key: .repositoryPassword(UUID()), value: "x")])
         }
-        await #expect(throws: AgentError.self) {
+        await #expect {
             _ = try await f.state.probeRepository(
                 f.planID, candidates: [SecretEntry(key: .checkInURL(f.planID), value: "https://hc-ping.com/x")])
+        } throws: { error in
+            if case .invalidRequest? = error as? AgentError { true } else { false }
         }
+    }
+
+    /// Fix round 3, N2: a check waiting in the repository's queue (behind another plan's backup, say) isn't yet
+    /// registered, so deleting the plan doesn't wait for whatever is ahead of it; the check then finds the plan
+    /// gone and runs nothing.
+    @Test func deletingAPlanDoesntWaitForACheckStillQueued() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        let id = f.planID
+        let key = RepositoryQueues.key(for: await f.plan().repository)
+        let gate = Locked<CheckedContinuation<Void, Never>?>(nil)
+        let holding = Task {
+            await f.dependencies.queues.run(repository: key) {
+                await withCheckedContinuation { continuation in gate.set(continuation) }
+            }
+        }
+        while gate.value == nil { try await Task.sleep(for: .milliseconds(5)) }
+        let check = Task {
+            try await f.state.probeRepository(id, candidates: [SecretEntry(key: .repositoryPassword(id), value: "x")])
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        _ = try await f.state.deletePlan(id)
+        gate.value?.resume()
+        await holding.value
+        await #expect(throws: AgentError.self) { _ = try await check.value }
+        #expect(f.state.candidates.values(for: id) == nil)
     }
 
     @Test func probeIsRefusedWhileDraining() async throws {

@@ -213,15 +213,26 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         return false
     }
 
-    /// Fix round 2: quitting with unsaved plan edits asks the same question, over the Settings window. Returns false
-    /// when there is nothing to ask (quit at once); otherwise `reply` gets whether the quit may go on: after a save
-    /// that worked or "Don't Save", not after Cancel or a refused save.
-    func askBeforeQuitting(_ reply: @escaping @MainActor (Bool) -> Void) -> Bool {
+    enum QuitQuestion {
+        /// Nothing unsaved: quit now.
+        case none
+        /// Asked; `reply` will say whether the quit goes on.
+        case asked
+        /// Settings already has a question up (closing it, or discarding changes): the quit is cancelled, and the
+        /// window brought forward so that question is answered first. Chaining onto it would mean guessing what each
+        /// answer means for the quit; cancelling leaves nothing waiting on a sheet that may never answer it.
+        case busy
+    }
+
+    /// Fix round 2: quitting with unsaved plan edits asks the same question, over the Settings window. `reply` gets
+    /// whether the quit may go on: after a save that worked or "Don't Save", not after Cancel or a refused save.
+    func askBeforeQuitting(_ reply: @escaping @MainActor (Bool) -> Void) -> QuitQuestion {
         guard let window = slots.openWindow(for: .settings), let editor = planEditorSlot?.editor, editor.edit.isDirty
-        else { return false }
+        else { return .none }
         WindowActivation.bringForward(window)
+        if window.attachedSheet != nil { return .busy }
         askToSave(editor, in: window, then: reply)
-        return true
+        return .asked
     }
 
     /// Save, Don't Save or Cancel for `editor`'s unsaved edits, as a sheet on `window`. `then` gets true once the

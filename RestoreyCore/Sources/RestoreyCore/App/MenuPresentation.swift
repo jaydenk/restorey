@@ -346,7 +346,7 @@ public enum MenuPresentation {
     private static func settled(_ status: PlanStatus, into line: inout PlanLine, _ format: TextContext) {
         let alerts = Set(status.alerts)
         if alerts.contains(.backupFailed) {
-            let failed = status.latestBackupRecord.flatMap { $0.outcome.failureReason == nil ? nil : $0 }
+            let failed = status.latestBackupVerdict.flatMap { $0.outcome.failureReason == nil ? nil : $0 }
             line.status = failed.map { "Backup failed at \(format.time($0.endedAt))" } ?? "Backup failed"
             if let reason = failed?.outcome.failureReason {
                 line.detail = reason

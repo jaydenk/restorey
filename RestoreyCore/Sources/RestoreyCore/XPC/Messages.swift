@@ -116,8 +116,14 @@ public struct PlanStatus: Codable, Sendable, Equatable {
     public var lastRecord: RunRecord?
     /// The newest record of a backup, whatever its outcome (a failure, a skip): what the menu's "Backup failed at
     /// <time>" and its reason come from, so a step that ran since can't stand in for it. A status from before it
-    /// existed decodes it from `lastRecord` when that is a backup's record.
+    /// existed decodes it from `lastRecord` when that is a backup's record. Done's progress reads it: a skip or a
+    /// failure ends the first backup.
     public var latestBackupRecord: RunRecord?
+    /// The newest backup record with a verdict (`RunOutcome.isVerdict`): what `backupFailed` is decided from
+    /// (`activeConditions`), so the menu's "Backup failed at <time>" and its reason read it, looking past a skip,
+    /// pause or lock since. A status from before it existed decodes it from `latestBackupRecord` (or `lastRecord`)
+    /// when that is a verdict.
+    public var latestBackupVerdict: RunRecord?
     /// Nil when the plan will not run on its own (stopped, invalid, or no confirmed recovery kit).
     public var nextRunAt: Date?
     /// Sorted by raw value.
@@ -133,12 +139,14 @@ public struct PlanStatus: Codable, Sendable, Equatable {
     public init(
         plan: Plan, phase: PlanPhase, lastRecord: RunRecord?, nextRunAt: Date?, alerts: [AlertCondition],
         lastBackup: RunRecord? = nil, repositorySize: RepositorySize? = nil, setupState: PlanSetupState? = nil,
-        latestBackupRecord: RunRecord? = nil
+        latestBackupRecord: RunRecord? = nil, latestBackupVerdict: RunRecord? = nil
     ) {
         self.plan = plan
         self.phase = phase
         self.lastRecord = lastRecord
-        self.latestBackupRecord = latestBackupRecord ?? Self.backupRecord(lastRecord)
+        let latest = latestBackupRecord ?? Self.backupRecord(lastRecord)
+        self.latestBackupRecord = latest
+        self.latestBackupVerdict = latestBackupVerdict ?? Self.verdict(latest)
         self.nextRunAt = nextRunAt
         self.alerts = alerts
         self.lastBackup = lastBackup
@@ -148,10 +156,15 @@ public struct PlanStatus: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case plan, phase, lastRecord, nextRunAt, alerts, lastBackup, repositorySize, setupState, latestBackupRecord
+        case latestBackupVerdict
     }
 
     private static func backupRecord(_ record: RunRecord?) -> RunRecord? {
         record?.operation == .backup ? record : nil
+    }
+
+    private static func verdict(_ record: RunRecord?) -> RunRecord? {
+        record?.outcome.isVerdict == true ? record : nil
     }
 
     /// A status from an agent before schema 3 has no `lastBackup`, `repositorySize` or `setupState`: the
@@ -163,6 +176,8 @@ public struct PlanStatus: Codable, Sendable, Equatable {
         lastRecord = try c.decodeIfPresent(RunRecord.self, forKey: .lastRecord)
         latestBackupRecord = try c.decodeIfPresent(RunRecord.self, forKey: .latestBackupRecord)
             ?? Self.backupRecord(lastRecord)
+        latestBackupVerdict = try c.decodeIfPresent(RunRecord.self, forKey: .latestBackupVerdict)
+            ?? Self.verdict(latestBackupRecord)
         nextRunAt = try c.decodeIfPresent(Date.self, forKey: .nextRunAt)
         alerts = try c.decode([AlertCondition].self, forKey: .alerts)
         lastBackup = try c.decodeIfPresent(RunRecord.self, forKey: .lastBackup)

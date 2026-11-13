@@ -118,9 +118,19 @@ struct MessagesTests {
             var object = try JSONSerialization.jsonObject(with: XPCCoding.encode(PlanStatus(
                 plan: Self.plan(), phase: .idle, lastRecord: last, nextRunAt: nil, alerts: []))) as! [String: Any]
             object["latestBackupRecord"] = nil
+            object["latestBackupVerdict"] = nil
             let decoded = try XPCCoding.decode(PlanStatus.self, from: JSONSerialization.data(withJSONObject: object))
             #expect(decoded.latestBackupRecord == expected)
+            // The verdict falls back the same way, when the record is one (a failure is).
+            #expect(decoded.latestBackupVerdict == expected)
         }
+        // A skip isn't a verdict: an older status that only had one has no verdict to show.
+        var skip = backup
+        skip.outcome = .skipped(.onBattery)
+        let decodedSkip = try XPCCoding.decode(PlanStatus.self, from: XPCCoding.encode(PlanStatus(
+            plan: Self.plan(), phase: .idle, lastRecord: skip, nextRunAt: nil, alerts: [])))
+        #expect(decodedSkip.latestBackupRecord == skip)
+        #expect(decodedSkip.latestBackupVerdict == nil)
     }
 
     @Test func newShapesArePinned() throws {

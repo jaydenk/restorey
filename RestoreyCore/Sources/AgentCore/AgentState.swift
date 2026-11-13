@@ -54,7 +54,9 @@ public actor AgentState {
     /// Plans whose repository is being measured after an adopt (`beginMeasurement`). Not a run: the plan
     /// stays idle and can back up (its backup waits in the repository's queue), but a drain waits for it
     /// and a delete stops it first.
-    private var measuring: Set<UUID> = []
+    /// Registered measurements and credential checks per plan, counted: an adopt's size measurement and a check
+    /// can overlap, and the first to end mustn't end the other's registration.
+    private var measuring: [UUID: Int] = [:]
     /// `deletePlan` callers waiting for a measurement they stopped to end.
     private var measuringWaiters: [CheckedContinuation<Void, Never>] = []
     /// `prepareForRestart` callers, woken whenever the agent may have become idle.
@@ -294,7 +296,8 @@ public actor AgentState {
             nextRunAt: next == .distantFuture ? nil : next, alerts: alerts,
             lastBackup: history.lastBackupRecord, repositorySize: history.repositorySize,
             setupState: PlanSetupState(plan: plan),
-            latestBackupRecord: history.recent.first { $0.operation == .backup })
+            latestBackupRecord: history.recent.first { $0.operation == .backup },
+            latestBackupVerdict: history.recent.first { $0.operation == .backup && $0.outcome.isVerdict })
     }
 
     /// Pushes the status and, unless `deliveringAlerts` is false, has the alerts delivered for it: every
@@ -444,9 +447,9 @@ public actor AgentState {
         // A measurement after an adopt is stopped rather than refusing the delete (setup's Cancel deletes the
         // plan it just adopted). restic has `interruptGracePeriod` to stop; its record is written before the
         // plan goes. One still waiting in the queue finds the plan gone and doesn't start.
-        if measuring.contains(id) {
+        if measuring[id] != nil {
             await runner?.stopMeasurement(planID: id)
-            while measuring.contains(id) { await withCheckedContinuation { measuringWaiters.append($0) } }
+            while measuring[id] != nil { await withCheckedContinuation { measuringWaiters.append($0) } }
         }
 
         return try await serialisedWrite {
@@ -669,11 +672,16 @@ public actor AgentState {
         try requireRunnable(planID)
         let plan = try requirePlan(planID)
         guard !deleting.contains(planID) else { throw AgentError.planDeleting(name: plan.name) }
-        measuring.insert(planID)
+        measuring[planID, default: 0] += 1
     }
 
+    func isMeasuring(_ planID: UUID) -> Bool { measuring[planID] != nil }
+
+    /// Ends one registration; the plan counts as measuring until the last ends.
     func endMeasurement(planID: UUID) {
-        guard measuring.remove(planID) != nil else { return }
+        guard let count = measuring[planID] else { return }
+        measuring[planID] = count > 1 ? count - 1 : nil
+        guard count == 1 else { return }
         let waiters = measuringWaiters
         measuringWaiters.removeAll()
         for waiter in waiters { waiter.resume() }

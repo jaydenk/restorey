@@ -58,8 +58,9 @@ public func shouldNotify(_ state: AlertNotificationState, now: Date) -> Bool {
 }
 
 extension RunOutcome {
-    /// False for outcomes that say nothing about whether the work succeeded.
-    fileprivate var isVerdict: Bool {
+    /// False for outcomes that say nothing about whether the work succeeded. Also decides
+    /// `PlanStatus.latestBackupVerdict`, so the menu's failure line follows `backupFailed`.
+    public var isVerdict: Bool {
         switch self {
         case .paused, .cancelled, .skipped, .locked, .stoppedBySystem: false
         default: true

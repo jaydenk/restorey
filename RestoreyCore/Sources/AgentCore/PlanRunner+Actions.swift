@@ -41,21 +41,23 @@ extension PlanRunner {
     /// Settings' check of typed credentials before it saves them (Ruling R2): what `probeRepository` would find with
     /// `candidates` in place of the keychain's. A check, not a run, and a short repository action like the size
     /// measurement after an adopt: it isn't a run of the plan, so the plan isn't shown backing up and Back Up Now
-    /// isn't refused (the backup waits its turn in the repository's queue, behind the check); it is registered with
-    /// the state, so a drain waits for it and deleting the plan stops it. It records nothing: no history record, no
-    /// in-progress marker, no run log. Its outcome goes back only as the reply.
+    /// isn't refused (the backup waits its turn in the repository's queue, behind the check). Like the measurement,
+    /// it is registered with the state only once its turn comes, so a drain waits for it and deleting the plan
+    /// stops it, while a check still waiting (behind another plan's backup, say) holds up neither; it then finds the
+    /// plan gone and runs nothing. It records nothing: no history record, no in-progress marker, no run log. Its
+    /// outcome goes back only as the reply.
     ///
     /// The candidates are set (`AgentState.candidates`) only inside the check's turn of the queue and cleared with
     /// `defer` however it ends; they are in the redactor too.
     public func checkCredentials(planID: UUID, candidates: [SecretKey: String]) async throws -> RepositoryProbe {
-        try await deps.state.beginMeasurement(planID: planID)
         let handle = RunHandle()
         measurementHandles[planID, default: []].append(handle)
         let result = await check(planID: planID, candidates: candidates, handle: handle)
         measurementEnded(planID: planID, handle: handle)
-        await deps.state.endMeasurement(planID: planID)
         return try result.get()
     }
+
+    private typealias CheckSteps = (probe: StepResult, listing: Result<AdoptReport, AgentError>?)
 
     private func check(
         planID: UUID, candidates: [SecretKey: String], handle: RunHandle
@@ -65,20 +67,32 @@ extension PlanRunner {
         case .failure(let error): return .failure(error)
         case .success(let ready): session = ready
         }
-        let store = deps.state.candidates
-        let checked = await deps.queues.run(repository: session.key) {
-            [self] () async -> (StepResult, Result<AdoptReport, AgentError>?)? in
+        let turn = await deps.queues.run(repository: session.key) {
+            [self] () async -> Result<CheckSteps, AgentError>? in
             guard !(await isWindingDown()), handle.intent == nil else { return nil }
-            store.set(candidates, for: planID)
-            defer { store.set(nil, for: planID) }
-            let probe = await runStep(.catConfig, trigger: .manual, session: session, handle: handle, recorded: false)
-            guard case .success = probe.record.outcome, !(await isWindingDown()) else { return (probe, nil) }
-            return (probe, await listSnapshots(session: session, handle: handle, recorded: false))
+            do {
+                try await deps.state.beginMeasurement(planID: planID)
+            } catch {
+                return .failure((error as? AgentError) ?? .unknownPlan)
+            }
+            let steps = await checkSteps(planID: planID, candidates: candidates, session: session, handle: handle)
+            await deps.state.endMeasurement(planID: planID)
+            return .success(steps)
         }
-        guard let (probe, listing) = checked else {
-            return .failure(handle.intent == nil ? .draining : .unknownPlan)
-        }
-        return probeResult(probe: probe, listing: listing, session: session)
+        guard let turn else { return .failure(handle.intent == nil ? .draining : .unknownPlan) }
+        return turn.flatMap { probeResult(probe: $0.probe, listing: $0.listing, session: session) }
+    }
+
+    /// The check's restic steps, with the candidates set for the helper only while they run.
+    private func checkSteps(
+        planID: UUID, candidates: [SecretKey: String], session: RunSession, handle: RunHandle
+    ) async -> CheckSteps {
+        let store = deps.state.candidates
+        store.set(candidates, for: planID)
+        defer { store.set(nil, for: planID) }
+        let probe = await runStep(.catConfig, trigger: .manual, session: session, handle: handle, recorded: false)
+        guard case .success = probe.record.outcome, !(await isWindingDown()) else { return (probe, nil) }
+        return (probe, await listSnapshots(session: session, handle: handle, recorded: false))
     }
 
     /// Runs the agent's Full Disk Access probe, records it and pushes the status even when nothing
