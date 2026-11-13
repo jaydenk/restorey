@@ -9,7 +9,8 @@ import Foundation
 /// key again (fix round 4, M1). The prompt's answer and the window's resign-key notification come from different
 /// processes, so the answer can arrive first, while the window (and AppKit itself: the notification is posted as the
 /// window's state changes) still reads as key. Waiting for the resign and the return, not for "key now", covers both
-/// orders. If the prompt never takes the key, the wait times out and the reveal shows dots, the safe way to be wrong.
+/// orders. If the prompt never takes the key, the wait times out; by then any late resign has had the whole wait to
+/// arrive, so the reveal decides from `isKey` (fix round 5).
 @MainActor
 public final class KeyWaiter {
     /// The window's key state as last reported.
@@ -126,6 +127,9 @@ public enum RevealOrder {
         guard await approve(), isCurrent() else { return false }
         if prompts { _ = await waiter.waitUntilKey(timeout: timeout) }
         guard isCurrent(), await fetch() else { return false }
-        return isCurrent() && waiter.isBack
+        // Key now, not "back": once the wait has ended (back, or timed out), a resign that was late has had the
+        // whole wait to arrive, so `isKey` is no longer stale. A prompt that never took the key is shown, as
+        // approving promises (fix round 5).
+        return isCurrent() && waiter.isKey
     }
 }

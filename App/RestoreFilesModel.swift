@@ -140,8 +140,12 @@ final class RestoreFilesModel {
         guard opening == generation, let plan else { return false }
         problem = nil
         if !authenticated {
-            switch await OwnerAuthentication.confirm(
-                reason: "show the restore commands for “\(plan.name)”", returningTo: .restoreFiles) {
+            let outcome = await OwnerAuthentication.confirm(
+                reason: "show the restore commands for “\(plan.name)”", returningTo: .restoreFiles)
+            // The window closed or another plan was picked while macOS asked: the answer, whichever it was, was for
+            // that opening, so nothing of it (`declined`, `problem`) is kept for this one.
+            guard opening == generation else { return false }
+            switch outcome {
             case .confirmed:
                 declined = false
             case .declined:
@@ -153,7 +157,6 @@ final class RestoreFilesModel {
                 problem = sentence
                 return false
             }
-            guard opening == generation else { return false }
             authenticated = true
         }
         return true

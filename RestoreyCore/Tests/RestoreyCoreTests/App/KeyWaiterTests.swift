@@ -125,9 +125,10 @@ struct KeyWaiterTests {
         #expect(show)
     }
 
-    /// M1, the other way: the late resign never comes back in time. The fetch runs after the timeout (Copy needs
-    /// the secrets) and nothing is shown, even though the window last read as key when the answer came.
-    @Test func aPromptThatNeverGivesTheKeyBackShowsNothing() async {
+    /// Fix round 5: a prompt that never takes the key (the window stays key throughout). The wait times out, and
+    /// by then any late resign has had the whole wait to arrive, so a window still key is shown (owner ruling:
+    /// approving shows them at once).
+    @Test func aPromptThatNeverTakesTheKeyShowsAfterTheTimeout() async {
         let waiter = KeyWaiter()
         waiter.becameKey()
         var fetched = false
@@ -139,6 +140,30 @@ struct KeyWaiterTests {
                 return true
             })
         #expect(fetched)
+        #expect(show)
+    }
+
+    /// M1, the other way: the resign arrives after the answer and the window never comes back in time. The fetch
+    /// runs after the timeout (Copy needs the secrets) and nothing is shown.
+    @Test func aLateResignWithNoReturnShowsDots() async {
+        let waiter = KeyWaiter()
+        waiter.becameKey()
+        var fetched = false
+        let show = await RevealOrder.reveal(
+            waiter: waiter, prompts: true, timeout: .milliseconds(80), isCurrent: { true },
+            approve: {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(10))
+                    waiter.resignedKey()
+                }
+                return true
+            },
+            fetch: {
+                fetched = true
+                return true
+            })
+        #expect(fetched)
+        #expect(!waiter.isKey)
         #expect(!show)
     }
 
