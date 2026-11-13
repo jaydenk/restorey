@@ -55,6 +55,13 @@ import Testing
         #expect(fields.map(\.isSecret) == [true, false, false])
     }
 
+    @Test func theEnvironmentCommandIsSecretEvenWhenItsValuesAreMissing() {
+        let plan = RestoreCommandsTests.s3Plan()
+        let document = RecoveryKitDocument.make(RecoveryKitSecrets(plan: plan, secrets: []), createdAt: Self.created)
+        let fields = document.sections.first { $0.title == "Restore without Restorey" }!.fields
+        #expect(fields.map(\.isSecret) == [true, false, false])
+    }
+
     @Test func noCheckInURLNoSection() {
         let document = RecoveryKitDocument.make(Self.s3Kit(checkIn: false), createdAt: Self.created)
         #expect(!document.sections.map(\.title).contains("Check-in URL"))

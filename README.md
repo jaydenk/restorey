@@ -544,8 +544,12 @@ It appears in setup's recovery kit step, from the menu's "New recovery kit neede
 "Show recovery kit…" in the plan's settings. Each field has a copy button (secrets are copied as concealed
 pasteboard items, so clipboard managers that honour the marker don't keep them), then **Print…** and **Save as
 PDF…**. The save panel picks no folder for you, and if the PDF lands on this Mac's own disk the window says so and
-recommends deleting it once the kit is stored elsewhere. The PDF is created readable only by you. Restorey never
-writes the kit anywhere by itself.
+recommends deleting it once the kit is stored elsewhere. The PDF is laid out in memory, written to a temporary file
+created readable only by you (`mkstemp`, mode 0600) in the folder you picked, flushed to disk and renamed over the
+target (`PrivateFile`), so no copy is ever readable by others and a failed save leaves nothing behind. Restorey
+never writes the kit anywhere by itself. The kit saved during setup comes before the schedule step, so it has no
+check-in URL (it isn't needed to restore); the kit window includes it once it is saved, and the schedule step says
+so.
 
 Outside setup the kit window asks for Touch ID or your login password first (`OwnerAuthentication`), once per
 opening, and only then fetches the secrets; closing the window drops them. Only a plan that has finished setup
@@ -557,8 +561,12 @@ whose keys changed while it was open is shown again rather than confirmed.
 
 **Restore Files…** in the menu opens the same commands for the chosen plan (a plan picker switches between
 plans). Passwords and keys show as dots; holding Option shows them while it is held, and each command has a copy
-button that copies the real command. The first reveal or copy asks for Touch ID or your login password, once per
-opening, and the secrets are fetched only then and dropped when the window closes or another plan is picked.
+button that copies the real command. The first reveal or copy of a command that carries secrets (decided from the
+plan, so a copy before any reveal still asks and copies the real values) asks for Touch ID or your login password,
+once per opening, and the secrets are fetched only then and dropped when the window closes or another plan is
+picked. If you decline, holding Option doesn't ask again in that opening; "Show Passwords and Keys…" or a copy
+does. A Mac that can't ask at all (no login password set, say) says so and why, rather than asking you to try
+Touch ID.
 
 ## Restoring without Restorey
 
@@ -579,8 +587,9 @@ The first lines tell restic where the repository is and how to open it: an S3 or
 endpoint) uses the two `AWS_` keys; another location exports its own environment variables instead (for example
 `RESTIC_REST_USERNAME` and `RESTIC_REST_PASSWORD`), and a folder or drive needs none. `restic snapshots` lists this
 Mac's snapshots (`--host` is the kit's host label), and `restic restore latest` restores the newest of them into a
-folder called `Restored` in your home folder, under each file's original path. Every value is single-quoted so the
-shell reads it exactly, spaces, quote marks and non-ASCII letters included.
+folder called `Restored` in your home folder, under each file's original path. Every password and key is
+single-quoted so the shell reads it exactly, spaces, quote marks and non-ASCII letters included; the repository
+address and host label are quoted only when they hold characters the shell would treat specially.
 
 The password is the one restic knows. Restorey hands restic the stored password through
 `RESTIC_PASSWORD_COMMAND`, and restic trims white space from the ends of what that command prints, while it reads

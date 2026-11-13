@@ -113,6 +113,20 @@ import Testing
         #expect(unrevealed.contains("export RESTIC_PASSWORD=••••••••"))
     }
 
+    /// Whether a command needs the secrets comes from the plan, not from what has been fetched: before any
+    /// fetch the masked and revealed texts are the same dots, and a copy then must still ask and fetch first.
+    @Test func theFirstCommandNeedsSecretsEvenBeforeTheyAreFetched() {
+        let plan = Self.s3Plan()
+        for secrets in [[], Self.secrets(plan)] {
+            #expect(RestoreCommands.make(plan: plan, secrets: secrets).map(\.needsSecrets) == [true, false, false])
+        }
+        let local = Plan.newHotPlan(
+            name: "Drive", repository: .raw(repository: "/Volumes/Backup/restic", environmentNames: []),
+            origin: .created, hostLabel: "pepper", sources: ["/Users/me"], exclusions: [], now: Date())
+        // The password alone is a secret.
+        #expect(RestoreCommands.make(plan: local, secrets: []).map(\.needsSecrets) == [true, false, false])
+    }
+
     @Test func aHostLabelWithSpacesIsQuoted() async throws {
         let plan = Self.s3Plan(hostLabel: "Jayden's MacBook Pro")
         let commands = RestoreCommands.make(plan: plan, secrets: Self.secrets(plan))

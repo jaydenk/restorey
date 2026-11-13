@@ -7,18 +7,10 @@ import RestoreyCore
 /// saves it. (Printing hands the pages to macOS's print system, as any printing does.)
 @MainActor
 enum RecoveryKitExport {
-    struct SaveError: Error, CustomStringConvertible {
-        let description: String
-    }
-
-    /// Writes the kit as a PDF at `url`, readable only by this user where the volume keeps permissions.
+    /// Writes the kit as a PDF at `url`: created 0600 in that folder and renamed over the target
+    /// (`PrivateFile`), so no copy of it is ever readable by others, even for a moment.
     static func savePDF(_ document: RecoveryKitDocument, to url: URL) throws {
-        // Created with its permissions, not written and then narrowed.
-        guard FileManager.default.createFile(
-            atPath: url.path, contents: pdfData(document), attributes: [.posixPermissions: 0o600])
-        else {
-            throw SaveError(description: "Restorey couldn't save the recovery kit to \(url.path).")
-        }
+        try PrivateFile.write(pdfData(document), to: url)
     }
 
     /// The print panel, for the user's printer (or the panel's own PDF menu), with the PDF's pages.

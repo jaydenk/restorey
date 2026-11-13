@@ -17,16 +17,19 @@ public enum RestoreCommands {
         public var text: String
         /// The command with every secret in it. Held only while the window or kit showing it is open.
         public var revealedText: String
+        /// The plan's secrets go into this command, whether or not they have been fetched yet: copying or showing
+        /// it needs them (and the owner's confirmation first). Decided from the plan, never by comparing the
+        /// texts, which are the same dots before a fetch.
+        public var needsSecrets: Bool
 
-        public init(title: String, text: String, revealedText: String) {
+        public init(title: String, text: String, revealedText: String, needsSecrets: Bool) {
             self.title = title
             self.text = text
             self.revealedText = revealedText
+            self.needsSecrets = needsSecrets
         }
 
         public var id: String { title }
-        /// Whether `revealedText` holds anything `text` doesn't show.
-        public var hasSecrets: Bool { text != revealedText }
 
         // Never the revealed text, so a command can be logged or dumped safely.
         public var description: String { "Command(\(title): \(text))" }
@@ -49,7 +52,8 @@ public enum RestoreCommands {
         let values = Dictionary(secrets.map { ($0.key, $0.value) }, uniquingKeysWith: { first, _ in first })
         var masked = ["export RESTIC_REPOSITORY=\(displayQuoted(plan.repository.resticRepository))"]
         var revealed = masked
-        for (name, key) in variables(plan) {
+        let secretVariables = variables(plan)
+        for (name, key) in secretVariables {
             masked.append("export \(name)=\(mask)")
             guard let value = values[key] else {
                 revealed.append("export \(name)=\(mask)")
@@ -64,9 +68,11 @@ public enum RestoreCommands {
         return [
             Command(
                 title: "Tell restic where the repository is", text: masked.joined(separator: "\n"),
-                revealedText: revealed.joined(separator: "\n")),
-            Command(title: "List this Mac's snapshots", text: snapshots, revealedText: snapshots),
-            Command(title: "Restore the latest snapshot to Restored in your home folder", text: restore, revealedText: restore),
+                revealedText: revealed.joined(separator: "\n"), needsSecrets: !secretVariables.isEmpty),
+            Command(title: "List this Mac's snapshots", text: snapshots, revealedText: snapshots, needsSecrets: false),
+            Command(
+                title: "Restore the latest snapshot to Restored in your home folder", text: restore, revealedText: restore,
+                needsSecrets: false),
         ]
     }
 

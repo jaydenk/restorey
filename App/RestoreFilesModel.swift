@@ -20,6 +20,8 @@ final class RestoreFilesModel {
     private(set) var copied: String?
 
     @ObservationIgnored private var authenticated = false
+    /// The owner declined (or the Mac couldn't ask) in this opening: Option no longer prompts by itself.
+    private(set) var declined = false
     @ObservationIgnored private var secrets: RecoveryKitSecrets?
     /// Bumped by `dropSecrets`, so a fetch that answers after the plan changed or the window closed is thrown away.
     @ObservationIgnored private var generation = 0
@@ -48,15 +50,22 @@ final class RestoreFilesModel {
 
     var revealed: Bool { optionHeld && hasSecrets }
 
+    /// Holding Option asks for the owner only until they decline once: after that, Option alone never brings
+    /// the prompt back in this opening, and "Show Passwords and Keys…" (`askAgain`) or a copy does.
     func optionChanged(_ held: Bool) {
         optionHeld = held
-        if held, !hasSecrets { Task { await fetchSecrets() } }
+        if held, !hasSecrets, !declined { Task { await fetchSecrets() } }
+    }
+
+    /// The explicit way to ask again after a decline.
+    func askAgain() async {
+        await fetchSecrets()
     }
 
     /// Copies the real command, by title, so the caller's copy (which may be the revealed one) isn't held here.
     func copy(_ title: String) async {
         guard let command = commands.first(where: { $0.title == title }) else { return }
-        if command.hasSecrets {
+        if command.needsSecrets {
             guard await fetchSecrets(), let current = commands.first(where: { $0.title == title }) else { return }
             ConcealedPasteboard.copy(current.revealedText)
         } else {
@@ -84,8 +93,16 @@ final class RestoreFilesModel {
         defer { working = false }
         let asked = generation
         if !authenticated {
-            guard await OwnerAuthentication.confirm(reason: "show the restore commands for “\(plan.name)”") else {
+            switch await OwnerAuthentication.confirm(reason: "show the restore commands for “\(plan.name)”") {
+            case .confirmed:
+                declined = false
+            case .declined:
+                declined = true
                 problem = "The passwords and keys stay hidden until you use Touch ID or enter your login password."
+                return false
+            case .unavailable(let sentence):
+                declined = true
+                problem = sentence
                 return false
             }
             guard asked == generation else { return false }
@@ -114,6 +131,7 @@ final class RestoreFilesModel {
     func close() {
         dropSecrets()
         authenticated = false
+        declined = false
         optionHeld = false
     }
 }

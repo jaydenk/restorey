@@ -62,5 +62,9 @@ struct RestoreFilesView: View {
                 .foregroundStyle(.red)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        if model.declined, !model.hasSecrets {
+            Button("Show Passwords and Keys…") { Task { await model.askAgain() } }
+                .disabled(model.working)
+        }
     }
 }

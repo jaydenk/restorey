@@ -101,7 +101,7 @@ public struct RecoveryKitDocument: Sendable, Equatable, CustomStringConvertible,
         sections.append(Section(
             title: "Restore without Restorey",
             fields: RestoreCommands.make(plan: plan, secrets: kit.secrets).map {
-                Field(label: $0.title, value: $0.revealedText, isSecret: $0.hasSecrets, concealed: $0.text)
+                Field(label: $0.title, value: $0.revealedText, isSecret: $0.needsSecrets, concealed: $0.text)
             }))
         if plan.hasCheckInURL, let url = secret("Check-in URL", .checkInURL(plan.id)) {
             sections.append(Section(title: "Check-in URL", fields: [url]))

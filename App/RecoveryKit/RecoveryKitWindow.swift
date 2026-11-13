@@ -18,6 +18,8 @@ final class RecoveryKitWindowModel {
         case asking
         /// Cancelled or failed: "Show Recovery Kit" asks again.
         case declined
+        /// This Mac can't ask (no login password, say): the sentence says why.
+        case unavailable(String)
         case open
     }
 
@@ -55,8 +57,13 @@ final class RecoveryKitWindowModel {
     func unlock() async {
         guard let plan, plan.setupState != .unfinished, gate != .asking, gate != .open else { return }
         gate = .asking
-        guard await OwnerAuthentication.confirm(reason: "show the recovery kit for “\(plan.plan.name)”") else {
+        switch await OwnerAuthentication.confirm(reason: "show the recovery kit for “\(plan.plan.name)”") {
+        case .confirmed: break
+        case .declined:
             gate = .declined
+            return
+        case .unavailable(let sentence):
+            gate = .unavailable(sentence)
             return
         }
         // The window may have closed while macOS asked.
@@ -138,9 +145,15 @@ struct RecoveryKitWindow: View {
         case .locked, .asking:
             Text("Restorey asks for Touch ID or your login password before showing the kit, because it holds the keys to your backups.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        case .declined:
-            Text("The recovery kit stays hidden until you use Touch ID or enter your login password.")
-                .fixedSize(horizontal: false, vertical: true)
+        case .declined, .unavailable:
+            if case .unavailable(let sentence) = model.gate {
+                Label(sentence, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("The recovery kit stays hidden until you use Touch ID or enter your login password.")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack {
                 Spacer()
                 Button("Show Recovery Kit") { Task { await model.unlock() } }.keyboardShortcut(.defaultAction)
