@@ -25,7 +25,8 @@ final class RestoreFilesModel {
     /// The owner declined (or the Mac couldn't ask) in this opening: Option no longer prompts by itself.
     private(set) var declined = false
     @ObservationIgnored private var secrets: RecoveryKitSecrets?
-    /// Bumped by `dropSecrets`, so a fetch that answers after the plan changed or the window closed is thrown away.
+    /// The opening: bumped by `dropSecrets` (the plan changed or the window closed). Taken before a prompt and checked
+    /// before and after the fetch, so a closed opening never asks the agent and a late answer is thrown away.
     @ObservationIgnored private var generation = 0
     /// Observed copy of whether the secrets for the plan shown are here.
     private(set) var hasSecrets = false
@@ -63,8 +64,10 @@ final class RestoreFilesModel {
 
     /// "Show Passwords and Keys(…)" / "Hide Passwords and Keys". Showing asks for the owner first if this opening
     /// hasn't yet; approving keeps them shown. After a prompt the window gets the key back only once macOS grants
-    /// the activation `OwnerAuthentication` asks for, so the order is `RevealOrder`'s: wait for the window to be key
-    /// (up to `keyWait`), then fetch, then show only if it is still key (fix round 3, N1).
+    /// the activation `OwnerAuthentication` asks for, so the order is `RevealOrder`'s: ask, wait for the window to be
+    /// back (up to `keyWait`), fetch, then show only if it is still key (fix round 3, N1). The opening is taken
+    /// before the prompt, so a window closed (or a plan changed) during the prompt or the wait never fetches; `close`
+    /// also ends the wait at once (fix round 4, I1).
     func revealButtonPressed() async {
         if reveal.kept {
             reveal.toggle()
@@ -77,11 +80,12 @@ final class RestoreFilesModel {
         guard !working else { return }
         working = true
         defer { working = false }
-        let prompted = !authenticated
-        guard await authenticate() else { return }
-        let show = await RevealOrder.afterApproval(waiter: keyWaiter, timeout: prompted ? Self.keyWait : .zero) {
-            await self.fetchFromAgent()
-        }
+        let opening = generation
+        let show = await RevealOrder.reveal(
+            waiter: keyWaiter, prompts: !authenticated, timeout: Self.keyWait,
+            isCurrent: { opening == self.generation },
+            approve: { await self.authenticate(opening) },
+            fetch: { await self.fetchFromAgent(opening) })
         if show { reveal.approvedByButton() }
     }
 
@@ -126,15 +130,15 @@ final class RestoreFilesModel {
         guard !working else { return false }
         working = true
         defer { working = false }
-        guard await authenticate() else { return false }
-        return await fetchFromAgent()
+        let opening = generation
+        guard await authenticate(opening) else { return false }
+        return await fetchFromAgent(opening)
     }
 
-    /// Asks for the owner if this opening hasn't yet. True once confirmed.
-    private func authenticate() async -> Bool {
-        guard let plan else { return false }
+    /// Asks for the owner if this opening hasn't yet. True once confirmed, while `opening` is still the one shown.
+    private func authenticate(_ opening: Int) async -> Bool {
+        guard opening == generation, let plan else { return false }
         problem = nil
-        let asked = generation
         if !authenticated {
             switch await OwnerAuthentication.confirm(
                 reason: "show the restore commands for “\(plan.name)”", returningTo: .restoreFiles) {
@@ -149,32 +153,35 @@ final class RestoreFilesModel {
                 problem = sentence
                 return false
             }
-            guard asked == generation else { return false }
+            guard opening == generation else { return false }
             authenticated = true
         }
         return true
     }
 
-    /// Fetches the plan's secrets from the agent (the owner already confirmed).
-    private func fetchFromAgent() async -> Bool {
+    /// Fetches the plan's secrets from the agent (the owner already confirmed), only while `opening` is still the
+    /// one shown: a closed window or a changed plan asks for nothing, and an answer that comes after is dropped.
+    private func fetchFromAgent(_ opening: Int) async -> Bool {
+        guard opening == generation else { return false }
         if hasSecrets { return true }
         guard let plan else { return false }
-        let asked = generation
         switch await supervisor.connection.recoveryKit(plan.id) {
         case .success(let reply):
-            guard asked == generation, reply.plan.id == planID else { return false }
+            guard opening == generation, reply.plan.id == planID else { return false }
             secrets = reply
             hasSecrets = true
             return true
         case .failure(let error):
-            guard asked == generation else { return false }
+            guard opening == generation else { return false }
             problem = FormValidation.sentence(error.description)
             return false
         }
     }
 
+    /// Ends the opening: secrets go, and a reveal waiting for the window stops waiting (`KeyWaiter.cancel`).
     private func dropSecrets() {
         generation += 1
+        keyWaiter.cancel()
         secrets = nil
         hasSecrets = false
         problem = nil

@@ -654,9 +654,11 @@ holding Option shows them only while it is held, for a quick look (`SecretReveal
 button that copies the real command. The first reveal or copy of a command that carries secrets (decided from the
 plan, so a copy before any reveal still asks and copies the real values) asks for Touch ID or your login password,
 once per opening, and the secrets are fetched only then and dropped when the window closes or another plan is
-picked. Approving through the button shows them at once: Restorey waits (up to a second) for the window to be the
-key window again after the prompt, then fetches the secrets, and shows them only if the window is still key, so
-switching away meanwhile leaves dots (`KeyWaiter`, `RevealOrder`). If you decline, holding Option doesn't ask again in that
+picked. Approving through the button shows them at once: Restorey waits (up to a second) for the window to come
+back from the prompt (to lose the key window to it and become key again, since the prompt's answer can arrive before
+macOS says the window lost the key), then fetches the secrets, and shows them only if the window is still key, so
+switching away meanwhile leaves dots (`KeyWaiter`, `RevealOrder`). Closing the window, or picking another plan,
+during the prompt or that wait ends the wait at once, and nothing is fetched for it (the kit window too). If you decline, holding Option doesn't ask again in that
 opening; "Show Passwords and Keys…" or a copy does. A Mac that can't ask at all (no login password set, say) says so and why, rather than asking you to try
 Touch ID.
 

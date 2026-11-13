@@ -76,8 +76,9 @@ final class RecoveryKitModel {
         return false
     }
 
-    /// The secrets go now, not when SwiftUI lets go of the view.
+    /// The secrets go now, not when SwiftUI lets go of the view, and a reveal waiting for the window stops waiting.
     func close() {
+        keyWaiter.cancel()
         state = .idle
         savedOnThisMac = nil
         copied = nil

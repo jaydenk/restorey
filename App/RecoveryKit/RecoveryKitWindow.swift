@@ -33,6 +33,8 @@ final class RecoveryKitWindowModel {
     /// The kit changed under the window (keys saved elsewhere) when it was about to be confirmed.
     private(set) var replacedBeforeConfirming = false
 
+    /// Set by `close`. Each opening of the window has its own model, so a closed one never opens again.
+    @ObservationIgnored private var closed = false
     @ObservationIgnored private let supervisor: AgentSupervisor
     @ObservationIgnored let finishSetup: () -> Void
 
@@ -53,33 +55,45 @@ final class RecoveryKitWindowModel {
             ? RecoveryKitText.reconfirmHeading : "Recovery kit for “\(plan.plan.name)”"
     }
 
-    /// Asks for Touch ID or the password, then fetches the kit. Only for a plan that finished setup.
+    /// Asks for Touch ID or the password, then fetches the kit. Only for a plan that finished setup, and only while
+    /// the window is open: a window closed during the prompt or the wait after it never fetches (fix round 4, I1).
     ///
     /// `revealing`: asked for by the button after a decline, so approving shows the passwords and keys at once
     /// (owner ruling, 13 Nov); the prompt made on opening shows the kit with them as dots.
     func unlock(revealing: Bool = false) async {
-        guard let plan, plan.setupState != .unfinished, gate != .asking, gate != .open else { return }
+        guard !closed, let plan, plan.setupState != .unfinished, gate != .asking, gate != .open else { return }
         gate = .asking
-        switch await OwnerAuthentication.confirm(
-            reason: "show the recovery kit for “\(plan.plan.name)”", returningTo: .recoveryKit) {
-        case .confirmed: break
-        case .declined:
-            gate = .declined
-            return
-        case .unavailable(let sentence):
-            gate = .unavailable(sentence)
-            return
+        let approve = { () async -> Bool in
+            let outcome = await OwnerAuthentication.confirm(
+                reason: "show the recovery kit for “\(plan.plan.name)”", returningTo: .recoveryKit)
+            // The window may have closed while macOS asked: it stays locked.
+            guard !self.closed, self.gate == .asking else { return false }
+            switch outcome {
+            case .confirmed:
+                self.gate = .open
+                return true
+            case .declined:
+                self.gate = .declined
+            case .unavailable(let sentence):
+                self.gate = .unavailable(sentence)
+            }
+            return false
         }
-        // The window may have closed while macOS asked.
-        guard gate == .asking else { return }
-        gate = .open
-        guard revealing else { return await kit.load() }
-        // `RevealOrder` (fix round 3, N1): the window is key again only once macOS grants the activation asked for
-        // after the prompt, so wait for that, then load, then show only if it is still key.
-        let show = await RevealOrder.afterApproval(waiter: kit.keyWaiter, timeout: RestoreFilesModel.keyWait) {
+        let isOpen = { !self.closed && self.gate == .open }
+        let load = { () async -> Bool in
+            guard isOpen() else { return false }
             await self.kit.load()
             return self.kit.document != nil
         }
+        guard revealing else {
+            if await approve() { _ = await load() }
+            return
+        }
+        // `RevealOrder` (fix rounds 3 and 4): the window is key again only once macOS grants the activation asked for
+        // after the prompt, so wait for that, then load, then show only if it is still key and still open.
+        let show = await RevealOrder.reveal(
+            waiter: kit.keyWaiter, prompts: true, timeout: RestoreFilesModel.keyWait,
+            isCurrent: isOpen, approve: approve, fetch: load)
         if show { kit.revealByButton() }
     }
 
@@ -108,7 +122,10 @@ final class RecoveryKitWindowModel {
         }
     }
 
+    /// The window closed: the secrets go, a reveal waiting for the window stops waiting, and nothing more is
+    /// fetched for this opening (`unlock` checks it after every wait).
     func close() {
+        closed = true
         gate = .locked
         kit.close()
     }
