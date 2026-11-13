@@ -33,6 +33,11 @@ public struct SetupDraft: Sendable, Equatable, CustomStringConvertible, CustomDe
         progress.step = step
     }
 
+    /// Records the permissions step's "Open at login" switch, applied later by Continue.
+    public mutating func setOpenAtLogin(_ on: Bool) {
+        progress.openAtLogin = on
+    }
+
     /// The window is closing: the secrets go; the progress stays for the next opening.
     public mutating func close() {
         secrets = [:]

@@ -24,23 +24,28 @@ public struct SetupProgress: Codable, Sendable, Equatable {
     /// The recovery kit has been saved or printed at `.recoveryKit`. The agent's confirmation is deferred
     /// to Done (see `SetupFlow`), so this, not the plan, is what lets setup go past `.recoveryKit`.
     public var kitSaved: Bool
+    /// The permissions step's "Open at login" choice, kept from the moment it is switched until Continue applies
+    /// it, because granting Full Disk Access quits the app mid-step. Nil until switched: on (P2-16).
+    public var openAtLogin: Bool?
 
-    public init(planID: UUID?, step: SetupStep, addingPlan: Bool, kitSaved: Bool = false) {
+    public init(planID: UUID?, step: SetupStep, addingPlan: Bool, kitSaved: Bool = false, openAtLogin: Bool? = nil) {
         self.planID = planID
         self.step = step
         self.addingPlan = addingPlan
         self.kitSaved = kitSaved
+        self.openAtLogin = openAtLogin
     }
 
-    private enum CodingKeys: String, CodingKey { case planID, step, addingPlan, kitSaved }
+    private enum CodingKeys: String, CodingKey { case planID, step, addingPlan, kitSaved, openAtLogin }
 
-    /// Progress stored before `kitSaved` existed still decodes, as not saved.
+    /// Progress stored before `kitSaved` or `openAtLogin` existed still decodes: not saved, and not switched.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         planID = try c.decodeIfPresent(UUID.self, forKey: .planID)
         step = try c.decode(SetupStep.self, forKey: .step)
         addingPlan = try c.decode(Bool.self, forKey: .addingPlan)
         kitSaved = try c.decodeIfPresent(Bool.self, forKey: .kitSaved) ?? false
+        openAtLogin = try c.decodeIfPresent(Bool.self, forKey: .openAtLogin)
     }
 }
 

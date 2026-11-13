@@ -183,7 +183,8 @@ entitlement, and administrators can write to `/Applications` anyway; anyone else
 Finder. The permissions step ticks off Applications, checks Full Disk Access through the agent's own probe and
 re-reads the agent's notification answer every 2 s while the window can be seen and whenever Restorey comes back to
 the front, asks the agent for notification permission, and has "Open at login" (on by default), applied on Continue,
-which needs Full Disk Access. The step's secrets live only in `SetupDraft`, which drops them whenever the step changes
+which needs Full Disk Access; the switch is kept in the saved progress until then, since granting Full Disk Access
+quits the app mid-step. The step's secrets live only in `SetupDraft`, which drops them whenever the step changes
 and when the window closes; the progress is saved only when the step changes.
 
 ### The menu bar

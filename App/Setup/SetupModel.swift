@@ -34,8 +34,16 @@ final class SetupModel {
     /// Whether the setup window can be seen (`WindowRouter` follows its occlusion state). The Full Disk Access
     /// poll asks the agent only while it can.
     @ObservationIgnored var windowVisible = true
-    /// P2-16: on by default; applied when the step is left with Continue.
-    var openAtLogin: Bool
+    /// P2-16: on by default; applied when the step is left with Continue. Saved in the progress as soon as it is
+    /// switched, so the quit that granting Full Disk Access causes doesn't undo it.
+    var openAtLogin: Bool {
+        get { draft.progress.openAtLogin ?? defaultOpenAtLogin }
+        set {
+            draft.setOpenAtLogin(newValue)
+            if installed { store.save(draft.progress) }
+        }
+    }
+    @ObservationIgnored private let defaultOpenAtLogin: Bool
     private(set) var loginItemError: String?
 
     @ObservationIgnored private let context: Context
@@ -47,11 +55,11 @@ final class SetupModel {
         draft = SetupDraft(progress: progress)
         switch context {
         case .refused:
-            openAtLogin = true
+            defaultOpenAtLogin = true
         case .installed(let supervisor, let loginItem):
             fullDiskAccessGranted = supervisor.lastKnownStatus?.fdaMissing == false
-            // Off only when the user has switched Restorey off in Login Items.
-            openAtLogin = loginItem.status != .requiresApproval
+            // Until switched here: off only when the user has switched Restorey off in Login Items.
+            defaultOpenAtLogin = loginItem.status != .requiresApproval
         }
     }
 

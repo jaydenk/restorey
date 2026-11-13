@@ -139,8 +139,8 @@ public struct AppInstaller: Sendable {
     private let dispose: @Sendable (URL) throws -> URL?
 
     public init(
-        stagingDirectory: @escaping @Sendable (URL) throws -> URL = AppInstaller.replacementDirectory,
-        dispose: @escaping @Sendable (URL) throws -> URL? = AppInstaller.trash
+        stagingDirectory: @escaping @Sendable (URL) throws -> URL = { try AppInstaller.replacementDirectory(for: $0) },
+        dispose: @escaping @Sendable (URL) throws -> URL? = { try AppInstaller.trash($0) }
     ) {
         self.stagingDirectory = stagingDirectory
         self.dispose = dispose
@@ -205,7 +205,7 @@ public struct AppMoveRunner<Probe: AppMoveProbe>: Sendable {
 
     public init(
         probe: Probe, installer: AppInstaller = AppInstaller(),
-        trash: @escaping @Sendable (URL) throws -> URL? = AppInstaller.trash
+        trash: @escaping @Sendable (URL) throws -> URL? = { try AppInstaller.trash($0) }
     ) {
         self.probe = probe
         self.installer = installer

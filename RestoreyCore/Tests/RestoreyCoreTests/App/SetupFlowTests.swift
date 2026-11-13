@@ -267,3 +267,27 @@ import Testing
         #expect(opened == SetupProgress(planID: nil, step: .permissions, addingPlan: false))
     }
 }
+
+@Suite struct SetupOpenAtLoginTests {
+    @Test func aSwitchedOffChoiceSurvivesAQuitAndResume() throws {
+        let suite = "restorey-tests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var draft = SetupDraft(progress: SetupProgress(planID: nil, step: .permissions, addingPlan: false))
+        draft.setOpenAtLogin(false)
+        SetupProgressStore(defaults: defaults).save(draft.progress)
+
+        // Granting Full Disk Access quits the app; the relaunch loads and resumes the progress.
+        let loaded = SetupProgressStore(defaults: defaults).load()
+        #expect(loaded?.openAtLogin == false)
+        #expect(SetupFlow.resume(saved: loaded, plans: [], installed: true)?.openAtLogin == false)
+        #expect(SetupFlow.opening(saved: loaded, plans: nil, installed: true).openAtLogin == false)
+    }
+
+    @Test func progressSavedBeforeTheFieldDecodesAsNotSwitched() throws {
+        let old = Data(#"{"addingPlan":false,"kitSaved":false,"step":"permissions"}"#.utf8)
+        let progress = try JSONDecoder().decode(SetupProgress.self, from: old)
+        #expect(progress.openAtLogin == nil)
+        #expect(progress.step == .permissions)
+    }
+}
