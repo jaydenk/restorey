@@ -37,12 +37,15 @@ public enum AppMoveError: Error, Equatable, CustomStringConvertible {
     case refused(AppMoveRefusal)
     /// Something appeared at the destination after the screen decided there was nothing there.
     case destinationExists
+    /// Part of the copy being moved can't be read (or, once copied, changed), so no complete copy can be made.
+    case unreadableCopy
     case failed(String)
 
     public var description: String {
         switch self {
         case .refused(let refusal): refusal.sentence
         case .destinationExists: "A copy of Restorey appeared in Applications while this screen was open. Try again."
+        case .unreadableCopy: AppMove.unreadableCopy
         case .failed(let detail): "Restorey couldn't move itself to Applications (\(detail))."
         }
     }
@@ -78,6 +81,10 @@ public enum AppMove {
     public static let noPermission =
         "Restorey can't write to the Applications folder. Drag it into Applications in Finder instead."
 
+    public static let unreadableCopy =
+        "Part of this copy of Restorey can't be read, so it can't be moved. Download Restorey again, then move the "
+        + "new copy to Applications."
+
     public static let quarantineAttribute = "com.apple.quarantine"
 
     /// The build's own bundle name (`CFBundleName`, the product name), never the name the copy was saved under,
@@ -111,23 +118,44 @@ public enum AppMove {
         translocated ? original : bundleURL
     }
 
-    /// A file-system error as the screen reports it: a permission refusal gets its own sentence.
-    public static func error(from error: any Error) -> AppMoveError {
-        if let moveError = error as? AppMoveError { return moveError }
+    /// Whether two URLs name the same item: the same path once symbolic links are resolved, or (when both
+    /// exist) the same file, which also catches a path spelled with different case on a case-insensitive volume.
+    public static func isSameItem(_ a: URL, _ b: URL) -> Bool {
+        let resolvedA = a.resolvingSymlinksInPath().standardizedFileURL
+        let resolvedB = b.resolvingSymlinksInPath().standardizedFileURL
+        if resolvedA.path == resolvedB.path { return true }
+        let key: Set<URLResourceKey> = [.fileResourceIdentifierKey]
+        guard let idA = try? resolvedA.resourceValues(forKeys: key).fileResourceIdentifier,
+              let idB = try? resolvedB.resourceValues(forKeys: key).fileResourceIdentifier
+        else { return false }
+        return idA.isEqual(idB)
+    }
+
+    /// Whether a file-system error is a permission refusal (Cocoa's read or write code, or EACCES/EPERM).
+    static func isPermissionDenied(_ error: any Error) -> Bool {
         let ns = error as NSError
         let denied = [Int(EACCES), Int(EPERM)]
         if ns.domain == NSCocoaErrorDomain,
             [NSFileWriteNoPermissionError, NSFileReadNoPermissionError].contains(ns.code)
         {
-            return .refused(.noPermission)
+            return true
         }
-        if ns.domain == NSPOSIXErrorDomain, denied.contains(ns.code) { return .refused(.noPermission) }
+        if ns.domain == NSPOSIXErrorDomain, denied.contains(ns.code) { return true }
         if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError,
             underlying.domain == NSPOSIXErrorDomain, denied.contains(underlying.code)
         {
-            return .refused(.noPermission)
+            return true
         }
-        return .failed(ns.localizedDescription)
+        return false
+    }
+
+    /// An error from writing into Applications (staging, the Trash, the final move) as the screen reports it: a
+    /// permission refusal gets the "can't write to the Applications folder" sentence. Reading the copy is
+    /// `AppInstaller`'s to classify, since Cocoa reports a source it can't read with its *write* error code.
+    public static func error(from error: any Error) -> AppMoveError {
+        if let moveError = error as? AppMoveError { return moveError }
+        if isPermissionDenied(error) { return .refused(.noPermission) }
+        return .failed((error as NSError).localizedDescription)
     }
 }
 
@@ -167,8 +195,14 @@ public struct AppInstaller: Sendable {
         let staging = try stagingDirectory(destination)
         defer { try? fileManager.removeItem(at: staging) }
         let staged = staging.appendingPathComponent(destination.lastPathComponent, isDirectory: true)
-        try fileManager.copyItem(at: source, to: staged)
-        try Self.removeQuarantine(under: staged)
+        // The staging folder was just made, so a refusal while copying into it (or clearing the quarantine of the
+        // copy, which carries the source's permissions) is the source's, whatever code Cocoa gives it.
+        do {
+            try fileManager.copyItem(at: source, to: staged)
+            try Self.removeQuarantine(under: staged)
+        } catch {
+            throw AppMove.isPermissionDenied(error) ? AppMoveError.unreadableCopy : error
+        }
         let disposed: URL? = if exists { try dispose(destination) } else { nil }
         do {
             try fileManager.moveItem(at: staged, to: destination)
@@ -225,6 +259,8 @@ public struct AppMoveRunner<Probe: AppMoveProbe>: Sendable {
         } catch {
             throw AppMove.error(from: error)
         }
-        if let copyToTrash { _ = try? trash(copyToTrash) }
+        // A translocated copy whose original *is* the destination (a quarantined copy already in Applications)
+        // must not trash the copy just put there.
+        if let copyToTrash, !AppMove.isSameItem(copyToTrash, destination) { _ = try? trash(copyToTrash) }
     }
 }

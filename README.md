@@ -173,7 +173,9 @@ status; a copy outside `/Applications` opens it at once, on "Move to Application
 copies the app into `/Applications` under the build's own name (`Restorey.app`, or `RestoreyDev.app` for the
 development identity, whatever the downloaded copy was called), through a staging folder (`AppInstaller`), removes
 `com.apple.quarantine` from the copy, moves the copy it ran from to the Trash (for a translocated launch, the original
-in `~/Downloads`, never the read-only mount), opens the moved copy and quits. `AppMove` decides, and decides again
+in `~/Downloads`, never the read-only mount, and never the copy just moved in when that original was already
+in Applications), opens the moved copy and quits. A copy that can't be read in full is reported as such (download
+Restorey again), not as Applications being unwritable. `AppMove` decides, and decides again
 when the button is pressed: while any agent of this identity is registered (read from launchd and from the app's
 record of its last registration, never from `SMAppService`) it refuses and asks for Restorey to be quit and the copy in
 Applications replaced by hand, since a backup may be running; an app of another bundle identifier at the destination

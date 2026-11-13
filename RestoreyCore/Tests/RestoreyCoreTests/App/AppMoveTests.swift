@@ -138,8 +138,12 @@ import Testing
         return (installer, staging, trash)
     }
 
+    /// Like the Finder's Trash, a second item of the same name gets a new name rather than failing.
     static func moveToTrash(_ url: URL, _ trash: URL) throws -> URL? {
-        let target = trash.appendingPathComponent(url.lastPathComponent)
+        var target = trash.appendingPathComponent(url.lastPathComponent)
+        if FileManager.default.fileExists(atPath: target.path) {
+            target = trash.appendingPathComponent(UUID().uuidString + "-" + url.lastPathComponent)
+        }
         try FileManager.default.moveItem(at: url, to: target)
         return target
     }
@@ -181,39 +185,70 @@ import Testing
         #expect(try Self.marker(trash.appendingPathComponent("RestoreyDev.app")) == "old")
     }
 
-    @Test func aCopyThatFailsPartwayLeavesNothingBehind() throws {
+    /// A source bundle with a folder nobody can read. APFS clones ignore a file's own mode, but copying can't
+    /// list an unreadable folder, so `copyItem` fails partway, after it has started writing the copy.
+    static func makeUnreadableBundle(in folder: URL) throws -> (bundle: URL, restore: () -> Void) {
+        let bundle = try makeBundle(in: folder, marker: "new")
+        let locked = bundle.appendingPathComponent("Contents/Resources/Locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: locked.appendingPathComponent("file.dat"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+        return (bundle, { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) })
+    }
+
+    @Test func aCopyThatFailsPartwayLeavesNothingBehindAndBlamesTheCopy() throws {
         let folder = try Folder()
-        let source = try Self.makeBundle(in: try folder.folder("Downloads"), marker: "new")
-        // A nested file nobody can read: copyItem fails after it has started copying the bundle.
-        let unreadable = source.appendingPathComponent("Contents/Resources/locked.dat")
-        try FileManager.default.createDirectory(
-            at: unreadable.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("x".utf8).write(to: unreadable)
-        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: unreadable.path)
-        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: unreadable.path) }
+        let (source, restore) = try Self.makeUnreadableBundle(in: try folder.folder("Downloads"))
+        defer { restore() }
         let applications = try folder.folder("Applications")
         let destination = AppMove.destination(productName: "RestoreyDev", applications: applications)
         let (installer, staging, _) = try Self.installer(in: folder)
 
-        #expect(throws: (any Error).self) { try installer.install(source, at: destination, replacing: false) }
+        #expect(throws: AppMoveError.unreadableCopy) { try installer.install(source, at: destination, replacing: false) }
         #expect(!FileManager.default.fileExists(atPath: destination.path))
         #expect(!FileManager.default.fileExists(atPath: staging.path))
+        #expect(AppMoveError.unreadableCopy.description == AppMove.unreadableCopy)
+        #expect(!AppMove.unreadableCopy.contains("write to the Applications"))
     }
 
     @Test func aFailedReplaceKeepsTheOldCopy() throws {
         let folder = try Folder()
-        let source = try Self.makeBundle(in: try folder.folder("Downloads"), marker: "new")
-        let unreadable = source.appendingPathComponent("Contents/Resources/locked.dat")
-        try FileManager.default.createDirectory(
-            at: unreadable.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("x".utf8).write(to: unreadable)
-        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: unreadable.path)
-        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: unreadable.path) }
+        let (source, restore) = try Self.makeUnreadableBundle(in: try folder.folder("Downloads"))
+        defer { restore() }
         let old = try Self.makeBundle(in: try folder.folder("Applications"), marker: "old")
-        let (installer, _, _) = try Self.installer(in: folder)
+        let (installer, _, trash) = try Self.installer(in: folder)
 
-        #expect(throws: (any Error).self) { try installer.install(source, at: old, replacing: true) }
+        #expect(throws: AppMoveError.unreadableCopy) { try installer.install(source, at: old, replacing: true) }
         #expect(try Self.marker(old) == "old")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: trash.path).isEmpty)
+    }
+
+    @Test func aReadOnlyApplicationsFolderIsStillAWriteRefusal() throws {
+        let folder = try Folder()
+        let source = try Self.makeBundle(in: try folder.folder("Downloads"), marker: "new")
+        let applications = try folder.folder("Applications")
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: applications.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: applications.path) }
+        let destination = AppMove.destination(productName: "RestoreyDev", applications: applications)
+        let (installer, _, _) = try Self.installer(in: folder)
+        do {
+            try installer.install(source, at: destination, replacing: false)
+            Issue.record("installed into a read-only folder")
+        } catch {
+            #expect(AppMove.error(from: error) == .refused(.noPermission))
+        }
+    }
+
+    @Test func sameItemSeesThroughLinksAndSpelling() throws {
+        let folder = try Folder()
+        let applications = try folder.folder("Applications")
+        let bundle = try Self.makeBundle(in: applications, marker: "x")
+        let link = folder.url.appendingPathComponent("AppsLink")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: applications)
+        #expect(AppMove.isSameItem(link.appendingPathComponent("RestoreyDev.app"), bundle))
+        #expect(AppMove.isSameItem(URL(fileURLWithPath: applications.path + "/./RestoreyDev.app"), bundle))
+        #expect(AppMove.isSameItem(applications.appendingPathComponent("restoreydev.app"), bundle))
+        #expect(!AppMove.isSameItem(folder.url.appendingPathComponent("Other.app"), bundle))
     }
 }
 
@@ -281,6 +316,26 @@ private final class FakeProbe: AppMoveProbe {
             try await runner.run(source: source, destination: destination, bundleID: Self.bundleID, copyToTrash: nil)
         }
         #expect(!FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    @Test func aTranslocatedCopyWhoseOriginalIsTheDestinationIsNotTrashed() async throws {
+        // A quarantined copy unzipped straight into Applications runs translocated; its original is the
+        // destination, so after the replace the copy to trash is the new copy itself.
+        let folder = try AppMoveTests.Folder()
+        let mount = try AppMoveTests.makeBundle(in: try folder.folder("AppTranslocation"), marker: "new")
+        let applications = try folder.folder("Applications")
+        let destination = try AppMoveTests.makeBundle(in: applications, marker: "old")
+        let link = folder.url.appendingPathComponent("AppsLink")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: applications)
+        let original = link.appendingPathComponent("RestoreyDev.app")
+        let (runner, trash) = try Self.runner(FakeProbe(), in: folder)
+
+        try await runner.run(source: mount, destination: destination, bundleID: Self.bundleID, copyToTrash: original)
+        #expect(FileManager.default.fileExists(atPath: destination.path))
+        #expect(try AppMoveTests.marker(destination) == "new")
+        // Only the old copy went to the Trash.
+        #expect(try FileManager.default.contentsOfDirectory(atPath: trash.path) == ["RestoreyDev.app"])
+        #expect(try AppMoveTests.marker(trash.appendingPathComponent("RestoreyDev.app")) == "old")
     }
 
     @Test func replacesThisRestoreyAndTrashesTheOldCopy() async throws {
