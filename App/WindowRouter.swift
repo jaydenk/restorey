@@ -4,13 +4,15 @@ import RestoreyCore
 import SwiftUI
 
 /// What the shell's windows show that the shell, not the window, decides: the Settings section and plan asked
-/// for, and whether the status item is hidden (the General section's note, UI design §8). Settings (Task 14)
-/// reads it; `WindowRouter` and `AppDelegate` write it.
+/// for, and whether the status item is hidden (the General section's note, UI design §8). Settings reads it and
+/// writes the section and plan the user picks; `WindowRouter` and `AppDelegate` write it.
 @MainActor
 @Observable
 final class ShellState {
     var settingsSection: SettingsSection = SettingsRoute.initial.section
     var settingsPlanID: UUID? = SettingsRoute.initial.planID
+    /// The plan's tab shown in Plans; kept as the user switches plans.
+    var settingsPlanTab: PlanTab = .what
     /// The status item's `isVisible` is false: the user hid it (System Settings → Menu Bar, or dragged it out).
     /// A status item squeezed out of a full menu bar still reads visible (`NSStatusItem.isVisible`).
     var statusItemHidden = false
@@ -19,17 +21,24 @@ final class ShellState {
 /// Opens the app's windows: one per kind (`AppWindowKind`), brought to the front if it is already open, with
 /// the app activated, since a menu bar app is usually not the active one when asked. The windows are never
 /// state-restored, so a menu bar app doesn't reopen Settings by itself at every launch. Closing a window
-/// releases it and its content, so a recovery kit's secrets go with it.
-///
-/// Until Settings (Task 14) exists, its window holds a placeholder.
+/// releases it and its content, so a recovery kit's secrets go with it (and Settings' typed keys with its).
 @MainActor
 final class WindowRouter: NSObject, NSWindowDelegate {
     let state = ShellState()
     private let slots = WindowSlots<AppWindowKind, NSWindow>()
     /// The plan a recovery kit or Restore Files window shows.
     private var shownPlan: [AppWindowKind: UUID] = [:]
-    /// Makes the setup window's model when it opens (`AppDelegate` supplies it: refused or installed).
-    var makeSetupModel: (() -> SetupModel)?
+    /// Makes the setup window's model when it opens (`AppDelegate` supplies it: refused or installed), at the
+    /// progress given, or where the saved progress says when nil.
+    var makeSetupModel: ((SetupProgress?) -> SetupModel)?
+    /// The installed copy's saved setup progress, for "+ Add plan…" (`AppDelegate` sets it).
+    var setupStore: SetupProgressStore?
+    /// The installed copy's open-at-login switch (`AppDelegate` sets it, P2-16): Settings → General. Like the
+    /// supervisor, a copy outside /Applications has none, and no Settings.
+    var loginItem: LoginItem?
+    /// The Settings window's toolbar of sections, and the plan editor it holds, while the window is open.
+    private var settingsToolbar: SettingsToolbar?
+    private var planEditorSlot: PlanEditorSlot?
     /// The open setup window's model, told when the window closes so its secrets go at once.
     private var setupModel: SetupModel?
     /// The installed copy's supervisor (`AppDelegate` sets it): the recovery kit and Restore Files windows ask the
@@ -40,10 +49,11 @@ final class WindowRouter: NSObject, NSWindowDelegate {
     private var recoveryKitModel: RecoveryKitWindowModel?
     private var restoreFilesModel: RestoreFilesModel?
 
-    func showSetup() {
+    /// Shows setup, at `progress` when the window isn't already open (an open one comes forward as it is).
+    func showSetup(progress: SetupProgress? = nil) {
         guard let makeSetupModel else { return }
         show(.setup) { [weak self] in
-            let model = makeSetupModel()
+            let model = makeSetupModel(progress)
             model.closeWindow = { [weak self] in self?.slots.openWindow(for: .setup)?.performClose(nil) }
             self?.setupModel = model
             let controller = NSHostingController(rootView: SetupWindow(model: model))
@@ -55,15 +65,47 @@ final class WindowRouter: NSObject, NSWindowDelegate {
     }
 
     /// Shows Settings. With neither argument, an open window comes forward as it is and a new one starts at
-    /// Plans; a section or plan passed switches to it (`settingsRoute`).
-    func showSettings(section: SettingsSection? = nil, planID: UUID? = nil) {
+    /// Plans; a section or plan passed switches to it (`settingsRoute`), and a tab to that plan's tab.
+    func showSettings(section: SettingsSection? = nil, planID: UUID? = nil, tab: PlanTab? = nil) {
         let open = slots.openWindow(for: .settings).map { _ in
             SettingsRoute(section: state.settingsSection, planID: state.settingsPlanID)
         }
         let route = settingsRoute(open: open, section: section, planID: planID)
         state.settingsSection = route.section
         state.settingsPlanID = route.planID
-        show(.settings) { [state] in NSHostingController(rootView: SettingsPlaceholderView(state: state)) }
+        if let tab { state.settingsPlanTab = tab }
+        guard let supervisor, let loginItem else { return }
+        let context = SettingsContext(
+            supervisor: supervisor, loginItem: loginItem,
+            finishSetup: { [weak self] in self?.showSetup() },
+            openSetup: { [weak self] in self?.showSetup(progress: $0) },
+            addPlan: { [weak self] in self?.addPlan() },
+            showRecoveryKit: { [weak self] in self?.showRecoveryKit(planID: $0) })
+        show(.settings, configure: { [weak self, state] window in
+            window.styleMask.insert(.resizable)
+            let toolbar = SettingsToolbar(state: state)
+            toolbar.attach(to: window)
+            self?.settingsToolbar = toolbar
+        }) { [weak self, state] in
+            let slot = PlanEditorSlot()
+            self?.planEditorSlot = slot
+            let controller = NSHostingController(
+                rootView: SettingsWindow(context: context, state: state, editorSlot: slot))
+            // The window may be made larger than the content's minimum, never smaller.
+            controller.sizingOptions = [.minSize]
+            return controller
+        }
+    }
+
+    /// "+ Add plan…" (`SetupFlow.addingPlan`): opens setup itself unless there is an unfinished plan's setup to
+    /// finish first, which Settings asks about. An open setup window just comes forward (nil).
+    private func addPlan() -> AddPlanStart? {
+        if slots.openWindow(for: .setup) != nil {
+            showSetup()
+            return nil
+        }
+        guard let plans = supervisor?.lastKnownStatus?.plans else { return nil }
+        return SetupFlow.addingPlan(saved: setupStore?.load(), plans: plans, installed: true)
     }
 
     /// "Save Recovery Kit…" (a plan needing a new kit) and Settings' "Show recovery kit…".
@@ -105,8 +147,12 @@ final class WindowRouter: NSObject, NSWindowDelegate {
 
     /// Shows the window of `kind`, making it with `content` if none is open. A plan's window asked for another
     /// plan gets fresh content, so nothing of the first plan stays in it.
-    private func show(_ kind: AppWindowKind, planID: UUID? = nil, content: () -> NSViewController) {
+    private func show(
+        _ kind: AppWindowKind, planID: UUID? = nil, configure: (NSWindow) -> Void = { _ in },
+        content: () -> NSViewController
+    ) {
         let (window, isNew) = slots.window(for: kind) { makeWindow(kind, content: content()) }
+        if isNew { configure(window) }
         if let planID {
             if !isNew, shownPlan[kind] != planID { window.contentViewController = content() }
             shownPlan[kind] = planID
@@ -151,34 +197,11 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             restoreFilesModel?.close()
             restoreFilesModel = nil
         case .settings:
-            break
+            planEditorSlot?.close()
+            planEditorSlot = nil
+            settingsToolbar = nil
         }
         // The content (and anything secret it holds) goes now, not when AppKit lets go of the window.
         window.contentViewController = nil
-    }
-}
-
-/// Stands in for Task 14's Settings window: the four sections, and the General section's hidden-icon note.
-private struct SettingsPlaceholderView: View {
-    @Bindable var state: ShellState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Picker("Section", selection: $state.settingsSection) {
-                ForEach(SettingsSection.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            if state.settingsSection == .general, state.statusItemHidden {
-                Label(statusItemHiddenNote, systemImage: "menubar.rectangle")
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.yellow.opacity(0.15), in: RoundedRectangle(cornerRadius: 6))
-            }
-            Text("The \(state.settingsSection.title) section isn't built yet.").foregroundStyle(.secondary)
-            Spacer()
-        }
-        .padding(20)
-        .frame(width: 560, height: 320)
     }
 }

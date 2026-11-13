@@ -89,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             mode = .refused
             statusItem = StatusItemController(refused: verdict, router: router)
             let mover = AppMover(bundle: .main, identity: identity, translocated: verdict == .translocated)
-            router.makeSetupModel = { [setupStore] in
+            router.makeSetupModel = { [setupStore] _ in
                 // Always the move screen; the saved progress is the installed copy's and is left alone.
                 SetupModel(
                     context: .refused(mover),
@@ -110,10 +110,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             #endif
             self.statusItem = statusItem
             let loginItem = LoginItem(installed: copy)
-            router.makeSetupModel = { [setupStore] in
+            router.loginItem = loginItem
+            router.setupStore = setupStore
+            router.makeSetupModel = { [setupStore] progress in
                 SetupModel(
                     context: .installed(supervisor, loginItem),
-                    progress: SetupFlow.opening(
+                    progress: progress ?? SetupFlow.opening(
                         saved: setupStore.load(), plans: supervisor.lastKnownStatus?.plans, installed: true),
                     store: setupStore)
             }

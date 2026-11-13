@@ -1,0 +1,127 @@
+import AppKit
+import Observation
+import RestoreyCore
+import SwiftUI
+
+/// What Settings works with, from the shell: the installed copy's supervisor and login item, and the other windows
+/// it opens. `WindowRouter` makes it; a copy outside /Applications has no Settings.
+@MainActor
+struct SettingsContext {
+    let supervisor: AgentSupervisor
+    let loginItem: LoginItem
+    /// Setup where it was left (a plan's "Finish Setup…", like the menu's).
+    let finishSetup: () -> Void
+    /// Setup at this progress ("+ Add plan…" once decided, or an unfinished plan's setup to finish first).
+    let openSetup: (SetupProgress) -> Void
+    /// What "+ Add plan…" opens (`SetupFlow.addingPlan`); nil when the setup window was already open and has come
+    /// forward instead.
+    let addPlan: () -> AddPlanStart?
+    let showRecoveryKit: (UUID) -> Void
+}
+
+/// The Settings window's content (UI design §6, mockup `v0.1-settings.html`): the section the toolbar picks.
+/// General and Plans are here; Network is the next build's.
+struct SettingsWindow: View {
+    let context: SettingsContext
+    @Bindable var state: ShellState
+    let editorSlot: PlanEditorSlot
+
+    var body: some View {
+        Group {
+            switch state.settingsSection {
+            case .general:
+                GeneralPane(context: context, state: state)
+            case .plans:
+                PlansPane(context: context, state: state, slot: editorSlot)
+            case .network:
+                Text("The Network section isn't built yet.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .history:
+                HistoryList(planID: nil, initialPlanFilter: state.settingsPlanID)
+                    .padding(16)
+            }
+        }
+        .frame(minWidth: 760, idealWidth: 780, minHeight: 520, idealHeight: 560)
+        .environment(context.supervisor)
+    }
+}
+
+/// The window's toolbar of sections, as macOS Settings windows have it (`NSWindow.ToolbarStyle.preference`):
+/// AppKit's, so the selected section shows the way the system draws it. It follows `ShellState`, which the
+/// menu's routes also set (`WindowRouter.showSettings`), and writes the user's choice back to it.
+@MainActor
+final class SettingsToolbar: NSObject, NSToolbarDelegate {
+    private let state: ShellState
+    private let toolbar = NSToolbar(identifier: "RestoreySettings")
+    private weak var window: NSWindow?
+
+    init(state: ShellState) {
+        self.state = state
+        super.init()
+        toolbar.delegate = self
+        toolbar.displayMode = .iconAndLabel
+        toolbar.allowsUserCustomization = false
+    }
+
+    func attach(to window: NSWindow) {
+        self.window = window
+        window.toolbar = toolbar
+        window.toolbarStyle = .preference
+        follow()
+    }
+
+    private static func identifier(_ section: SettingsSection) -> NSToolbarItem.Identifier {
+        NSToolbarItem.Identifier(section.rawValue)
+    }
+
+    private static func symbol(_ section: SettingsSection) -> String {
+        switch section {
+        case .general: "gearshape"
+        case .plans: "list.bullet.rectangle"
+        case .network: "network"
+        case .history: "clock.arrow.circlepath"
+        }
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        SettingsSection.allCases.map(Self.identifier)
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        SettingsSection.allCases.map(Self.identifier)
+    }
+
+    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        SettingsSection.allCases.map(Self.identifier)
+    }
+
+    func toolbar(
+        _ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+        willBeInsertedIntoToolbar flag: Bool
+    ) -> NSToolbarItem? {
+        guard let section = SettingsSection(rawValue: itemIdentifier.rawValue) else { return nil }
+        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+        item.label = section.title
+        item.image = NSImage(systemSymbolName: Self.symbol(section), accessibilityDescription: section.title)
+        item.target = self
+        item.action = #selector(choose(_:))
+        return item
+    }
+
+    @objc private func choose(_ item: NSToolbarItem) {
+        guard let section = SettingsSection(rawValue: item.itemIdentifier.rawValue) else { return }
+        state.settingsSection = section
+    }
+
+    /// Shows the state's section, and again each time it changes.
+    private func follow() {
+        let section = withObservationTracking {
+            state.settingsSection
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.follow() }
+        }
+        toolbar.selectedItemIdentifier = Self.identifier(section)
+        window?.title = "\(AppWindowKind.settings.title) — \(section.title)"
+    }
+}

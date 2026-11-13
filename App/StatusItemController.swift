@@ -229,7 +229,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
             // The agent posts the notifications, so it is the app to turn them on for.
             if let url = Self.notificationsURL(bundleID: supervisor.identity.agentBundleID) { NSWorkspace.shared.open(url) }
         case .addCheckInURL(let planID):
-            router.showSettings(section: .plans, planID: planID)
+            router.showSettings(section: .plans, planID: planID, tab: .alerts)
         case .dismissOffMacNote(let planID):
             let connection = supervisor.connection
             run("Restorey couldn't dismiss the note") { [await connection.dismissOffMacNote(planID)] }

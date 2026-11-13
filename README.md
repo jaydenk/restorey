@@ -152,16 +152,15 @@ main menu, because key equivalents reach a window's text fields only through men
 Quit), an Edit menu (Undo, Redo, Cut, Copy, Paste, Paste and Match Style, Delete, Select All) and a Window menu
 (Minimise, Close) make ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V, ⌘A, ⌘W and ⌘Q work in its windows. Each kind of window (setup, Settings, recovery kit, Restore
 Files) opens at most once: asking again brings the open one to the front. None is restored at launch, and closing a
-window releases it, so a recovery kit's secrets go with it. Until its screen is built, Settings holds a
-placeholder. The setup window follows its content's size from step to step.
+window releases it, so a recovery kit's secrets go with it. The setup window follows its content's size from step to step.
 
 Opening Restorey again while it runs (from Finder, Spotlight or `open`) opens Settings, or brings an open Settings
 window forward as it is, so the app can still be reached when its menu bar icon can't be seen. If the icon is hidden (System Settings → Menu Bar) when Restorey
 starts, it opens Settings at once, in General (as does opening it again while the icon is hidden), with the note "Restorey's menu bar icon is hidden. Show it in System
 Settings → Menu Bar." An icon squeezed out of a full menu bar isn't detected (macOS still reports it as visible), so
 opening the app again is the way in. A copy outside `/Applications` opens setup's "Move to Applications" step
-instead. Open at login registers the app itself with `SMAppService.mainApp`, from the installed copy only; its switch
-comes with Settings → General.
+instead. Open at login registers the app itself with `SMAppService.mainApp`, from the installed copy only; it is
+switched in setup's permissions step and in Settings → General.
 
 The setup window's step order and rules live in `SetupFlow` (`RestoreyCore`): Move to Applications,
 permissions (Full Disk Access required, notifications optional), storage, password, recovery kit, sources, schedule,
@@ -239,6 +238,57 @@ path and pressing the button again runs all of it again. `SetupModel` keeps the 
 Applying a plan's retention to snapshots from before it adopted the repository (product spec §5.6's opt-in, with a
 `forget --dry-run` count) needs an engine call that doesn't exist yet, so setup doesn't offer it; until it does,
 `forget` only ever touches snapshots tagged with the plan's own ID.
+
+### Settings
+
+Settings (⌘, in the menu) is a window with a toolbar of sections, as macOS draws them for settings: **General**,
+**Plans**, **Network** and **History** (mockup `docs/mockups/v0.1-settings.html`). The menu's routes pick the section
+and plan: a plan's line opens it in Plans, "Show Details…" opens History for that plan, and "No off-Mac monitoring —
+Add…" opens the plan's Alerts tab. Network is still to come.
+
+**General** has Open at login (the switch re-reads `SMAppService` after every change, so a Restorey switched off in
+System Settings → General → Login Items shows as off with a note and "Open Login Items…", never as what was asked),
+Full Disk Access as the agent's own probe finds it, notifications as the agent last heard from the notification
+centre, the background agent's state and version ("Running · 0.1.0 (11)"), each with the menu's fix (Fix…, Turn
+On…, Restart Agent, Open Login Items…), the logs folder (Show in Finder), and, while the menu bar icon is hidden, the
+note saying where to show it. These are read again whenever Restorey comes back to the front. The words are
+`SettingsGeneral`'s (`RestoreyCore`).
+
+**Plans** lists the plans with "+ Add plan…", which opens setup from "Where backups go" (`SetupProgress.addingPlan`).
+Setup keeps one saved progress, so `SetupFlow.addingPlan` decides what it opens: a new add, the add or first run
+already under way, or, when another plan's setup isn't finished, a question offering to finish that one first. An
+unfinished plan shows "Setup not finished" with "Finish Setup…" (setup is still making it, so it has no tabs); a plan
+needing a new kit shows "New recovery kit needed" with "Save Recovery Kit…". Every other plan has tabs:
+
+- **What**: its name, the folders and drives, and the exclusions (setup's line and "Review Exclusions…" sheet).
+- **Schedule**: the interval, the battery rule and the plan's own upload limit in MB/s (empty, the default, is none;
+  a networked repository also gets its share of the Mac-wide limit, the smaller winning, Ruling P2-7).
+- **Storage**: the repository address, read-only (a different repository is a new plan), the repository password
+  and storage keys or environment values (empty keeps what's saved; a new S3 or B2 key needs both halves), the host
+  label, the pack size (read-only) and "Show recovery kit…". Entering the repository password doesn't change the
+  repository's: it is for one changed outside Restorey.
+- **Keep**: retention, the prune switch, and for an adopted repository how often old snapshots are tidied.
+- **Alerts**: the check-in URL (saved, Remove, or a new one) and "no successful backup in N days".
+- **History**: the History list for that plan.
+
+The tabs edit a copy (`PlanEdit` in `RestoreyCore`, held by `PlanEditModel`): the fields keep exactly what is typed,
+and trimming and parsing happen only when Save (⌘S) builds the request. A value the form can't show exactly (an
+interval or battery rule set elsewhere, a limit with more decimals than the field shows) is kept unless its control
+changes. Changing the folders or the host label shows the product spec's warning that the next backup starts a new
+snapshot group, and that the old group's snapshots are kept as they are (§5.4, §5.6). Typing a password, a key or an
+environment value shows "Saving pauses backups until you save a new recovery kit." before saving: the agent clears
+the kit's confirmation, so the plan waits for the new kit. The typed secrets go when the save succeeds, on Revert, when
+another plan is shown and when the window closes; switching away from unsaved edits asks first. The editor belongs to
+the window, so going to General and back keeps them. Delete Plan… asks with the developer window's words ("Its
+settings, saved passwords and keys, and history are removed. The repository and its snapshots aren't touched."); the
+agent also removes the plan's run logs.
+
+**History** lists every plan's runs, newest first, with a plan filter and Everything, Backups, Problems or Skipped and
+paused (`HistoryPresentation`): local time, plan, how the run ended in the menu's wording ("Backed up", "Old snapshots
+tidied", "Skipped: Photos isn't connected", "Backup failed" with the menu's reason; never "failed" for a pause, a
+skip or a stop by the system), the size added and the time taken where known, and "Show Log", which opens the run's
+log only if its path stays inside the logs folder's `runs/`. The list is fetched again whenever a plan records a new
+run.
 
 ### The menu bar
 

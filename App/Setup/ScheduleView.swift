@@ -39,50 +39,20 @@ private struct ScheduleFields: View {
         Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
             GridRow {
                 Text("Back up")
-                Picker("Back up", selection: form.intervalHours) {
-                    ForEach(ScheduleForm.intervalHours, id: \.self) { Text(ScheduleForm.title(hours: $0)).tag($0) }
-                }
-                .labelsHidden()
-                .fixedSize()
+                IntervalPicker(hours: form.intervalHours)
             }
             GridRow {
                 Text("On battery")
-                Picker("On battery", selection: form.battery) {
-                    ForEach(ScheduleForm.batteryChoices, id: \.self) { Text(ScheduleForm.title(battery: $0)).tag($0) }
-                }
-                .labelsHidden()
-                .fixedSize()
+                BatteryPicker(rule: form.battery)
             }
             GridRow(alignment: .firstTextBaseline) {
                 Text("Keep")
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        CountField(text: form.hourly, unit: "hourly")
-                        CountField(text: form.daily, unit: "daily")
-                        CountField(text: form.weekly, unit: "weekly")
-                        CountField(text: form.monthly, unit: "monthly")
-                    }
-                    if case .failure(let problem) = model.schedule!.retention {
-                        Text(problem.message).font(.caption).foregroundStyle(.red)
-                    }
-                }
+                RetentionFields(form: form)
             }
         }
         .disabled(model.working)
         Divider()
         CheckInField(model: model)
-    }
-}
-
-private struct CountField: View {
-    @Binding var text: String
-    let unit: String
-
-    var body: some View {
-        HStack(spacing: 3) {
-            PlainTextField(title: unit, text: $text).frame(width: 46)
-            Text(unit).foregroundStyle(.secondary)
-        }
     }
 }
 
@@ -92,23 +62,13 @@ private struct CheckInField: View {
 
     var body: some View {
         let key = SecretKey.checkInURL(model.planID)
-        SetupField(label: "Check-in URL (optional)", problem: model.checkInProblem) {
-            if model.plan?.hasCheckInURL == true, !model.removeCheckInURL {
-                HStack {
-                    Text("A check-in URL is saved.")
-                    Button("Remove") { model.removeCheckInURL = true }
-                }
-            } else {
-                SecretField(
-                    title: "https://hc-ping.com/…",
-                    text: Binding(get: { model.secret(key) }, set: { model.setSecret($0, for: key) }))
-            }
-        }
-        .disabled(model.working)
-        Text(ScheduleForm.checkInExplanation)
-            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        CheckInURLField(
+            saved: model.plan?.hasCheckInURL == true, remove: $model.removeCheckInURL,
+            text: Binding(get: { model.secret(key) }, set: { model.setSecret($0, for: key) }),
+            problem: model.checkInProblem)
+            .disabled(model.working)
         // The kit step came before this one, so the kit saved there has no check-in URL.
-        Text("The recovery kit you saved doesn't include this URL; it isn't needed to restore. Once it's saved, the plan's recovery kit in Settings (Show Recovery Kit…) includes it.")
+        Text("The recovery kit you saved doesn't include this URL; it isn't needed to restore. Once it's saved, the plan's recovery kit in Settings (Show recovery kit…) includes it.")
             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 }
