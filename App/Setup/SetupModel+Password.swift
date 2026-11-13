@@ -18,8 +18,9 @@ extension SetupModel {
         guard step == .password, passwordStep == .probing || passwordStep == .probeFailed, let plan = draft.plan,
             let supervisor
         else { return }
-        probeFailed = false
         await act {
+            // Inside the action, so a refused `act` (another action running) leaves the step as it was.
+            probeFailed = false
             switch await supervisor.connection.probeRepository(plan.id) {
             case .failure(let error):
                 probeFailed = true

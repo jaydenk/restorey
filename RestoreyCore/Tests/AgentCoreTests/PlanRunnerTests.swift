@@ -847,6 +847,51 @@ struct PlanRunnerTests {
         #expect(await f.runner.waitForBackgroundRun(planID: f.planID) == nil)
     }
 
+    /// Once the backup step has finished, the run's maintenance (forget here) isn't "the backup asked for":
+    /// Back Up Now then gets the old refusal, not a silent "already running" that starts nothing.
+    @Test func backUpNowDuringTheRunsMaintenanceIsRefusedNotReportedAsRunning() async throws {
+        let restic = try ResticBinary.require()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restorey-maintenance-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let inForget = directory.appendingPathComponent("in-forget")
+        let release = directory.appendingPathComponent("release")
+        let wrapper = directory.appendingPathComponent("restic.sh")
+        // forget waits for the test to let it go, so the run sits in its maintenance.
+        try """
+            #!/bin/sh
+            if [ "$1" = forget ]; then
+              touch '\(inForget.path)'
+              while [ ! -f '\(release.path)' ]; do /bin/sleep 0.05; done
+            fi
+            exec '\(restic.path)' "$@"
+
+            """.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+
+        let f = try await RunnerFixture.make(executable: wrapper)
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        let deadline = ContinuousClock.now + .seconds(60)
+        while !FileManager.default.fileExists(atPath: inForget.path), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(FileManager.default.fileExists(atPath: inForget.path))
+        #expect(await f.status().phase.isRunning)
+        await #expect { try await f.state.backUpNow(f.planID) } throws: {
+            ($0 as? AgentError)?.message == "Fixture is already backing up"
+        }
+        try "".write(to: release, atomically: true, encoding: .utf8)
+        let record = try await run.value
+        guard case .success = record.outcome else {
+            Issue.record("expected the backup to succeed, got \(record.outcome)")
+            return
+        }
+    }
+
     /// A Resume on a plan that isn't paused only answers with the status.
     @Test func resumeWhileNotPausedStartsNothing() async throws {
         let f = try await RunnerFixture.make()

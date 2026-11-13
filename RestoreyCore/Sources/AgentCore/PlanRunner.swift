@@ -170,9 +170,10 @@ public actor PlanRunner {
             if afterPausedRun, handles[planID]?.intent == .pause {
                 startWhenPausedRunEnds.insert(planID)
             } else {
-                // A backup already running and carrying on (the scheduler got there first) is the backup asked
-                // for. Anything else holding the plan (a run stopping for a pause, an adopt) is refused as
-                // before; only Resume queues a backup behind a stopping run (Ruling R62).
+                // A backup step already under way and carrying on (the scheduler got there first) is the backup
+                // asked for. Anything else holding the plan (a run stopping for a pause, a run's maintenance after
+                // its backup step, an adopt) is refused as before; only Resume queues a backup behind a stopping
+                // run (Ruling R62).
                 if handles[planID]?.isLiveBackup == true {
                     alreadyRunning = true
                 } else {
@@ -448,6 +449,7 @@ public actor PlanRunner {
 
         if await isWindingDown() { return await skippedForUpdate() }
         let backup = await runStep(.backup, trigger: trigger, session: session, handle: handle, progress: true)
+        handle.backupStepEnded()
         await commit(backup.record, plan: plan, fda: fda, stoppedReason: backup.stoppedReason)
         queueEndPing(backup, redactor: session.redactor)
 

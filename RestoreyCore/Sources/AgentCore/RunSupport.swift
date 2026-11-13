@@ -8,6 +8,7 @@ final class RunHandle: Sendable {
     private struct State {
         var intent: InterruptIntent?
         var process: ResticProcess?
+        var backupStepDone = false
     }
 
     private let state = Mutex(State())
@@ -21,8 +22,17 @@ final class RunHandle: Sendable {
 
     var intent: InterruptIntent? { state.withLock { $0.intent } }
 
-    /// A backup that hasn't been asked to stop (pause, delete, system stop, update): it will carry on.
-    var isLiveBackup: Bool { isBackup && intent == nil }
+    /// A backup whose backup step is still under way and hasn't been asked to stop (pause, delete, system stop,
+    /// update). Its maintenance afterwards (forget, prune, check) doesn't count: that isn't the backup a caller
+    /// asking for one wants.
+    var isLiveBackup: Bool {
+        state.withLock { isBackup && $0.intent == nil && !$0.backupStepDone }
+    }
+
+    /// The backup step has ended (its record is committed); what follows is maintenance.
+    func backupStepEnded() {
+        state.withLock { $0.backupStepDone = true }
+    }
 
     /// The restic process the run currently has, if any.
     var process: ResticProcess? { state.withLock { $0.process } }

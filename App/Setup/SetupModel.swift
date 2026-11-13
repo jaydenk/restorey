@@ -66,9 +66,6 @@ final class SetupModel {
     var working = false
     /// Set by `loadPlan` when the first status read has no plan under the saved id (see `planMissing`).
     var planMissingAtLoad = false
-    /// The agent can't read its settings, so its status lists no plans: the window shows why and waits for a
-    /// status that has them, never offering to start again (that would orphan the plan once the file is fixed).
-    var configError: String?
     /// The password step's last probe failed (its sentence is `stepError`): "Try Again" probes again.
     var probeFailed = false
     /// Set when "Start first backup" has started the run: the records it is measured against.
@@ -240,6 +237,11 @@ final class SetupModel {
     /// The plan this setup saved is gone from the agent (deleted elsewhere, while the window was closed or open):
     /// the steps can't go on, and the window offers to start again (`startAgain`). A status with a settings error
     /// lists no plans, so it never counts.
+    /// The agent can't read its settings, so its status lists no plans: the window shows why and waits for a
+    /// status that has them, never offering to start again (that would orphan the plan once the file is fixed).
+    /// From the latest status, so a file that becomes unreadable while the window is open shows it too.
+    var configError: String? { supervisor?.status?.configError }
+
     var planMissing: Bool {
         if planMissingAtLoad { return true }
         guard let id = draft.progress.planID, let status = supervisor?.status, status.configError == nil else {
@@ -260,8 +262,7 @@ final class SetupModel {
 
     /// A resumed setup gets the plan back from the agent's status (the plan was saved at each Continue).
     /// Waits for the first status when there is none yet. A first run with no plan saved has nothing to load.
-    /// A status without the plan (deleted elsewhere) sets `planMissing`; one with a settings error sets
-    /// `configError` and the wait goes on.
+    /// A status without the plan (deleted elsewhere) sets `planMissing`; with a settings error the wait goes on.
     ///
     /// The wait isn't woken by cancellation: a step view that goes while it waits leaves this task parked until
     /// the next status arrives, when it sees the cancellation and returns without touching anything. Statuses
@@ -270,17 +271,15 @@ final class SetupModel {
         guard draft.plan == nil, let id = draft.progress.planID, let supervisor else { return }
         while !Task.isCancelled, draft.plan == nil {
             if let status = supervisor.lastKnownStatus {
-                if let error = status.configError {
-                    // No plans are listed while the settings can't be read: wait for a status that can say.
-                    configError = error
+                if status.configError != nil {
+                    // No plans are listed while the settings can't be read (`configError` shows why): wait for a
+                    // status that can say.
                 } else if let saved = status.plans.first(where: { $0.plan.id == id })?.plan {
-                    configError = nil
                     draft.plan = saved
                     storage = StorageForm(repository: saved.repository)
                     hostLabel = saved.hostLabel
                     return
                 } else {
-                    configError = nil
                     planMissingAtLoad = true
                     return
                 }
