@@ -70,6 +70,9 @@ final class SetupModel {
     var probeFailed = false
     /// Set when "Start first backup" has started the run: the records it is measured against.
     var firstBackupBaseline: FirstBackupProgress.Baseline?
+    /// The recovery kit step's kit (`SetupModel+RecoveryKit`). It holds the plan's secrets, so it goes with the
+    /// step: whenever the step changes and when the window closes.
+    var recoveryKit: RecoveryKitModel?
     /// Closes the setup window (`WindowRouter` supplies it): Done's Close.
     @ObservationIgnored var closeWindow: (() -> Void)?
     /// Used for the secrets' keychain names before "Check" has saved a plan.
@@ -112,6 +115,7 @@ final class SetupModel {
     /// The window is closing: the step's secrets go now. The progress stays saved for the next opening.
     func close() {
         draft.close()
+        closeRecoveryKit()
     }
 
     var facts: SetupFacts {
@@ -127,6 +131,7 @@ final class SetupModel {
     func go(to next: SetupStep) {
         guard next != draft.step else { return }
         draft.go(to: next)
+        closeRecoveryKit()
         stepError = nil
         if installed { store.save(draft.progress) }
     }
@@ -297,6 +302,7 @@ final class SetupModel {
     /// After `planMissing`: forget the plan and go back to the storage step with an empty form.
     func startAgain() {
         draft.forgetPlan()
+        closeRecoveryKit()
         planMissingAtLoad = false
         probeFailed = false
         storage = StorageForm()

@@ -21,8 +21,10 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
     case foreignSecret
     /// No `PlanRunner` is attached yet (the agent is still starting), so nothing can run.
     case runnerUnavailable
-    /// A plan never backs up before the user confirms they saved its recovery kit (spec §7).
-    case recoveryKitNotConfirmed(name: String)
+    /// A plan never backs up before the user confirms they saved its recovery kit (spec §7). `setupFinished`: the
+    /// plan's kit was confirmed once and a change to its repository or a secret asks for a new one (Ruling R28),
+    /// which reads differently from a first backup (carry list).
+    case recoveryKitNotConfirmed(name: String, setupFinished: Bool)
     /// `createRepository` found a repository at the address; restic init never overwrites one.
     case repositoryAlreadyExists
     /// A restic action asked for by the app (create, adopt) failed. The text is already redacted.
@@ -47,8 +49,10 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
         case .planDeleting(let name): "\(name) is being deleted"
         case .foreignSecret: "A secret in the request belongs to a different plan"
         case .runnerUnavailable: "Restorey's agent is still starting up. Try again in a moment"
-        case .recoveryKitNotConfirmed(let name):
+        case .recoveryKitNotConfirmed(let name, setupFinished: false):
             "Confirm you've saved the recovery kit for \(name) before its first backup"
+        case .recoveryKitNotConfirmed(let name, setupFinished: true):
+            "Save a new recovery kit for \(name) — the saved one has the old keys"
         case .repositoryAlreadyExists: "A repository already exists there"
         case .operationFailed(let detail): detail
         case .storage(let detail): detail

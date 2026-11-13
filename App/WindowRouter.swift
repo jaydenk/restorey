@@ -21,8 +21,7 @@ final class ShellState {
 /// state-restored, so a menu bar app doesn't reopen Settings by itself at every launch. Closing a window
 /// releases it and its content, so a recovery kit's secrets go with it.
 ///
-/// Until Settings (Task 14), the recovery kit (Task 13) and Restore Files exist, each of those windows holds a
-/// placeholder.
+/// Until Settings (Task 14) exists, its window holds a placeholder.
 @MainActor
 final class WindowRouter: NSObject, NSWindowDelegate {
     let state = ShellState()
@@ -33,6 +32,13 @@ final class WindowRouter: NSObject, NSWindowDelegate {
     var makeSetupModel: (() -> SetupModel)?
     /// The open setup window's model, told when the window closes so its secrets go at once.
     private var setupModel: SetupModel?
+    /// The installed copy's supervisor (`AppDelegate` sets it): the recovery kit and Restore Files windows ask the
+    /// agent through it. A refused copy has none, and opens neither.
+    var supervisor: AgentSupervisor?
+    /// The open recovery kit and Restore Files windows' models, told when their window closes or shows another plan,
+    /// so the secrets they hold go at once.
+    private var recoveryKitModel: RecoveryKitWindowModel?
+    private var restoreFilesModel: RestoreFilesModel?
 
     func showSetup() {
         guard let makeSetupModel else { return }
@@ -60,12 +66,33 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         show(.settings) { [state] in NSHostingController(rootView: SettingsPlaceholderView(state: state)) }
     }
 
+    /// "Save Recovery Kit…" (a plan needing a new kit) and Settings' "Show recovery kit…".
     func showRecoveryKit(planID: UUID) {
-        show(.recoveryKit, planID: planID) { NSHostingController(rootView: PlaceholderView(kind: .recoveryKit, planID: planID)) }
+        guard let supervisor else { return }
+        show(.recoveryKit, planID: planID) { [weak self] in
+            self?.recoveryKitModel?.close()
+            let model = RecoveryKitWindowModel(planID: planID, supervisor: supervisor) { [weak self] in self?.showSetup() }
+            self?.recoveryKitModel = model
+            return Self.sizedToContent(RecoveryKitWindow(model: model))
+        }
     }
 
+    /// The plan picked in the menu; the window's own picker can switch to another.
     func showRestoreFiles(planID: UUID) {
-        show(.restoreFiles, planID: planID) { NSHostingController(rootView: PlaceholderView(kind: .restoreFiles, planID: planID)) }
+        guard let supervisor else { return }
+        show(.restoreFiles, planID: planID) { [weak self] in
+            self?.restoreFilesModel?.close()
+            let model = RestoreFilesModel(planID: planID, supervisor: supervisor)
+            self?.restoreFilesModel = model
+            return Self.sizedToContent(RestoreFilesView(model: model))
+        }
+    }
+
+    /// A window that follows its content's ideal size, as the kit loads or the plan changes.
+    private static func sizedToContent(_ view: some View) -> NSViewController {
+        let controller = NSHostingController(rootView: view)
+        controller.sizingOptions = [.preferredContentSize, .minSize]
+        return controller
     }
 
     func show(_ opening: ShellOpening) {
@@ -113,27 +140,21 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         else { return }
         slots.closed(window, for: kind)
         shownPlan[kind] = nil
-        if kind == .setup {
+        switch kind {
+        case .setup:
             setupModel?.close()
             setupModel = nil
+        case .recoveryKit:
+            recoveryKitModel?.close()
+            recoveryKitModel = nil
+        case .restoreFiles:
+            restoreFilesModel?.close()
+            restoreFilesModel = nil
+        case .settings:
+            break
         }
         // The content (and anything secret it holds) goes now, not when AppKit lets go of the window.
         window.contentViewController = nil
-    }
-}
-
-private struct PlaceholderView: View {
-    let kind: AppWindowKind
-    var planID: UUID?
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Text(kind.title).font(.title2)
-            if let planID { Text("Plan \(planID.uuidString)").font(.caption).foregroundStyle(.secondary) }
-            Text("This window isn't built yet.").foregroundStyle(.secondary)
-        }
-        .padding(32)
-        .frame(width: 480, height: 280)
     }
 }
 

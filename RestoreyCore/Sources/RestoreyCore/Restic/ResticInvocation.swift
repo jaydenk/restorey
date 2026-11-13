@@ -233,13 +233,14 @@ public func displayCommand(_ inv: ResticInvocation) -> String {
     return (env + ["restic"] + inv.arguments.map(displayQuoted)).joined(separator: " ")
 }
 
-/// Always single-quoted.
-private func shellQuoted(_ s: String) -> String {
+/// Always single-quoted: `sh` reads every byte between single quotes as it is, newlines included, and a
+/// single quote is written `'\''`. Shared with `RestoreCommands`.
+func shellQuoted(_ s: String) -> String {
     "'" + s.replacing("'", with: "'\\''") + "'"
 }
 
-/// Quoted only when the text has characters the shell would treat specially.
-private func displayQuoted(_ s: String) -> String {
+/// Quoted only when the text has characters the shell would treat specially. Shared with `RestoreCommands`.
+func displayQuoted(_ s: String) -> String {
     let safe = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_@%+=:,./-")
     return !s.isEmpty && s.allSatisfy(safe.contains) ? s : shellQuoted(s)
 }

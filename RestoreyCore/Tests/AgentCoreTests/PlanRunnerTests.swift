@@ -712,6 +712,26 @@ struct PlanRunnerTests {
         #expect(try await f.snapshots().isEmpty)
     }
 
+    /// Carry list: a plan that finished setup and needs its kit again (a changed password) is told to save a
+    /// new kit, not to confirm one "before its first backup".
+    @Test func aChangedPasswordAsksForANewKitInWordsForAnExistingPlan() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        let plan = await f.plan()
+        _ = try await f.state.savePlan(SavePlanRequest(
+            plan: plan, secrets: [SecretEntry(key: .repositoryPassword(plan.id), value: "a different password")]))
+        #expect(await f.state.status().plans.first { $0.plan.id == f.planID }?.setupState == .needsNewKit)
+
+        let expected = "Save a new recovery kit for Fixture — the saved one has the old keys"
+        await #expect {
+            try await f.state.backUpNow(f.planID)
+        } throws: { ($0 as? AgentError)?.message == expected }
+        let record = try await f.runner.runBackup(planID: f.planID, trigger: .manual)
+        #expect(record.outcome == .failed(exitCode: -1, reason: expected))
+        #expect(try await f.snapshots().isEmpty)
+    }
+
     @Test func invalidPlanIsRefusedWithoutRestic() async throws {
         let f = try await RunnerFixture.make()
         defer { f.remove() }

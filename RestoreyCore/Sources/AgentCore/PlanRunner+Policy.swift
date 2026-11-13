@@ -97,7 +97,9 @@ extension PlanRunner {
     static func refusal(_ plan: Plan) -> AgentError? {
         let errors = plan.validationErrors()
         if !errors.isEmpty { return .invalidPlan(errors) }
-        if plan.recoveryKitConfirmedAt == nil { return .recoveryKitNotConfirmed(name: plan.name) }
+        if plan.recoveryKitConfirmedAt == nil {
+            return .recoveryKitNotConfirmed(name: plan.name, setupFinished: plan.setupCompletedAt != nil)
+        }
         return nil
     }
 

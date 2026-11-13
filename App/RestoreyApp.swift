@@ -101,6 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .installed(let copy):
             let supervisor = AgentSupervisor(installed: copy, identity: identity, log: log)
             self.supervisor = supervisor
+            router.supervisor = supervisor
             let statusItem = StatusItemController(supervisor: supervisor, router: router)
             #if DEBUG
             let developer = DeveloperWindowController(supervisor: supervisor, identity: identity)

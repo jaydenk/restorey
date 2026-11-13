@@ -135,7 +135,8 @@ interface only to the signed app: the listener requires the app's bundle ID and 
 team in `Config/Local.xcconfig`, so any other process is refused. Only one call returns secrets: `recoveryKit`
 replies with a plan's repository password, its S3 keys or raw environment values, and its check-in URL, so the app
 can show the recovery kit; it goes only to the signed Restorey app over that XPC connection, the agent logs just the
-plan and how many secrets it sent, and the app keeps them only while the kit is open. The other calls the setup and
+plan and how many secrets it sent, and the app keeps them only while the kit or the Restore Files window is open
+(see "The recovery kit"). The other calls the setup and
 Settings screens use return no secret: `probeRepository` (is the address empty, or a repository the password opens,
 with its snapshots by host), `history` (run records, newest first, for one plan or all), `probeFullDiskAccess`
 (runs the agent's own probe and pushes the status) and `dismissOffMacNote`. It is the only writer of `config.json`,
@@ -151,8 +152,8 @@ main menu, because key equivalents reach a window's text fields only through men
 Quit), an Edit menu (Undo, Redo, Cut, Copy, Paste, Paste and Match Style, Delete, Select All) and a Window menu
 (Minimise, Close) make ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V, ⌘A, ⌘W and ⌘Q work in its windows. Each kind of window (setup, Settings, recovery kit, Restore
 Files) opens at most once: asking again brings the open one to the front. None is restored at launch, and closing a
-window releases it, so a recovery kit's secrets go with it. Until their screens are built, Settings, the recovery kit
-and Restore Files hold placeholders. The setup window follows its content's size from step to step.
+window releases it, so a recovery kit's secrets go with it. Until its screen is built, Settings holds a
+placeholder. The setup window follows its content's size from step to step.
 
 Opening Restorey again while it runs (from Finder, Spotlight or `open`) opens Settings, or brings an open Settings
 window forward as it is, so the app can still be reached when its menu bar icon can't be seen. If the icon is hidden (System Settings → Menu Bar) when Restorey
@@ -208,8 +209,11 @@ when "Create New Repository" succeeds, and `adoption`, the adopt report (host na
 the count), set only when `adopt` succeeds. So a setup quit after "Open Repository" but before "Use This Repository"
 resumes on the adopt path rather than calling someone else's repository its own, and the sources step's new-group
 warning survives a quit (kept rather than listed again, which can take minutes on a remote repository). A new
-address at "Check" clears both facts. **Recovery kit** is a frame for Task 13's kit: the tick "I've
-saved it somewhere other than this Mac" is recorded in the progress and lets setup go on. **What to back up** has the
+address at "Check" clears both facts. **Recovery kit** shows the kit (see "The recovery kit") once the
+repository's own password is saved, that is once this setup created or adopted the repository; before that the plan
+holds only "Check"'s stand-in, so the step says so and offers Back instead of a kit. The tick "I've
+saved it somewhere other than this Mac" can be set once the kit has shown; it is recorded in the progress and lets
+setup go on, and the agent confirms the kit only at "Start First Backup". **What to back up** has the
 home folder by default (or the adopted snapshot's folders, with the new-group warning when they're changed), the
 exclusions in one line (`ExclusionsSummary`) and "Review Exclusions…" (folders, with Restorey's own two kept; file
 types; one file system). **Schedule** has the interval (hourly by default; 1, 2, 4, 6, 12 or 24 hours), the battery
@@ -262,7 +266,8 @@ The menu, top to bottom:
   first item, "All Plans", acts on every plan, then one item per plan (an AppKit item with a submenu can't also
   have its own action). They appear only while the agent is healthy.
 - **Restore Files…** (a submenu of plans when there are several; an unfinished plan isn't listed, having no
-  recovery kit and perhaps no repository yet), **Settings…** (⌘,), the Debug-only
+  recovery kit and perhaps no repository yet), which opens the plan's restic restore commands (see "The recovery
+  kit"), **Settings…** (⌘,), the Debug-only
   **Developer…**, and **Quit Restorey** (⌘Q).
 
 Coloured text (the fix in the accent colour, a red or orange status) switches to the highlight's text colour on
@@ -274,7 +279,9 @@ go (a backup starts and its progress bar appears, a banner is raised) the items 
 
 The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`) runs each backup in this order:
 
-1. Refuses a plan that is invalid or whose recovery kit hasn't been confirmed, without running restic.
+1. Refuses a plan that is invalid or whose recovery kit hasn't been confirmed, without running restic: "Confirm
+   you've saved the recovery kit for <plan> before its first backup", or, for a plan that finished setup and needs
+   its kit again after a change, "Save a new recovery kit for <plan> — the saved one has the old keys".
 2. Checks the plan's conditions (network, battery, mounted volumes, sources that exist). A skipped run (on
    battery, no network, an unmounted volume) is recorded but sends no check-in ping. The network conditions
    apply only to a repository on another machine (S3, B2, or a raw `sftp:`, `rest:`, `rclone:` and so on): a
@@ -525,11 +532,61 @@ registers its agent, and the agent restarted after each later install
 (override with `RESTOREY_HOSTED_DERIVED_DATA`), not `build/`, because macOS blocks launching an app from
 `~/Documents` on a privacy prompt that nobody is there to answer.
 
+## The recovery kit
+
+A repository password that exists only in the Keychain of a lost Mac opens nothing, so every plan has a recovery
+kit (`RecoveryKitDocument`, from the agent's `recoveryKit` reply): the repository address and password, the
+storage keys (an S3 or B2 plan's key ID and secret key, or each environment variable of another location), the
+host label this Mac's snapshots are under, the commands below, and the check-in URL when the plan has one. A kit
+missing any secret isn't shown: the agent refuses it, naming the Keychain item, and the app shows that sentence.
+
+It appears in setup's recovery kit step, from the menu's "New recovery kit needed — Save Recovery Kit…" and from
+"Show recovery kit…" in the plan's settings. Each field has a copy button (secrets are copied as concealed
+pasteboard items, so clipboard managers that honour the marker don't keep them), then **Print…** and **Save as
+PDF…**. The save panel picks no folder for you, and if the PDF lands on this Mac's own disk the window says so and
+recommends deleting it once the kit is stored elsewhere. The PDF is created readable only by you. Restorey never
+writes the kit anywhere by itself.
+
+Outside setup the kit window asks for Touch ID or your login password first (`OwnerAuthentication`), once per
+opening, and only then fetches the secrets; closing the window drops them. Only a plan that has finished setup
+opens there (the agent's `setupCompletedAt`, set by the first confirmation and never cleared); an unfinished one
+offers "Finish Setup…". For a plan needing a new kit, the window is headed "Save a new recovery kit — the saved one
+has the old keys" and its tick "I've saved it somewhere other than this Mac" confirms the kit with the agent, which
+lets backups carry on. Before confirming, the window checks the kit against the agent's current secrets, so a kit
+whose keys changed while it was open is shown again rather than confirmed.
+
+**Restore Files…** in the menu opens the same commands for the chosen plan (a plan picker switches between
+plans). Passwords and keys show as dots; holding Option shows them while it is held, and each command has a copy
+button that copies the real command. The first reveal or copy asks for Touch ID or your login password, once per
+opening, and the secrets are fetched only then and dropped when the window closes or another plan is picked.
+
 ## Restoring without Restorey
 
-Your backups will always be plain restic repositories. If Restorey ever disappears, you can restore with
-the restic command-line tool and the details from your recovery kit. Full instructions will be added here
-before the first release.
+Your backups are plain restic repositories, so restic alone can restore them. Install
+[restic](https://restic.net), then paste these into Terminal in order, with the values from your recovery kit
+(the kit and Restore Files give them filled in):
+
+```sh
+export RESTIC_REPOSITORY=s3:https://s3.us-west-004.backblazeb2.com/my-bucket/macs/pepper
+export RESTIC_PASSWORD='your repository password'
+export AWS_ACCESS_KEY_ID='your key ID'
+export AWS_SECRET_ACCESS_KEY='your secret key'
+restic snapshots --host pepper
+restic restore latest --host pepper --target ~/Restored
+```
+
+The first lines tell restic where the repository is and how to open it: an S3 or B2 plan (B2 through its S3
+endpoint) uses the two `AWS_` keys; another location exports its own environment variables instead (for example
+`RESTIC_REST_USERNAME` and `RESTIC_REST_PASSWORD`), and a folder or drive needs none. `restic snapshots` lists this
+Mac's snapshots (`--host` is the kit's host label), and `restic restore latest` restores the newest of them into a
+folder called `Restored` in your home folder, under each file's original path. Every value is single-quoted so the
+shell reads it exactly, spaces, quote marks and non-ASCII letters included.
+
+The password is the one restic knows. Restorey hands restic the stored password through
+`RESTIC_PASSWORD_COMMAND`, and restic trims white space from the ends of what that command prints, while it reads
+`RESTIC_PASSWORD` as it is; so for a password typed with a space or newline at either end, the kit gives it without
+them, which is the password the repository really has (checked against restic 0.19.1, and by
+`RestoreCommandsTests` end to end).
 
 ## Licence
 

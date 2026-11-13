@@ -147,11 +147,4 @@ extension SetupModel {
         probeFailed = false
         go(to: .storage)
     }
-
-    // MARK: Recovery kit (step 4, Task 13's)
-
-    func continueFromRecoveryKit() {
-        guard step == .recoveryKit, canContinue else { return }
-        go(to: SetupFlow.next(after: step, facts: facts))
-    }
 }

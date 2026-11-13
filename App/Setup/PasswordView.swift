@@ -1,4 +1,3 @@
-import AppKit
 import RestoreyCore
 import SwiftUI
 
@@ -95,7 +94,7 @@ private struct NewRepositoryForm: View {
             HStack {
                 SecretField(title: "Repository password", text: secret(key))
                 if !model.ownPassword {
-                    Button("Copy") { copyConcealed(model.secret(key)) }
+                    Button("Copy") { ConcealedPasteboard.copy(model.secret(key)) }
                     Button("New") { model.newGeneratedPassword() }
                         .help("Make another password")
                 }
@@ -155,14 +154,4 @@ private struct ExistingRepositorySummary: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
-}
-
-/// Copies a secret the user asked to copy, marked concealed so clipboard managers that honour the marker
-/// (nspasteboard.org) don't keep it.
-@MainActor
-private func copyConcealed(_ text: String) {
-    let pasteboard = NSPasteboard.general
-    pasteboard.clearContents()
-    pasteboard.setString(text, forType: .string)
-    pasteboard.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
 }
