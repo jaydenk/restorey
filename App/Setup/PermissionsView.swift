@@ -2,7 +2,7 @@ import RestoreyCore
 import SwiftUI
 
 /// Setup step 1 (mockup step 1, UI design §4): in Applications, Full Disk Access (required, checked by the agent
-/// every 2 s while shown and whenever the app comes back to the front), notifications (optional) and Open at
+/// every 2 s while the window can be seen and whenever the app comes back to the front), notifications (optional) and Open at
 /// login (on by default, P2-16).
 struct PermissionsView: View {
     @Bindable var model: SetupModel
@@ -52,9 +52,9 @@ struct PermissionsView: View {
             }
         }
         // Cancelled when the step changes or the window closes.
-        .task { await model.pollFullDiskAccess() }
+        .task { await model.pollPermissions() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { await model.checkFullDiskAccess() }
+            Task { await model.checkPermissions() }
         }
     }
 }

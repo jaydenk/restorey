@@ -88,7 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             log.info("Not touching the agent: this copy at \(Bundle.main.bundlePath) is \(verdict)")
             mode = .refused
             statusItem = StatusItemController(refused: verdict, router: router)
-            let mover = AppMover(source: Bundle.main.bundleURL, identity: identity)
+            let mover = AppMover(bundle: .main, identity: identity, translocated: verdict == .translocated)
             router.makeSetupModel = { [setupStore] in
                 // Always the move screen; the saved progress is the installed copy's and is left alone.
                 SetupModel(

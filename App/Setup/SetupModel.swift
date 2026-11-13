@@ -31,7 +31,9 @@ final class SetupModel {
     private(set) var fullDiskAccessGranted = false
     private(set) var fullDiskAccessError: String?
     private(set) var requestingNotifications = false
-    @ObservationIgnored private var notificationsAnswer: Bool?
+    /// Whether the setup window can be seen (`WindowRouter` follows its occlusion state). The Full Disk Access
+    /// poll asks the agent only while it can.
+    @ObservationIgnored var windowVisible = true
     /// P2-16: on by default; applied when the step is left with Continue.
     var openAtLogin: Bool
     private(set) var loginItemError: String?
@@ -51,8 +53,6 @@ final class SetupModel {
             // Off only when the user has switched Restorey off in Login Items.
             openAtLogin = loginItem.status != .requiresApproval
         }
-        // A refused copy saves nothing: the installed copy's place in setup must survive a stray copy being run.
-        if case .installed = context { store.save(progress) }
     }
 
     var installed: Bool {
@@ -73,16 +73,19 @@ final class SetupModel {
 
     var canContinue: Bool { SetupFlow.canContinue(from: step, facts: facts) }
 
+    /// Saved only on a real step change, and only by the installed copy: a stray copy's move screen must not
+    /// overwrite the installed copy's place in setup.
     private func go(to next: SetupStep) {
+        guard next != draft.step else { return }
         draft.go(to: next)
         if installed { store.save(draft.progress) }
     }
 
     // MARK: Move to Applications
 
-    func refreshMoveDecision() {
+    func refreshMoveDecision() async {
         guard case .refused(let mover) = context else { return }
-        moveDecision = mover.decision()
+        moveDecision = await mover.decision()
     }
 
     /// Moves, opens the moved copy and quits; on failure the screen shows why.
@@ -95,23 +98,36 @@ final class SetupModel {
             try await mover.move()
         } catch {
             moveError = AppMove.error(from: error).description
-            moveDecision = mover.decision()
+            moveDecision = await mover.decision()
         }
     }
 
     // MARK: Permissions
 
+    /// What the agent last said in a hello: it holds the notification centre's answer (Ruling R68).
     var notificationsAuthorised: Bool? {
         guard case .installed(let supervisor, _) = context else { return nil }
-        return notificationsAnswer ?? supervisor.lastHello?.notificationsAuthorised
+        return supervisor.lastHello?.notificationsAuthorised
     }
 
-    /// Asks the agent every `fullDiskAccessPollInterval` until the task is cancelled (the step's view goes).
-    func pollFullDiskAccess() async {
+    /// Every `fullDiskAccessPollInterval` while the window can be seen, until the task is cancelled (the step's
+    /// view goes): Full Disk Access, and the notification answer with it, which the user may change in Settings.
+    func pollPermissions() async {
         while !Task.isCancelled {
-            await checkFullDiskAccess()
+            if windowVisible { await checkPermissions() }
             try? await Task.sleep(for: Self.fullDiskAccessPollInterval)
         }
+    }
+
+    /// Also run whenever Restorey comes back to the front, visible or not.
+    func checkPermissions() async {
+        await checkFullDiskAccess()
+        await refreshNotifications()
+    }
+
+    private func refreshNotifications() async {
+        guard case .installed(let supervisor, _) = context else { return }
+        await supervisor.refreshHello()
     }
 
     /// The agent's own probe (product spec §5.7), not the app's: the agent is what reads the files.
@@ -135,9 +151,8 @@ final class SetupModel {
         guard case .installed(let supervisor, _) = context, !requestingNotifications else { return }
         requestingNotifications = true
         defer { requestingNotifications = false }
-        if case .success(let reply) = await supervisor.connection.requestNotificationPermission() {
-            notificationsAnswer = reply.granted
-        }
+        _ = await supervisor.connection.requestNotificationPermission()
+        await refreshNotifications()
     }
 
     func openNotificationSettings() {

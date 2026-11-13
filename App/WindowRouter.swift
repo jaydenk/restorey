@@ -95,6 +95,13 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         return window
     }
 
+    /// Setup's permissions poll runs only while its window can be seen.
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window.identifier?.rawValue == AppWindowKind.setup.rawValue
+        else { return }
+        setupModel?.windowVisible = window.occlusionState.contains(.visible)
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow,
               let raw = window.identifier?.rawValue, let kind = AppWindowKind(rawValue: raw)

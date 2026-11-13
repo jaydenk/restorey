@@ -170,17 +170,21 @@ recovery-kit window's job, not setup's. The kit is saved at its step but the age
 
 The setup window opens at launch while a plan's setup is unfinished or no plan exists, decided on the agent's first
 status; a copy outside `/Applications` opens it at once, on "Move to Applications" (also in its menu). That screen
-copies the app into `/Applications` (`AppMover`, file work in `AppInstaller`), removes `com.apple.quarantine` from
-the copy, swaps it in place of any copy the user chose to replace, moves the copy it ran from to the Trash (a
-read-only disk image keeps it), opens the moved copy and quits. If `/Applications` already has a copy, it
-offers to replace it only while that copy's agent isn't registered (read from launchd and from the app's record of
-its last registration, never from `SMAppService`); otherwise it asks for Restorey to be quit and the copy replaced by
-hand. It never asks for an administrator password: `NSWorkspace.requestAuthorization` needs the restricted
-Privileged File Operations entitlement, and administrators can write to `/Applications` anyway; anyone else is told
-to drag the app there in Finder. The permissions step ticks off Applications, checks Full Disk Access through the
-agent's own probe every 2 s while shown and whenever Restorey comes back to the front, asks the agent for notification
-permission, and has "Open at login" (on by default), applied on Continue, which needs Full Disk Access. The step's
-secrets live only in `SetupDraft`, which drops them whenever the step changes and when the window closes.
+copies the app into `/Applications` under the build's own name (`Restorey.app`, or `RestoreyDev.app` for the
+development identity, whatever the downloaded copy was called), through a staging folder (`AppInstaller`), removes
+`com.apple.quarantine` from the copy, moves the copy it ran from to the Trash (for a translocated launch, the original
+in `~/Downloads`, never the read-only mount), opens the moved copy and quits. `AppMove` decides, and decides again
+when the button is pressed: while any agent of this identity is registered (read from launchd and from the app's
+record of its last registration, never from `SMAppService`) it refuses and asks for Restorey to be quit and the copy in
+Applications replaced by hand, since a backup may be running; an app of another bundle identifier at the destination
+is never replaced; this Restorey there is offered for replacing, and the old copy goes to the Trash. It never asks for
+an administrator password: `NSWorkspace.requestAuthorization` needs the restricted Privileged File Operations
+entitlement, and administrators can write to `/Applications` anyway; anyone else is told to drag the app there in
+Finder. The permissions step ticks off Applications, checks Full Disk Access through the agent's own probe and
+re-reads the agent's notification answer every 2 s while the window can be seen and whenever Restorey comes back to
+the front, asks the agent for notification permission, and has "Open at login" (on by default), applied on Continue,
+which needs Full Disk Access. The step's secrets live only in `SetupDraft`, which drops them whenever the step changes
+and when the window closes; the progress is saved only when the step changes.
 
 ### The menu bar
 

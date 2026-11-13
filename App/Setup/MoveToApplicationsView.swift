@@ -13,8 +13,8 @@ struct MoveToApplicationsView: View {
             switch model.moveDecision {
             case .replace?:
                 Label(AppMove.replaceQuestion, systemImage: "exclamationmark.triangle")
-            case .refuse?:
-                Label(AppMove.refusal, systemImage: "exclamationmark.octagon")
+            case .refuse(let refusal)?:
+                Label(refusal.sentence, systemImage: "exclamationmark.octagon")
             case .move?, nil:
                 EmptyView()
             }
@@ -25,13 +25,17 @@ struct MoveToApplicationsView: View {
             SetupButtonRow {
                 if model.moving { ProgressView().controlSize(.small) }
                 switch model.moveDecision {
-                case .refuse?:
+                case .refuse(.agentRegistered)?:
                     Button("Quit Restorey") { NSApplication.shared.terminate(nil) }
                         .keyboardShortcut(.defaultAction)
                 case .replace?:
                     Button("Replace and Move") { Task { await model.moveToApplications() } }
                         .keyboardShortcut(.defaultAction)
                         .disabled(model.moving)
+                case .refuse?:
+                    // Nothing to replace by hand: once the other app is moved, or Restorey dragged in, this re-checks.
+                    Button("Check Again") { Task { await model.refreshMoveDecision() } }
+                        .keyboardShortcut(.defaultAction)
                 case .move?, nil:
                     Button("Move to Applications") { Task { await model.moveToApplications() } }
                         .keyboardShortcut(.defaultAction)
@@ -40,10 +44,10 @@ struct MoveToApplicationsView: View {
             }
         }
         .fixedSize(horizontal: false, vertical: true)
-        .onAppear { model.refreshMoveDecision() }
+        .task { await model.refreshMoveDecision() }
         // The other copy may be quit, set up or removed while this screen waits.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            model.refreshMoveDecision()
+            Task { await model.refreshMoveDecision() }
         }
     }
 }

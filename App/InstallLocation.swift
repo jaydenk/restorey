@@ -37,6 +37,22 @@ enum InstallLocation {
         return .installed(InstalledCopy(bundleURL: url))
     }
 
+    private typealias CreateOriginalPath = @convention(c) (
+        CFURL, UnsafeMutablePointer<Unmanaged<CFError>?>?
+    ) -> Unmanaged<CFURL>?
+
+    /// Where a translocated bundle really is (the copy in `~/Downloads`, say), so the move trashes that and not
+    /// the read-only mount. `SecTranslocateCreateOriginalPathForURL`, like `SecTranslocateIsTranslocatedURL`, is
+    /// exported by Security.framework but not in its public headers or documentation, so it is loaded with
+    /// `dlsym` (as LetsMove does). Nil when it can't be found; the move then trashes nothing.
+    static func originalURL(ofTranslocated url: URL) -> URL? {
+        guard let handle = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY),
+              let symbol = dlsym(handle, "SecTranslocateCreateOriginalPathForURL")
+        else { return nil }
+        let function = unsafeBitCast(symbol, to: CreateOriginalPath.self)
+        return function(url as CFURL, nil)?.takeRetainedValue() as URL?
+    }
+
     private typealias IsTranslocatedURL = @convention(c) (
         CFURL, UnsafeMutablePointer<Bool>, UnsafeMutablePointer<Unmanaged<CFError>?>?
     ) -> Bool

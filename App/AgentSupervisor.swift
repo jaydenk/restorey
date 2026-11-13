@@ -94,6 +94,14 @@ final class AgentSupervisor {
         registration.openLoginItems()
     }
 
+    /// A hello outside the heartbeat, for setup's permissions step: the notification answer the agent holds can
+    /// change in System Settings at any time, and the step shows it within its 2 s poll. Only the hello's
+    /// reply is noted; the heartbeat still decides the agent's health.
+    func refreshHello() async {
+        guard case .success(let reply) = await connection.hello(request) else { return }
+        noteHello(reply)
+    }
+
     // MARK: Heartbeat
 
     private func heartbeat() async {

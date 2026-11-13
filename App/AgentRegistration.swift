@@ -9,7 +9,7 @@ import ServiceManagement
 final class AgentRegistration {
     /// The SHA-256 of the embedded plist at the last successful `register()`. launchd keeps the job
     /// definition from registration, so a changed plist needs a re-registration (spike, spec §8).
-    static let plistHashKey = "agentPlistSHA256"
+    nonisolated static let plistHashKey = "agentPlistSHA256"
 
     private let service: SMAppService
     private let plistURL: URL
