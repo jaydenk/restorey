@@ -1587,16 +1587,13 @@ struct PlanRunnerTests {
         #expect(try await f.snapshots().count == 2)
     }
 
-    @Test func probeWrongPassword() async throws {
+    @Test func probeWithTheWrongPasswordFindsARepositoryItCantOpen() async throws {
         let f = try await RunnerFixture.make(confirmKit: false)
         defer { f.remove() }
         try "wrong".write(to: f.passwordFile, atomically: true, encoding: .utf8)
-        await #expect {
-            _ = try await f.state.probeRepository(f.planID)
-        } throws: {
-            ($0 as? AgentError) == .wrongPassword
-                && ($0 as? AgentError)?.message == "That password doesn't open the repository at this address."
-        }
+        // A repository is there: setup's password step asks for its password (UI design §4 step 3).
+        let probe = try await f.state.probeRepository(f.planID)
+        #expect(probe == RepositoryProbe(state: .passwordRejected))
         // Recorded like adopt, and no stop: the user is still choosing the password.
         let history = await f.history()
         #expect(history.recent.first?.operation == .catConfig)

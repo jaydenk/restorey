@@ -293,13 +293,18 @@ public struct AdoptReport: Codable, Sendable, Equatable {
 }
 
 /// `probeRepository`'s reply (Ruling P2-2): what is at the plan's repository address.
-/// JSON: `{"state":{"type":"empty"}}` or `{"state":{"type":"existing","report":{…}}}`.
+/// JSON: `{"state":{"type":"empty"}}`, `{"state":{"type":"existing","report":{…}}}` or
+/// `{"state":{"type":"passwordRejected"}}`.
 public struct RepositoryProbe: Codable, Sendable, Equatable {
     public enum State: Codable, Sendable, Equatable {
         /// Nothing there (`restic cat config` exit 10): a repository can be created.
         case empty
         /// A repository the plan's password opens, with what `adopt` would report.
         case existing(AdoptReport)
+        /// A repository is there, and the plan's password doesn't open it (restic's exit 12). Setup's first
+        /// probe is made before the user has typed that repository's password, so this is how it learns that
+        /// one is there.
+        case passwordRejected
 
         private enum CodingKeys: String, CodingKey { case type, report }
 
@@ -308,6 +313,7 @@ public struct RepositoryProbe: Codable, Sendable, Equatable {
             switch try c.decode(String.self, forKey: .type) {
             case "empty": self = .empty
             case "existing": self = .existing(try c.decode(AdoptReport.self, forKey: .report))
+            case "passwordRejected": self = .passwordRejected
             case let other: throw DecodingError.dataCorruptedError(
                 forKey: .type, in: c, debugDescription: "Unknown repository probe state \(other)")
             }
@@ -320,6 +326,7 @@ public struct RepositoryProbe: Codable, Sendable, Equatable {
             case .existing(let report):
                 try c.encode("existing", forKey: .type)
                 try c.encode(report, forKey: .report)
+            case .passwordRejected: try c.encode("passwordRejected", forKey: .type)
             }
         }
     }

@@ -135,6 +135,15 @@ public enum FormValidation {
         return .success(kiB.intValue)
     }
 
+    /// A sentence in the agent's style (no closing full stop: `fileTypeProblem`, `AgentError`, the call
+    /// errors) as a form shows it, with this type's sentences: ending with a full stop. Text that already
+    /// ends with one, a question mark or an exclamation mark is left alone.
+    public static func sentence(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = trimmed.last, !".?!".contains(last) else { return trimmed }
+        return trimmed + "."
+    }
+
     /// What is shown for entries `addingFileTypes` rejected. The wording the agent uses when it refuses a plan
     /// with such an entry (`AgentError`), from this one place.
     public static func fileTypeProblem(rejected: [String]) -> String {

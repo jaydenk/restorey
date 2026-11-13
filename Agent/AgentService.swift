@@ -142,6 +142,8 @@ final class AgentService: NSObject, AgentXPC, Sendable {
             case .empty: log.info("Probed the repository address for plan \(planID): nothing there")
             case .existing(let report):
                 log.info("Probed the repository address for plan \(planID): a repository with \(report.snapshotCount) snapshots")
+            case .passwordRejected:
+                log.info("Probed the repository address for plan \(planID): a repository its password doesn't open")
             }
             return probe
         }

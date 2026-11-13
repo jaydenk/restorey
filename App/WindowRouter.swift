@@ -38,8 +38,13 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         guard let makeSetupModel else { return }
         show(.setup) { [weak self] in
             let model = makeSetupModel()
+            model.closeWindow = { [weak self] in self?.slots.openWindow(for: .setup)?.performClose(nil) }
             self?.setupModel = model
-            return NSHostingController(rootView: SetupWindow(model: model))
+            let controller = NSHostingController(rootView: SetupWindow(model: model))
+            // Each step is a different height: the window follows the content's ideal size as the step changes,
+            // rather than keeping the first step's height and clipping the buttons of a taller one.
+            controller.sizingOptions = [.preferredContentSize, .minSize]
+            return controller
         }
     }
 

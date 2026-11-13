@@ -56,7 +56,7 @@ struct FileTypesEditor: View {
         // Keep what was refused in the field so it can be corrected.
         entry = result.rejected.joined(separator: " ")
         refused = entry
-        problem = result.rejected.isEmpty ? nil : FormValidation.fileTypeProblem(rejected: result.rejected)
+        problem = result.rejected.isEmpty ? nil : FormValidation.sentence(FormValidation.fileTypeProblem(rejected: result.rejected))
     }
 }
 

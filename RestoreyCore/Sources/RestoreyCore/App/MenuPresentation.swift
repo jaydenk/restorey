@@ -293,6 +293,14 @@ public enum MenuPresentation {
 
     // MARK: Plan lines
 
+    /// One plan's line as the menu shows it, for a window that follows one plan (setup's Done step).
+    public static func planLine(
+        for status: PlanStatus, bytesPerSecond: Double?, now: Date, calendar: Calendar, locale: Locale
+    ) -> PlanLine {
+        let rates = bytesPerSecond.map { [status.plan.id: $0] } ?? [:]
+        return line(for: status, rates: rates, format: TextContext(now: now, calendar: calendar, locale: locale))
+    }
+
     private static func line(
         for status: PlanStatus, rates: [UUID: Double], format: TextContext, suffix: String? = nil
     ) -> PlanLine {

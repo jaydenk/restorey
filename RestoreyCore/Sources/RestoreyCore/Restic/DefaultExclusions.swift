@@ -58,12 +58,33 @@ public enum DefaultExclusions {
     /// caches folder is covered by `~/Library/Caches`.
     public static func paths(home: URL, identity: Identity) -> [String] {
         var result = paths(home: home)
+        for own in ownFolders(home: home, identity: identity) where !result.contains(own) { result.append(own) }
+        return result
+    }
+
+    /// Restorey's own logs and Application Support folders for `identity`, as exclusion patterns. The
+    /// exclusions editor keeps these: removing one would defeat `--skip-if-unchanged` (above).
+    public static func ownFolders(home: URL, identity: Identity) -> [String] {
         let h = escapedGlob(home.path)
-        for own in [
+        return [
             "\(h)/Library/Logs/\(escapedGlob(identity.logsDirectoryName))",
             "\(h)/Library/Application Support/\(escapedGlob(identity.rootID))",
-        ] where !result.contains(own) { result.append(own) }
-        return result
+        ]
+    }
+
+    /// The exclusion pattern for a folder the user picks: its path with glob characters escaped, so it
+    /// matches only itself.
+    public static func pattern(forFolder path: String) -> String {
+        escapedGlob(URL(fileURLWithPath: path).standardizedFileURL.path)
+    }
+
+    /// An exclusion pattern as the editor lists it: `~` for the home folder, otherwise as restic gets it (an
+    /// escape stays visible, so a literal `*` can be told from a wildcard).
+    public static func displayPattern(_ pattern: String, home: URL) -> String {
+        let h = escapedGlob(home.path)
+        if pattern == h { return "~" }
+        if pattern.hasPrefix(h + "/") { return "~" + pattern.dropFirst(h.count) }
+        return pattern
     }
 
     /// File-type exclusions a new plan starts with (Ruling R64b), Backblaze-style: extensions without the

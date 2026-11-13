@@ -230,7 +230,9 @@ struct MessagesTests {
         let report = AdoptReport(hosts: ["other"], latestPathsForHost: [], snapshotCount: 2)
         try roundTrip(RepositoryProbe(state: .empty))
         try roundTrip(RepositoryProbe(state: .existing(report)))
+        try roundTrip(RepositoryProbe(state: .passwordRejected))
         #expect(try json(RepositoryProbe(state: .empty)) == #"{"state":{"type":"empty"}}"#)
+        #expect(try json(RepositoryProbe(state: .passwordRejected)) == #"{"state":{"type":"passwordRejected"}}"#)
         #expect(try json(RepositoryProbe(state: .existing(report)))
             == #"{"state":{"report":{"hosts":["other"],"latestPathsForHost":[],"snapshotCount":2},"type":"existing"}}"#)
         #expect(throws: DecodingError.self) {

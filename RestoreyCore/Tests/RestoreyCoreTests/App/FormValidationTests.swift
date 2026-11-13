@@ -178,4 +178,12 @@ struct FormValidationTests {
         #expect(FormValidation.displayPath("/Users/mellow/x", home: "/Users/me") == "/Users/mellow/x")
         #expect(FormValidation.displayPath("/Volumes/Backup", home: "/Users/me") == "/Volumes/Backup")
     }
+
+    /// The agent's sentences, and `fileTypeProblem`, end without a full stop; forms show them with one.
+    @Test func agentSentencesGetTheFormsFullStop() {
+        #expect(FormValidation.sentence("A repository already exists there") == "A repository already exists there.")
+        #expect(FormValidation.sentence("Already a sentence.") == "Already a sentence.")
+        #expect(FormValidation.sentence("Really? ") == "Really?")
+        #expect(FormValidation.sentence(FormValidation.fileTypeProblem(rejected: [".dmg"])).hasSuffix("or space."))
+    }
 }

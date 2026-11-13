@@ -12,6 +12,8 @@ let package = Package(
     targets: [
         .target(
             name: "RestoreyCore",
+            // EFF's large word list for generated repository passwords (README: third-party material).
+            resources: [.copy("Resources/eff_large_wordlist.txt")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .target(

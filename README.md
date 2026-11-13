@@ -151,8 +151,8 @@ main menu, because key equivalents reach a window's text fields only through men
 Quit), an Edit menu (Undo, Redo, Cut, Copy, Paste, Paste and Match Style, Delete, Select All) and a Window menu
 (Minimise, Close) make ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V, ⌘A, ⌘W and ⌘Q work in its windows. Each kind of window (setup, Settings, recovery kit, Restore
 Files) opens at most once: asking again brings the open one to the front. None is restored at launch, and closing a
-window releases it, so a recovery kit's secrets go with it. Until their screens are built, these windows hold
-placeholders.
+window releases it, so a recovery kit's secrets go with it. Until their screens are built, Settings, the recovery kit
+and Restore Files hold placeholders. The setup window follows its content's size from step to step.
 
 Opening Restorey again while it runs (from Finder, Spotlight or `open`) opens Settings, or brings an open Settings
 window forward as it is, so the app can still be reached when its menu bar icon can't be seen. If the icon is hidden (System Settings → Menu Bar) when Restorey
@@ -188,6 +188,35 @@ the front, asks the agent for notification permission, and has "Open at login" (
 which needs Full Disk Access; the switch is kept in the saved progress until then, since granting Full Disk Access
 quits the app mid-step. The step's secrets live only in `SetupDraft`, which drops them whenever the step changes
 and when the window closes; the progress is saved only when the step changes.
+
+From the storage step on, each Continue saves the plan through the agent (kit unconfirmed, so it never runs), so a
+resumed setup gets its values back from the agent's status. **Where backups go** offers B2 (the default), S3 or
+another restic location (a path, or any restic backend with its environment variables, whose values go to the
+keychain), with Backblaze's and AWS's pages on making a bucket and a key; `StorageForm` (`RestoreyCore`) checks the
+fields with `FormValidation` and reads them into the plan's repository. "Check" saves the plan with a stand-in
+generated password and asks the agent what is there (`probeRepository`): nothing (`empty`), or a repository the
+stand-in can't open (`passwordRejected`, restic's exit 12), which is how setup learns that one is there before the
+user has typed its password. **Repository password** then offers either a generated password (shown, copyable as a
+concealed pasteboard item, or replaced by the user's own) and an explicit "Create New Repository", or the existing
+repository's password: "Open Repository" probes again with it and shows "312 snapshots from 3 Macs" and the host
+label this Mac's snapshots are under (`SetupAdoption`: the repository's host matching this Mac's computer, local or
+Unix host name, spelt as the snapshots spell it, else this Mac's name, with the new-group warning); "Use This
+Repository" makes it an adopted plan (no prune, forget daily, pack size left alone), runs `adopt` and fills the
+sources in from the latest snapshot for that host label. **Recovery kit** is a frame for Task 13's kit: the tick "I've
+saved it somewhere other than this Mac" is recorded in the progress and lets setup go on. **What to back up** has the
+home folder by default (or the adopted snapshot's folders, with the new-group warning when they're changed), the
+exclusions in one line (`ExclusionsSummary`) and "Review Exclusions…" (folders, with Restorey's own two kept; file
+types; one file system). **Schedule** has the interval (hourly by default; 1, 2, 4, 6, 12 or 24 hours), the battery
+rule, retention and the optional check-in URL with why it matters (`ScheduleForm`). **Done**'s "Start First Backup"
+saves anything left, confirms the kit, then backs up: confirming makes the plan due, so the scheduler may start it
+first, and an "already backing up" refusal then counts as started, judged from the plan's phase. The progress line
+(`FirstBackupProgress`) is the menu's wording, plus "Waiting to start" while the run has no progress yet (queued behind
+an adopt's size measurement, say). Closing the window leaves the backup running. Every agent sentence shown in setup
+gets a closing full stop (`FormValidation.sentence`), as the form's own sentences have.
+
+Applying a plan's retention to snapshots from before it adopted the repository (product spec §5.6's opt-in, with a
+`forget --dry-run` count) needs an engine call that doesn't exist yet, so setup doesn't offer it; until it does,
+`forget` only ever touches snapshots tagged with the plan's own ID.
 
 ### The menu bar
 
@@ -487,3 +516,11 @@ before the first release.
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
+
+Generated repository passwords use the Electronic Frontier Foundation's large word list
+(`RestoreyCore/Sources/RestoreyCore/Resources/eff_large_wordlist.txt`, 7,776 words, vendored unchanged from
+<https://www.eff.org/files/2016/07/18/eff_large_wordlist.txt>, SHA-256
+`addd35536511597a02fa0a9ff1e5284677b8883b83e986e43f15a3db996b903e`), © Electronic Frontier Foundation, used under the
+Creative Commons Attribution licence (CC BY 3.0 US when EFF published the list in 2016; EFF's copyright policy now
+offers its original material under CC BY 4.0, <https://www.eff.org/copyright>). A password is six words drawn with
+the system's secure random number generator, joined by hyphens: about 77.5 bits.

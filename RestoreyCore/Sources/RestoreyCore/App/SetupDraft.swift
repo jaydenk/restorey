@@ -8,8 +8,14 @@ public struct SetupDraft: Sendable, Equatable, CustomStringConvertible, CustomDe
     CustomReflectable
 {
     public private(set) var progress: SetupProgress
-    /// The plan being built, from the storage step on (Task 12). Holds no secrets (`Plan`).
+    /// The plan being built, from the storage step on. Holds no secrets (`Plan`). Saved to the agent at each
+    /// step's Continue, so a setup resumed after a quit gets it back from the agent's status.
     public var plan: Plan?
+    /// What the storage step's "Check" (or the password step's own probe) found at the plan's address. Not
+    /// saved: a resumed password step probes again.
+    public var probe: RepositoryProbe?
+    /// What adopting the repository reported, for the sources step's pre-fill and new-group warning. Not saved.
+    public var adoption: AdoptReport?
     public private(set) var secrets: [SecretKey: String] = [:]
 
     public init(progress: SetupProgress, plan: Plan? = nil) {
@@ -31,6 +37,17 @@ public struct SetupDraft: Sendable, Equatable, CustomStringConvertible, CustomDe
         guard step != progress.step else { return }
         secrets = [:]
         progress.step = step
+    }
+
+    /// Records the plan the storage step's "Check" saved, so a quit after it resumes with that plan.
+    public mutating func setPlanID(_ id: UUID?) {
+        progress.planID = id
+    }
+
+    /// The recovery-kit step's "I've saved it somewhere other than this Mac" tick (`SetupProgress.kitSaved`).
+    /// The agent's confirmation waits for Done (`SetupFlow`).
+    public mutating func setKitSaved(_ saved: Bool) {
+        progress.kitSaved = saved
     }
 
     /// Records the permissions step's "Open at login" switch, applied later by Continue.

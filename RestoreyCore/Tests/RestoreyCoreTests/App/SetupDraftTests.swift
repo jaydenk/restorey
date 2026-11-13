@@ -62,4 +62,17 @@ import Testing
         #expect(SetupStep.storage.heading(addingPlan: true) == "Step 1 of 5 · Where backups go")
         #expect(SetupStep.done.heading(addingPlan: false) == "Done")
     }
+
+    @Test func theKitTickAndThePlanAreRecordedInTheProgress() {
+        var draft = SetupDraft(progress: SetupProgress(planID: nil, step: .storage, addingPlan: false))
+        draft.setPlanID(Self.planID)
+        draft.go(to: .recoveryKit)
+        #expect(!draft.progress.kitSaved)
+        draft.setKitSaved(true)
+        #expect(draft.progress == SetupProgress(planID: Self.planID, step: .recoveryKit, addingPlan: false, kitSaved: true))
+        // The probe and adoption report aren't secrets: a step change keeps them.
+        draft.probe = RepositoryProbe(state: .passwordRejected)
+        draft.go(to: .sources)
+        #expect(draft.probe == RepositoryProbe(state: .passwordRejected))
+    }
 }

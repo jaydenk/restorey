@@ -25,8 +25,6 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
     case recoveryKitNotConfirmed(name: String)
     /// `createRepository` found a repository at the address; restic init never overwrites one.
     case repositoryAlreadyExists
-    /// `probeRepository` found a repository the plan's password doesn't open.
-    case wrongPassword
     /// A restic action asked for by the app (create, adopt) failed. The text is already redacted.
     case operationFailed(String)
     /// Writing a store, the keychain or a file failed. The text names the step, never a secret.
@@ -52,7 +50,6 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
         case .recoveryKitNotConfirmed(let name):
             "Confirm you've saved the recovery kit for \(name) before its first backup"
         case .repositoryAlreadyExists: "A repository already exists there"
-        case .wrongPassword: "That password doesn't open the repository at this address."
         case .operationFailed(let detail): detail
         case .storage(let detail): detail
         case .invalidRequest(let detail): "Restorey couldn't read the request: \(detail)"

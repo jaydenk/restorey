@@ -2,7 +2,6 @@ import RestoreyCore
 import SwiftUI
 
 /// The setup window's content: the step line, then the current step's screen (mockup `v0.1-setup-flow.html`).
-/// Storage to Done are Task 12's.
 struct SetupWindow: View {
     let model: SetupModel
 
@@ -16,14 +15,23 @@ struct SetupWindow: View {
                 MoveToApplicationsView(model: model)
             case .permissions:
                 PermissionsView(model: model)
-            case .storage, .password, .recoveryKit, .sources, .schedule, .done:
-                Text("This step isn't built yet.").foregroundStyle(.secondary)
-                Spacer()
+            case .storage:
+                StorageView(model: model)
+            case .password:
+                PasswordView(model: model)
+            case .recoveryKit:
+                RecoveryKitStepView(model: model)
+            case .sources:
+                SourcesView(model: model)
+            case .schedule:
+                ScheduleView(model: model)
+            case .done:
+                DoneView(model: model)
             }
         }
         .padding(20)
-        .frame(width: 480, alignment: .topLeading)
-        .frame(minHeight: 300, alignment: .topLeading)
+        .frame(width: 520, alignment: .topLeading)
+        .frame(minHeight: 340, alignment: .topLeading)
     }
 }
 
@@ -35,6 +43,36 @@ struct SetupButtonRow<Content: View>: View {
         HStack {
             Spacer()
             content
+        }
+    }
+}
+
+/// A labelled field with the sentence for its problem underneath, when there is one.
+struct SetupField<Field: View>: View {
+    let label: String
+    var problem: String?
+    @ViewBuilder let field: Field
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.callout).foregroundStyle(.secondary)
+            field
+            if let problem {
+                Text(problem).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// The step's last error, and the spinner while its action runs.
+struct SetupStepStatus: View {
+    let model: SetupModel
+
+    var body: some View {
+        if let error = model.stepError {
+            Label(error, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

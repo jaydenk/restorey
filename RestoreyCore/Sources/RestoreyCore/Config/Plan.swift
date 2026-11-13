@@ -260,7 +260,7 @@ public enum Schedule: Codable, Sendable, Equatable {
 }
 
 /// `{"type":"minimumPercent","percent":20}` or `{"type":"neverOnBattery"}`
-public enum BatteryRule: Codable, Sendable, Equatable {
+public enum BatteryRule: Codable, Sendable, Hashable {
     case minimumPercent(Int)
     case neverOnBattery
 

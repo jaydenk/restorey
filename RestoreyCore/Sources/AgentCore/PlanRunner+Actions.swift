@@ -28,7 +28,7 @@ extension PlanRunner {
 
     /// What is at the plan's repository address (Ruling P2-2): `restic cat config`, then, if a repository
     /// is there, the same listing as `adopt`, in one turn of the repository's queue. Exit 10 is `.empty`; a
-    /// password that doesn't open the repository is `AgentError.wrongPassword`; anything else gets the
+    /// password that doesn't open the repository (exit 12) is `.passwordRejected`; anything else gets the
     /// create probe's sentences (`probeFailureMessage`). Each step is recorded like adopt's, and none of
     /// them stops the plan: the user is still choosing what to back up to. Never creates or changes anything.
     public func probeRepository(planID: UUID) async throws -> RepositoryProbe {
@@ -133,7 +133,7 @@ extension PlanRunner {
         guard let (probe, listing) = probed else { return .failure(.draining) }
         switch probe.record.outcome {
         case .repositoryMissing: return .success(RepositoryProbe(state: .empty))
-        case .wrongPassword: return .failure(.wrongPassword)
+        case .wrongPassword: return .success(RepositoryProbe(state: .passwordRejected))
         case .success:
             // A repository is there, but the agent began winding down before the listing.
             guard let listing else { return .failure(.draining) }
