@@ -1713,6 +1713,42 @@ struct PlanRunnerTests {
         #expect(await f.operations() == [.catConfig, .initRepository, .catConfig])
     }
 
+    /// restic's exit_error for an unreadable repository is two lines (its message, then the repository's path):
+    /// the sentence the app shows is the first, on one line, without the path repeated after it.
+    @Test func aProbeFailureIsOneSentenceWithoutRestricsExtraLines() async throws {
+        let f = try await RunnerFixture.make()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: f.repository.path)
+            f.remove()
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: f.repository.path)
+        await #expect {
+            _ = try await f.state.probeRepository(f.planID)
+        } throws: { error in
+            guard case .operationFailed(let message)? = error as? AgentError else { return false }
+            return message.hasPrefix("Restorey couldn't check the repository address: ")
+                && message.contains("permission denied") && !message.contains("\n")
+                && !message.hasSuffix(f.repository.lastPathComponent)
+        }
+    }
+
+    /// Settings' check of a new password: the probe runs as usual (the fixture's helper script prints its own
+    /// password file), and the candidate is gone once it ends, whether it ran or was refused.
+    @Test func aCandidatePasswordLastsOnlyAsLongAsTheProbe() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        let probe = try await f.state.probeRepository(f.planID, candidatePassword: "candidate")
+        #expect(probe == RepositoryProbe(state: .existing(
+            AdoptReport(hosts: [], latestPathsForHost: [], snapshotCount: 0))))
+        #expect(await f.state.candidatePassword(for: f.planID) == nil)
+
+        await f.state.prepareForRestart()
+        await #expect { _ = try await f.state.probeRepository(f.planID, candidatePassword: "candidate") } throws: {
+            ($0 as? AgentError) == .draining
+        }
+        #expect(await f.state.candidatePassword(for: f.planID) == nil)
+    }
+
     @Test func probeIsRefusedWhileDraining() async throws {
         let f = try await RunnerFixture.make()
         defer { f.remove() }

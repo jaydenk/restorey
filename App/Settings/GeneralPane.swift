@@ -30,7 +30,7 @@ struct GeneralPane: View {
                              perform: perform)
                 }
                 LabeledContent("Notifications") {
-                    LineView(line: SettingsGeneral.notifications(authorised: supervisor.lastHello?.notificationsAuthorised),
+                    LineView(line: SettingsGeneral.notifications(hello: supervisor.lastHello),
                              busy: asking, perform: perform)
                 }
                 LabeledContent("Background agent") {

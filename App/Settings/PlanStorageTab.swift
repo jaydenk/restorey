@@ -21,14 +21,14 @@ struct PlanStorageTab: View {
                 .font(.caption).foregroundStyle(.secondary)
 
             ForEach(model.edit.credentialKeys, id: \.account) { key in
-                SetupField(label: label(key)) {
+                SetupField(label: label(key), problem: key == .repositoryPassword(model.planID) ? model.passwordProblem : nil) {
                     SecretField(title: label(key), text: secret(key))
                 }
             }
             if let problem = model.edit.keyPairProblem {
                 Text(problem).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
-            Text("Leave a field empty to keep what's saved. Enter the repository password only if it was changed outside Restorey: this doesn't change the repository's password, only the one Restorey opens it with.")
+            Text("Leave a field empty to keep what's saved. Enter the repository password only if it was changed outside Restorey: this doesn't change the repository's password, only the one Restorey opens it with. Saving tries it on the repository first.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 
             Divider()

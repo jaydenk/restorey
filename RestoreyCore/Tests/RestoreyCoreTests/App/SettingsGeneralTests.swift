@@ -13,12 +13,20 @@ struct SettingsGeneralTests {
         #expect(GeneralAction.openFullDiskAccess.buttonTitle == "Fix…")
     }
 
+    private static func hello(notifications: Bool?) -> HelloReply {
+        HelloReply(
+            agentVersion: "0.1.0", agentBuild: "11", executablePath: "/x", draining: false,
+            notificationsAuthorised: notifications)
+    }
+
+    /// No hello yet is "unknown", not "never asked": only a hello carrying nil says the agent hasn't asked.
     @Test func notifications() {
-        #expect(SettingsGeneral.notifications(authorised: true) == .init("Allowed"))
-        #expect(SettingsGeneral.notifications(authorised: false)
+        #expect(SettingsGeneral.notifications(hello: Self.hello(notifications: true)) == .init("Allowed"))
+        #expect(SettingsGeneral.notifications(hello: Self.hello(notifications: false))
             == .init("Off — Restorey can't alert you", severity: .warning, action: .openNotificationSettings))
-        #expect(SettingsGeneral.notifications(authorised: nil)
+        #expect(SettingsGeneral.notifications(hello: Self.hello(notifications: nil))
             == .init("Not asked yet", severity: .warning, action: .askForNotifications))
+        #expect(SettingsGeneral.notifications(hello: nil) == .init("Checking…"))
         #expect(GeneralAction.openNotificationSettings.buttonTitle == "Turn On…")
         #expect(GeneralAction.askForNotifications.buttonTitle == "Turn On…")
     }

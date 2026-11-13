@@ -186,7 +186,7 @@ struct PlanEditTests {
         var edit = PlanEdit(plan: Self.plan())
         #expect(!edit.pausesBackups)
         edit.setSecret("https://hc-ping.com/abc", for: .checkInURL(edit.planID))
-        edit.fields.hostLabel = "studio"
+        edit.fields.name = "Renamed"
         #expect(!edit.pausesBackups)
         edit.setSecret("new password", for: .repositoryPassword(edit.planID))
         #expect(edit.pausesBackups)
@@ -195,6 +195,23 @@ struct PlanEditTests {
         var raw = PlanEdit(plan: Self.plan(Self.raw))
         raw.setSecret("v", for: .environment(raw.planID, name: "RESTIC_REST_PASSWORD"))
         #expect(raw.pausesBackups)
+    }
+
+    /// Ruling R2: a changed repository password is tried on the repository before anything is saved.
+    @Test func aTypedPasswordIsCheckedFirstAndOnlyAnOpenedRepositoryLetsTheSaveGoOn() {
+        var edit = PlanEdit(plan: Self.plan())
+        #expect(edit.passwordToCheck == nil)
+        edit.setSecret("new-key", for: .s3AccessKeyID(edit.planID))
+        #expect(edit.passwordToCheck == nil)
+        edit.setSecret(" new pass\n", for: .repositoryPassword(edit.planID))
+        #expect(edit.passwordToCheck == " new pass\n")
+
+        let report = AdoptReport(hosts: ["mac"], latestPathsForHost: [], snapshotCount: 3)
+        #expect(PlanEdit.passwordProblem(after: .existing(report)) == nil)
+        #expect(PlanEdit.passwordProblem(after: .passwordRejected)
+            == "The repository doesn't open with this password. Nothing was saved.")
+        #expect(PlanEdit.passwordProblem(after: .empty)
+            == "There's no repository at this plan's address, so the password can't be checked. Nothing was saved.")
     }
 
     @Test func secretsNeverAppearInDescriptions() {
@@ -240,7 +257,8 @@ struct PlanEditTests {
         #expect(edit.hostLabelWarning == nil)
         edit.fields.hostLabel = "studio"
         #expect(edit.hostLabelWarning == "Backups under “studio” start a new snapshot group: the next backup reads every file again "
-            + "(it doesn't upload them again), and this plan's retention no longer thins the snapshots under “mac”, which are kept as they are.")
+            + "(it doesn't upload them again), and this plan's retention no longer thins the snapshots under “mac”, which are kept as they are. "
+            + "Saving pauses backups until you save a new recovery kit, since its restore commands name the host label.")
     }
 
     @Test func changingTheFoldersWarnsOfANewSnapshotGroup() {
@@ -281,6 +299,42 @@ struct PlanEditTests {
         #expect(edit.fields.name == "Mine")
         #expect(edit.secret(.repositoryPassword(plan.id)) == "typed")
         #expect(try edit.request().get().plan.offMacNoteDismissed)
+    }
+
+    /// Fix round 1, minor 4: after a rebase, a save sends only what the user changed; a field they never touched
+    /// keeps the agent's newer value rather than the one the form started with.
+    @Test func aSaveAfterARebaseSendsOnlyWhatWasChanged() throws {
+        let plan = Self.plan()
+        var edit = PlanEdit(plan: plan)
+        edit.fields.name = "Mine"
+        var latest = plan
+        latest.fileTypeExclusions = ["iso"]
+        latest.retention.daily = 9
+        latest.uploadLimitKiB = 2048
+        latest.schedule = .interval(seconds: 7200)
+        latest.sources = ["/Users/me", "/Volumes/Photos"]
+        edit.rebase(on: latest)
+        let sent = try edit.request().get().plan
+        #expect(sent.name == "Mine")
+        #expect(sent.fileTypeExclusions == ["iso"])
+        #expect(sent.retention.daily == 9)
+        #expect(sent.uploadLimitKiB == 2048)
+        #expect(sent.schedule == .interval(seconds: 7200))
+        #expect(sent.sources == ["/Users/me", "/Volumes/Photos"])
+        // Nothing the user didn't touch is warned about either.
+        #expect(edit.sourcesWarning == nil)
+        #expect(edit.hostLabelWarning == nil)
+    }
+
+    /// Ruling R3: the kit's restore commands name the host label, so a new one pauses backups for a new kit too.
+    @Test func aNewHostLabelPausesBackupsAndSaysSo() {
+        var edit = PlanEdit(plan: Self.plan())
+        edit.fields.hostLabel = " mac "
+        #expect(!edit.pausesBackups)
+        edit.fields.hostLabel = "studio"
+        #expect(edit.pausesBackups)
+        #expect(edit.hostLabelWarning?.hasSuffix(
+            "Saving pauses backups until you save a new recovery kit, since its restore commands name the host label.") == true)
     }
 
     @Test func savingResetsTheFormAndDropsTheSecrets() {

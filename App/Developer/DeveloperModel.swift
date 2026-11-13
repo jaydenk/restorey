@@ -124,8 +124,8 @@ final class DeveloperModel {
     func resume() { planAction("Resume") { await $0.resume($1) } }
     func adopt() { planAction("Adopt") { await $0.adopt($1) } }
 
-    /// Deletes the chosen plan through the agent (its config entry, Keychain items, credentials file and
-    /// history). The repository and the plan's run logs are left alone. The form returns to "New plan".
+    /// Deletes the chosen plan through the agent (its config entry, Keychain items, credentials file, history and
+    /// run logs, Ruling P2-12). The repository is left alone. The form returns to "New plan".
     func deletePlan() {
         guard let id = selectedPlanID else {
             output = "Delete plan: choose a plan first."

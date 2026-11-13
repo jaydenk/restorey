@@ -310,7 +310,7 @@ public func classify(
         switch operation {
         case .backup: return .warning(unreadable: errors.count)
         case .forget:
-            return .failed(exitCode: 3, reason: exitErrorMessage ?? errors.first?.message
+            return .failed(exitCode: 3, reason: exitErrorMessage.map(errorSentence) ?? errors.first?.message
                 ?? "restic couldn't remove every snapshot it was asked to forget")
         default: break
         }
@@ -327,6 +327,14 @@ public func classify(
     default:
         break
     }
-    let reason = exitErrorMessage ?? errors.first?.message ?? "restic exited with status \(exitCode)."
+    let reason = exitErrorMessage.map(errorSentence) ?? errors.first?.message ?? "restic exited with status \(exitCode)."
     return .failed(exitCode: exitCode, reason: reason)
+}
+
+/// restic's `exit_error` text as a failure's one-line reason: its first line. restic adds lines of its own after
+/// the error (the repository's location, "Is there a repository at the following location?"), which would
+/// otherwise run on into every sentence the reason is put in. The whole text stays in the run's log.
+func errorSentence(_ exitErrorMessage: String) -> String {
+    let lines = exitErrorMessage.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+    return lines.first { !$0.isEmpty } ?? exitErrorMessage
 }

@@ -15,6 +15,8 @@ public enum BannerAction: Sendable, Equatable {
     case addCheckInURL(UUID)
     case dismissOffMacNote(UUID)
     case finishSetup(UUID)
+    /// No plan yet: opens setup where it was left (the window may have been closed).
+    case setUp
     case saveRecoveryKit(UUID)
     case showDetails(UUID)
 
@@ -27,7 +29,7 @@ public enum BannerAction: Sendable, Equatable {
         case .turnOnNotifications: "Turn On…"
         case .addCheckInURL: "Add…"
         case .dismissOffMacNote: "Don't Show This Again"
-        case .finishSetup: "Finish Setup…"
+        case .finishSetup, .setUp: "Finish Setup…"
         case .saveRecoveryKit: "Save Recovery Kit…"
         case .showDetails: "Show Details…"
         }
@@ -244,6 +246,11 @@ public enum MenuPresentation {
 
     private static func banners(status: AgentStatus, notificationsAuthorised: Bool?) -> [MenuBanner] {
         var banners: [MenuBanner] = []
+        if status.plans.isEmpty {
+            banners.append(MenuBanner(
+                severity: .warning, title: "Setup not finished",
+                detail: "Set up a backup plan to start backing up this Mac.", action: .setUp))
+        }
         let alerts = Set(status.plans.flatMap(\.alerts))
         // The probe's answer is the truth once it has run; a plan's alert stands in only before then.
         let fdaMissing = status.fdaMissing ?? alerts.contains(.fullDiskAccessMissing)

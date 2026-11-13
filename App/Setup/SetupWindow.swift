@@ -60,7 +60,7 @@ private struct PlanMissingView: View {
         VStack(alignment: .leading, spacing: 10) {
             Label("The plan this setup was making is no longer there.", systemImage: "exclamationmark.triangle")
                 .font(.headline)
-            Text("It may have been deleted while setup was closed. Start again from where backups go; nothing has been backed up for it.")
+            Text("It may have been deleted elsewhere, in Settings or another window. Start again from where backups go; nothing has been backed up for it.")
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)
             SetupButtonRow {

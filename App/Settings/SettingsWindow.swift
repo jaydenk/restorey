@@ -38,12 +38,29 @@ struct SettingsWindow: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .history:
-                HistoryList(planID: nil, initialPlanFilter: state.settingsPlanID)
+                HistoryList(planID: nil, filterRequest: state.historyFilter)
                     .padding(16)
             }
         }
         .frame(minWidth: 760, idealWidth: 780, minHeight: 520, idealHeight: 560)
         .environment(context.supervisor)
+        // Here rather than in Plans: a route from the menu can ask for another plan while any section shows.
+        .alert(
+            "Discard your changes to “\(editorSlot.editor?.saved.name ?? "")”?",
+            isPresented: Binding(
+                get: { state.planSelection.pending != nil }, set: { if !$0 { state.cancelPlanSwitch() } })
+        ) {
+            Button("Discard Changes", role: .destructive) {
+                state.settingsSection = .plans
+                state.confirmPlanSwitch()
+            }
+            Button("Keep Editing", role: .cancel) {
+                state.settingsSection = .plans
+                state.cancelPlanSwitch()
+            }
+        } message: {
+            Text("They haven't been saved.")
+        }
     }
 }
 

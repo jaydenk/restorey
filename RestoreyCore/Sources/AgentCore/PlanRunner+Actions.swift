@@ -31,9 +31,13 @@ extension PlanRunner {
     /// password that doesn't open the repository (exit 12) is `.passwordRejected`; anything else gets the
     /// create probe's sentences (`probeFailureMessage`). Each step is recorded like adopt's, and none of
     /// them stops the plan: the user is still choosing what to back up to. Never creates or changes anything.
-    public func probeRepository(planID: UUID) async throws -> RepositoryProbe {
+    ///
+    /// With `candidatePassword`, restic opens the repository with it rather than the keychain's: it is set for the
+    /// helper (`AgentState.setCandidatePassword`) only inside the probe's turn of the queue, and added to the
+    /// redactor, so it is never logged.
+    public func probeRepository(planID: UUID, candidatePassword: String? = nil) async throws -> RepositoryProbe {
         let handle = try await begin(planID)
-        let result = await probe(planID: planID, handle: handle)
+        let result = await probe(planID: planID, handle: handle, candidatePassword: candidatePassword)
         await end(planID, handle)
         return try result.get()
     }
@@ -116,19 +120,27 @@ extension PlanRunner {
         return listed ?? .failure(.draining)
     }
 
-    private func probe(planID: UUID, handle: RunHandle) async -> Result<RepositoryProbe, AgentError> {
+    private func probe(
+        planID: UUID, handle: RunHandle, candidatePassword: String?
+    ) async -> Result<RepositoryProbe, AgentError> {
         let session: RunSession
-        switch await actionSession(planID: planID) {
+        switch await actionSession(planID: planID, extraSecrets: candidatePassword.map { [$0] } ?? []) {
         case .failure(let error): return .failure(error)
         case .success(let ready): session = ready
         }
         let probed = await deps.queues.run(repository: session.key) {
             [self] () async -> (StepResult, Result<AdoptReport, AgentError>?)? in
             guard !(await isWindingDown()) else { return nil }
+            if let candidatePassword { await deps.state.setCandidatePassword(candidatePassword, for: planID) }
             let probe = await runStep(.catConfig, trigger: .manual, session: session, handle: handle)
             await commit(probe.record, plan: session.plan)
-            guard case .success = probe.record.outcome, !(await isWindingDown()) else { return (probe, nil) }
-            return (probe, await listSnapshots(session: session, handle: handle))
+            guard case .success = probe.record.outcome, !(await isWindingDown()) else {
+                if candidatePassword != nil { await deps.state.setCandidatePassword(nil, for: planID) }
+                return (probe, nil)
+            }
+            let listing = await listSnapshots(session: session, handle: handle)
+            if candidatePassword != nil { await deps.state.setCandidatePassword(nil, for: planID) }
+            return (probe, listing)
         }
         guard let (probe, listing) = probed else { return .failure(.draining) }
         switch probe.record.outcome {
@@ -223,11 +235,11 @@ extension PlanRunner {
         await deps.state.endMeasurement(planID: planID)
     }
 
-    private func actionSession(planID: UUID) async -> Result<RunSession, AgentError> {
+    private func actionSession(planID: UUID, extraSecrets: [String] = []) async -> Result<RunSession, AgentError> {
         guard let plan = try? await deps.state.runInputs(planID).plan else { return .failure(.unknownPlan) }
         let errors = plan.validationErrors()
         guard errors.isEmpty else { return .failure(.invalidPlan(errors)) }
-        switch prepare(plan) {
+        switch prepare(plan, extraSecrets: extraSecrets) {
         case .ready(let session): return .success(session)
         case .failed(_, let reason, _): return .failure(.operationFailed(reason))
         }

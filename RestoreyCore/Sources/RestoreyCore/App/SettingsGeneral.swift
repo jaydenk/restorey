@@ -57,12 +57,14 @@ public enum SettingsGeneral {
         }
     }
 
-    /// The agent's answer from the notification centre (`HelloReply.notificationsAuthorised`).
-    public static func notifications(authorised: Bool?) -> Line {
-        switch authorised {
-        case true?: Line("Allowed")
-        case false?: Line("Off — Restorey can't alert you", severity: .warning, action: .openNotificationSettings)
-        case nil: Line("Not asked yet", severity: .warning, action: .askForNotifications)
+    /// The agent's answer from the notification centre (`HelloReply.notificationsAuthorised`). No hello yet is
+    /// unknown; a hello with no answer means the agent has never asked.
+    public static func notifications(hello: HelloReply?) -> Line {
+        guard let hello else { return Line("Checking…") }
+        switch hello.notificationsAuthorised {
+        case true?: return Line("Allowed")
+        case false?: return Line("Off — Restorey can't alert you", severity: .warning, action: .openNotificationSettings)
+        case nil: return Line("Not asked yet", severity: .warning, action: .askForNotifications)
         }
     }
 

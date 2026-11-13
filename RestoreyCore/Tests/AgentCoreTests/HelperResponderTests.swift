@@ -101,6 +101,27 @@ struct HelperResponderTests {
         #expect(try result.get() == Data("pa ss\"wörd\n".utf8))
     }
 
+    /// While Settings checks a new password (`probeRepository(_:candidatePassword:)`), the probe's restic gets the
+    /// password being checked, not the keychain's; once the check ends, the keychain's again.
+    @Test func aCandidatePasswordIsServedOnlyWhileItIsBeingChecked() async throws {
+        let f = try await Fixture()
+        await f.superviseRestic()
+        await f.state.setCandidatePassword("new pässword", for: f.planID)
+        var result = await f.responder.respond(to: try f.request(.repositoryPassword), callerPID: Self.caller)
+        #expect(try result.get() == Data("new pässword".utf8))
+        await f.state.setCandidatePassword(nil, for: f.planID)
+        result = await f.responder.respond(to: try f.request(.repositoryPassword), callerPID: Self.caller)
+        #expect(try result.get() == Data("pa ss\"wörd\n".utf8))
+    }
+
+    /// A candidate is checked like the keychain's value: an unsupervised caller still gets nothing.
+    @Test func aCandidatePasswordIsRefusedToAnUnsupervisedCaller() async throws {
+        let f = try await Fixture()
+        await f.state.setCandidatePassword("new", for: f.planID)
+        let result = await f.responder.respond(to: try f.request(.repositoryPassword), callerPID: Self.caller)
+        #expect(Self.refusal(result) == .notSupervised)
+    }
+
     @Test func s3CredentialsAreTheCredentialProcessJSON() async throws {
         let f = try await Fixture()
         await f.superviseRestic()

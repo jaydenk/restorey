@@ -58,10 +58,13 @@ public struct HelperResponder: Sendable {
         guard await authoriseHelper(callerPID: callerPID, planID: planID, lookup: lookup, supervised: supervised)
         else { return .failure(.notSupervised) }
         guard await state.isConfiguredPlan(planID) else { return .failure(.unknownPlan) }
+        // A password Settings is checking before it saves it, while that probe runs.
+        let candidate = request.kind == .repositoryPassword ? await state.candidatePassword(for: planID) : nil
 
         let result = Result { () throws(Refusal) -> Data in
             switch request.kind {
             case .repositoryPassword:
+                if let candidate { return Data(candidate.utf8) }
                 return Data(try read(.repositoryPassword(planID)).utf8)
             case .s3Credentials:
                 let keyID = try read(.s3AccessKeyID(planID))

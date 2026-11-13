@@ -10,12 +10,32 @@ import SwiftUI
 @Observable
 final class ShellState {
     var settingsSection: SettingsSection = SettingsRoute.initial.section
-    var settingsPlanID: UUID? = SettingsRoute.initial.planID
+    /// The plan Plans shows. Every change goes through `requestPlan`, so unsaved edits are never dropped unasked.
+    private(set) var planSelection = PlanSelection(selected: SettingsRoute.initial.planID)
+    var settingsPlanID: UUID? { planSelection.selected }
+    /// The plan the History section's list was last asked to show (the menu's "Show Details…"); a new request each
+    /// time, so asking again for the same plan resets a filter the user changed.
+    var historyFilter: HistoryFilterRequest?
     /// The plan's tab shown in Plans; kept as the user switches plans.
     var settingsPlanTab: PlanTab = .what
     /// The status item's `isVisible` is false: the user hid it (System Settings → Menu Bar, or dragged it out).
     /// A status item squeezed out of a full menu bar still reads visible (`NSStatusItem.isVisible`).
     var statusItemHidden = false
+
+    /// The one way to change the plan Plans shows: from the sidebar, the menu's routes and a reopen. `editing` is
+    /// the plan with unsaved edits, if any (`PlanEditorSlot.unsavedPlanID`); a request for another then waits for
+    /// the discard question (`PlanSelection`).
+    func requestPlan(_ planID: UUID?, editing: UUID?) { planSelection.request(planID, editing: editing) }
+    func confirmPlanSwitch() { planSelection.confirm() }
+    func cancelPlanSwitch() { planSelection.cancel() }
+    /// The plan shown was deleted.
+    func forgetPlan() { planSelection.forget() }
+}
+
+/// A request for the History list's plan filter. Each is new (`id`), so a repeat of the same plan still applies.
+struct HistoryFilterRequest: Equatable {
+    let id = UUID()
+    let planID: UUID?
 }
 
 /// Opens the app's windows: one per kind (`AppWindowKind`), brought to the front if it is already open, with
@@ -72,8 +92,13 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         }
         let route = settingsRoute(open: open, section: section, planID: planID)
         state.settingsSection = route.section
-        state.settingsPlanID = route.planID
-        if let tab { state.settingsPlanTab = tab }
+        if route.section == .history {
+            // A plan asked for in History is the list's filter, not the plan Plans shows.
+            if section != nil || planID != nil { state.historyFilter = HistoryFilterRequest(planID: route.planID) }
+        } else {
+            state.requestPlan(route.planID, editing: planEditorSlot?.unsavedPlanID)
+            if let tab, state.planSelection.pending == nil { state.settingsPlanTab = tab }
+        }
         guard let supervisor, let loginItem else { return }
         let context = SettingsContext(
             supervisor: supervisor, loginItem: loginItem,
@@ -171,6 +196,44 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         return window
+    }
+
+    /// Ruling R1: closing Settings with unsaved plan edits asks Save, Don't Save or Cancel, as switching plans asks.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender.identifier?.rawValue == AppWindowKind.settings.rawValue, let editor = planEditorSlot?.editor,
+            editor.edit.isDirty
+        else { return true }
+        askToSave(editor, closing: sender)
+        return false
+    }
+
+    private func askToSave(_ editor: PlanEditModel, closing window: NSWindow) {
+        let alert = NSAlert()
+        alert.messageText = "Do you want to save the changes to “\(editor.saved.name)”?"
+        let lost = "If you don't save, your changes are lost."
+        alert.informativeText = editor.edit.pausesBackups ? "\(PlanEdit.pauseWarning) \(lost)" : lost
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Don't Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            switch response {
+            case .alertFirstButtonReturn:
+                Task { @MainActor in
+                    await editor.save()
+                    if editor.edit.isDirty {
+                        // Refused: show why, in Plans, and keep the window open.
+                        self?.state.settingsSection = .plans
+                    } else {
+                        window.close()
+                    }
+                }
+            case .alertSecondButtonReturn:
+                editor.revert()
+                window.close()
+            default:
+                break
+            }
+        }
     }
 
     /// Setup's permissions poll runs only while its window can be seen.

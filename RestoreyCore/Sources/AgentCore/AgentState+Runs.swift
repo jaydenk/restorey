@@ -38,9 +38,12 @@ extension AgentState {
 
     /// What is at the plan's repository address: nothing, or a repository its password opens (Ruling P2-2).
     /// Setup's "Check" calls it after saving the plan, so it runs before the recovery kit is confirmed.
-    public func probeRepository(_ id: UUID) async throws -> RepositoryProbe {
+    ///
+    /// `candidatePassword`: a password to try instead of the keychain's (Settings checking a changed one before it
+    /// saves it). The helper serves it only while the probe runs (`candidatePassword(for:)`); nothing is saved.
+    public func probeRepository(_ id: UUID, candidatePassword: String? = nil) async throws -> RepositoryProbe {
         try requireRunnable(id)
-        return try await requireRunner().probeRepository(planID: id)
+        return try await requireRunner().probeRepository(planID: id, candidatePassword: candidatePassword)
     }
 
     /// Runs the Full Disk Access probe now and pushes the status (Ruling P2-11). Changes no file, so it is

@@ -81,6 +81,9 @@ public actor AgentState {
 
     /// Per plan, why the last helper request failed to read the keychain (the runner reports it).
     private var helperFailures: [UUID: String] = [:]
+    /// A password being checked by `probeRepository(_:candidatePassword:)`, served to the helper in place of the
+    /// keychain's while that probe's turn of the repository queue runs. Memory only, never logged.
+    private var candidatePasswords: [UUID: String] = [:]
 
     /// Runs backups, creates and adopts repositories (`attach(runner:)`). Weak: the runner holds this state.
     weak var runner: PlanRunner?
@@ -378,13 +381,16 @@ public actor AgentState {
             let checkInChanged = !plan.hasCheckInURL || planSecrets.changesValue(of: .checkInURL(plan.id))
             if let index = updated.plans.firstIndex(where: { $0.id == plan.id }) {
                 let stored = updated.plans[index]
-                // The recovery kit holds the address, the password and the backend keys: a change to any of them
-                // needs a new kit before backups carry on. The check-in URL isn't needed to restore (product spec
-                // §7), so changing it from the Alerts tab doesn't pause backups.
-                let unchanged = stored.repository == plan.repository
-                    && !planSecrets.changesAnyValue(excluding: [checkInKey])
-                credentialsChanged = !unchanged
-                plan.recoveryKitConfirmedAt = unchanged ? stored.recoveryKitConfirmedAt : nil
+                // The recovery kit holds the address, the password, the backend keys and the host label its
+                // restore commands pass as `--host`: a change to any of them needs a new kit before backups carry
+                // on. The check-in URL isn't needed to restore (product spec §7), so changing it from the Alerts
+                // tab doesn't pause backups.
+                // Only a new address or secret can cure a stop (a wrong password, a missing repository); a new
+                // label can't, so it doesn't clear one.
+                credentialsChanged = stored.repository != plan.repository
+                    || planSecrets.changesAnyValue(excluding: [checkInKey])
+                let kitStillHolds = !credentialsChanged && stored.hostLabel == plan.hostLabel
+                plan.recoveryKitConfirmedAt = kitStillHolds ? stored.recoveryKitConfirmedAt : nil
                 plan.setupCompletedAt = stored.setupCompletedAt
                 plan.offMacNoteDismissed = stored.offMacNoteDismissed
                 updated.plans[index] = plan
@@ -880,6 +886,16 @@ public actor AgentState {
     /// True when `id` is a plan in the loaded config.
     public func isConfiguredPlan(_ id: UUID) -> Bool {
         config.plans.contains { $0.id == id }
+    }
+
+    /// Nil clears it. Only the probe sets it, inside its turn of the repository's queue: no other restic of the
+    /// plan (or of its repository) runs then, so only the probe's restic is served it.
+    public func setCandidatePassword(_ password: String?, for planID: UUID) {
+        candidatePasswords[planID] = password
+    }
+
+    public func candidatePassword(for planID: UUID) -> String? {
+        candidatePasswords[planID]
     }
 
     /// Records that a helper request for the plan couldn't read its keys. `reason` names the keychain

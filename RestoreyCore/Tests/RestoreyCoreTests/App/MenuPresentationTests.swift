@@ -492,11 +492,17 @@ struct MenuPresentationTests {
         #expect(healthyWithoutStatus.message == "Connecting to the background agent…")
     }
 
+    /// Fix round 1, F3: with no plan, the menu is the way back into a setup window that was closed, with the
+    /// unfinished-setup banner's words.
     @Test func noPlansYet() {
         let content = Self.make(Self.status([]))
-        #expect(content.icon == .ok)
+        #expect(content.icon == .warning)
         #expect(content.message == "No backup plans yet")
         #expect(content.actions.plans.isEmpty)
+        #expect(content.banners == [MenuBanner(
+            severity: .warning, title: "Setup not finished", detail: "Set up a backup plan to start backing up this Mac.",
+            action: .setUp)])
+        #expect(BannerAction.setUp.buttonTitle == "Finish Setup…")
     }
 
     @Test func aDamagedInstallationAndARegistrationFailure() {

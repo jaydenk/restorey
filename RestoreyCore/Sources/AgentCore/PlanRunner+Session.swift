@@ -27,8 +27,9 @@ extension PlanRunner {
     /// Reads the plan's secrets for the redactor (and a raw plan's environment), and writes an S3 plan's
     /// credentials file with the agent as the helper. Only the raw environment is required here: the
     /// password and S3 keys are fetched by restic through the helper, which reports its own failures.
-    func prepare(_ plan: Plan) -> Preparation {
-        let (redactor, environment, problems) = redactorAndEnvironment(for: plan)
+    /// `extraSecrets`: values to redact besides the keychain's (a password being checked).
+    func prepare(_ plan: Plan, extraSecrets: [String] = []) -> Preparation {
+        let (redactor, environment, problems) = redactorAndEnvironment(for: plan, extraSecrets: extraSecrets)
         if !problems.isEmpty {
             let reason = ([Self.keychainUnreadable] + problems).joined(separator: ". ")
             return .failed(.credentialsUnavailable, reason: reason, redactor: redactor)
@@ -52,9 +53,9 @@ extension PlanRunner {
     }
 
     private func redactorAndEnvironment(
-        for plan: Plan
+        for plan: Plan, extraSecrets: [String] = []
     ) -> (redactor: Redactor, environment: [String: String], problems: [String]) {
-        var known: [String] = []
+        var known: [String] = extraSecrets
         for key in [SecretKey.repositoryPassword(plan.id), .s3AccessKeyID(plan.id), .s3SecretAccessKey(plan.id)] {
             if let value = try? deps.secrets.read(key) { known.append(value) }
         }

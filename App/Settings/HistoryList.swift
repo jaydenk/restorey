@@ -18,10 +18,14 @@ struct HistoryList: View {
     @State private var filter: HistoryFilter = .everything
     @State private var missingLog = false
 
-    /// `initialPlanFilter`: the plan the all-plans list starts filtered to (the menu's "Show Details…").
-    init(planID: UUID?, initialPlanFilter: UUID? = nil) {
+    /// The all-plans list's requested filter (the menu's "Show Details…"), applied when the list appears and
+    /// again whenever a new request arrives while it is open.
+    let filterRequest: HistoryFilterRequest?
+
+    init(planID: UUID?, filterRequest: HistoryFilterRequest? = nil) {
         self.planID = planID
-        _planFilter = State(initialValue: planID == nil ? initialPlanFilter : nil)
+        self.filterRequest = filterRequest
+        _planFilter = State(initialValue: planID == nil ? filterRequest?.planID : nil)
     }
 
     private var plans: [Plan] { supervisor.lastKnownStatus?.plans.map(\.plan) ?? [] }
@@ -65,6 +69,7 @@ struct HistoryList: View {
             }
         }
         .task(id: newestRecords) { await load() }
+        .onChange(of: filterRequest) { if planID == nil { planFilter = filterRequest?.planID } }
         .alert("This run's log is no longer there.", isPresented: $missingLog) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -113,6 +118,9 @@ private struct HistoryRowView: View {
             if showsPlan {
                 Text(row.plan).lineLimit(1).frame(minWidth: 120, alignment: .leading)
             }
+            Text(row.operation)
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 60, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.outcome)
                 if let detail = row.detail {

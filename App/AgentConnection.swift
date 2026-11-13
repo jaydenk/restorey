@@ -111,6 +111,14 @@ final class AgentConnection {
         await call(RepositoryProbe.self, timeout: .seconds(1200)) { $0.probeRepository(planID.uuidString, withReply: $1) }
     }
 
+    /// `probeRepository` with `password` in place of the saved one, which is left as it is. As long as a probe.
+    func probeRepositoryPassword(_ planID: UUID, password: String) async -> Result<RepositoryProbe, AgentCallError> {
+        guard let data = try? XPCCoding.encode(PasswordProbeRequest(planID: planID, password: password)) else {
+            return .failure(.badReply("password probe request"))
+        }
+        return await call(RepositoryProbe.self, timeout: .seconds(1200)) { $0.probeRepositoryPassword(data, withReply: $1) }
+    }
+
     /// One plan's run records, or every plan's when `planID` is nil, newest first.
     func history(_ planID: UUID?) async -> Result<[RunRecord], AgentCallError> {
         await call([RunRecord].self, timeout: .seconds(10)) { $0.history(planID?.uuidString, withReply: $1) }

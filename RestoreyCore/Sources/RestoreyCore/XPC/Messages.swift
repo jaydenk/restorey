@@ -277,6 +277,27 @@ public struct SavePlanRequest: Codable, Sendable, Equatable, CustomStringConvert
     }
 }
 
+/// `probeRepositoryPassword`'s request: a repository password to try on the plan's repository without saving it
+/// (Settings' Storage tab checks a changed password before saving). Its descriptions and mirror never include
+/// the password, like `SecretEntry`'s.
+public struct PasswordProbeRequest: Codable, Sendable, Equatable, CustomStringConvertible,
+    CustomDebugStringConvertible, CustomReflectable
+{
+    public var planID: UUID
+    public var password: String
+
+    public init(planID: UUID, password: String) {
+        self.planID = planID
+        self.password = password
+    }
+
+    public var description: String { "PasswordProbeRequest(plan: \(planID.uuidString), password: <redacted>)" }
+    public var debugDescription: String { description }
+    public var customMirror: Mirror {
+        Mirror(self, children: ["planID": planID, "password": "<redacted>"], displayStyle: .struct)
+    }
+}
+
 // MARK: Other replies
 
 /// What `adopt` found in an existing repository (spec §5.2).

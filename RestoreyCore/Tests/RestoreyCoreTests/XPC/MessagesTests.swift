@@ -294,4 +294,16 @@ struct MessagesTests {
         #expect(String(describing: entry).contains("repository-password"))
         #expect(String(describing: request).contains(Self.planID.uuidString))
     }
+
+    /// Settings checks a changed repository password before saving it (`probeRepositoryPassword`).
+    @Test func passwordProbeRequestRoundTripsAndNeverPrintsThePassword() throws {
+        let request = PasswordProbeRequest(planID: Self.planID, password: "hunter2 pa ss\"wörd\n")
+        try roundTrip(request)
+        var dumped = ""
+        dump(request, to: &dumped)
+        for text in [String(describing: request), String(reflecting: request), "\(request)", dumped] {
+            #expect(!text.contains("hunter2"), "leaked in: \(text)")
+        }
+        #expect(String(describing: request).contains(Self.planID.uuidString))
+    }
 }

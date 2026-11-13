@@ -318,6 +318,23 @@ struct AgentStateTests {
         #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == nil)
     }
 
+    /// The kit's restore commands name the host label (`restic restore latest --host <label>`), so a kit saved
+    /// before a new label would restore the old group's latest snapshot: a new label needs a new kit.
+    @Test func hostLabelChangeResetsTheRecoveryKit() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        var plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        _ = try await state.confirmRecoveryKit(plan.id)
+        plan.name = "Renamed"
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: []))
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt != nil)
+        plan.hostLabel = "studio"
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: []))
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == nil)
+    }
+
     /// The check-in URL isn't needed to open or restore the repository (product spec §7's kit is the address, the
     /// password, the backend keys, the host label and the commands), so adding, changing or removing it from the
     /// Alerts tab doesn't pause backups for a new kit. Answering "No off-Mac monitoring — Add…" mustn't stop them.

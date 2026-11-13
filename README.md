@@ -227,7 +227,7 @@ an adopt's size measurement, say). Closing the window leaves the backup running.
 gets a closing full stop (`FormValidation.sentence`), as the form's own sentences have. An environment row's value
 is held by the row until "Check" names its keychain item, so renaming the row keeps what was typed, and "Leave a key
 empty to keep the one already saved" shows only while the form still shows the saved address. If the plan a setup
-was building is gone from the agent's status (deleted while the window was closed or open), the window says so and
+was building is gone from the agent's status (deleted elsewhere, while the window was closed or open), the window says so and
 offers "Start Again" at the storage step. A status that lists no plans because the agent can't read its settings
 never counts: the window shows "Restorey can't read its settings: …" (whenever the latest status says so) and waits, so the plan isn't orphaned once the
 file is fixed. A resumed password step whose probe fails says so with "Try Again" rather than a spinner. The adopt
@@ -272,19 +272,25 @@ needing a new kit shows "New recovery kit needed" with "Save Recovery Kit…". E
 - **History**: the History list for that plan.
 
 The tabs edit a copy (`PlanEdit` in `RestoreyCore`, held by `PlanEditModel`): the fields keep exactly what is typed,
-and trimming and parsing happen only when Save (⌘S) builds the request. A value the form can't show exactly (an
-interval or battery rule set elsewhere, a limit with more decimals than the field shows) is kept unless its control
-changes. Changing the folders or the host label shows the product spec's warning that the next backup starts a new
-snapshot group, and that the old group's snapshots are kept as they are (§5.4, §5.6). Typing a password, a key or an
-environment value shows "Saving pauses backups until you save a new recovery kit." before saving: the agent clears
-the kit's confirmation, so the plan waits for the new kit. The typed secrets go when the save succeeds, on Revert, when
-another plan is shown and when the window closes; switching away from unsaved edits asks first. The editor belongs to
-the window, so going to General and back keeps them. Delete Plan… asks with the developer window's words ("Its
+and trimming and parsing happen only when Save (⌘S) builds the request, which applies only the fields the user
+changed. So a value the form can't show exactly (an interval or battery rule set elsewhere, a limit with more
+decimals than the field shows) is kept, and if the agent's copy of the plan changes while you edit, the fields you
+didn't touch keep its newer values. Changing the folders or the host label shows the product spec's warning that the
+next backup starts a new snapshot group, and that the old group's snapshots are kept as they are (§5.4, §5.6). Typing
+a password, a key or an environment value, or a new host label, shows "Saving pauses backups until you save a new
+recovery kit." before saving: the agent clears the kit's confirmation, so the plan waits for the new kit. A typed
+repository password is first tried on the repository ("Checking the password…"), and nothing is saved unless the
+repository opens with it. The typed secrets go when the save succeeds, on Revert, when another plan is shown and when
+the window closes. Every change of the plan shown (the sidebar, a plan's line in the menu, "Add…", opening the app
+again) goes through one guard (`PlanSelection`): with unsaved edits, a request for another plan waits for "Discard
+your changes…?", and closing the window asks Save, Don't Save or Cancel. The editor belongs to the window, so going
+to General and back keeps them. Delete Plan… asks with the developer window's words ("Its
 settings, saved passwords and keys, and history are removed. The repository and its snapshots aren't touched."); the
 agent also removes the plan's run logs.
 
-**History** lists every plan's runs, newest first, with a plan filter and Everything, Backups, Problems or Skipped and
-paused (`HistoryPresentation`): local time, plan, how the run ended in the menu's wording ("Backed up", "Old snapshots
+**History** lists every plan's runs, newest first, with a plan filter (set again by each "Show Details…") and
+Everything, Backups, Problems or Skipped and paused (`HistoryPresentation`): local time, plan, the step (Backup, Tidy,
+Check…), how the run ended in the menu's wording ("Backed up", "Old snapshots
 tidied", "Skipped: Photos isn't connected", "Backup failed" with the menu's reason; never "failed" for a pause, a
 skip or a stop by the system), the size added and the time taken where known, and "Show Log", which opens the run's
 log only if its path stays inside the logs folder's `runs/`. The list is fetched again whenever a plan records a new
@@ -298,6 +304,9 @@ drive with an upload badge), paused (a pause badge), warning (an outlined "!" tr
 (`externaldrive.fill.badge.xmark`, the only filled icon). All five are template images, monochrome like the rest of
 the menu bar (owner, 12 Nov 2026), so the menu bar tints and dims them like its own; colour is kept for the text
 inside the open menu.
+
+With no plan at all, the menu shows "Setup not finished — Finish Setup…" (a warning), which reopens setup where it
+was left, so a setup window closed before its first plan can always be found again.
 
 The menu, top to bottom:
 
@@ -547,6 +556,10 @@ How it works (design spec §7; [spike findings](docs/spike-findings.md) H2 and H
   stderr, which restic's S3 library discards.
 - The agent trusts a restic by its process ID and start time together, and stops trusting it the moment it
   exits, so a later process that reuses the same ID is never mistaken for it.
+- Settings tries a changed repository password before saving it (`probeRepositoryPassword`): the agent holds the
+  typed password in memory for the plan only during that probe's turn of the repository's queue, when no other
+  restic of the plan or its repository can run, and the helper hands it to the probe's restic instead of the
+  Keychain's. It is added to the run's redactor, never saved, and dropped when the probe ends.
 
 What this doesn't protect against: an attacker who can hijack a restic process Restorey is supervising could
 obtain that plan's secrets; any program running as you can already do a great deal.
@@ -609,10 +622,12 @@ has the old keys" and its tick "I've saved it somewhere other than this Mac" con
 lets backups carry on. Before confirming, the window checks the kit against the agent's current secrets, so a kit
 whose keys changed while it was open is shown again rather than confirmed.
 
-A plan needs a new kit when what opens its repository changes: saving a different repository password or storage
-key (or environment value) clears the kit's confirmation, and the plan's backups wait until the new kit is saved
-and confirmed. Adding, changing or removing the check-in URL doesn't: it isn't needed to restore, so answering "No
-off-Mac monitoring — Add…" never stops backups.
+A plan needs a new kit when what the kit holds to open and restore its repository changes: saving a different
+repository password or storage key (or environment value), or a new host label (the kit's restore commands pass it
+as `--host`, so an old kit would restore the old group's latest snapshot), clears the kit's confirmation, and the
+plan's backups wait until the new kit is saved and confirmed. A new host label doesn't clear a stopped plan's stop;
+only a new address or key can cure one. Adding, changing or removing the check-in URL doesn't need a new kit: it
+isn't needed to restore, so answering "No off-Mac monitoring — Add…" never stops backups.
 
 **Restore Files…** in the menu opens the same commands for the chosen plan (a plan picker switches between
 plans). Passwords and keys show as dots; holding Option shows them while it is held, and each command has a copy

@@ -44,14 +44,18 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
         }
     }
 
-    /// The plan as the agent last reported it: what `fields` started from, and what a save is built on.
+    /// The plan as the agent last reported it: what a save is built on.
     public private(set) var saved: Plan
     public var fields: Fields
+    /// The fields as they were when editing began (or last saved, reverted or followed the agent): a field that
+    /// still equals its start is one the user hasn't changed, and a save leaves the agent's value for it alone.
+    private var started: Fields
     private var secrets: [SecretKey: String] = [:]
 
     public init(plan: Plan) {
         saved = plan
         fields = Fields(plan: plan)
+        started = fields
     }
 
     public var planID: UUID { saved.id }
@@ -88,12 +92,21 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
     // MARK: State
 
     /// Something differs from the saved plan, or a secret has been typed.
-    public var isDirty: Bool { fields != Fields(plan: saved) || !secrets.isEmpty }
+    public var isDirty: Bool { fields != started || !secrets.isEmpty }
 
     /// Shown before saving whenever a password or storage key has been typed: the saved kit holds the old one, so
     /// the agent stops the plan's backups until a new kit is saved and confirmed (UI design §6.2). The check-in
     /// URL isn't needed to open the repository and pauses nothing.
-    public var pausesBackups: Bool { credentialKeys.contains { secrets[$0] != nil } }
+    ///
+    /// A new host label does too (Ruling R3): the kit's restore commands pass it as `--host`.
+    public var pausesBackups: Bool { credentialKeys.contains { secrets[$0] != nil } || newHostLabel != nil }
+
+    /// The host label the user typed, trimmed, when it differs from the saved one.
+    private var newHostLabel: String? {
+        guard fields.hostLabel != started.hostLabel else { return nil }
+        let label = fields.hostLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return label.isEmpty || label == saved.hostLabel ? nil : label
+    }
 
     public static let pauseWarning = "Saving pauses backups until you save a new recovery kit."
 
@@ -101,16 +114,16 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
 
     /// A new host label starts a new `host,paths` group.
     public var hostLabelWarning: String? {
-        let label = fields.hostLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !label.isEmpty, label != saved.hostLabel else { return nil }
+        guard let label = newHostLabel else { return nil }
         return "Backups under “\(label)” start a new snapshot group: the next backup reads every file again (it doesn't "
             + "upload them again), and this plan's retention no longer thins the snapshots under “\(saved.hostLabel)”, "
-            + "which are kept as they are."
+            + "which are kept as they are. Saving pauses backups until you save a new recovery kit, since its restore "
+            + "commands name the host label."
     }
 
     /// A different set of folders (compared as places: a trailing slash is the same folder) starts a new group.
     public var sourcesWarning: String? {
-        guard !fields.sources.isEmpty else { return nil }
+        guard !fields.sources.isEmpty, fields.sources != started.sources else { return nil }
         let before = Set(FormValidation.addingSources(saved.sources, to: []))
         let after = Set(FormValidation.addingSources(fields.sources, to: []))
         guard before != after else { return nil }
@@ -166,29 +179,31 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
 
     /// The save request, or the first problem. Built on the saved plan, so fields the tabs don't show (the kit
     /// confirmation, the off-Mac note) go back as the agent sent them; the agent keeps its own copy of those anyway.
-    /// A value the form rounds (an interval, battery rule or upload limit it can't show exactly) is kept as saved
-    /// unless its control was changed.
+    /// Only what the user changed is applied: a field still at its start keeps the saved plan's value, so a value
+    /// the form rounds (an interval, battery rule or upload limit it can't show exactly) is kept, and after a rebase
+    /// a field the user never touched keeps the agent's newer value.
     public func request() -> Result<SavePlanRequest, FormValidation.Problem> {
         if let problem { return .failure(.init(problem)) }
-        let initial = Fields(plan: saved)
         var plan = saved
-        plan.name = fields.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        plan.sources = fields.sources
-        plan.exclusions = fields.exclusions
-        plan.fileTypeExclusions = fields.fileTypeExclusions
-        plan.oneFileSystem = fields.oneFileSystem
-        if fields.schedule.intervalHours != initial.schedule.intervalHours {
-            plan.schedule = .interval(seconds: fields.schedule.intervalHours * 3600)
+        func changed<Value: Equatable>(_ field: KeyPath<Fields, Value>) -> Bool { fields[keyPath: field] != started[keyPath: field] }
+        if changed(\.name) { plan.name = fields.name.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if changed(\.sources) { plan.sources = fields.sources }
+        if changed(\.exclusions) { plan.exclusions = fields.exclusions }
+        if changed(\.fileTypeExclusions) { plan.fileTypeExclusions = fields.fileTypeExclusions }
+        if changed(\.oneFileSystem) { plan.oneFileSystem = fields.oneFileSystem }
+        if changed(\.schedule.intervalHours) { plan.schedule = .interval(seconds: fields.schedule.intervalHours * 3600) }
+        if changed(\.schedule.battery) { plan.conditions.battery = fields.schedule.battery }
+        let retentionText = [\Fields.schedule.hourly, \.schedule.daily, \.schedule.weekly, \.schedule.monthly]
+        if retentionText.contains(where: changed), case .success(let retention) = fields.schedule.retention {
+            plan.retention = retention
         }
-        if fields.schedule.battery != initial.schedule.battery { plan.conditions.battery = fields.schedule.battery }
-        if case .success(let retention) = fields.schedule.retention { plan.retention = retention }
-        if fields.uploadLimit != initial.uploadLimit, case .success(let limit) = FormValidation.uploadLimit(fields.uploadLimit) {
+        if changed(\.uploadLimit), case .success(let limit) = FormValidation.uploadLimit(fields.uploadLimit) {
             plan.uploadLimitKiB = limit
         }
-        plan.hostLabel = fields.hostLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        plan.pruneEnabled = fields.pruneEnabled
-        plan.forgetCadence = fields.forgetCadence
-        plan.noSuccessAlertDays = fields.noSuccessAlertDays
+        if changed(\.hostLabel) { plan.hostLabel = fields.hostLabel.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if changed(\.pruneEnabled) { plan.pruneEnabled = fields.pruneEnabled }
+        if changed(\.forgetCadence) { plan.forgetCadence = fields.forgetCadence }
+        if changed(\.noSuccessAlertDays) { plan.noSuccessAlertDays = fields.noSuccessAlertDays }
 
         let typedURL = secret(checkInKey)
         let intent: CheckInIntent
@@ -205,25 +220,46 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
         return .success(SavePlanRequest(plan: plan, secrets: entries))
     }
 
+    /// A typed repository password, which Settings tries on the repository before saving it (Ruling R2): the field
+    /// can't change the repository's own password, so a mistyped one would only show at the next backup.
+    public var passwordToCheck: String? { secrets[.repositoryPassword(saved.id)] }
+
+    /// What the check of `passwordToCheck` found, as the field's sentence, or nil when the repository opened with it
+    /// and the save can go on.
+    public static func passwordProblem(after probe: RepositoryProbe.State) -> String? {
+        switch probe {
+        case .existing: nil
+        case .passwordRejected: "The repository doesn't open with this password. Nothing was saved."
+        case .empty: "There's no repository at this plan's address, so the password can't be checked. Nothing was saved."
+        }
+    }
+
     /// The agent's copy of the plan changed (a save elsewhere, a kit confirmed, a file type normalised). An
     /// untouched form follows it; edits in progress are kept, and are now compared with it.
+    ///
+    /// Edits in progress keep their start, so a save still knows which fields the user changed (`request`).
     public mutating func rebase(on latest: Plan) {
         guard latest.id == saved.id, latest != saved else { return }
-        let untouched = fields == Fields(plan: saved)
+        let untouched = fields == started
         saved = latest
-        if untouched { fields = Fields(plan: latest) }
+        if untouched {
+            fields = Fields(plan: latest)
+            started = fields
+        }
     }
 
     /// The agent saved `plan`: the form starts again from it, and the typed secrets go.
     public mutating func didSave(_ plan: Plan) {
         saved = plan
         fields = Fields(plan: plan)
+        started = fields
         secrets = [:]
     }
 
     /// "Revert": back to the saved plan, secrets dropped.
     public mutating func revert() {
         fields = Fields(plan: saved)
+        started = fields
         secrets = [:]
     }
 

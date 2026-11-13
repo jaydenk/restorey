@@ -26,6 +26,14 @@ struct RunOutcomeTests {
             summary: summary, errors: errors, exitErrorMessage: message)
     }
 
+    /// restic 0.19.1's exit_error for an unreadable repository: the error, then the location on its own line.
+    @Test func aFailuresReasonIsTheFirstLineOfResticsError() {
+        let message = "Fatal: unable to open config file: stat /r/config: permission denied\n/r"
+        #expect(outcome(1, op: .catConfig, message: message)
+            == .failed(exitCode: 1, reason: "Fatal: unable to open config file: stat /r/config: permission denied"))
+        #expect(outcome(1, message: "\n  one line  \n") == .failed(exitCode: 1, reason: "one line"))
+    }
+
     // MARK: The system stopping the agent (Ruling R67)
 
     @Test func exit130AfterASystemStopIsStoppedBySystem() {

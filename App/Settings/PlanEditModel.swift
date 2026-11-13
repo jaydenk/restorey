@@ -10,8 +10,12 @@ import RestoreyCore
 final class PlanEditModel {
     private(set) var edit: PlanEdit
     private(set) var saving = false
-    /// The last save's sentence, cleared by the next edit's save or a revert.
+    /// A typed repository password is being tried on the repository (Ruling R2).
+    private(set) var checkingPassword = false
+    /// The last save's sentence. Any edit clears it, so it never hides the current problem.
     private(set) var saveError: String?
+    /// The password field's sentence after its check failed; cleared when the password is typed again.
+    private(set) var passwordProblem: String?
 
     @ObservationIgnored private let connection: AgentConnection
 
@@ -25,12 +29,19 @@ final class PlanEditModel {
 
     var fields: PlanEdit.Fields {
         get { edit.fields }
-        set { edit.fields = newValue }
+        set {
+            edit.fields = newValue
+            saveError = nil
+        }
     }
 
     func secret(_ key: SecretKey) -> String { edit.secret(key) }
 
-    func setSecret(_ value: String, for key: SecretKey) { edit.setSecret(value, for: key) }
+    func setSecret(_ value: String, for key: SecretKey) {
+        edit.setSecret(value, for: key)
+        saveError = nil
+        if key == .repositoryPassword(planID) { passwordProblem = nil }
+    }
 
     /// The agent sent a newer copy of the plan.
     func rebase(on plan: Plan) { edit.rebase(on: plan) }
@@ -38,10 +49,12 @@ final class PlanEditModel {
     func revert() {
         edit.revert()
         saveError = nil
+        passwordProblem = nil
     }
 
     /// Sends the edits; on success the form starts again from the plan the agent saved (normalised by it) and the
-    /// typed secrets go. A refusal keeps everything as typed, so it can be corrected and saved again.
+    /// typed secrets go. A typed repository password is tried on the repository first, and nothing is saved unless
+    /// the repository opens with it. A refusal keeps everything as typed, so it can be corrected and saved again.
     func save() async {
         guard !saving else { return }
         let request: SavePlanRequest
@@ -55,9 +68,26 @@ final class PlanEditModel {
         saving = true
         saveError = nil
         defer { saving = false }
+        if let password = edit.passwordToCheck {
+            checkingPassword = true
+            let probe = await connection.probeRepositoryPassword(planID, password: password)
+            checkingPassword = false
+            switch probe {
+            case .success(let found):
+                if let problem = PlanEdit.passwordProblem(after: found.state) {
+                    passwordProblem = problem
+                    saveError = problem
+                    return
+                }
+            case .failure(let error):
+                saveError = FormValidation.sentence(error.description) + " Nothing was saved."
+                return
+            }
+        }
         switch await connection.savePlan(request) {
         case .success(let status):
             edit.didSave(status.plans.first { $0.plan.id == request.plan.id }?.plan ?? request.plan)
+            passwordProblem = nil
         case .failure(let error):
             saveError = FormValidation.sentence(error.description)
         }
