@@ -27,9 +27,10 @@ struct PlanSecrets {
         }
     }
 
-    /// True when any submitted value differs from what the keychain holds (including a new key).
-    var changesAnyValue: Bool {
-        entries.contains { entry in changes(entry) }
+    /// True when any submitted value differs from what the keychain holds (including a new key), leaving out
+    /// the keys in `excluded`.
+    func changesAnyValue(excluding excluded: Set<SecretKey> = []) -> Bool {
+        entries.contains { entry in !excluded.contains(entry.key) && changes(entry) }
     }
 
     /// True when a value is submitted for `key` and differs from what the keychain holds.

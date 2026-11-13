@@ -48,6 +48,17 @@ struct DisplayFormatTests {
         #expect(DisplayFormat.remaining(seconds: 7_500) == "~2 h 5 min")
     }
 
+    /// A run's length in the history: seconds under a minute, then minutes, then hours and minutes.
+    @Test func durations() {
+        #expect(DisplayFormat.duration(seconds: 0) == "0 s")
+        #expect(DisplayFormat.duration(seconds: 7.4) == "7 s")
+        #expect(DisplayFormat.duration(seconds: 59.6) == "1 min")
+        #expect(DisplayFormat.duration(seconds: 125) == "2 min")
+        #expect(DisplayFormat.duration(seconds: 3600) == "1 h")
+        #expect(DisplayFormat.duration(seconds: 3900) == "1 h 5 min")
+        #expect(DisplayFormat.duration(seconds: -3) == "0 s")
+    }
+
     @Test func clockTimeIsTwentyFourHourInTheCalendarsZone() {
         // 04:16 UTC is 14:16 in Brisbane.
         var utc = Calendar(identifier: .gregorian)

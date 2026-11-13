@@ -51,6 +51,16 @@ public enum DisplayFormat {
         return rest == 0 ? "~\(hours) h" : "~\(hours) h \(rest) min"
     }
 
+    /// How long a run took: "7 s" under a minute, then "2 min", "1 h", "1 h 5 min" (rounded to the nearest).
+    public static func duration(seconds: TimeInterval) -> String {
+        let whole = Int(max(seconds, 0).rounded())
+        guard whole >= 60 else { return "\(whole) s" }
+        let minutes = Int((Double(whole) / 60).rounded())
+        guard minutes >= 60 else { return "\(minutes) min" }
+        let (hours, rest) = minutes.quotientAndRemainder(dividingBy: 60)
+        return rest == 0 ? "\(hours) h" : "\(hours) h \(rest) min"
+    }
+
     /// The time of day as the locale writes a 24-hour clock ("14:16"), in the calendar's time zone.
     public static func time(_ date: Date, calendar: Calendar, locale: Locale) -> String {
         formatter(template: "Hmm", calendar: calendar, locale: locale).string(from: date)

@@ -290,4 +290,39 @@ import Testing
         #expect(progress.openAtLogin == nil)
         #expect(progress.step == .permissions)
     }
+
+}
+
+extension SetupFlowTests {
+    // MARK: "+ Add plan…" (Settings → Plans)
+
+    @Test func addingAPlanStartsAFreshSetupAtStorage() {
+        let plans = [Self.status("Home", .complete), Self.status("Old", .needsNewKit)]
+        let start = SetupFlow.addingPlan(saved: nil, plans: plans, installed: true)
+        #expect(start == .start(SetupProgress(planID: nil, step: .storage, addingPlan: true)))
+        // Progress left by a setup that has since finished is stale, not a setup to finish.
+        let stale = SetupProgress(planID: plans[0].plan.id, step: .done, addingPlan: true, kitSaved: true)
+        #expect(SetupFlow.addingPlan(saved: stale, plans: plans, installed: true)
+            == .start(SetupProgress(planID: nil, step: .storage, addingPlan: true)))
+    }
+
+    /// There is one saved setup at a time: an unfinished plan's setup is finished first rather than overwritten.
+    @Test func anUnfinishedPlansSetupIsFinishedFirst() {
+        let unfinished = Self.status("Half", .unfinished)
+        let plans = [Self.status("Home", .complete), unfinished]
+        let saved = SetupProgress(planID: unfinished.plan.id, step: .sources, addingPlan: true, kitSaved: true)
+        #expect(SetupFlow.addingPlan(saved: saved, plans: plans, installed: true)
+            == .finishFirst(saved, planName: "Half"))
+        #expect(SetupFlow.addingPlan(saved: nil, plans: plans, installed: true)
+            == .finishFirst(SetupProgress(planID: unfinished.plan.id, step: .storage, addingPlan: false), planName: "Half"))
+    }
+
+    /// An add begun but not yet saved by "Check", or a first run with no plan at all, is simply carried on.
+    @Test func aSetupWithNoPlanYetIsCarriedOn() {
+        let plans = [Self.status("Home", .complete)]
+        let draft = SetupProgress(planID: nil, step: .storage, addingPlan: true)
+        #expect(SetupFlow.addingPlan(saved: draft, plans: plans, installed: true) == .resume(draft))
+        #expect(SetupFlow.addingPlan(saved: nil, plans: [], installed: true)
+            == .resume(SetupProgress(planID: nil, step: .permissions, addingPlan: false)))
+    }
 }

@@ -493,8 +493,9 @@ private extension PlanPhase {
     var isStopped: Bool { if case .stopped = self { true } else { false } }
 }
 
-private extension RunOutcome {
-    /// The short reason for an outcome that is a failed backup, or nil for any other outcome.
+extension RunOutcome {
+    /// The short reason for an outcome that is a failure, or nil for any other outcome. The menu and the History
+    /// list (`HistoryPresentation`) share it.
     var failureReason: String? {
         switch self {
         case .wrongPassword: "wrong password"

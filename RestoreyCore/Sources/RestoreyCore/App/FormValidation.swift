@@ -135,6 +135,21 @@ public enum FormValidation {
         return .success(kiB.intValue)
     }
 
+    /// A saved upload limit as the field shows it, in MB/s: the inverse of `uploadLimit`, with up to two decimals
+    /// and a full stop whatever the Mac's region; nil (no limit) is empty. A limit that needs more decimals is
+    /// shown rounded, so a form keeps the stored value unless the text is changed (`PlanEdit`).
+    public static func uploadLimitText(kiB: Int?) -> String {
+        guard let kiB else { return "" }
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = false
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 2
+        formatter.roundingMode = .halfUp
+        return formatter.string(from: NSNumber(value: Double(kiB) / 1024)) ?? "\(Double(kiB) / 1024)"
+    }
+
     /// A sentence in the agent's style (no closing full stop: `fileTypeProblem`, `AgentError`, the call
     /// errors) as a form shows it, with this type's sentences: ending with a full stop. Text that already
     /// ends with one, a question mark or an exclamation mark is left alone.

@@ -190,6 +190,19 @@ public enum SetupFlow {
         return resume(saved: saved, plans: plans, installed: installed) ?? first
     }
 
+    /// What "+ Add plan…" in Settings opens. Setup keeps one saved progress, so a setup still to finish is carried
+    /// on rather than overwritten: an unfinished plan's is finished first (the caller says so and offers it), and
+    /// one with no plan saved yet (an add before "Check", or a first run with no plans) simply reopens. Otherwise a
+    /// new add starts at `.storage`.
+    public static func addingPlan(saved: SetupProgress?, plans: [PlanStatus], installed: Bool) -> AddPlanStart {
+        guard let pending = resume(saved: saved, plans: plans, installed: installed) else {
+            return .start(SetupProgress(planID: nil, step: firstStep(installed: installed, addingPlan: true), addingPlan: true))
+        }
+        guard let planID = pending.planID else { return .resume(pending) }
+        let name = plans.first { $0.plan.id == planID }?.plan.name ?? ""
+        return .finishFirst(pending, planName: name)
+    }
+
     private static func isStillValid(_ saved: SetupProgress, plans: [PlanStatus], unfinished: [PlanStatus]) -> Bool {
         guard let planID = saved.planID else {
             // Before "Check" saved a plan: an added plan's draft, or a first run with no plans yet.
@@ -214,6 +227,16 @@ public enum SetupFlow {
         }
         return progress
     }
+}
+
+/// `SetupFlow.addingPlan`'s answer.
+public enum AddPlanStart: Sendable, Equatable {
+    /// A new add, from "Where backups go".
+    case start(SetupProgress)
+    /// A setup with no plan saved yet: reopen it as it is.
+    case resume(SetupProgress)
+    /// `planName`'s setup isn't finished: finish it (at this progress) before adding another.
+    case finishFirst(SetupProgress, planName: String)
 }
 
 /// `SetupProgress` in `UserDefaults` (key `setupProgress`). The defaults are injected so tests never touch

@@ -318,6 +318,40 @@ struct AgentStateTests {
         #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == nil)
     }
 
+    /// The check-in URL isn't needed to open or restore the repository (product spec §7's kit is the address, the
+    /// password, the backend keys, the host label and the commands), so adding, changing or removing it from the
+    /// Alerts tab doesn't pause backups for a new kit. Answering "No off-Mac monitoring — Add…" mustn't stop them.
+    @Test func checkInURLChangeKeepsTheRecoveryKit() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        var plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        _ = try await state.confirmRecoveryKit(plan.id)
+        let confirmedAt = clock.now
+
+        plan.hasCheckInURL = true
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: [
+            SecretEntry(key: .checkInURL(plan.id), value: "https://hc-ping.com/first"),
+        ]))
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == confirmedAt)
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: [
+            SecretEntry(key: .checkInURL(plan.id), value: "https://hc-ping.com/second"),
+        ]))
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == confirmedAt)
+        plan.hasCheckInURL = false
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: []))
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == confirmedAt)
+
+        // A key changed alongside it still needs a new kit.
+        plan.hasCheckInURL = true
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: [
+            SecretEntry(key: .checkInURL(plan.id), value: "https://hc-ping.com/third"),
+            SecretEntry(key: .s3SecretAccessKey(plan.id), value: "rotated"),
+        ]))
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == nil)
+    }
+
     // MARK: Setup state (Ruling P2-3, Review Focus 2)
 
     @Test func firstKitConfirmationSetsSetupCompleted() async throws {

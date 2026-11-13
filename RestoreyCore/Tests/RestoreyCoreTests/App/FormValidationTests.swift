@@ -138,6 +138,18 @@ struct FormValidationTests {
         #expect(FormValidation.uploadLimit(text) == .failure("Enter the limit as a number of MB/s, such as 5 or 1.5."))
     }
 
+    /// What the field shows for a saved limit: MB/s with up to two decimals and a full stop, whatever the region.
+    @Test func uploadLimitTextIsTheStoredLimitInMegabytes() {
+        #expect(FormValidation.uploadLimitText(kiB: nil) == "")
+        #expect(FormValidation.uploadLimitText(kiB: 5120) == "5")
+        #expect(FormValidation.uploadLimitText(kiB: 1536) == "1.5")
+        #expect(FormValidation.uploadLimitText(kiB: 512) == "0.5")
+        #expect(FormValidation.uploadLimitText(kiB: 1000) == "0.98")
+        for kiB in [5120, 1536, 512, 256, 3072] {
+            #expect(FormValidation.uploadLimit(FormValidation.uploadLimitText(kiB: kiB)) == .success(kiB))
+        }
+    }
+
     // MARK: File types
 
     @Test func typedFileTypesAreNormalisedAndDeduplicated() {

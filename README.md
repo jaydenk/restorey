@@ -559,6 +559,11 @@ has the old keys" and its tick "I've saved it somewhere other than this Mac" con
 lets backups carry on. Before confirming, the window checks the kit against the agent's current secrets, so a kit
 whose keys changed while it was open is shown again rather than confirmed.
 
+A plan needs a new kit when what opens its repository changes: saving a different repository password or storage
+key (or environment value) clears the kit's confirmation, and the plan's backups wait until the new kit is saved
+and confirmed. Adding, changing or removing the check-in URL doesn't: it isn't needed to restore, so answering "No
+off-Mac monitoring — Add…" never stops backups.
+
 **Restore Files…** in the menu opens the same commands for the chosen plan (a plan picker switches between
 plans). Passwords and keys show as dots; holding Option shows them while it is held, and each command has a copy
 button that copies the real command. The first reveal or copy of a command that carries secrets (decided from the

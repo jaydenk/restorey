@@ -378,7 +378,11 @@ public actor AgentState {
             let checkInChanged = !plan.hasCheckInURL || planSecrets.changesValue(of: .checkInURL(plan.id))
             if let index = updated.plans.firstIndex(where: { $0.id == plan.id }) {
                 let stored = updated.plans[index]
-                let unchanged = stored.repository == plan.repository && !planSecrets.changesAnyValue
+                // The recovery kit holds the address, the password and the backend keys: a change to any of them
+                // needs a new kit before backups carry on. The check-in URL isn't needed to restore (product spec
+                // §7), so changing it from the Alerts tab doesn't pause backups.
+                let unchanged = stored.repository == plan.repository
+                    && !planSecrets.changesAnyValue(excluding: [checkInKey])
                 credentialsChanged = !unchanged
                 plan.recoveryKitConfirmedAt = unchanged ? stored.recoveryKitConfirmedAt : nil
                 plan.setupCompletedAt = stored.setupCompletedAt
