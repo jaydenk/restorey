@@ -64,7 +64,7 @@ private struct BucketFields: View {
                 SecretField(title: StorageForm.label(for: key, kind: form.kind).capitalisedFirst, text: secret(key))
             }
         }
-        if model.plan != nil {
+        if model.keepsSavedSecrets {
             Text("Leave a key empty to keep the one already saved.").font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -95,6 +95,7 @@ private struct OtherLocationFields: View {
                     PlainTextField(title: "Name", text: $row.name).frame(width: 190)
                     SecretField(title: "Value", text: value(row))
                     Button {
+                        model.setEnvironmentValue("", for: row.id)
                         model.storage.environment.removeAll { $0.id == row.id }
                     } label: {
                         Image(systemName: "minus.circle")
@@ -111,9 +112,9 @@ private struct OtherLocationFields: View {
             .disabled(model.working)
     }
 
+    /// By the row's id, not its name: the name can still change, and the value must follow the row.
     private func value(_ row: StorageForm.EnvironmentRow) -> Binding<String> {
-        let key = SecretKey.environment(model.planID, name: row.name.trimmingCharacters(in: .whitespaces))
-        return Binding(get: { model.secret(key) }, set: { model.setSecret($0, for: key) })
+        Binding(get: { model.environmentValue(row.id) }, set: { model.setEnvironmentValue($0, for: row.id) })
     }
 }
 

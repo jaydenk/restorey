@@ -10,28 +10,56 @@ struct SetupWindow: View {
             Text(model.heading)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            switch model.step {
-            case .moveToApplications:
-                MoveToApplicationsView(model: model)
-            case .permissions:
-                PermissionsView(model: model)
-            case .storage:
-                StorageView(model: model)
-            case .password:
-                PasswordView(model: model)
-            case .recoveryKit:
-                RecoveryKitStepView(model: model)
-            case .sources:
-                SourcesView(model: model)
-            case .schedule:
-                ScheduleView(model: model)
-            case .done:
-                DoneView(model: model)
+            if model.planMissing {
+                PlanMissingView(model: model)
+            } else {
+                stepView
             }
         }
         .padding(20)
         .frame(width: 520, alignment: .topLeading)
         .frame(minHeight: 340, alignment: .topLeading)
+    }
+
+    @ViewBuilder private var stepView: some View {
+        switch model.step {
+        case .moveToApplications:
+            MoveToApplicationsView(model: model)
+        case .permissions:
+            PermissionsView(model: model)
+        case .storage:
+            StorageView(model: model)
+        case .password:
+            PasswordView(model: model)
+        case .recoveryKit:
+            RecoveryKitStepView(model: model)
+        case .sources:
+            SourcesView(model: model)
+        case .schedule:
+            ScheduleView(model: model)
+        case .done:
+            DoneView(model: model)
+        }
+    }
+}
+
+/// The plan this setup was building is gone from the agent (deleted elsewhere, say): say so, and start again
+/// at the storage step rather than leave the step waiting for it.
+private struct PlanMissingView: View {
+    let model: SetupModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("The plan this setup was making is no longer there.", systemImage: "exclamationmark.triangle")
+                .font(.headline)
+            Text("It may have been deleted while setup was closed. Start again from where backups go; nothing has been backed up for it.")
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 12)
+            SetupButtonRow {
+                Button("Start Again") { model.startAgain() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
     }
 }
 

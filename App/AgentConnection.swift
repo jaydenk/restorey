@@ -76,8 +76,13 @@ final class AgentConnection {
         await statusCall(timeout: .seconds(60)) { $0.deletePlan(planID.uuidString, withReply: $1) }
     }
 
-    func backUpNow(_ planID: UUID?) async -> Result<AgentStatus, AgentCallError> {
-        await statusCall(timeout: .seconds(60)) { $0.backUpNow(planID?.uuidString, withReply: $1) }
+    /// Its status also feeds `onStatus`, like the status calls'.
+    func backUpNow(_ planID: UUID?) async -> Result<BackUpNowReply, AgentCallError> {
+        let result = await call(BackUpNowReply.self, timeout: .seconds(60)) {
+            $0.backUpNow(planID?.uuidString, withReply: $1)
+        }
+        if case .success(let reply) = result { onStatus?(reply.status) }
+        return result
     }
 
     func pause(_ planID: UUID) async -> Result<AgentStatus, AgentCallError> {

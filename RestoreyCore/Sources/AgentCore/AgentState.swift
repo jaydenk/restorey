@@ -602,7 +602,7 @@ public actor AgentState {
         }
         guard start else { return status() }
         try requireRunnable(id)
-        return try await requireRunner().backUpNow(id, afterPausedRun: true)
+        return try await requireRunner().backUpNow(id, afterPausedRun: true).status
     }
 
     /// Changes one plan's history and saves `state.json`, through the write gate. The runner records

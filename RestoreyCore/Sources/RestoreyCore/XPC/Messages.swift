@@ -292,6 +292,33 @@ public struct AdoptReport: Codable, Sendable, Equatable {
     }
 }
 
+/// `backUpNow`'s reply: the status, and whether the one plan asked for was already backing up (a scheduled run,
+/// say), which isn't a refusal: the backup the caller wanted is running. Always false for every plan (nil).
+/// JSON: `{"alreadyRunning":true,"status":{…}}`. An agent from before this type answered with a bare
+/// `AgentStatus`, which decodes as not already running.
+public struct BackUpNowReply: Codable, Sendable, Equatable {
+    public var status: AgentStatus
+    public var alreadyRunning: Bool
+
+    public init(status: AgentStatus, alreadyRunning: Bool) {
+        self.status = status
+        self.alreadyRunning = alreadyRunning
+    }
+
+    private enum CodingKeys: String, CodingKey { case status, alreadyRunning }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard c.contains(.status) else {
+            status = try AgentStatus(from: decoder)
+            alreadyRunning = false
+            return
+        }
+        status = try c.decode(AgentStatus.self, forKey: .status)
+        alreadyRunning = try c.decodeIfPresent(Bool.self, forKey: .alreadyRunning) ?? false
+    }
+}
+
 /// `probeRepository`'s reply (Ruling P2-2): what is at the plan's repository address.
 /// JSON: `{"state":{"type":"empty"}}`, `{"state":{"type":"existing","report":{…}}}` or
 /// `{"state":{"type":"passwordRejected"}}`.

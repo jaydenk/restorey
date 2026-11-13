@@ -70,9 +70,24 @@ import Testing
         #expect(!draft.progress.kitSaved)
         draft.setKitSaved(true)
         #expect(draft.progress == SetupProgress(planID: Self.planID, step: .recoveryKit, addingPlan: false, kitSaved: true))
-        // The probe and adoption report aren't secrets: a step change keeps them.
+        // The probe isn't a secret: a step change keeps it.
         draft.probe = RepositoryProbe(state: .passwordRejected)
         draft.go(to: .sources)
         #expect(draft.probe == RepositoryProbe(state: .passwordRejected))
+    }
+
+    @Test func environmentValuesFollowTheirRowNotItsName() {
+        // Typed into a row before its name is final: renaming the row must not orphan the value.
+        var draft = Self.draft()
+        let row = UUID()
+        draft.setEnvironmentValue("s3cr3t", for: row)
+        #expect(draft.environmentValue(row) == "s3cr3t")
+        #expect(!draft.description.contains("s3cr3t"))
+        #expect(!String(reflecting: draft).contains("s3cr3t"))
+        draft.go(to: .password)
+        #expect(draft.environmentValue(row) == nil)
+        draft.setEnvironmentValue("again", for: row)
+        draft.close()
+        #expect(draft.environmentValue(row) == nil)
     }
 }

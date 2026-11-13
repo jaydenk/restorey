@@ -191,9 +191,9 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
         case .openPlan(let planID):
             router.showSettings(section: .plans, planID: planID)
         case .backUpAll:
-            run("Restorey couldn't start the backup") { [await connection.backUpNow(nil)] }
+            run("Restorey couldn't start the backup") { [await connection.backUpNow(nil).map(\.status)] }
         case .backUp(let planID):
-            run("Restorey couldn't start the backup") { [await connection.backUpNow(planID)] }
+            run("Restorey couldn't start the backup") { [await connection.backUpNow(planID).map(\.status)] }
         case .pauseAll:
             let plans = choices(supervisor).filter(\.canPause).map(\.id)
             run("Restorey couldn't pause the backup") { await Self.each(plans, connection.pause) }

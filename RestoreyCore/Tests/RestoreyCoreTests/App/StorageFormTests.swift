@@ -106,10 +106,31 @@ import Testing
         var form = StorageForm(kind: .other)
         form.repository = "/Volumes/Backup/restic"
         #expect(form.secretEntries(planID: Self.planID, typed: { _ in nil }, saved: false) == .success([]))
-        form.environment = [StorageForm.EnvironmentRow(name: "A"), StorageForm.EnvironmentRow(name: "B")]
-        let typed: [SecretKey: String] = [.environment(Self.planID, name: "A"): "1"]
-        #expect(form.secretEntries(planID: Self.planID, typed: { typed[$0] }, saved: false)
+        var a = StorageForm.EnvironmentRow(name: "A_TYPO")
+        let b = StorageForm.EnvironmentRow(name: "B")
+        form.environment = [a, b]
+        // Typed by row, so renaming the row afterwards keeps its value.
+        let typed: [UUID: String] = [a.id: "1"]
+        a.name = " A "
+        form.environment[0] = a
+        #expect(form.secretEntries(planID: Self.planID, typed: { _ in nil }, environmentValue: { typed[$0] }, saved: false)
             == .failure("Enter the value of B."))
+        let both: [UUID: String] = [a.id: "1", b.id: "two words"]
+        #expect(form.secretEntries(planID: Self.planID, typed: { _ in nil }, environmentValue: { both[$0] }, saved: false)
+            == .success([
+                SecretEntry(key: .environment(Self.planID, name: "A"), value: "1"),
+                SecretEntry(key: .environment(Self.planID, name: "B"), value: "two words"),
+            ]))
+    }
+
+    @Test func emptyKeysCanBeKeptOnlyWhileTheAddressIsTheSavedOne() {
+        let form = Self.b2()
+        let saved = form.repositoryValue
+        #expect(form.keepsSavedSecrets(saved: saved))
+        #expect(!form.keepsSavedSecrets(saved: nil))
+        var moved = form
+        moved.bucket = "other-bucket"
+        #expect(!moved.keepsSavedSecrets(saved: saved))
     }
 
     @Test func aSavedRepositoryFillsTheForm() {

@@ -96,9 +96,9 @@ final class AgentService: NSObject, AgentXPC, Sendable {
                 log.info("Refused Back Up Now: \(error.message)")
                 throw error
             }
-            let status = try await state.backUpNow(id)
-            log.info("Back up now: \(planID.map { "plan \($0)" } ?? "every plan")")
-            return status
+            let reply = try await state.backUpNow(id)
+            log.info("Back up now: \(planID.map { "plan \($0)" } ?? "every plan")\(reply.alreadyRunning ? " (already backing up)" : "")")
+            return reply
         }
     }
 

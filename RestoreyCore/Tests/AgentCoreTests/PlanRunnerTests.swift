@@ -1196,11 +1196,13 @@ struct PlanRunnerTests {
         // Not due for another hour, but a manual run ignores the schedule.
         #expect(nextRunDate(plan: await f.plan(), history: await f.history(), now: f.clock.now) > f.clock.now)
 
-        let status = try await f.state.backUpNow(f.planID)
-        #expect(status.plans.first?.phase.isRunning == true)
-        await #expect { try await f.state.backUpNow(f.planID) } throws: {
-            ($0 as? AgentError)?.message == "Fixture is already backing up"
-        }
+        let reply = try await f.state.backUpNow(f.planID)
+        #expect(reply.status.plans.first?.phase.isRunning == true)
+        #expect(!reply.alreadyRunning)
+        // Asked again while it runs: not a refusal, but its own answer (setup's Done relies on it).
+        let again = try await f.state.backUpNow(f.planID)
+        #expect(again.alreadyRunning)
+        #expect(again.status.plans.first?.phase.isRunning == true)
         let record = try #require(await f.runner.waitForBackgroundRun(planID: f.planID))
         #expect(record.trigger == .manual)
         guard case .success = record.outcome else {
@@ -1214,7 +1216,8 @@ struct PlanRunnerTests {
         let f = try await RunnerFixture.make()
         defer { f.remove() }
         f.power.set(PowerState(onBattery: true, percent: 1))
-        _ = try await f.state.backUpNow(nil)
+        let all = try await f.state.backUpNow(nil)
+        #expect(!all.alreadyRunning)
         let record = try #require(await f.runner.waitForBackgroundRun(planID: f.planID))
         #expect(record.outcome == .skipped(.batteryBelow(20)))
         #expect(await f.pings() == [])

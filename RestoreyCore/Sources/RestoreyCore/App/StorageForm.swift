@@ -175,16 +175,29 @@ public struct StorageForm: Sendable, Equatable {
         }
     }
 
+    /// Whether an empty secret field keeps the saved value: only while the form still describes `saved`, the
+    /// repository the plan was saved with (a changed address needs every secret again, `secretEntries`).
+    public func keepsSavedSecrets(saved: Repository?) -> Bool {
+        saved != nil && repositoryValue == saved
+    }
+
     /// The secrets to send with "Check", or the sentence saying what's missing. A secret left empty is kept as
     /// it is when `saved` (the plan was saved before with the same repository, so the agent has it); a new
-    /// plan, or a changed repository, needs every one.
+    /// plan, or a changed repository, needs every one. `typed` reads the keys' fields; `environmentValue` reads
+    /// an environment row's value by the row's id, since its name (and so its keychain name) may have changed
+    /// since it was typed.
     public func secretEntries(
-        planID: UUID, typed: (SecretKey) -> String?, saved: Bool
+        planID: UUID, typed: (SecretKey) -> String?, environmentValue: (UUID) -> String? = { _ in nil },
+        saved: Bool
     ) -> Result<[SecretEntry], FormValidation.Problem> {
         var entries: [SecretEntry] = []
         var missing: [String] = []
+        let rows = Dictionary(
+            environment.map { ($0.name.trimmingCharacters(in: .whitespaces), $0.id) }, uniquingKeysWith: { first, _ in first })
         for key in secretKeys(planID: planID) {
-            if let value = typed(key), !value.isEmpty {
+            let value: String?
+            if case .environment(_, let name) = key { value = rows[name].flatMap(environmentValue) } else { value = typed(key) }
+            if let value, !value.isEmpty {
                 entries.append(SecretEntry(key: key, value: value))
             } else if !saved {
                 missing.append(Self.label(for: key, kind: kind))

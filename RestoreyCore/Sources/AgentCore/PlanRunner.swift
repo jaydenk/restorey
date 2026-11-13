@@ -156,20 +156,26 @@ public actor PlanRunner {
 
     /// Starts a manual backup of one plan (or of every plan that may run, when nil) in the background
     /// and returns the status showing it running. A single plan that is invalid or has no confirmed
-    /// recovery kit is refused with the reason.
+    /// recovery kit is refused with the reason; one already running is reported as such, not refused.
     ///
     /// `afterPausedRun` is Resume's (Ruling R62): when the plan's run is still stopping for a pause, the
     /// backup starts, through this same path, once that run has ended and recorded `.paused`, instead of
     /// being refused as "already backing up". Back Up Now itself doesn't pass it.
-    public func backUpNow(_ planID: UUID?, afterPausedRun: Bool = false) async throws -> AgentStatus {
+    public func backUpNow(_ planID: UUID?, afterPausedRun: Bool = false) async throws -> BackUpNowReply {
         try await deps.state.requireRunnable(planID)
+        var alreadyRunning = false
         if let planID {
             let plan = try await deps.state.runInputs(planID).plan
             if let refusal = Self.refusal(plan) { throw refusal }
             if afterPausedRun, handles[planID]?.intent == .pause {
                 startWhenPausedRunEnds.insert(planID)
             } else {
-                try await startInBackground(planID)
+                // Already running (the scheduler got there first): the backup asked for is under way.
+                do {
+                    try await startInBackground(planID)
+                } catch AgentError.alreadyRunning {
+                    alreadyRunning = true
+                }
             }
         } else {
             for (plan, _) in await deps.state.allRunInputs() where Self.refusal(plan) == nil {
@@ -185,7 +191,7 @@ public actor PlanRunner {
                 }
             }
         }
-        return await deps.state.status()
+        return BackUpNowReply(status: await deps.state.status(), alreadyRunning: alreadyRunning)
     }
 
     /// On agent start, before the runner is attached to the state: turns every run still marked in

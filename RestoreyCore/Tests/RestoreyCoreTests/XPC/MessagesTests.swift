@@ -240,6 +240,17 @@ struct MessagesTests {
         }
     }
 
+    @Test func backUpNowReplyRoundTripsAndAnOldStatusReplyStillDecodes() throws {
+        let status = AgentStatus(plans: [], configError: nil, fdaMissing: false, generatedAt: Date(timeIntervalSince1970: 0))
+        try roundTrip(BackUpNowReply(status: status, alreadyRunning: true))
+        try roundTrip(BackUpNowReply(status: status, alreadyRunning: false))
+        #expect(try json(BackUpNowReply(status: status, alreadyRunning: true)).hasPrefix(#"{"alreadyRunning":true,"status":{"#))
+        // An agent from before the reply existed answered with a bare status: started, not already running.
+        let old = try XPCCoding.encode(status)
+        let decoded = try XPCCoding.decode(BackUpNowReply.self, from: old)
+        #expect(decoded == BackUpNowReply(status: status, alreadyRunning: false))
+    }
+
     @Test func recoveryKitSecretsRoundTrip() throws {
         try roundTrip(RecoveryKitSecrets(plan: Self.plan(), secrets: [
             SecretEntry(key: .repositoryPassword(Self.planID), value: "pa ss\"wörd\n"),

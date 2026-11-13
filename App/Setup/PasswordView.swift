@@ -11,18 +11,22 @@ struct PasswordView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            switch model.draft.probe?.state {
-            case nil:
+            switch model.passwordStep {
+            case .probing:
                 HStack {
                     ProgressView().controlSize(.small)
                     Text("Checking the repository address…").foregroundStyle(.secondary)
                 }
-            case .empty?:
+            case .create:
                 NewRepositoryForm(model: model)
-            case .passwordRejected?:
+            case .open:
                 ExistingRepositoryPassword(model: model)
-            case .existing(let report)?:
+            case .adopt(let report):
                 ExistingRepositorySummary(model: model, report: report)
+            case .ready:
+                Text("The repository is ready.").font(.headline)
+                Text("This setup made or adopted it before it was interrupted. Continue to the recovery kit.")
+                    .fixedSize(horizontal: false, vertical: true)
             }
             SetupStepStatus(model: model)
             Spacer(minLength: 12)
@@ -41,26 +45,24 @@ struct PasswordView: View {
     }
 
     @ViewBuilder private var actionButton: some View {
-        if model.repositoryReady {
+        switch model.passwordStep {
+        case .ready:
             Button("Continue") { model.continueFromPassword() }
                 .keyboardShortcut(.defaultAction)
-        } else {
-            switch model.draft.probe?.state {
-            case .empty?:
-                Button("Create New Repository") { Task { await model.createRepository() } }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(model.working || model.passwordProblem != nil)
-            case .passwordRejected?:
-                Button("Open Repository") { Task { await model.openExistingRepository() } }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(model.working || model.secret(.repositoryPassword(model.planID)).isEmpty)
-            case .existing?:
-                Button("Use This Repository") { Task { await model.useExistingRepository() } }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(model.working || FormValidation.hostLabel(model.hostLabel) != nil)
-            case nil:
-                EmptyView()
-            }
+        case .create:
+            Button("Create New Repository") { Task { await model.createRepository() } }
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.working || model.passwordProblem != nil)
+        case .open:
+            Button("Open Repository") { Task { await model.openExistingRepository() } }
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.working || model.secret(.repositoryPassword(model.planID)).isEmpty)
+        case .adopt:
+            Button("Use This Repository") { Task { await model.useExistingRepository() } }
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.working || FormValidation.hostLabel(model.hostLabel) != nil)
+        case .probing:
+            EmptyView()
         }
     }
 }
@@ -128,25 +130,21 @@ private struct ExistingRepositorySummary: View {
     let report: AdoptReport
 
     var body: some View {
-        if model.repositoryReady {
-            Text("The repository is ready.").font(.headline)
-        } else {
-            Text("A repository is already here: \(SetupAdoption.summary(report)).").font(.headline)
-            Text("Restorey adds this Mac's backups to it and never removes snapshots it didn't make. It doesn't prune an existing repository, which locks out other Macs while it runs; you can turn pruning on in Settings.")
+        Text("A repository is already here: \(SetupAdoption.summary(report)).").font(.headline)
+        Text("Restorey adds this Mac's backups to it and never removes snapshots it didn't make. It doesn't prune an existing repository, which locks out other Macs while it runs; you can turn pruning on in Settings.")
+            .fixedSize(horizontal: false, vertical: true)
+        SetupField(label: "This Mac's snapshots are under") {
+            Picker("Host label", selection: $model.hostLabel) {
+                ForEach(model.hostChoices, id: \.self) { Text($0).tag($0) }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+        .disabled(model.working)
+        if let warning = SetupAdoption.newGroupWarning(hostLabel: model.hostLabel, sources: nil, report: report) {
+            Label(warning, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)
-            SetupField(label: "This Mac's snapshots are under") {
-                Picker("Host label", selection: $model.hostLabel) {
-                    ForEach(model.hostChoices, id: \.self) { Text($0).tag($0) }
-                }
-                .labelsHidden()
-                .fixedSize()
-            }
-            .disabled(model.working)
-            if let warning = SetupAdoption.newGroupWarning(hostLabel: model.hostLabel, sources: nil, report: report) {
-                Label(warning, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
     }
 }

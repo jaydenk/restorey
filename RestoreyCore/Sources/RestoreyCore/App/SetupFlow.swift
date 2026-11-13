@@ -27,18 +27,33 @@ public struct SetupProgress: Codable, Sendable, Equatable {
     /// The permissions step's "Open at login" choice, kept from the moment it is switched until Continue applies
     /// it, because granting Full Disk Access quits the app mid-step. Nil until switched: on (P2-16).
     public var openAtLogin: Bool?
+    /// This setup ran "Create New Repository" for the plan's address and it succeeded. Only that says the
+    /// repository is this setup's own: a password that opens it may just have been typed for someone else's.
+    public var repositoryCreated: Bool
+    /// What adopting the repository reported (hosts, the latest snapshot's paths for the host label, the count),
+    /// kept for the sources step's new-group warning after a quit. Set only once `adopt` has succeeded. Host names
+    /// and folder paths, no secret.
+    public var adoption: AdoptReport?
 
-    public init(planID: UUID?, step: SetupStep, addingPlan: Bool, kitSaved: Bool = false, openAtLogin: Bool? = nil) {
+    public init(
+        planID: UUID?, step: SetupStep, addingPlan: Bool, kitSaved: Bool = false, openAtLogin: Bool? = nil,
+        repositoryCreated: Bool = false, adoption: AdoptReport? = nil
+    ) {
         self.planID = planID
         self.step = step
         self.addingPlan = addingPlan
         self.kitSaved = kitSaved
         self.openAtLogin = openAtLogin
+        self.repositoryCreated = repositoryCreated
+        self.adoption = adoption
     }
 
-    private enum CodingKeys: String, CodingKey { case planID, step, addingPlan, kitSaved, openAtLogin }
+    private enum CodingKeys: String, CodingKey {
+        case planID, step, addingPlan, kitSaved, openAtLogin, repositoryCreated, adoption
+    }
 
-    /// Progress stored before `kitSaved` or `openAtLogin` existed still decodes: not saved, and not switched.
+    /// Progress stored before `kitSaved`, `openAtLogin`, `repositoryCreated` or `adoption` existed still decodes:
+    /// not saved, not switched, nothing created or adopted.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         planID = try c.decodeIfPresent(UUID.self, forKey: .planID)
@@ -46,6 +61,34 @@ public struct SetupProgress: Codable, Sendable, Equatable {
         addingPlan = try c.decode(Bool.self, forKey: .addingPlan)
         kitSaved = try c.decodeIfPresent(Bool.self, forKey: .kitSaved) ?? false
         openAtLogin = try c.decodeIfPresent(Bool.self, forKey: .openAtLogin)
+        repositoryCreated = try c.decodeIfPresent(Bool.self, forKey: .repositoryCreated) ?? false
+        adoption = try c.decodeIfPresent(AdoptReport.self, forKey: .adoption)
+    }
+}
+
+/// What the password step shows, from what is known about the plan's address (UI design §4 step 3).
+public enum PasswordStep: Sendable, Equatable {
+    /// Nothing known yet: a resumed step probes again.
+    case probing
+    /// Nothing there: a password and "Create New Repository".
+    case create
+    /// A repository the saved password doesn't open: ask for its own.
+    case open
+    /// A repository the saved password opens, not made by this setup: choose the host label and adopt it.
+    case adopt(AdoptReport)
+    /// Created, or adopted, by this setup: Continue.
+    case ready
+
+    /// Decided from the recorded facts first (`repositoryCreated`, `adoption`), never from the plan's origin:
+    /// a plan saved with a typed password that opens someone else's repository still has its new-plan origin.
+    public static func decide(probe: RepositoryProbe.State?, progress: SetupProgress) -> PasswordStep {
+        if progress.repositoryCreated || progress.adoption != nil { return .ready }
+        switch probe {
+        case nil: return .probing
+        case .empty?: return .create
+        case .passwordRejected?: return .open
+        case .existing(let report)?: return .adopt(report)
+        }
     }
 }
 
@@ -168,7 +211,7 @@ public enum SetupFlow {
 }
 
 /// `SetupProgress` in `UserDefaults` (key `setupProgress`). The defaults are injected so tests never touch
-/// the app's own. It holds no secrets, only the step and the plan's id.
+/// the app's own. It holds no secrets: the step, the plan's id and the facts above (folder paths and host names).
 public struct SetupProgressStore {
     public static let key = "setupProgress"
 

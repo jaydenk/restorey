@@ -12,8 +12,9 @@ extension AgentState {
     /// Backs up one plan, or every plan that may run when `id` is nil, in the background. Ignores the
     /// schedule but not the pre-run conditions. The reply shows the plan running. A refusal is written to
     /// `agent.log` as well as returned (final review M5): a Back Up Now that did nothing is otherwise
-    /// invisible. The reasons never name a secret.
-    public func backUpNow(_ id: UUID?) async throws -> AgentStatus {
+    /// invisible. The reasons never name a secret. A plan already backing up is not a refusal: the reply says
+    /// so (`BackUpNowReply.alreadyRunning`).
+    public func backUpNow(_ id: UUID?) async throws -> BackUpNowReply {
         do {
             try requireRunnable(id)
             return try await requireRunner().backUpNow(id)

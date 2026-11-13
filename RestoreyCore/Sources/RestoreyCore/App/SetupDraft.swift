@@ -14,9 +14,10 @@ public struct SetupDraft: Sendable, Equatable, CustomStringConvertible, CustomDe
     /// What the storage step's "Check" (or the password step's own probe) found at the plan's address. Not
     /// saved: a resumed password step probes again.
     public var probe: RepositoryProbe?
-    /// What adopting the repository reported, for the sources step's pre-fill and new-group warning. Not saved.
-    public var adoption: AdoptReport?
     public private(set) var secrets: [SecretKey: String] = [:]
+    /// The values typed into the storage step's environment rows, by row: a row's name can still change, and its
+    /// keychain name (`SecretKey.environment`) is only decided at "Check". Secrets, dropped like `secrets`.
+    private var environmentValues: [UUID: String] = [:]
 
     public init(progress: SetupProgress, plan: Plan? = nil) {
         self.progress = progress
@@ -32,11 +33,47 @@ public struct SetupDraft: Sendable, Equatable, CustomStringConvertible, CustomDe
         secrets[key] = value
     }
 
+    public func environmentValue(_ row: UUID) -> String? { environmentValues[row] }
+
+    /// Nil removes the value.
+    public mutating func setEnvironmentValue(_ value: String?, for row: UUID) {
+        environmentValues[row] = value
+    }
+
     /// Moves to `step`. Leaving a step drops every secret it held.
     public mutating func go(to step: SetupStep) {
         guard step != progress.step else { return }
         secrets = [:]
+        environmentValues = [:]
         progress.step = step
+    }
+
+    /// The plan's address changed: what was found, created or adopted at the old one no longer holds.
+    public mutating func forgetRepository() {
+        probe = nil
+        progress.repositoryCreated = false
+        progress.adoption = nil
+    }
+
+    /// "Create New Repository" succeeded.
+    public mutating func setRepositoryCreated() {
+        progress.repositoryCreated = true
+    }
+
+    /// `adopt` succeeded with `report`.
+    public mutating func setAdoption(_ report: AdoptReport) {
+        progress.adoption = report
+    }
+
+    /// The saved plan is gone (deleted elsewhere): setup starts again at the storage step, keeping only how it
+    /// was opened and the Open at login choice.
+    public mutating func forgetPlan() {
+        plan = nil
+        probe = nil
+        secrets = [:]
+        environmentValues = [:]
+        progress = SetupProgress(
+            planID: nil, step: .storage, addingPlan: progress.addingPlan, openAtLogin: progress.openAtLogin)
     }
 
     /// Records the plan the storage step's "Check" saved, so a quit after it resumes with that plan.
@@ -58,17 +95,22 @@ public struct SetupDraft: Sendable, Equatable, CustomStringConvertible, CustomDe
     /// The window is closing: the secrets go; the progress stays for the next opening.
     public mutating func close() {
         secrets = [:]
+        environmentValues = [:]
     }
 
     public var description: String {
         let accounts = secrets.keys.map(\.account).sorted().joined(separator: ", ")
-        return "SetupDraft(step: \(progress.step.rawValue), plan: \(plan?.id.uuidString ?? "none"), secrets: [\(accounts)])"
+        return "SetupDraft(step: \(progress.step.rawValue), plan: \(plan?.id.uuidString ?? "none"), secrets: [\(accounts)], "
+            + "environment values: \(environmentValues.count))"
     }
     public var debugDescription: String { description }
     public var customMirror: Mirror {
         Mirror(
             self,
-            children: ["progress": progress, "plan": plan as Any, "secrets": secrets.keys.map(\.account).sorted()],
+            children: [
+                "progress": progress, "plan": plan as Any, "secrets": secrets.keys.map(\.account).sorted(),
+                "environmentValues": environmentValues.count,
+            ],
             displayStyle: .struct)
     }
 }
