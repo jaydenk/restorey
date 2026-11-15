@@ -300,13 +300,13 @@ struct EarlierSnapshotsTests {
         let text = EarlierSnapshotsText.confirmation(
             sample(.beforeAdoption), pruneEnabled: false, afterFirstBackup: true, home: "/Users/x")
         #expect(text.title == "Remove 12 snapshots from before Restorey?")
-        #expect(text.message == "Retention keeps 3 of the 15 snapshots on pepper, other tools' included; the rest go "
-            + "after the first backup. Other Macs and folders aren't touched. Prune is off, so their data stays. "
+        #expect(text.message == "Retention keeps 3 of the 15 snapshots of these folders from this Mac, other tools' included; "
+            + "the rest go after the first successful backup. Other Macs and folders aren't touched. Prune is off: the data stays. "
             + "This can't be undone.")
         #expect(text.button == "Remove 12 Snapshots")
         let settings = EarlierSnapshotsText.confirmation(
             sample(.beforeAdoption, kept: 0), pruneEnabled: true, afterFirstBackup: false, home: "/Users/x")
-        #expect(settings.message == "Retention keeps none of the 12 snapshots on pepper, other tools' included. "
+        #expect(settings.message == "Retention keeps none of the 12 snapshots of these folders from this Mac, other tools' included. "
             + "Other Macs and folders aren't touched. Prune frees the space later. This can't be undone.")
     }
 

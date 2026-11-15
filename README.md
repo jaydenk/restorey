@@ -251,7 +251,7 @@ The adopt step also offers "Apply this plan's retention to existing snapshots fr
 off by default. Switched on, "Use This Repository" adopts as usual, then asks the agent for a preview
 (`previewEarlierSnapshots`: a `forget --dry-run` that takes no lock and records nothing) and shows its own
 confirmation, "Remove N snapshots from before Restorey?", with how many the plan's retention keeps, whether prune will
-free the space, and that it can't be undone, in a few short sentences so the sheet fits the setup window. Cancel is
+free the space, that they go after the first successful backup, and that it can't be undone, in a few short sentences so the sheet fits the setup window. Cancel is
 the default button (Return, and Escape too); "Remove N Snapshots" is never the default (`DestructiveAlert`). The confirmed snapshot IDs are
 kept in the setup progress (`earlierRemoval`), and Done hands them to the agent before it confirms the kit
 (`removeEarlierSnapshotsAfterNextBackup`); the agent removes them only after the plan's first backup that succeeds
