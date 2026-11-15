@@ -145,4 +145,19 @@ struct AppShellTests {
         slots.closed(second, for: .settings)
         #expect(slots.openWindow(for: .setup) === second)
     }
+
+    // MARK: The tab a plan request lands on (Task 14c, review minor 4)
+
+    @Test func aSidebarPickLandsOnTheFirstTab() {
+        #expect(planRequestLandsOnFirstTab(.sidebarPick))
+    }
+
+    @Test func theMenuAskingForAPlanLandsOnTheFirstTab() {
+        #expect(planRequestLandsOnFirstTab(.route(planID: UUID())))
+    }
+
+    /// "Settings…" or a reopen with the window open asks for no plan: the tab shown stays.
+    @Test func aRouteForNoPlanKeepsTheTab() {
+        #expect(!planRequestLandsOnFirstTab(.route(planID: nil)))
+    }
 }

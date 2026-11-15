@@ -107,6 +107,23 @@ public func settingsRoute(open: SettingsRoute?, section: SettingsSection?, planI
     return SettingsRoute(section: section ?? .plans, planID: planID)
 }
 
+/// Where a request to show a plan in Settings → Plans comes from (Task 14c).
+public enum PlanRequestSource: Sendable, Equatable {
+    /// The user picked the plan in the sidebar.
+    case sidebarPick
+    /// A route into Settings: the menu's plan line or "Add…" (a plan), or "Settings…" and a reopen (none).
+    case route(planID: UUID?)
+}
+
+/// Whether the request opens the plan on its first tab, the Overview, when it names no tab of its own: a plan
+/// picked or asked for does; a route that asks for no plan keeps the tab shown (review minor 4).
+public func planRequestLandsOnFirstTab(_ source: PlanRequestSource) -> Bool {
+    switch source {
+    case .sidebarPick: true
+    case .route(let planID): planID != nil
+    }
+}
+
 // MARK: Open at login
 
 /// Open at login is on only when `SMAppService.mainApp` is `enabled`. `requiresApproval` means the user

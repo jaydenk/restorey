@@ -1,3 +1,4 @@
+import AppKit
 import RestoreyCore
 import SwiftUI
 
@@ -38,9 +39,19 @@ struct PlansPane: View {
         EditorKey(planID: selectedID, editable: selected.map { $0.setupState != .unfinished } ?? false)
     }
 
+    static let sidebarWidth: CGFloat = 200
+    /// The plan page's padding on each side.
+    static let pagePadding: CGFloat = 16
+
+    /// The narrowest the pane can be with every tab showing in full: the sidebar, its divider, and the tab row inside
+    /// the page's padding. The Settings window's minimum width comes from it (Task 14c R1).
+    @MainActor static var minimumWidth: CGFloat {
+        sidebarWidth + 1 + 2 * pagePadding + PlanTabPicker.naturalWidth
+    }
+
     var body: some View {
         HStack(spacing: 0) {
-            sidebar.frame(width: 200)
+            sidebar.frame(width: Self.sidebarWidth)
             Divider()
             detail.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
@@ -88,7 +99,8 @@ struct PlansPane: View {
     /// Through the one guard (`ShellState.requestPlan`): a switch away from unsaved edits asks first.
     private func choose(_ id: UUID?) {
         guard let id, id != selectedID else { return }
-        state.requestPlan(id, landing: .overview, editing: slot.unsavedPlanID)
+        state.requestPlan(
+            id, landing: planRequestLandsOnFirstTab(.sidebarPick) ? .overview : nil, editing: slot.unsavedPlanID)
     }
 
     /// The selected plan's editor: the one already open for it is kept (the pane came back from another section),
@@ -169,6 +181,26 @@ enum PlanTab: String, CaseIterable, Identifiable {
     }
 }
 
+/// The row of a plan's tabs. A segmented control doesn't shrink below its segments, so it keeps its natural width
+/// (`fixedSize`) and the window is made wide enough for it (`PlansPane.minimumWidth`) rather than letting it overflow:
+/// overflowing content is centred by the hosting view and clipped at both edges (Task 14c R1).
+struct PlanTabPicker: View {
+    @Binding var tab: PlanTab
+
+    var body: some View {
+        Picker("Tab", selection: $tab) {
+            ForEach(PlanTab.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+    }
+
+    /// The row's natural width, measured once with the system's fonts.
+    @MainActor static let naturalWidth: CGFloat = NSHostingView(rootView: PlanTabPicker(tab: .constant(.overview)))
+        .fittingSize.width
+}
+
 /// A plan that finished setup: its tabs, then Delete Plan… and Save.
 private struct PlanDetail: View {
     let status: PlanStatus
@@ -186,11 +218,7 @@ private struct PlanDetail: View {
             if status.setupState == .needsNewKit {
                 NewKitBanner(planID: status.plan.id, context: context)
             }
-            Picker("Tab", selection: $tab) {
-                ForEach(PlanTab.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            PlanTabPicker(tab: $tab)
             if tab == .history {
                 HistoryList(planID: status.plan.id)
             } else {
@@ -204,7 +232,7 @@ private struct PlanDetail: View {
             Divider()
             SaveBar(model: model, planName: status.plan.name, planID: status.plan.id, context: context, deleted: deleted)
         }
-        .padding(16)
+        .padding(PlansPane.pagePadding)
     }
 
     @ViewBuilder private var tabContent: some View {

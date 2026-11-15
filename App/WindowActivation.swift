@@ -16,8 +16,10 @@ import RestoreyCore
 @MainActor
 enum WindowActivation {
     private static let controller = ActivationController(host: AppKitActivationHost())
-    /// The About panel while it is up, so its closing is noticed.
-    private static var aboutObserver: NSObjectProtocol?
+    /// The About panel's notifications while it is open, so its closing is noticed.
+    private static var aboutObservers: [NSObjectProtocol] = []
+    /// The app's log (`AppDelegate` sets it once it has one).
+    static var log: AppLog?
 
     /// Shows `window` (one of Restorey's, `id`) in front and asks for the app to be activated.
     static func bringForward(_ window: NSWindow, as id: WindowPresence.Window) {
@@ -42,23 +44,37 @@ enum WindowActivation {
     static func showAbout() {
         let before = snapshots()
         NSApplication.shared.orderFrontStandardAboutPanel(nil)
+        // Shown again while open (or hidden by deactivation), it is already counted.
+        guard aboutObservers.isEmpty else { return }
         // The panel AppKit just put on screen (`AboutPanel`): AppKit names it itself ("_NS:149"), so it is found as
-        // the window that appeared with the call, other than Restorey's own. Shown again while open, it is counted.
+        // the window that appeared with the call, other than Restorey's own.
         let own = Set(AppWindowKind.allCases.map(\.rawValue))
-        guard aboutObserver == nil,
-              let number = AboutPanel.find(before: before, after: snapshots(), ownIdentifiers: own),
+        guard let number = AboutPanel.find(before: before, after: snapshots(), ownIdentifiers: own),
               let panel = NSApplication.shared.window(withWindowNumber: number)
-        else { return }
+        else {
+            // Uncounted, closing Restorey's last window would leave the panel in a menu bar app (build 816).
+            log?.error("The About panel wasn't found after showing it, so it isn't counted as an open window")
+            return
+        }
         controller.shown(.about)
-        aboutObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification, object: panel, queue: .main
-        ) { _ in
-            MainActor.assumeIsolated {
-                if let observer = aboutObserver { NotificationCenter.default.removeObserver(observer) }
-                aboutObserver = nil
-                controller.closed(.about)
+        let events: [(Notification.Name, AboutPanel.Event)] = [
+            (NSWindow.willCloseNotification, .willClose),
+            (NSWindow.didChangeOcclusionStateNotification, .occlusionChanged),
+            (NSWindow.didResignKeyNotification, .resignedKey),
+        ]
+        aboutObservers = events.map { name, event in
+            NotificationCenter.default.addObserver(forName: name, object: panel, queue: .main) { _ in
+                MainActor.assumeIsolated { aboutEvent(event) }
             }
         }
+    }
+
+    /// Only a close ends the count (`AboutPanel.endsCount`): hidden by deactivation or ⌘H, the panel is still open.
+    private static func aboutEvent(_ event: AboutPanel.Event) {
+        guard AboutPanel.endsCount(event) else { return }
+        aboutObservers.forEach(NotificationCenter.default.removeObserver)
+        aboutObservers = []
+        controller.closed(.about)
     }
 }
 

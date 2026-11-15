@@ -40,12 +40,11 @@ struct AboutPanelTests {
         #expect(AboutPanel.find(before: [], after: [hidden], ownIdentifiers: Self.own) == nil)
     }
 
-    /// Hidden by deactivation is still open: only a close ends the count (`WindowPresence`).
-    @Test func aHiddenPanelStillCounts() {
-        var presence = WindowPresence()
-        presence.shown(.about)
-        // Hiding posts no close, so nothing is reported: the presence is unchanged.
-        #expect(presence.policy == .regular)
-        #expect(presence.closed(.about) == .accessory)
+    /// Review minor 6: only a close ends the panel's count. Hidden by deactivation or ⌘H (occlusion), or no longer
+    /// key, it is still open (the build 816 failure was the panel going uncounted while still open).
+    @Test func onlyAClosingEndsTheCount() {
+        #expect(AboutPanel.endsCount(.willClose))
+        #expect(!AboutPanel.endsCount(.occlusionChanged))
+        #expect(!AboutPanel.endsCount(.resignedKey))
     }
 }

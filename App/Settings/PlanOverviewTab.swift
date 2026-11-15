@@ -1,9 +1,10 @@
 import RestoreyCore
 import SwiftUI
 
-/// Settings → Plans → Overview (Task 14c, owner 15 Nov 2026): the menu's line for the plan, its last and next backup,
-/// and the menu's Back Up Now, Pause, Resume and Restore Files… for it. The words and which buttons are enabled are
-/// `MenuPresentation.overview`'s, from the same inputs as the menu, so it follows the agent live, progress included.
+/// Settings → Plans → Overview (Task 14c, owner 15 Nov 2026; layout ruling R1): the plan's state with the menu's reason,
+/// its last and next backup, and the menu's Back Up Now, Pause, Resume and Restore Files… for it. The words and which
+/// buttons are enabled are `MenuPresentation.overview`'s, from the same inputs as the menu, so it follows the agent
+/// live, progress included.
 struct PlanOverviewTab: View {
     let planID: UUID
     let context: SettingsContext
@@ -29,51 +30,48 @@ struct PlanOverviewTab: View {
 
     @ViewBuilder private func content(_ overview: PlanOverview) -> some View {
         VStack(alignment: .leading, spacing: 14) {
+            // The plan's state and the menu's reason; no plan name or repository here (the title has the name), and
+            // no times (the rows have them).
             VStack(alignment: .leading, spacing: 4) {
-                Text(overview.status)
+                Text(overview.headline)
                     .font(.title3.weight(.semibold))
-                    .foregroundStyle(statusColour(overview))
-                if let detail = overview.statusDetail {
-                    Text(detail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(headlineColour(overview))
+                if let reason = overview.reason {
+                    Text(reason).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 if let progress = overview.progress {
                     ProgressView(value: progress).accessibilityLabel("Backup progress")
-                }
-                if let destination = overview.destination {
-                    Text(destination).font(.callout).foregroundStyle(.secondary)
                 }
             }
             .accessibilityElement(children: .combine)
 
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
-                row("Last backup", overview.lastBackup, overview.lastBackupDetail)
-                if let next = overview.nextBackup {
-                    row("Next backup", next, overview.nextBackupDetail)
-                }
+                if let last = overview.lastBackup { row("Last backup", last) }
+                if let next = overview.nextBackup { row("Next backup", next) }
             }
 
             HStack {
                 ForEach(overview.buttons, id: \.kind) { button in
                     Button(button.title) { perform(button.kind) }
                         .disabled(!button.enabled)
-                        .accessibilityLabel(button.title)
                 }
             }
         }
     }
 
-    private func row(_ label: String, _ value: String, _ detail: String?) -> some View {
+    private func row(_ label: String, _ row: PlanOverview.Row) -> some View {
         GridRow {
             Text(label).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(value)
-                if let detail { Text(detail).font(.callout).foregroundStyle(.secondary) }
+                Text(row.value)
+                if let detail = row.detail { Text(detail).font(.callout).foregroundStyle(.secondary) }
             }
         }
         .accessibilityElement(children: .combine)
     }
 
-    private func statusColour(_ overview: PlanOverview) -> Color {
+    /// Coloured only when the plan needs attention, and then the reason (or the headline itself) says why.
+    private func headlineColour(_ overview: PlanOverview) -> Color {
         if overview.isPaused { return .secondary }
         switch overview.severity {
         case .error?: return .red

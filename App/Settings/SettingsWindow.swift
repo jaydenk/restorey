@@ -26,6 +26,9 @@ struct SettingsContext {
 /// The Settings window's content (UI design §6, mockup `v0.1-settings.html`): the section the toolbar picks.
 /// General and Plans are here; Network is the next build's.
 struct SettingsWindow: View {
+    /// The narrowest every section fits in: General and History need about 760, Plans its tabs (`PlansPane`).
+    @MainActor static var minimumWidth: CGFloat { max(760, PlansPane.minimumWidth.rounded(.up)) }
+
     let context: SettingsContext
     @Bindable var state: ShellState
     let editorSlot: PlanEditorSlot
@@ -46,7 +49,10 @@ struct SettingsWindow: View {
                     .padding(16)
             }
         }
-        .frame(minWidth: 760, idealWidth: 780, minHeight: 520, idealHeight: 560)
+        // Wide enough for every section, Plans' row of seven tabs the widest (measured, not guessed: a fixed 760
+        // let the tabs overflow, and the hosting view centred the overflow, clipping both edges; Task 14c R1).
+        .frame(
+            minWidth: Self.minimumWidth, idealWidth: Self.minimumWidth + 20, minHeight: 520, idealHeight: 560)
         .environment(context.supervisor)
         // Here rather than in Plans: a route from the menu can ask for another plan while any section shows.
         .alert(

@@ -472,7 +472,6 @@ public enum MenuPresentation {
 
 // MARK: - Helpers
 
-/// The inputs that shape text: the time, calendar and locale.
 /// The menu's words for a plan's backups, shared by its plan line and the Overview tab so neither has a copy.
 private enum Words {
     static func backedUp(_ backup: RunRecord, _ format: TextContext) -> String {
@@ -508,8 +507,10 @@ private enum Words {
 
 // MARK: Overview
 
-/// A plan's Overview tab in Settings (Task 14c, owner 15 Nov 2026): the menu's line for the plan, its last and next
-/// backup, and the menu's actions for it, enabled as the menu's items are.
+/// A plan's Overview tab in Settings (Task 14c, owner 15 Nov 2026; layout ruling R1). The headline is the plan's state
+/// only ("Up to date", "Backing up — 42%", "Backup failed", "Stopped", …) with the menu's reason where it has one; the
+/// times are only in the Last backup and Next backup rows, worded to follow their labels ("Today at 17:10"); and the
+/// menu's actions for the plan, enabled as the menu's items are.
 public struct PlanOverview: Sendable, Equatable {
     public struct Button: Sendable, Equatable {
         public enum Kind: Sendable, Hashable {
@@ -533,29 +534,37 @@ public struct PlanOverview: Sendable, Equatable {
         }
     }
 
-    /// The menu's line: "Backing up", "Backed up at 14:16", "Backup failed at 14:18", "Paused", "Stopped", … or, while
-    /// the agent can't be asked, why.
-    public var status: String
-    public var statusDetail: String?
+    /// One of the two time rows: the value reads after its label ("Last backup: Today at 17:10").
+    public struct Row: Sendable, Equatable {
+        public var value: String
+        public var detail: String?
+
+        public init(value: String, detail: String?) {
+            self.value = value
+            self.detail = detail
+        }
+    }
+
+    /// The plan's state, never a time.
+    public var headline: String
+    /// The menu's reason for the state: a failure's or a stop's cause, what needs attention, a backup's progress.
+    public var reason: String?
     public var progress: Double?
+    /// The headline's colour. Set only when the plan itself needs attention, and then the reason (or the headline)
+    /// says why.
     public var severity: Severity?
     public var isPaused: Bool
-    public var destination: String?
-    /// "Backed up at 14:16", "Backup failed at 14:18", "No backup yet".
-    public var lastBackup: String
-    /// Why the last backup failed, or how many files it couldn't read.
-    public var lastBackupDetail: String?
-    /// "Next 15:16" or "Resumes by itself at 16:00"; nil while a backup runs or the plan is stopped (the status says
-    /// so) or nothing is due.
-    public var nextBackup: String?
-    /// Why the last scheduled run was skipped, if it was.
-    public var nextBackupDetail: String?
+    public var lastBackup: Row?
+    /// When the next backup is due, or when a pause ends; nil while one runs, while the plan is stopped or waits for
+    /// a new kit, or when nothing is due.
+    public var nextBackup: Row?
     /// Back Up Now, Pause while a backup runs, Resume while paused, Restore Files….
     public var buttons: [Button]
 }
 
 extension MenuPresentation {
-    /// The Overview for `planID` from the same inputs as the menu (`make`); nil when the status doesn't list the plan.
+    /// The Overview for `planID` from the same inputs as the menu (`make`): the plan's line and actions come from the
+    /// menu's own content. Nil when the status doesn't list the plan.
     public static func overview(
         planID: UUID, health: AgentHealthState, status: AgentStatus?, notificationsAuthorised: Bool?,
         rates: [UUID: Double], now: Date, calendar: Calendar, locale: Locale
@@ -565,51 +574,98 @@ extension MenuPresentation {
             health: health, status: status, notificationsAuthorised: notificationsAuthorised, rates: rates, now: now,
             calendar: calendar, locale: locale)
         let format = TextContext(now: now, calendar: calendar, locale: locale)
-        let line = content.plans.first { $0.id == planID }
         let choice = content.actions.plans.first { $0.id == planID }
 
-        let lastBackup: String
-        let lastBackupDetail: String?
-        if let failed = Words.failedBackup(plan) {
-            lastBackup = Words.backupFailed(failed, format)
-            lastBackupDetail = failed.outcome.failureReason
-        } else if let backup = plan.lastBackup {
-            lastBackup = Words.backedUp(backup, format)
-            lastBackupDetail = Words.unreadable(backup)
+        var overview = PlanOverview(
+            headline: "", reason: nil, progress: nil, severity: nil, isPaused: false,
+            lastBackup: lastBackupRow(plan, format), nextBackup: nextBackupRow(plan, format), buttons: [])
+        if let line = content.plans.first(where: { $0.id == planID }) {
+            headline(plan, line, format, into: &overview)
         } else {
-            lastBackup = Words.noBackup(plan)
-            lastBackupDetail = nil
+            // The agent can't be asked (not running, switched off, …): the menu's banner says why. Its colour is the
+            // agent's, and its detail is the reason.
+            let banner = content.banners.first
+            overview.headline = banner?.title ?? content.message ?? ""
+            overview.reason = banner?.detail
+            overview.severity = banner?.severity
         }
 
-        var nextBackup: String?
-        var nextBackupDetail: String?
+        overview.buttons = [PlanOverview.Button(kind: .backUpNow, enabled: choice?.canBackUp ?? false)]
+        if plan.phase.isRunning { overview.buttons.append(.init(kind: .pause, enabled: choice?.canPause ?? false)) }
+        if plan.phase.isPaused { overview.buttons.append(.init(kind: .resume, enabled: choice?.canResume ?? false)) }
+        overview.buttons.append(.init(kind: .restoreFiles, enabled: choice?.canRestore ?? false))
+        return overview
+    }
+
+    /// The headline from the menu's facts for the plan: its phase and alerts, and its line's reason and severity. The
+    /// colour is the plan line's own, never a banner's (a plan with no check-in URL has a warning banner in the menu,
+    /// but nothing wrong with its backups: review R1 (b)).
+    private static func headline(_ plan: PlanStatus, _ line: PlanLine, _ format: TextContext, into overview: inout PlanOverview) {
+        let alerts = Set(plan.alerts)
+        overview.severity = line.severity
+        switch plan.phase {
+        case .running:
+            overview.headline = line.progress.map { "Backing up — \(Int(($0 * 100).rounded()))%" } ?? "Backing up"
+            overview.progress = line.progress
+            overview.reason = line.detail
+            return
+        case .paused:
+            overview.headline = "Paused"
+            overview.isPaused = true
+            return
+        case .idle, .skipped, .stopped:
+            break
+        }
+        if alerts.contains(.backupFailed) {
+            overview.headline = "Backup failed"
+            overview.reason = line.detail
+        } else if alerts.contains(.noRecentSuccess) {
+            overview.headline = line.status
+            overview.reason = line.detail
+        } else if case .stopped = plan.phase {
+            overview.headline = "Stopped"
+            overview.reason = line.detail
+        } else if plan.setupState == .needsNewKit {
+            overview.headline = "Waiting for a new recovery kit"
+            overview.severity = .warning
+        } else {
+            // The menu's details for a settled plan end in "Next …" when nothing else is wrong; that time is the row's.
+            let next = plan.nextRunAt.map { Words.next($0, format) }
+            let reason = line.detail == next ? nil : line.detail
+            overview.reason = reason
+            if line.severity != nil {
+                overview.headline = "Needs attention"
+            } else {
+                overview.headline = plan.lastBackup == nil ? Words.noBackup(plan) : "Up to date"
+            }
+        }
+    }
+
+    /// The newest backup's day and time. While the menu shows a failed backup (the `backupFailed` alert), so does the
+    /// row, even when the failed run is no longer among the records the status carries (review minor 3).
+    private static func lastBackupRow(_ plan: PlanStatus, _ format: TextContext) -> PlanOverview.Row {
+        if plan.alerts.contains(.backupFailed) {
+            let failed = Words.failedBackup(plan)
+            return .init(value: failed.map { format.day($0.endedAt) } ?? "Not known", detail: "Failed")
+        }
+        if let backup = plan.lastBackup { return .init(value: format.day(backup.endedAt), detail: nil) }
+        return .init(value: "None yet", detail: nil)
+    }
+
+    private static func nextBackupRow(_ plan: PlanStatus, _ format: TextContext) -> PlanOverview.Row? {
         switch plan.phase {
         case .running, .stopped:
-            break
+            return nil
         case .paused(let until):
-            nextBackup = Words.resumes(until, format)
-        case .skipped(let reason):
-            nextBackup = plan.nextRunAt.map { Words.next($0, format) }
-            nextBackupDetail = reason.summary
-        case .idle:
-            nextBackup = plan.nextRunAt.map { Words.next($0, format) }
+            return .init(value: format.day(until), detail: "When the pause ends")
+        case .idle, .skipped:
+            guard plan.setupState == .complete else { return nil }
+            return plan.nextRunAt.map { .init(value: format.day($0), detail: nil) }
         }
-
-        var buttons = [PlanOverview.Button(kind: .backUpNow, enabled: choice?.canBackUp ?? false)]
-        if plan.phase.isRunning { buttons.append(.init(kind: .pause, enabled: choice?.canPause ?? false)) }
-        if plan.phase.isPaused { buttons.append(.init(kind: .resume, enabled: choice?.canResume ?? false)) }
-        buttons.append(.init(kind: .restoreFiles, enabled: choice?.canRestore ?? false))
-
-        return PlanOverview(
-            status: line?.status ?? content.banners.first?.title ?? content.message ?? "",
-            statusDetail: line?.detail ?? (line == nil ? content.banners.first?.detail : nil),
-            progress: line?.progress, severity: line?.severity ?? content.banners.first?.severity,
-            isPaused: line?.isPaused ?? false, destination: line?.destination, lastBackup: lastBackup,
-            lastBackupDetail: lastBackupDetail, nextBackup: nextBackup, nextBackupDetail: nextBackupDetail,
-            buttons: buttons)
     }
 }
 
+/// The inputs that shape text: the time, calendar and locale.
 private struct TextContext {
     var now: Date
     var calendar: Calendar
@@ -617,6 +673,19 @@ private struct TextContext {
 
     func time(_ date: Date) -> String {
         DisplayFormat.time(date, calendar: calendar, locale: locale)
+    }
+
+    /// "Today at 14:16", "Yesterday at 09:05", "Tomorrow at 09:00", otherwise "9 Nov at 09:05": a time that reads
+    /// after a label (the Overview's rows).
+    func day(_ date: Date) -> String {
+        if calendar.isDate(date, inSameDayAs: now) { return "Today at \(time(date))" }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
+            return "Yesterday at \(time(date))"
+        }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now), calendar.isDate(date, inSameDayAs: tomorrow) {
+            return "Tomorrow at \(time(date))"
+        }
+        return "\(DisplayFormat.dayAndMonth(date, calendar: calendar, locale: locale)) at \(time(date))"
     }
 
     /// "at 14:16" today, "yesterday at 09:05", otherwise "9 Nov at 09:05".

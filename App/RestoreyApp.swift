@@ -80,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let log = AppLog(identity: identity, kind: .app)
+        WindowActivation.log = log
 
         // The gate: a copy outside /Applications, or translocated, touches nothing of the agent's.
         switch InstallLocation.check() {

@@ -2,8 +2,10 @@ import Foundation
 import Testing
 @testable import RestoreyCore
 
-/// A plan's Overview tab in Settings (Task 14c, owner 15 Nov 2026): the menu's line for the plan, its last and next
-/// backup, and Back Up Now, Pause, Resume and Restore Files… enabled as the menu's items are. Brisbane time, en-AU.
+/// A plan's Overview tab in Settings (Task 14c, owner 15 Nov 2026; layout ruling R1): a headline with the plan's state
+/// only ("Up to date", "Backing up — 42%", "Backup failed", …) and the menu's reason where there is one, then the times,
+/// only in the Last backup and Next backup rows ("Today at 17:10"), and the menu's actions, enabled as its items are.
+/// Brisbane time, en-AU.
 struct PlanOverviewTests {
     private static let locale = Locale(identifier: "en_AU")
     private static let calendar: Calendar = {
@@ -13,19 +15,20 @@ struct PlanOverviewTests {
         return calendar
     }()
 
-    private static func at(_ hour: Int, _ minute: Int) -> Date {
-        calendar.date(from: DateComponents(year: 2026, month: 11, day: 15, hour: hour, minute: minute))!
+    private static func at(_ hour: Int, _ minute: Int, day: Int = 15) -> Date {
+        calendar.date(from: DateComponents(year: 2026, month: 11, day: day, hour: hour, minute: minute))!
     }
 
     private static let now = at(14, 20)
 
-    private static func plan(setup: Bool = true, kit: Bool = true) -> Plan {
+    private static func plan(setup: Bool = true, kit: Bool = true, checkIn: Bool = true) -> Plan {
         var plan = Plan.newHotPlan(
             name: "Local · repo", repository: .raw(repository: "/Users/me/restorey-test/repo", environmentNames: []),
             origin: .created, hostLabel: "mac", sources: ["/Users/me"], exclusions: [], now: now)
-        plan.hasCheckInURL = true
+        plan.hasCheckInURL = checkIn
         plan.setupCompletedAt = setup ? now : nil
         plan.recoveryKitConfirmedAt = kit && setup ? now : nil
+        plan.noSuccessAlertDays = 3
         return plan
     }
 
@@ -37,13 +40,15 @@ struct PlanOverviewTests {
 
     private static func status(
         _ plan: Plan = plan(), phase: PlanPhase = .idle, backup: RunOutcome? = .success(snapshotID: "a"),
-        failed: RunOutcome? = nil, next: Date? = at(15, 16), alerts: [AlertCondition] = []
+        backedUpAt: Date = at(14, 16), failed: RunOutcome? = nil, failedAt: Date = at(14, 18), next: Date? = at(15, 16),
+        alerts: [AlertCondition] = [], verdictKnown: Bool = true
     ) -> PlanStatus {
-        let good = backup.map { record(plan, $0, at: at(14, 16)) }
-        let bad = failed.map { record(plan, $0, at: at(14, 18)) }
+        let good = backup.map { record(plan, $0, at: backedUpAt) }
+        let bad = failed.map { record(plan, $0, at: failedAt) }
+        let verdict = verdictKnown ? bad ?? good : nil
         return PlanStatus(
             plan: plan, phase: phase, lastRecord: bad ?? good, nextRunAt: next, alerts: alerts, lastBackup: good,
-            latestBackupRecord: bad ?? good, latestBackupVerdict: bad ?? good)
+            latestBackupRecord: verdict, latestBackupVerdict: verdict)
     }
 
     private static func overview(_ plan: PlanStatus, health: AgentHealthState = .healthy) -> PlanOverview {
@@ -61,88 +66,175 @@ struct PlanOverviewTests {
         Dictionary(uniqueKeysWithValues: overview.buttons.map { ($0.kind, $0.enabled) })
     }
 
-    // MARK: Each state, in the menu's words
+    /// No time of day in the headline or its reason: times are the rows' alone (ruling R1).
+    private static func expectNoTimeOfDay(_ overview: PlanOverview, sourceLocation: SourceLocation = #_sourceLocation) {
+        let text = ([overview.headline] + [overview.reason].compactMap { $0 }).joined(separator: " ")
+        #expect(text.range(of: #"\d{1,2}:\d{2}"#, options: .regularExpression) == nil, sourceLocation: sourceLocation)
+    }
 
-    @Test func anIdlePlanSaysWhenItLastAndNextBacksUp() {
-        let plan = Self.status()
-        let overview = Self.overview(plan)
-        #expect(overview.status == Self.menuLine(plan).status)
-        #expect(overview.status == "Backed up at 14:16")
-        #expect(overview.lastBackup == "Backed up at 14:16")
-        #expect(overview.nextBackup == "Next 15:16")
+    // MARK: Each state
+
+    @Test func anIdlePlanIsUpToDateWithItsTimesInTheRows() {
+        let overview = Self.overview(Self.status())
+        #expect(overview.headline == "Up to date")
+        #expect(overview.reason == nil)
+        #expect(overview.severity == nil)
+        #expect(overview.lastBackup == .init(value: "Today at 14:16", detail: nil))
+        #expect(overview.nextBackup == .init(value: "Today at 15:16", detail: nil))
         #expect(Self.enabled(overview) == [.backUpNow: true, .restoreFiles: true])
+        Self.expectNoTimeOfDay(overview)
+    }
+
+    /// Review R1 (b): the plan's off-Mac banner (no check-in URL) colours the menu's banner, never the plan's
+    /// headline, which has nothing that needs attention.
+    @Test func aPlanBannerDoesntColourTheHeadline() {
+        let overview = Self.overview(Self.status(Self.plan(checkIn: false)))
+        #expect(overview.headline == "Up to date")
+        #expect(overview.severity == nil)
     }
 
     @Test func aRunningBackupShowsItsProgressAndCanBePaused() {
         let progress = BackupStatus(percentDone: 0.42, totalBytes: 1_000_000_000, bytesDone: 420_000_000)
         let plan = Self.status(phase: .running(progress, retrying: nil))
         let overview = Self.overview(plan)
-        let line = Self.menuLine(plan)
-        #expect(overview.status == "Backing up")
-        #expect(overview.statusDetail == line.detail)
+        #expect(overview.headline == "Backing up — 42%")
+        #expect(overview.reason == Self.menuLine(plan).detail)
         #expect(overview.progress == 0.42)
         #expect(overview.nextBackup == nil)
         #expect(Self.enabled(overview) == [.backUpNow: false, .pause: true, .restoreFiles: true])
     }
 
-    @Test func aFailedBackupSaysWhenAndWhy() {
-        let plan = Self.status(failed: .wrongPassword, alerts: [.backupFailed])
-        let overview = Self.overview(plan)
-        #expect(overview.status == Self.menuLine(plan).status)
-        #expect(overview.status == "Backup failed at 14:18")
-        #expect(overview.statusDetail == "wrong password")
-        #expect(overview.severity == .error)
-        #expect(overview.lastBackup == "Backup failed at 14:18")
-        #expect(overview.lastBackupDetail == "wrong password")
+    @Test func aBackupWithNoProgressYetIsJustBackingUp() {
+        #expect(Self.overview(Self.status(phase: .running(nil, retrying: nil))).headline == "Backing up")
     }
 
-    @Test func aPausedPlanSaysWhenItResumesAndCanBeResumed() {
+    @Test func aFailedBackupSaysWhyAndTheRowSaysWhen() {
+        let plan = Self.status(failed: .wrongPassword, alerts: [.backupFailed])
+        let overview = Self.overview(plan)
+        #expect(overview.headline == "Backup failed")
+        #expect(overview.reason == "wrong password")
+        #expect(overview.reason == Self.menuLine(plan).detail)
+        #expect(overview.severity == .error)
+        #expect(overview.lastBackup == .init(value: "Today at 14:18", detail: "Failed"))
+        Self.expectNoTimeOfDay(overview)
+    }
+
+    /// Review minor 3: the Last backup row follows an active `backupFailed` alert, as the headline does, even when the
+    /// failed run has aged out of the records the status carries.
+    @Test func anActiveFailureAlertWinsOverAnOlderSuccess() {
+        let plan = Self.status(alerts: [.backupFailed], verdictKnown: false)
+        let overview = Self.overview(plan)
+        #expect(overview.headline == "Backup failed")
+        #expect(overview.lastBackup == .init(value: "Not known", detail: "Failed"))
+    }
+
+    @Test func aPausedPlanSaysWhenItResumes() {
         let plan = Self.status(phase: .paused(until: Self.at(16, 0)))
         let overview = Self.overview(plan)
-        #expect(overview.status == "Paused")
+        #expect(overview.headline == "Paused")
         #expect(overview.isPaused)
-        #expect(overview.nextBackup == "Resumes by itself at 16:00")
-        #expect(overview.nextBackup == Self.menuLine(plan).detail)
+        #expect(overview.reason == nil)
+        #expect(overview.nextBackup == .init(value: "Today at 16:00", detail: "When the pause ends"))
         #expect(Self.enabled(overview) == [.backUpNow: true, .resume: true, .restoreFiles: true])
+        Self.expectNoTimeOfDay(overview)
     }
 
     @Test func aStoppedPlanSaysWhy() {
-        let plan = Self.status(phase: .stopped(reason: "The repository password is wrong"))
-        let overview = Self.overview(plan)
-        #expect(overview.status == "Stopped")
-        #expect(overview.statusDetail == "The repository password is wrong")
+        let overview = Self.overview(Self.status(phase: .stopped(reason: "The repository password is wrong")))
+        #expect(overview.headline == "Stopped")
+        #expect(overview.reason == "The repository password is wrong")
+        #expect(overview.severity == .error)
         #expect(overview.nextBackup == nil)
         #expect(Self.enabled(overview) == [.backUpNow: true, .restoreFiles: true])
     }
 
-    @Test func aPlanNeedingANewKitCantBackUpOrPause() {
-        let plan = Self.status(Self.plan(kit: false))
-        let overview = Self.overview(plan)
-        #expect(overview.status == Self.menuLine(plan).status)
+    @Test func aPlanNeedingANewKitIsWaitingForIt() {
+        let overview = Self.overview(Self.status(Self.plan(kit: false)))
+        #expect(overview.headline == "Waiting for a new recovery kit")
+        #expect(overview.severity == .warning)
         #expect(Self.enabled(overview) == [.backUpNow: false, .restoreFiles: true])
     }
 
     @Test func aPlanThatNeverRanSaysSo() {
-        let plan = Self.status(backup: nil)
-        let overview = Self.overview(plan)
-        #expect(overview.status == "No backup yet")
-        #expect(overview.lastBackup == "No backup yet")
-        #expect(overview.nextBackup == "Next 15:16")
+        let overview = Self.overview(Self.status(backup: nil))
+        #expect(overview.headline == "No backup yet")
+        #expect(overview.lastBackup == .init(value: "None yet", detail: nil))
+        #expect(overview.nextBackup == .init(value: "Today at 15:16", detail: nil))
     }
 
-    @Test func aWarningSaysHowManyFilesCouldntBeRead() {
+    @Test func aWarningNeedsAttentionWithTheMenusReason() {
         let plan = Self.status(backup: .warning(unreadable: 2))
         let overview = Self.overview(plan)
-        #expect(overview.lastBackup == "Backed up at 14:16")
-        #expect(overview.lastBackupDetail == "2 files couldn't be read")
+        #expect(overview.headline == "Needs attention")
+        #expect(overview.reason == "2 files couldn't be read")
+        #expect(overview.severity == .warning)
+        #expect(overview.lastBackup == .init(value: "Today at 14:16", detail: nil))
     }
 
-    /// The agent not answering: nothing can be asked of it, as in the menu, and the status says why.
+    @Test func aSkippedRunNeedsAttentionWithItsReason() {
+        let plan = Self.status(phase: .skipped(.volumeNotMounted("Photos")))
+        let overview = Self.overview(plan)
+        #expect(overview.headline == "Needs attention")
+        #expect(overview.reason == "Skipped: Photos isn't connected")
+    }
+
+    @Test func noRecentSuccessKeepsTheMenusWords() {
+        let plan = Self.status(alerts: [.noRecentSuccess])
+        let overview = Self.overview(plan)
+        #expect(overview.headline == "No successful backup in 3 days")
+        #expect(overview.headline == Self.menuLine(plan).status)
+        #expect(overview.severity == .error)
+    }
+
+    @Test func rowsNameTheDay() {
+        let plan = Self.status(backedUpAt: Self.at(9, 5, day: 14), next: Self.at(9, 0, day: 16))
+        let overview = Self.overview(plan)
+        #expect(overview.lastBackup?.value == "Yesterday at 09:05")
+        #expect(overview.nextBackup?.value == "Tomorrow at 09:00")
+        let older = Self.overview(Self.status(backedUpAt: Self.at(9, 5, day: 9), next: Self.at(9, 0, day: 18)))
+        #expect(older.lastBackup?.value == "9 Nov at 09:05")
+        #expect(older.nextBackup?.value == "18 Nov at 09:00")
+    }
+
+    /// Ruling R1 (b): a coloured headline always comes with its reason, or is the reason itself.
+    @Test func aColouredHeadlineAlwaysSaysWhy() {
+        let selfExplaining: Set<String> = [
+            "Backup failed", "Stopped", "Waiting for a new recovery kit", "No successful backup in 3 days",
+        ]
+        let states = [
+            Self.status(), Self.status(Self.plan(checkIn: false)), Self.status(backup: .warning(unreadable: 1)),
+            Self.status(phase: .skipped(.onBattery)), Self.status(failed: .wrongPassword, alerts: [.backupFailed]),
+            Self.status(phase: .stopped(reason: "x")), Self.status(Self.plan(kit: false)),
+            Self.status(alerts: [.noRecentSuccess]), Self.status(alerts: [.checkFailed]),
+        ]
+        for state in states {
+            let overview = Self.overview(state)
+            if overview.severity != nil {
+                #expect(overview.reason != nil || selfExplaining.contains(overview.headline), "\(overview.headline)")
+            }
+        }
+    }
+
+    // MARK: The agent not answering, and the buttons
+
     @Test func anAgentThatIsntRunningDisablesEverything() {
-        let plan = Self.status()
-        let overview = Self.overview(plan, health: .notRunning(reachable: true))
-        #expect(overview.status == "The background agent isn't running")
+        let overview = Self.overview(Self.status(), health: .notRunning(reachable: true))
+        #expect(overview.headline == "The background agent isn't running")
+        #expect(overview.reason == "No backups will happen.")
         #expect(Self.enabled(overview) == [.backUpNow: false, .restoreFiles: false])
+    }
+
+    /// Review minor 5: Pause and Resume follow the menu's enablement, not just the phase.
+    @Test func pauseAndResumeAreDisabledWhenTheAgentCantBeAsked() {
+        let running = Self.status(phase: .running(nil, retrying: nil))
+        #expect(Self.enabled(Self.overview(running, health: .notRunning(reachable: true)))[.pause] == false)
+        let paused = Self.status(phase: .paused(until: Self.at(16, 0)))
+        #expect(Self.enabled(Self.overview(paused, health: .notRunning(reachable: true)))[.resume] == false)
+    }
+
+    @Test func aPausedPlanNeedingANewKitCantBeResumedHere() {
+        let paused = Self.status(Self.plan(kit: false), phase: .paused(until: Self.at(16, 0)))
+        #expect(Self.enabled(Self.overview(paused))[.resume] == false)
     }
 
     @Test func aPlanTheStatusDoesntListHasNoOverview() {
@@ -153,7 +245,8 @@ struct PlanOverviewTests {
         #expect(overview == nil)
     }
 
-    @Test func theButtonsAreInTheMenusOrder() {
+    /// The brief's order (Back Up Now first); the menu lists Resume first.
+    @Test func theButtonsAreInTheBriefsOrderWithTheMenusTitles() {
         let paused = Self.overview(Self.status(phase: .paused(until: Self.at(16, 0))))
         #expect(paused.buttons.map(\.kind) == [.backUpNow, .resume, .restoreFiles])
         #expect(paused.buttons.map(\.title) == ["Back Up Now", "Resume", "Restore Files…"])

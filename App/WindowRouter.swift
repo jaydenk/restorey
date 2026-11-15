@@ -108,7 +108,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             // A plan asked for (the menu's plan line, "Add…") opens on the Overview unless the route names a tab;
             // Settings brought forward as it is keeps its tab (Task 14c).
             state.requestPlan(
-                route.planID, tab: tab, landing: planID == nil ? nil : .overview,
+                route.planID, tab: tab, landing: planRequestLandsOnFirstTab(.route(planID: planID)) ? .overview : nil,
                 editing: planEditorSlot?.unsavedPlanID)
         }
         guard let supervisor, let loginItem else { return }

@@ -25,4 +25,21 @@ public enum AboutPanel {
                 && !(window.identifier.map(ownIdentifiers.contains) ?? false)
         }?.number
     }
+
+    /// What happened to the panel, as `WindowActivation` hears it.
+    public enum Event: Sendable {
+        case willClose
+        /// Hidden or shown again: Restorey deactivated, ⌘H, another window over it.
+        case occlusionChanged
+        case resignedKey
+    }
+
+    /// Whether `event` ends the panel's count. Only a close does: a panel hidden by deactivation or ⌘H is still open,
+    /// and comes back with Restorey (Task 14c).
+    public static func endsCount(_ event: Event) -> Bool {
+        switch event {
+        case .willClose: true
+        case .occlusionChanged, .resignedKey: false
+        }
+    }
 }
