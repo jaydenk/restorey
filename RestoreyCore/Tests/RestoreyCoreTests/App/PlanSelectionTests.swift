@@ -87,4 +87,35 @@ struct PlanSelectionTests {
         // No tab asked for: none to apply.
         #expect(selection.request(first, editing: nil) == nil)
     }
+
+    // MARK: The tab a request lands on (Task 14c)
+
+    /// Picking a plan in the sidebar, or opening one from the menu, lands on its Overview.
+    @Test func aPlanAskedForLandsOnTheLandingTab() {
+        var selection = PlanSelection<String>()
+        #expect(selection.request(first, landing: "overview", editing: nil) == "overview")
+        #expect(selection.request(second, landing: "overview", editing: nil) == "overview")
+    }
+
+    /// A route that names a tab keeps it: Alerts for "No off-Mac monitoring — Add…".
+    @Test func aNamedTabIsKept() {
+        var selection = PlanSelection<String>()
+        #expect(selection.request(first, tab: "alerts", landing: "overview", editing: nil) == "alerts")
+    }
+
+    /// Settings brought forward as it is (no plan asked for) keeps the tab shown.
+    @Test func noLandingKeepsTheTabShown() {
+        var selection = PlanSelection<String>()
+        #expect(selection.request(first, editing: nil) == nil)
+    }
+
+    /// A switch waiting on the discard question lands on the Overview once confirmed, or on the tab it named.
+    @Test func aWaitingSwitchLandsWhereItWouldHave() {
+        var selection = PlanSelection<String>()
+        selection.request(first, editing: nil)
+        #expect(selection.request(second, landing: "overview", editing: first) == nil)
+        #expect(selection.confirm() == "overview")
+        selection.request(first, tab: "alerts", landing: "overview", editing: second)
+        #expect(selection.confirm() == "alerts")
+    }
 }

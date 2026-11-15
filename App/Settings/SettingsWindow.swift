@@ -17,6 +17,8 @@ struct SettingsContext {
     /// forward instead.
     let addPlan: () -> AddPlanStart?
     let showRecoveryKit: (UUID) -> Void
+    /// The Overview tab's "Restore Files…", as the menu's.
+    let showRestoreFiles: (UUID) -> Void
     /// A plan was deleted: setup progress that names it is forgotten (live finding 2).
     let planDeleted: (UUID) -> Void
 }

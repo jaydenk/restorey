@@ -29,18 +29,23 @@ public struct PlanSelection<Tab: Sendable & Equatable>: Sendable, Equatable {
 
     /// `editing`: the plan whose unsaved edits are open, or nil when nothing is unsaved. A request for a different
     /// plan then waits; one for the same plan, or for none in particular (a route that names only a section), keeps
-    /// the plan being edited and asks nothing. Returns the tab to show now: `tab` when the request was carried out
-    /// or kept the plan shown, nil while it waits.
+    /// the plan being edited and asks nothing.
+    ///
+    /// `landing`: the tab a request that asks for a plan opens on when it names no tab of its own (the Overview, for a
+    /// sidebar pick or a plan opened from the menu, Task 14c); nil keeps the tab shown (Settings brought forward as it
+    /// is). Returns the tab to show now, `tab ?? landing`, when the request was carried out or kept the plan shown;
+    /// nil while it waits, and that tab is handed back by `confirm`.
     @discardableResult
-    public mutating func request(_ planID: UUID?, tab: Tab? = nil, editing: UUID?) -> Tab? {
+    public mutating func request(_ planID: UUID?, tab: Tab? = nil, landing: Tab? = nil, editing: UUID?) -> Tab? {
+        let shown = tab ?? landing
         if let editing {
-            guard let planID, planID != editing else { return tab }
-            pending = Pending(planID: planID, tab: tab)
+            guard let planID, planID != editing else { return shown }
+            pending = Pending(planID: planID, tab: shown)
             return nil
         }
         selected = planID
         pending = nil
-        return tab
+        return shown
     }
 
     /// "Discard Changes": the waiting request is carried out. Returns its tab, to show now.

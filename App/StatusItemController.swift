@@ -191,19 +191,19 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
         case .openPlan(let planID):
             router.showSettings(section: .plans, planID: planID)
         case .backUpAll:
-            run("Restorey couldn't start the backup") { [await connection.backUpNow(nil).map(\.status)] }
+            AgentActions.backUpNow(nil, connection)
         case .backUp(let planID):
-            run("Restorey couldn't start the backup") { [await connection.backUpNow(planID).map(\.status)] }
+            AgentActions.backUpNow(planID, connection)
         case .pauseAll:
             let plans = choices(supervisor).filter(\.canPause).map(\.id)
-            run("Restorey couldn't pause the backup") { await Self.each(plans, connection.pause) }
+            AgentActions.pause(plans, connection)
         case .pause(let planID):
-            run("Restorey couldn't pause the backup") { [await connection.pause(planID)] }
+            AgentActions.pause([planID], connection)
         case .resumeAll:
             let plans = choices(supervisor).filter(\.canResume).map(\.id)
-            run("Restorey couldn't resume the backup") { await Self.each(plans, connection.resume) }
+            AgentActions.resume(plans, connection)
         case .resume(let planID):
-            run("Restorey couldn't resume the backup") { [await connection.resume(planID)] }
+            AgentActions.resume([planID], connection)
         case .restoreFiles(let planID):
             router.showRestoreFiles(planID: planID)
         case .settings:
@@ -232,7 +232,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
             router.showSettings(section: .plans, planID: planID, tab: .alerts)
         case .dismissOffMacNote(let planID):
             let connection = supervisor.connection
-            run("Restorey couldn't dismiss the note") { [await connection.dismissOffMacNote(planID)] }
+            AgentActions.run("Restorey couldn't dismiss the note") { [await connection.dismissOffMacNote(planID)] }
         case .finishSetup, .setUp:
             router.showSetup()
         case .saveRecoveryKit(let planID):
@@ -245,28 +245,5 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
     /// The plans as the menu showed them, for "All Plans".
     private func choices(_ supervisor: AgentSupervisor) -> [PlanChoice] {
         content(supervisor).actions.plans
-    }
-
-    private static func each(
-        _ plans: [UUID], _ call: (UUID) async -> Result<AgentStatus, AgentCallError>
-    ) async -> [Result<AgentStatus, AgentCallError>] {
-        var results: [Result<AgentStatus, AgentCallError>] = []
-        for plan in plans { results.append(await call(plan)) }
-        return results
-    }
-
-    /// Runs the calls; the first failure is shown in an alert. Each reply is a status, which the connection hands
-    /// to the supervisor, so the menu shows the change.
-    private func run(_ failureTitle: String, _ calls: @escaping @MainActor () async -> [Result<AgentStatus, AgentCallError>]) {
-        Task {
-            for result in await calls() {
-                guard case .failure(let error) = result else { continue }
-                let alert = NSAlert()
-                alert.messageText = failureTitle
-                alert.informativeText = error.description
-                WindowActivation.runModal(alert)
-                return
-            }
-        }
     }
 }

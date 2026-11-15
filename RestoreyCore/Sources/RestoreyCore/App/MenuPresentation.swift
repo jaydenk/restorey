@@ -322,7 +322,7 @@ public enum MenuPresentation {
         case .paused(let until):
             line.status = "Paused"
             line.isPaused = true
-            line.detail = "Resumes by itself at \(format.time(until))"
+            line.detail = Words.resumes(until, format)
         case .idle, .skipped, .stopped:
             settled(status, into: &line, format)
         }
@@ -346,8 +346,8 @@ public enum MenuPresentation {
     private static func settled(_ status: PlanStatus, into line: inout PlanLine, _ format: TextContext) {
         let alerts = Set(status.alerts)
         if alerts.contains(.backupFailed) {
-            let failed = status.latestBackupVerdict.flatMap { $0.outcome.failureReason == nil ? nil : $0 }
-            line.status = failed.map { "Backup failed at \(format.time($0.endedAt))" } ?? "Backup failed"
+            let failed = Words.failedBackup(status)
+            line.status = Words.backupFailed(failed, format)
             if let reason = failed?.outcome.failureReason {
                 line.detail = reason
             } else if case .stopped(let reason) = status.phase {
@@ -380,12 +380,10 @@ public enum MenuPresentation {
         }
 
         if let backup = status.lastBackup {
-            line.status = "Backed up \(format.when(backup.endedAt))"
-            if case .warning(let unreadable) = backup.outcome {
-                flag("\(unreadable) \(unreadable == 1 ? "file" : "files") couldn't be read", .warning)
-            }
+            line.status = Words.backedUp(backup, format)
+            if let unreadable = Words.unreadable(backup) { flag(unreadable, .warning) }
         } else {
-            line.status = status.setupState == .unfinished ? "Not backing up yet" : "No backup yet"
+            line.status = Words.noBackup(status)
         }
         if case .skipped(let reason) = status.phase {
             if status.lastBackup == nil {
@@ -399,7 +397,7 @@ public enum MenuPresentation {
         if alerts.contains(.checkFailed) { flag("The repository check failed", .error) }
         if alerts.contains(.configurationError) { flag("There's a problem with this plan's settings", .error) }
 
-        if details.isEmpty, let next = status.nextRunAt { details = ["Next \(format.time(next))"] }
+        if details.isEmpty, let next = status.nextRunAt { details = [Words.next(next, format)] }
         line.detail = details.isEmpty ? nil : details.joined(separator: " · ")
         line.severity = severity
     }
@@ -475,6 +473,143 @@ public enum MenuPresentation {
 // MARK: - Helpers
 
 /// The inputs that shape text: the time, calendar and locale.
+/// The menu's words for a plan's backups, shared by its plan line and the Overview tab so neither has a copy.
+private enum Words {
+    static func backedUp(_ backup: RunRecord, _ format: TextContext) -> String {
+        "Backed up \(format.when(backup.endedAt))"
+    }
+
+    /// The plan's newest backup verdict, when it failed with a reason.
+    static func failedBackup(_ status: PlanStatus) -> RunRecord? {
+        status.latestBackupVerdict.flatMap { $0.outcome.failureReason == nil ? nil : $0 }
+    }
+
+    static func backupFailed(_ failed: RunRecord?, _ format: TextContext) -> String {
+        failed.map { "Backup failed at \(format.time($0.endedAt))" } ?? "Backup failed"
+    }
+
+    static func unreadable(_ backup: RunRecord) -> String? {
+        guard case .warning(let unreadable) = backup.outcome else { return nil }
+        return "\(unreadable) \(unreadable == 1 ? "file" : "files") couldn't be read"
+    }
+
+    static func noBackup(_ status: PlanStatus) -> String {
+        status.setupState == .unfinished ? "Not backing up yet" : "No backup yet"
+    }
+
+    static func resumes(_ until: Date, _ format: TextContext) -> String {
+        "Resumes by itself at \(format.time(until))"
+    }
+
+    static func next(_ date: Date, _ format: TextContext) -> String {
+        "Next \(format.time(date))"
+    }
+}
+
+// MARK: Overview
+
+/// A plan's Overview tab in Settings (Task 14c, owner 15 Nov 2026): the menu's line for the plan, its last and next
+/// backup, and the menu's actions for it, enabled as the menu's items are.
+public struct PlanOverview: Sendable, Equatable {
+    public struct Button: Sendable, Equatable {
+        public enum Kind: Sendable, Hashable {
+            case backUpNow
+            case pause
+            case resume
+            case restoreFiles
+        }
+
+        public var kind: Kind
+        public var enabled: Bool
+
+        /// The menu item's title.
+        public var title: String {
+            switch kind {
+            case .backUpNow: "Back Up Now"
+            case .pause: "Pause"
+            case .resume: "Resume"
+            case .restoreFiles: "Restore Files…"
+            }
+        }
+    }
+
+    /// The menu's line: "Backing up", "Backed up at 14:16", "Backup failed at 14:18", "Paused", "Stopped", … or, while
+    /// the agent can't be asked, why.
+    public var status: String
+    public var statusDetail: String?
+    public var progress: Double?
+    public var severity: Severity?
+    public var isPaused: Bool
+    public var destination: String?
+    /// "Backed up at 14:16", "Backup failed at 14:18", "No backup yet".
+    public var lastBackup: String
+    /// Why the last backup failed, or how many files it couldn't read.
+    public var lastBackupDetail: String?
+    /// "Next 15:16" or "Resumes by itself at 16:00"; nil while a backup runs or the plan is stopped (the status says
+    /// so) or nothing is due.
+    public var nextBackup: String?
+    /// Why the last scheduled run was skipped, if it was.
+    public var nextBackupDetail: String?
+    /// Back Up Now, Pause while a backup runs, Resume while paused, Restore Files….
+    public var buttons: [Button]
+}
+
+extension MenuPresentation {
+    /// The Overview for `planID` from the same inputs as the menu (`make`); nil when the status doesn't list the plan.
+    public static func overview(
+        planID: UUID, health: AgentHealthState, status: AgentStatus?, notificationsAuthorised: Bool?,
+        rates: [UUID: Double], now: Date, calendar: Calendar, locale: Locale
+    ) -> PlanOverview? {
+        guard let plan = status?.plans.first(where: { $0.plan.id == planID }) else { return nil }
+        let content = make(
+            health: health, status: status, notificationsAuthorised: notificationsAuthorised, rates: rates, now: now,
+            calendar: calendar, locale: locale)
+        let format = TextContext(now: now, calendar: calendar, locale: locale)
+        let line = content.plans.first { $0.id == planID }
+        let choice = content.actions.plans.first { $0.id == planID }
+
+        let lastBackup: String
+        let lastBackupDetail: String?
+        if let failed = Words.failedBackup(plan) {
+            lastBackup = Words.backupFailed(failed, format)
+            lastBackupDetail = failed.outcome.failureReason
+        } else if let backup = plan.lastBackup {
+            lastBackup = Words.backedUp(backup, format)
+            lastBackupDetail = Words.unreadable(backup)
+        } else {
+            lastBackup = Words.noBackup(plan)
+            lastBackupDetail = nil
+        }
+
+        var nextBackup: String?
+        var nextBackupDetail: String?
+        switch plan.phase {
+        case .running, .stopped:
+            break
+        case .paused(let until):
+            nextBackup = Words.resumes(until, format)
+        case .skipped(let reason):
+            nextBackup = plan.nextRunAt.map { Words.next($0, format) }
+            nextBackupDetail = reason.summary
+        case .idle:
+            nextBackup = plan.nextRunAt.map { Words.next($0, format) }
+        }
+
+        var buttons = [PlanOverview.Button(kind: .backUpNow, enabled: choice?.canBackUp ?? false)]
+        if plan.phase.isRunning { buttons.append(.init(kind: .pause, enabled: choice?.canPause ?? false)) }
+        if plan.phase.isPaused { buttons.append(.init(kind: .resume, enabled: choice?.canResume ?? false)) }
+        buttons.append(.init(kind: .restoreFiles, enabled: choice?.canRestore ?? false))
+
+        return PlanOverview(
+            status: line?.status ?? content.banners.first?.title ?? content.message ?? "",
+            statusDetail: line?.detail ?? (line == nil ? content.banners.first?.detail : nil),
+            progress: line?.progress, severity: line?.severity ?? content.banners.first?.severity,
+            isPaused: line?.isPaused ?? false, destination: line?.destination, lastBackup: lastBackup,
+            lastBackupDetail: lastBackupDetail, nextBackup: nextBackup, nextBackupDetail: nextBackupDetail,
+            buttons: buttons)
+    }
+}
+
 private struct TextContext {
     var now: Date
     var calendar: Calendar

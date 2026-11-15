@@ -274,6 +274,12 @@ needing a new kit shows "New recovery kit needed" with "Save Recovery Kit…"; a
 "Stopped" and its reason, as its line in the menu does. The sidebar notes the same under each plan's name, one at a
 time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`PlanNote`). Every other plan has tabs:
 
+- **Overview**, first and where a plan opens (picked in the sidebar, the menu's plan line, a new Settings window; a
+  route that names a tab, such as "Add…" for Alerts, keeps it): the menu's line for the plan, its last backup and the
+  next one, and Back Up Now, Pause while a backup runs, Resume while paused and Restore Files…, enabled as the menu's
+  items are and asking the agent the same way (`MenuPresentation.overview`, `AgentActions`). It follows the agent
+  live, progress included.
+
 - **What**: its name, the folders and drives, and the exclusions (setup's line and "Review Exclusions…" sheet).
 - **Schedule**: the interval, the battery rule and the plan's own upload limit in MB/s (empty, the default, is none;
   a networked repository also gets its share of the Mac-wide limit, the smaller winning, Ruling P2-7).

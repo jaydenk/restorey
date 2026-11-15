@@ -18,7 +18,7 @@ final class ShellState {
     /// section and when Settings closes, so History opened later starts with every plan.
     var historyFilter: HistoryFilterRequest?
     /// The plan's tab shown in Plans; kept as the user switches plans.
-    var settingsPlanTab: PlanTab = .what
+    var settingsPlanTab: PlanTab = .overview
     /// The status item's `isVisible` is false: the user hid it (System Settings → Menu Bar, or dragged it out).
     /// A status item squeezed out of a full menu bar still reads visible (`NSStatusItem.isVisible`).
     var statusItemHidden = false
@@ -28,8 +28,9 @@ final class ShellState {
     /// the discard question (`PlanSelection`).
     /// A tab named with the plan (the menu's "Add…" opens Alerts) shows once the switch happens, now or after
     /// "Discard Changes".
-    func requestPlan(_ planID: UUID?, tab: PlanTab? = nil, editing: UUID?) {
-        if let tab = planSelection.request(planID, tab: tab, editing: editing) { settingsPlanTab = tab }
+    /// `landing`: the tab a request for a plan opens on when it names none (the Overview); nil keeps the tab shown.
+    func requestPlan(_ planID: UUID?, tab: PlanTab? = nil, landing: PlanTab? = nil, editing: UUID?) {
+        if let tab = planSelection.request(planID, tab: tab, landing: landing, editing: editing) { settingsPlanTab = tab }
     }
 
     func confirmPlanSwitch() {
@@ -104,7 +105,11 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             // A plan asked for in History is the list's filter, not the plan Plans shows.
             if section != nil || planID != nil { state.historyFilter = HistoryFilterRequest(planID: route.planID) }
         } else {
-            state.requestPlan(route.planID, tab: tab, editing: planEditorSlot?.unsavedPlanID)
+            // A plan asked for (the menu's plan line, "Add…") opens on the Overview unless the route names a tab;
+            // Settings brought forward as it is keeps its tab (Task 14c).
+            state.requestPlan(
+                route.planID, tab: tab, landing: planID == nil ? nil : .overview,
+                editing: planEditorSlot?.unsavedPlanID)
         }
         guard let supervisor, let loginItem else { return }
         let context = SettingsContext(
@@ -113,6 +118,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             openSetup: { [weak self] in self?.showSetup(progress: $0) },
             addPlan: { [weak self] in self?.addPlan() },
             showRecoveryKit: { [weak self] in self?.showRecoveryKit(planID: $0) },
+            showRestoreFiles: { [weak self] in self?.showRestoreFiles(planID: $0) },
             planDeleted: { [weak self] in self?.planDeleted($0) })
         show(.settings, configure: { [weak self, state] window in
             window.styleMask.insert(.resizable)
@@ -302,6 +308,8 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             restoreFilesModel = nil
         case .settings:
             state.historyFilter = nil
+            // A new Settings window opens a plan on its Overview (Task 14c).
+            state.settingsPlanTab = .overview
             planEditorSlot?.close()
             planEditorSlot = nil
             settingsToolbar = nil

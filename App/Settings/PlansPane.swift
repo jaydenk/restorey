@@ -88,7 +88,7 @@ struct PlansPane: View {
     /// Through the one guard (`ShellState.requestPlan`): a switch away from unsaved edits asks first.
     private func choose(_ id: UUID?) {
         guard let id, id != selectedID else { return }
-        state.requestPlan(id, editing: slot.unsavedPlanID)
+        state.requestPlan(id, landing: .overview, editing: slot.unsavedPlanID)
     }
 
     /// The selected plan's editor: the one already open for it is kept (the pane came back from another section),
@@ -152,11 +152,13 @@ struct PlansPane: View {
 /// A plan's tabs (UI design §6.2). Which one shows is `ShellState.settingsPlanTab`, so the menu's "No off-Mac
 /// monitoring — Add…" can open Alerts.
 enum PlanTab: String, CaseIterable, Identifiable {
-    case what, schedule, storage, keep, alerts, history
+    /// First, and where a plan opens (Task 14c): the menu's line for the plan, with its actions.
+    case overview, what, schedule, storage, keep, alerts, history
     var id: String { rawValue }
 
     var title: String {
         switch self {
+        case .overview: "Overview"
         case .what: "What"
         case .schedule: "Schedule"
         case .storage: "Storage"
@@ -207,6 +209,7 @@ private struct PlanDetail: View {
 
     @ViewBuilder private var tabContent: some View {
         switch tab {
+        case .overview: PlanOverviewTab(planID: status.plan.id, context: context)
         case .what: PlanWhatTab(model: model, identity: context.supervisor.identity)
         case .schedule: PlanScheduleTab(model: model)
         case .storage: PlanStorageTab(model: model) { context.showRecoveryKit(status.plan.id) }
