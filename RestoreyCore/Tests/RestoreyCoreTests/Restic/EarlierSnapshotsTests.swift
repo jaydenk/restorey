@@ -10,11 +10,18 @@ struct EarlierSnapshotsTests {
     private static let own = "restorey:11111111-2222-3333-4444-555555555555"
     private static let otherPlan = "restorey:99999999-2222-3333-4444-555555555555"
 
-    private func plan(origin: RepositoryOrigin = .adopted, sources: [String] = ["/Users/x/Documents", "/Users/x/Code"]) -> Plan {
+    /// 1 Jun 2026: after every sample snapshot (1 Jan 2026) unless a test says otherwise.
+    private static let adoptedAt = EarlierSnapshots.date("2026-06-01T00:00:00Z")!
+
+    private func plan(
+        origin: RepositoryOrigin = .adopted, sources: [String] = ["/Users/x/Documents", "/Users/x/Code"],
+        adoptedAt: Date? = EarlierSnapshotsTests.adoptedAt
+    ) -> Plan {
         var p = Plan.newHotPlan(
             name: "Home", repository: .raw(repository: "/tmp/repo", environmentNames: []), origin: origin,
             hostLabel: "pepper", sources: sources, exclusions: [], now: Date(timeIntervalSince1970: 1_800_000_000))
         p.id = Self.planID
+        if origin == .adopted { p.adoptedAt = adoptedAt }
         return p
     }
 
@@ -28,6 +35,7 @@ struct EarlierSnapshotsTests {
         var host = "pepper"
         var paths: [String]
         var tags: [String]?
+        var time = "2026-01-01T10:00:00+10:30"
     }
 
     private struct Group {
@@ -44,7 +52,7 @@ struct EarlierSnapshotsTests {
         func snap(_ s: Snap) -> [String: Any] {
             var d: [String: Any] = [
                 "id": s.id, "short_id": String(s.id.prefix(8)), "hostname": s.host, "paths": s.paths,
-                "time": "2026-01-01T10:00:00+10:30",
+                "time": s.time,
             ]
             if let tags = s.tags { d["tags"] = tags }
             return d
@@ -188,6 +196,41 @@ struct EarlierSnapshotsTests {
         }
     }
 
+    // MARK: Before adoption means before adoption
+
+    /// Fix round 1 (I2): only snapshots taken no later than the adoption are "from before adoption". Another tool
+    /// still writing untagged snapshots of the same folders afterwards never has those offered.
+    @Test func snapshotsTakenAfterTheAdoptionAreNotFromBeforeIt() throws {
+        var g = group("a1", paths: current, tags: nil)
+        g.remove.append(Snap(id: Self.id("late"), paths: current, tags: nil, time: "2026-07-01T09:00:00.123456789+10:30"))
+        g.remove.append(Snap(id: Self.id("edge"), paths: current, tags: nil, time: "2026-06-01T00:00:00Z"))
+        g.remove.append(Snap(id: Self.id("bad"), paths: current, tags: nil, time: "yesterday"))
+        let before = try #require(try groups(reply([g]), plan()).first)
+        #expect(before.removeIDs == ["a10", "a11", "edge"].map(Self.id))
+        #expect(before.keptCount == 1)
+    }
+
+    /// A plan adopted before the adoption time was recorded is bounded by its own first snapshot; with none, nothing
+    /// is known to be from before adoption, so nothing is offered.
+    @Test func withoutARecordedAdoptionTheFirstOwnSnapshotBoundsIt() throws {
+        var g = group("a1", paths: current, tags: nil)
+        g.remove.append(Snap(id: Self.id("late"), paths: current, tags: nil, time: "2026-03-01T10:00:00+10:30"))
+        let own = Group(
+            paths: current, tags: [Self.own],
+            keep: [Snap(id: Self.id("own2"), paths: current, tags: [Self.own], time: "2026-04-01T10:00:00+10:30"),
+                   Snap(id: Self.id("own1"), paths: current, tags: [Self.own], time: "2026-02-01T10:00:00+10:30")],
+            remove: [])
+        let bounded = try groups(reply([g, own]), plan(adoptedAt: nil))
+        #expect(bounded.first?.removeIDs == ["a10", "a11"].map(Self.id))
+        #expect(try groups(reply([g]), plan(adoptedAt: nil)).isEmpty)
+    }
+
+    @Test func resticTimesAreRead() {
+        #expect(EarlierSnapshots.date("2026-10-01T10:01:00.123456789+10:30") != nil)
+        #expect(EarlierSnapshots.date("2026-10-01T00:31:00Z") == EarlierSnapshots.date("2026-10-01T10:01:00+09:30"))
+        #expect(EarlierSnapshots.date("2026-10-01") == nil)
+    }
+
     // MARK: What is confirmed is what is removed
 
     /// Only IDs the user confirmed AND a fresh preview still puts in the action's scope are removed: a snapshot
@@ -258,9 +301,10 @@ struct EarlierSnapshotsTests {
             sample(.beforeAdoption), pruneEnabled: false, afterFirstBackup: true, home: "/Users/x")
         #expect(text.title == "Remove 12 snapshots taken on pepper before Restorey?")
         #expect(text.message == "Applied as if they were this plan's own, its retention removes 12 of the 15 snapshots "
-            + "this Mac made of these folders before Restorey once the first backup has succeeded, and keeps 3. Snapshots from other Macs, "
-            + "other tools and other folders aren't touched. Their data stays in the repository while prune is off for "
-            + "this plan. This can't be undone.")
+            + "this Mac made of these folders before Restorey once the first backup has succeeded, and keeps 3. That "
+            + "includes other tools' snapshots of these folders from this Mac before Restorey. Snapshots from other Macs, "
+            + "other Restorey plans and other folders are never touched. Their data stays in the repository while prune "
+            + "is off for this plan. This can't be undone.")
         #expect(text.button == "Remove 12 Snapshots")
     }
 

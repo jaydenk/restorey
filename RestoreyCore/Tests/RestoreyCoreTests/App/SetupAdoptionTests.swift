@@ -61,16 +61,26 @@ import Testing
     // MARK: Plan defaults
 
     @Test func adoptedPlanNeverPrunesAndForgetsDaily() {
-        let plan = SetupAdoption.adopted(SetupAdoptionTests.plan(repository: Self.b2), hostLabel: "Pepper")
+        let plan = SetupAdoption.adopted(SetupAdoptionTests.plan(repository: Self.b2), hostLabel: "Pepper", now: Date(timeIntervalSince1970: 1_800_000_000))
         #expect(plan.origin == .adopted)
         #expect(plan.hostLabel == "Pepper")
         #expect(plan.pruneEnabled == false)
         #expect(plan.forgetCadence == .daily)
         #expect(plan.packSizeMiB == nil)
+        #expect(plan.adoptedAt == Date(timeIntervalSince1970: 1_800_000_000))
+    }
+
+    /// Task 14b: the first adoption's time bounds "before adoption"; adopting again (a resumed setup) keeps it, and a
+    /// created repository has none.
+    @Test func theAdoptionTimeIsTheFirstAdoptions() {
+        let first = SetupAdoption.adopted(Self.plan(repository: Self.b2), hostLabel: "x", now: Date(timeIntervalSince1970: 100))
+        let again = SetupAdoption.adopted(first, hostLabel: "y", now: Date(timeIntervalSince1970: 200))
+        #expect(again.adoptedAt == Date(timeIntervalSince1970: 100))
+        #expect(SetupAdoption.created(again).adoptedAt == nil)
     }
 
     @Test func createdPlanGetsNewHotPlansDefaultsBack() {
-        let adopted = SetupAdoption.adopted(Self.plan(repository: Self.b2), hostLabel: "x")
+        let adopted = SetupAdoption.adopted(Self.plan(repository: Self.b2), hostLabel: "x", now: Date(timeIntervalSince1970: 1_800_000_000))
         let created = SetupAdoption.created(adopted)
         let fresh = Self.plan(repository: Self.b2)
         #expect(created.origin == .created)

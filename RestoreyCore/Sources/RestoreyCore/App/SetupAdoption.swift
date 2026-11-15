@@ -49,10 +49,12 @@ public enum SetupAdoption {
     }
 
     /// `plan` as an adopted repository's plan (product spec §5.6): someone else's repository is never
-    /// pruned, `forget` runs daily rather than after every backup, and its pack size is left as it is.
-    public static func adopted(_ plan: Plan, hostLabel: String) -> Plan {
+    /// pruned, `forget` runs daily rather than after every backup, and its pack size is left as it is. The first
+    /// adoption's time is kept (`Plan.adoptedAt`, Task 14b): a later "Use This Repository" (a resumed setup) keeps it.
+    public static func adopted(_ plan: Plan, hostLabel: String, now: Date) -> Plan {
         var plan = plan
         plan.origin = .adopted
+        if plan.adoptedAt == nil { plan.adoptedAt = now }
         plan.hostLabel = hostLabel
         plan.pruneEnabled = false
         plan.forgetCadence = .daily
@@ -65,6 +67,7 @@ public enum SetupAdoption {
     public static func created(_ plan: Plan) -> Plan {
         var plan = plan
         plan.origin = .created
+        plan.adoptedAt = nil
         plan.pruneEnabled = true
         plan.forgetCadence = .afterEachBackup
         if case .s3 = plan.repository { plan.packSizeMiB = 64 } else { plan.packSizeMiB = nil }

@@ -97,6 +97,7 @@ struct PlanCodingTests {
         original.conditions.battery = .neverOnBattery
         var rawPlan = plan(.raw(repository: "rest:http://nas/repo", environmentNames: ["A", "B"]), .adopted)
         rawPlan.conditions.battery = .minimumPercent(35)
+        rawPlan.adoptedAt = Self.now
 
         for sample in [original, rawPlan] {
             let decoded = try VersionedStore<PlanBox>.makeDecoder()

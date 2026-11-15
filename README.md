@@ -253,8 +253,10 @@ off by default. Switched on, "Use This Repository" adopts as usual, then asks th
 confirmation, "Remove N snapshots taken on <host> before Restorey?", with how many the plan's retention keeps, whether
 prune will free the space, and that it can't be undone; Cancel is the default button. The confirmed snapshot IDs are
 kept in the setup progress (`earlierRemoval`), and Done hands them to the agent before it confirms the kit
-(`removeEarlierSnapshotsAfterNextBackup`); the agent removes them only after the plan's first backup that succeeds,
-so a setup that fails never deletes anything. Nothing to remove, or Cancel, leaves the step on "The repository is
+(`removeEarlierSnapshotsAfterNextBackup`); the agent removes them only after the plan's first backup that succeeds
+with every file, so a setup that fails never deletes anything. The confirmation says that other tools' snapshots of
+these folders from this Mac before Restorey are included, and that other Macs', other Restorey plans' and other
+folders' never are. Nothing to remove, or Cancel, leaves the step on "The repository is
 ready" saying so, with the switch there to try again.
 
 ### Settings
@@ -430,15 +432,22 @@ folders). "Apply retention" means as if they were the plan's own: the preview is
 <label>` with the plan's retention over a timeline that holds them and the plan's current snapshots together
 (`--group-by host,paths` for the snapshots from before adoption; `--tag restorey:<id> --group-by host,tags` for
 previous folder lists), since the plan's ordinary `forget`, a group at a time, already thins each old group on its own.
-`EarlierSnapshots` (RestoreyCore) then decides snapshot by snapshot, from each one's own host, paths and tags, so
-another Mac's snapshots, another plan's, a superset of the plan's folders, the plan's current snapshots, or the plan's
-tag with the user's own beside it are never removable. A confirmed removal runs a fresh preview in the same turn of the
+`EarlierSnapshots` (RestoreyCore) then decides snapshot by snapshot, from each one's own host, paths, tags and time, so
+another Mac's snapshots, another Restorey plan's, a superset of the plan's folders, the plan's current snapshots, or
+the plan's tag with the user's own beside it are never removable. "Before adoption" means this Mac's snapshots of
+exactly the plan's folders with no `restorey:` tag, other tools' tagged ones included, taken no later than the
+adoption (`Plan.adoptedAt`, recorded by "Use This Repository"; a plan adopted before it was recorded is bounded by its
+first snapshot with its own tag, and with none nothing is offered), so a tool still writing to the same folders after
+adoption never has those snapshots offered. A confirmed removal runs a fresh preview in the same turn of the
 repository's queue and then `forget --retry-lock 5m -- <ids>` with no policy and no filter, for exactly the confirmed
 IDs that preview still puts in the action: a snapshot added after the confirmation is never taken, and one gone
 meanwhile is left out (restic itself skips a missing ID with `Ignoring "<id>"` and exits 0). A lock another client
 holds past the wait removes nothing, says so, and is never broken. Nothing is pruned; the plan's prune schedule frees
-the space. Each confirmed removal is a History row ("Removed 12 earlier snapshots", or "No earlier snapshots needed
-removing") with its log; the preview records nothing.
+the space. Each confirmed removal is a History row ("Removed 12 earlier snapshots", "No earlier snapshots needed
+removing", or "Couldn't remove earlier snapshots", a fresh preview that failed included) with its log; the preview
+records nothing. Setup's choice runs only after a backup that succeeded with every file (not one that left unreadable
+files out); a lock held elsewhere, an interruption or a preview that fails keeps it for the next backup (a line in
+`agent.log`, no row), and its row is added when it finally runs.
 
 Every restic run has its own log in `~/Library/Logs/Restorey/runs/<plan ID>/` (`Restorey-Dev` for Debug builds),
 with secrets redacted. A log starts with the restic command (values hidden) and ends with the outcome; a

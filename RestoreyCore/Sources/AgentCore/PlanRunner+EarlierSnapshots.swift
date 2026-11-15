@@ -79,17 +79,32 @@ extension PlanRunner {
 
     /// A fresh preview, then `forget` of the confirmed IDs still in scope, recorded. Inside the caller's turn of the
     /// repository's queue. With none left in scope restic isn't run, and the record says nothing needed removing.
+    /// Every verdict is a History row, a refused confirmation and a failed preview included. `pending` (setup's choice,
+    /// run after a backup): a failed preview isn't a verdict, since nothing was tried; the choice waits for the next
+    /// backup, with no row (so a backend down for a day doesn't leave a row an hour).
     func removeEarlier(
-        _ confirmation: EarlierSnapshotsConfirmation, session: RunSession, handle: RunHandle, trigger: RunTrigger
+        _ confirmation: EarlierSnapshotsConfirmation, session: RunSession, handle: RunHandle, trigger: RunTrigger,
+        pending: Bool = false
     ) async -> EarlierRemoval {
         let plan = session.plan
-        if let problem = confirmation.problem(for: plan) { return .failed("Restorey can't remove those snapshots: \(problem)") }
+        func failedRow(_ sentence: String) async -> EarlierRemoval {
+            let now = deps.now()
+            await commit(RunRecord(
+                id: UUID(), planID: plan.id, operation: .forgetSnapshots(ids: confirmation.snapshotIDs), trigger: trigger,
+                startedAt: now, endedAt: now, outcome: .failed(exitCode: Self.startFailureExitCode, reason: sentence),
+                summary: nil, logFile: ""), plan: plan)
+            return .failed(sentence)
+        }
+        if let problem = confirmation.problem(for: plan) {
+            return await failedRow("Restorey can't remove those snapshots: \(problem)")
+        }
         let groups: [EarlierSnapshotGroup]
         switch await earlierGroups([confirmation.scope.kind], session: session, handle: handle) {
         case .success(let found): groups = found
         case .failure(let error):
             if let intent = handle.intent { return .notFinished(intent.outcome, Self.stoppedSentence) }
-            return .failed(error.message)
+            if pending { return .notFinished(.failed(exitCode: Self.startFailureExitCode, reason: error.message), error.message) }
+            return await failedRow(error.message)
         }
         let ids = EarlierSnapshots.removable(confirmation, now: groups)
         let confirmed = Set(confirmation.snapshotIDs).count
@@ -126,6 +141,14 @@ extension PlanRunner {
         }
     }
 
+    /// A backup that succeeded with every file: what setup's pending removal waits for.
+    static func succeededFully(_ outcome: RunOutcome) -> Bool {
+        switch outcome {
+        case .success, .unchanged: true
+        default: false
+        }
+    }
+
     static let stoppedSentence =
         "The removal was stopped before it finished. Snapshots already removed are gone; the rest are still there"
 
@@ -144,7 +167,7 @@ extension PlanRunner {
         _ pending: EarlierSnapshotsConfirmation, session: RunSession, handle: RunHandle, trigger: RunTrigger
     ) async -> Bool {
         let planID = session.plan.id
-        let result = await removeEarlier(pending, session: session, handle: handle, trigger: trigger)
+        let result = await removeEarlier(pending, session: session, handle: handle, trigger: trigger, pending: true)
         switch result {
         case .notFinished(_, let sentence):
             deps.agentLog("Left the confirmed removal of earlier snapshots for plan \(planID.uuidString) for its next backup: \(sentence)")

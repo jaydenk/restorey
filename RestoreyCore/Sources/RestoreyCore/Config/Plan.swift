@@ -40,6 +40,11 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
     /// Whether the user has dismissed the "No off-Mac monitoring" note for this plan.
     public var offMacNoteDismissed: Bool
     public var createdAt: Date
+    /// When setup adopted the plan's repository ("Use This Repository"). It bounds "snapshots from before
+    /// adoption" (product spec §5.6, Task 14b): only snapshots this Mac made by then are offered. Nil for a created
+    /// repository, and for a plan adopted before the field existed (`EarlierSnapshots` then bounds by the plan's
+    /// earliest own snapshot).
+    public var adoptedAt: Date?
 
     public init(
         id: UUID,
@@ -63,7 +68,8 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         recoveryKitConfirmedAt: Date?,
         setupCompletedAt: Date? = nil,
         offMacNoteDismissed: Bool = false,
-        createdAt: Date
+        createdAt: Date,
+        adoptedAt: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -87,13 +93,14 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         self.setupCompletedAt = setupCompletedAt
         self.offMacNoteDismissed = offMacNoteDismissed
         self.createdAt = createdAt
+        self.adoptedAt = adoptedAt
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, repository, origin, hostLabel, sources, exclusions, fileTypeExclusions, oneFileSystem
         case schedule, conditions, retention, pruneEnabled, forgetCadence, uploadLimitKiB, packSizeMiB
         case noSuccessAlertDays, hasCheckInURL, recoveryKitConfirmedAt, setupCompletedAt, offMacNoteDismissed
-        case createdAt
+        case createdAt, adoptedAt
     }
 
     /// `config.json` always has `offMacNoteDismissed` (schema 3), but a plan in a status or save request from
@@ -125,6 +132,7 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         setupCompletedAt = try c.decodeIfPresent(Date.self, forKey: .setupCompletedAt)
         offMacNoteDismissed = try c.decodeIfPresent(Bool.self, forKey: .offMacNoteDismissed) ?? false
         createdAt = try c.decode(Date.self, forKey: .createdAt)
+        adoptedAt = try c.decodeIfPresent(Date.self, forKey: .adoptedAt)
     }
 
     /// A new plan with every spec default applied. Callers pass the folder exclusion list

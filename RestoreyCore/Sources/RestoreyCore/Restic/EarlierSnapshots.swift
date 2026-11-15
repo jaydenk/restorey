@@ -170,7 +170,10 @@ public struct EarlierSnapshotsRequest: Codable, Sendable, Equatable {
 /// - the host must be the plan's host label exactly;
 /// - the plan's own tag alone (`restorey:<id>`, no other tag) with paths other than the plan's sources is a previous
 ///   folder list;
-/// - no `restorey:` tag at all with exactly the plan's sources is from before adoption, for an adopted plan only;
+/// - no `restorey:` tag at all (untagged, or other tools' tags) with exactly the plan's sources, taken no later than the
+///   adoption, is from before adoption, for an adopted plan only. The bound is `Plan.adoptedAt`; a plan adopted before
+///   that was recorded is bounded by its earliest snapshot with its own tag, and with none nothing is offered. A
+///   snapshot whose time can't be read never qualifies;
 /// - anything else (another plan's tag, the plan's tag with the user's own beside it, a superset or a subset of the
 ///   sources, the plan's current snapshots) is never removable, though it counts in the timeline as restic sees it.
 public enum EarlierSnapshots {
@@ -191,6 +194,8 @@ public enum EarlierSnapshots {
         fromForgetReply line: String, kind: EarlierSnapshotKind, plan: Plan
     ) throws -> [EarlierSnapshotGroup] {
         let reply = try JSONDecoder().decode([Group].self, from: Data(line.utf8))
+        let all = reply.flatMap { ($0.keep ?? []) + ($0.remove ?? []) }
+        let adoption = adoptionBound(plan: plan, snapshots: all)
         var found: [EarlierSnapshotScope: EarlierSnapshotGroup] = [:]
         func note(_ snapshot: Snapshot, removed: Bool) {
             let paths = normalised(snapshot.paths ?? [])
@@ -198,6 +203,9 @@ public enum EarlierSnapshots {
             guard let scope = scope(host: snapshot.hostname ?? "", paths: paths, tags: tags, plan: plan),
                 scope.kind == kind
             else { return }
+            if case .beforeAdoption = scope {
+                guard let adoption, let taken = snapshot.time.flatMap(date), taken <= adoption else { return }
+            }
             var entry = found[scope] ?? EarlierSnapshotGroup(
                 scope: scope, host: plan.hostLabel, paths: paths, tags: [], keptCount: 0, removeIDs: [])
             if removed { entry.removeIDs.append(snapshot.id) } else { entry.keptCount += 1 }
@@ -227,6 +235,30 @@ public enum EarlierSnapshots {
     }
 
     // MARK: Classification
+
+    /// The latest time a snapshot may have to count as from before adoption: `Plan.adoptedAt`, or for a plan adopted
+    /// before that was recorded, the earliest snapshot carrying the plan's own tag (the first one Restorey made). Nil:
+    /// nothing is known to be from before adoption, so nothing is offered.
+    private static func adoptionBound(plan: Plan, snapshots: [Snapshot]) -> Date? {
+        if let adoptedAt = plan.adoptedAt { return adoptedAt }
+        let own = "restorey:\(plan.id.uuidString)"
+        return snapshots.filter { ($0.tags ?? []).contains(own) }.compactMap { $0.time.flatMap(date) }.min()
+    }
+
+    /// restic's RFC 3339 time (`2026-10-01T10:01:00.123456789+10:30`, up to nine fractional digits, or `Z`). The
+    /// fraction is cut to milliseconds, which the formatter takes; nil when it can't be read.
+    static func date(_ text: String) -> Date? {
+        var trimmed = text
+        if let dot = text.firstIndex(of: "."),
+            let end = text[text.index(after: dot)...].firstIndex(where: { !$0.isNumber })
+        {
+            let digits = text[text.index(after: dot)..<end].prefix(3)
+            trimmed = String(text[..<dot]) + (digits.isEmpty ? "" : "." + digits) + String(text[end...])
+        }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = trimmed.contains(".") ? [.withInternetDateTime, .withFractionalSeconds] : [.withInternetDateTime]
+        return formatter.date(from: trimmed)
+    }
 
     private static func scope(host: String, paths: [String], tags: [String], plan: Plan) -> EarlierSnapshotScope? {
         guard host == plan.hostLabel else { return nil }
@@ -281,89 +313,6 @@ public enum EarlierSnapshots {
         let hostname: String?
         let paths: [String]?
         let tags: [String]?
-    }
-}
-
-/// The words around the earlier-snapshots actions (UI design §4 step 3 and §6.2, Task 14b), in the product spec's terms.
-public enum EarlierSnapshotsText {
-    /// An NSAlert's text: a destructive confirmation whose default button is Cancel.
-    public struct Confirmation: Sendable, Equatable {
-        public var title: String
-        public var message: String
-        /// The destructive button, "Remove 12 Snapshots".
-        public var button: String
-    }
-
-    /// The confirmation for `group`. `afterFirstBackup`: setup's, where the removal waits for the plan's first
-    /// successful backup. Prune frees the space only where the plan prunes; otherwise the data stays.
-    public static func confirmation(
-        _ group: EarlierSnapshotGroup, pruneEnabled: Bool, afterFirstBackup: Bool, home: String = NSHomeDirectory()
-    ) -> Confirmation {
-        let n = group.removeIDs.count
-        let title: String
-        let whose: String
-        switch group.scope {
-        case .beforeAdoption:
-            title = "Remove \(snapshots(n)) taken on \(group.host) before Restorey?"
-            whose = "\(snapshots(group.total)) this Mac made of these folders before Restorey"
-        case .previousFolderList:
-            title = "Remove \(snapshots(n)) from the previous folder list?"
-            whose = "\(snapshots(group.total)) of \(folders(group.paths, home: home))"
-        }
-        let when = afterFirstBackup ? " once the first backup has succeeded" : ""
-        let keeps = group.keptCount == 0 ? "keeps none" : "keeps \(group.keptCount)"
-        var message = "Applied as if they were this plan's own, its retention removes \(n) of the \(whose)\(when), and \(keeps)."
-        if case .beforeAdoption = group.scope {
-            message += " Snapshots from other Macs, other tools and other folders aren't touched."
-        }
-        message += pruneEnabled
-            ? " The space \(n == 1 ? "it uses" : "they use") is freed at the plan's next prune."
-            : " Their data stays in the repository while prune is off for this plan."
-        message += " This can't be undone."
-        return Confirmation(title: title, message: message, button: "Remove \(n) \(n == 1 ? "Snapshot" : "Snapshots")")
-    }
-
-    /// The Keep tab's line for one group.
-    public static func row(_ group: EarlierSnapshotGroup, home: String = NSHomeDirectory()) -> String {
-        let n = group.removeIDs.count
-        let removes = "retention would remove \(n == 0 ? "none" : String(n))."
-        switch group.scope {
-        case .beforeAdoption:
-            return "Before Restorey: \(snapshots(group.total)) from \(group.host); \(removes)"
-        case .previousFolderList:
-            return "Previous folder list \(folders(group.paths, home: home)): \(snapshots(group.total)); \(removes)"
-        }
-    }
-
-    /// The Keep tab's one line when there is nothing to apply, or nil when some group has snapshots to remove.
-    public static func nothingToApply(_ preview: EarlierSnapshotsPreview) -> String? {
-        if preview.groups.isEmpty {
-            return "No earlier snapshots from this Mac to apply retention to."
-        }
-        return preview.hasAnythingToRemove ? nil : "Nothing to apply: retention keeps every earlier snapshot."
-    }
-
-    /// What a finished removal says.
-    public static func removed(_ removal: EarlierSnapshotsRemoval) -> String {
-        var text = removal.removed == 0
-            ? "No snapshots were removed."
-            : "Removed \(removal.removed) earlier \(removal.removed == 1 ? "snapshot" : "snapshots")."
-        if removal.leftAlone > 0 {
-            text += removal.leftAlone == 1
-                ? " 1 confirmed snapshot was left: it had gone, or retention now keeps it."
-                : " \(removal.leftAlone) confirmed snapshots were left: they had gone, or retention now keeps them."
-        }
-        return text
-    }
-
-    /// History's outcome for a removal record (`ResticOperation.forgetSnapshots`) that succeeded.
-    public static func historyOutcome(removed: Int) -> String {
-        removed == 0 ? "No earlier snapshots needed removing" : "Removed \(removed) earlier \(removed == 1 ? "snapshot" : "snapshots")"
-    }
-
-    private static func snapshots(_ n: Int) -> String { "\(n) \(n == 1 ? "snapshot" : "snapshots")" }
-
-    private static func folders(_ paths: [String], home: String) -> String {
-        paths.map { FormValidation.displayPath($0, home: home) }.joined(separator: ", ")
+        let time: String?
     }
 }

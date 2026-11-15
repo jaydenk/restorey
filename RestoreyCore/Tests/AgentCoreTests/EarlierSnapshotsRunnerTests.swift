@@ -25,17 +25,28 @@ struct EarlierSnapshotsRunnerTests {
         var current: [String] = []
     }
 
-    private func fixture(origin: RepositoryOrigin = .adopted, retryLock: String = "5m") async throws -> RunnerFixture {
-        try await RunnerFixture.make(origin: origin, retryLock: retryLock) { $0.retention = Self.keepOneADay }
+    /// Adopted at noon on 1 Oct 2026, local time (restic's `--time` is local too): every seeded snapshot is from
+    /// before it.
+    private static let adoptedAt = Calendar.current.date(
+        from: DateComponents(year: 2026, month: 10, day: 1, hour: 12))!
+
+    private func fixture(
+        origin: RepositoryOrigin = .adopted, retryLock: String = "5m", executable: URL? = nil
+    ) async throws -> RunnerFixture {
+        try await RunnerFixture.make(origin: origin, executable: executable, retryLock: retryLock) {
+            $0.retention = Self.keepOneADay
+            if origin == .adopted { $0.adoptedAt = Self.adoptedAt }
+        }
     }
 
-    /// One snapshot made with plain restic, outside the runner, at `hour` o'clock on 1 Oct 2026. Returns its ID.
+    /// One snapshot made with plain restic, outside the runner, at `hour` o'clock on `day` Oct 2026. Returns its ID.
     @discardableResult
     private func snapshot(
-        _ f: RunnerFixture, host: String = "fixturehost", tags: [String] = [], paths: [URL], hour: Int
+        _ f: RunnerFixture, host: String = "fixturehost", tags: [String] = [], paths: [URL], hour: Int, day: Int = 1
     ) async throws -> String {
+        let time = String(format: "2026-10-%02d %02d:00:00", day, hour)
         let args = ["backup", "--json", "--cache-dir", f.cache.path, "--host=\(host)"]
-            + tags.map { "--tag=\($0)" } + ["--time=2026-10-01 \(String(format: "%02d", hour)):00:00", "--"] + paths.map(\.path)
+            + tags.map { "--tag=\($0)" } + ["--time=\(time)", "--"] + paths.map(\.path)
         let done = try await f.restic(.backup) { $0.arguments = args }
         #expect(done.exitCode == 0, "seed backup: \(done.stderrTail)")
         // The summary's snapshot_id is restic's full ID (0.19.1).
@@ -261,6 +272,114 @@ struct EarlierSnapshotsRunnerTests {
         let ops = await f.operations()
         let backupIndex = try #require(ops.lastIndex(of: .backup))
         #expect(ops[backupIndex + 1] == .forgetSnapshots(ids: group.removeIDs), "\(ops)")
+    }
+
+    /// Fix round 1 (I2): an untagged snapshot of the same folders taken after the adoption (another tool still writing)
+    /// is not from before it: it is never offered, and it survives the removal.
+    @Test(.timeLimit(.minutes(3))) func aSnapshotTakenAfterTheAdoptionIsNotOffered() async throws {
+        let f = try await fixture()
+        defer { f.remove() }
+        let seeded = try await seed(f)
+        // Two on 2 Oct, so retention (one a day) would remove the earlier of them: only the time bound keeps it out.
+        let later = try await snapshot(f, paths: [f.source], hour: 1, day: 2)
+        let latest = try await snapshot(f, paths: [f.source], hour: 2, day: 2)
+        let group = try #require(try await f.state.previewEarlierSnapshots(f.planID).group(.beforeAdoption))
+        #expect(Set(group.removeIDs) == Set(seeded.beforeAdoption + seeded.beforeAdoptionTagged))
+        #expect(!group.removeIDs.contains(later))
+        #expect(group.keptCount == 0, "a snapshot from after the adoption isn't counted as kept from before it either")
+        _ = try await f.state.removeEarlierSnapshots(
+            EarlierSnapshotsRequest(planID: f.planID, confirmation: EarlierSnapshotsConfirmation(group)))
+        #expect(try await f.snapshotIDs().isSuperset(of: [later, latest]))
+    }
+
+    /// Fix round 1 (I1): a backup that left files out (`.warning`) isn't the success setup's choice waits for.
+    @Test(.timeLimit(.minutes(3))) func setupsChoiceWaitsForABackupWithEveryFile() async throws {
+        let f = try await fixture()
+        defer { f.remove() }
+        let seeded = try await seed(f)
+        let group = try #require(try await f.state.previewEarlierSnapshots(f.planID).group(.beforeAdoption))
+        _ = try await f.state.removeEarlierSnapshotsAfterNextBackup(
+            EarlierSnapshotsRequest(planID: f.planID, confirmation: EarlierSnapshotsConfirmation(group)))
+        let unreadable = f.source.appendingPathComponent("unreadable.txt")
+        try "secret".write(to: unreadable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: unreadable.path)
+        let partial = try await f.runner.runBackup(planID: f.planID, trigger: .manual)
+        #expect({ if case .warning = partial.outcome { true } else { false } }(), "\(partial.outcome)")
+        #expect(await f.history().pendingEarlierRemoval != nil)
+        #expect(try await f.snapshotIDs().isSuperset(of: seeded.beforeAdoption))
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: unreadable.path)
+        let full = try await f.runner.runBackup(planID: f.planID, trigger: .manual)
+        #expect(PlanRunner.succeededFully(full.outcome), "\(full.outcome)")
+        #expect(await f.history().pendingEarlierRemoval == nil)
+        #expect(try await f.snapshotIDs().isDisjoint(with: group.removeIDs))
+    }
+
+    // MARK: A preview that fails (I3)
+
+    /// A stand-in restic that fails every earlier-snapshots preview while `flag` exists, and is the vendored restic
+    /// otherwise.
+    private func failingPreviews(flag: URL) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-preview-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let script = dir.appendingPathComponent("restic")
+        try """
+            #!/bin/sh
+            # Only the previews pass --no-lock (it is allowed with forget --dry-run alone).
+            case " $* " in *" --no-lock "*)
+              if [ -e '\(flag.path)' ]; then
+                echo '{"message_type":"exit_error","code":1,"message":"Fatal: the preview broke"}' >&2; exit 1
+              fi;;
+            esac
+            exec '\(try ResticBinary.require().path)' "$@"
+            """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        return script
+    }
+
+    /// A removal confirmed in Settings whose fresh preview fails is a failed History row, and removes nothing.
+    @Test(.timeLimit(.minutes(3))) func aFailedPreviewDuringAConfirmedRemovalIsAFailedRow() async throws {
+        let flag = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-flag-\(UUID().uuidString)")
+        let f = try await fixture(executable: try failingPreviews(flag: flag))
+        defer { f.remove(); try? FileManager.default.removeItem(at: flag) }
+        _ = try await seed(f)
+        let group = try #require(try await f.state.previewEarlierSnapshots(f.planID).group(.beforeAdoption))
+        let before = try await f.snapshotIDs()
+        FileManager.default.createFile(atPath: flag.path, contents: nil)
+        await #expect(throws: AgentError.self) {
+            try await f.state.removeEarlierSnapshots(
+                EarlierSnapshotsRequest(planID: f.planID, confirmation: EarlierSnapshotsConfirmation(group)))
+        }
+        let record = try #require(await f.history().recent.first)
+        #expect(record.operation == .forgetSnapshots(ids: group.removeIDs))
+        #expect({ if case .failed(_, let reason) = record.outcome { reason.contains("preview broke") } else { false } }(),
+                "\(record.outcome)")
+        #expect(try await f.snapshotIDs() == before)
+    }
+
+    /// Setup's choice isn't finished by a failed preview: no row, one agent.log line, and it runs at the next backup,
+    /// whose row is the one it ends with.
+    @Test(.timeLimit(.minutes(3))) func aFailedPreviewKeepsSetupsChoiceForTheNextBackup() async throws {
+        let flag = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-flag-\(UUID().uuidString)")
+        let f = try await fixture(executable: try failingPreviews(flag: flag))
+        defer { f.remove(); try? FileManager.default.removeItem(at: flag) }
+        _ = try await seed(f)
+        let group = try #require(try await f.state.previewEarlierSnapshots(f.planID).group(.beforeAdoption))
+        _ = try await f.state.removeEarlierSnapshotsAfterNextBackup(
+            EarlierSnapshotsRequest(planID: f.planID, confirmation: EarlierSnapshotsConfirmation(group)))
+        FileManager.default.createFile(atPath: flag.path, contents: nil)
+        let first = try await f.runner.runBackup(planID: f.planID, trigger: .manual)
+        #expect(PlanRunner.succeededFully(first.outcome))
+        #expect(await f.history().pendingEarlierRemoval != nil)
+        #expect(!(await f.operations()).contains { if case .forgetSnapshots = $0 { true } else { false } })
+        #expect(f.agentLog.value.contains { $0.contains("for its next backup") && $0.contains("preview broke") })
+        #expect(try await f.snapshotIDs().isSuperset(of: group.removeIDs))
+
+        try FileManager.default.removeItem(at: flag)
+        _ = try await f.runner.runBackup(planID: f.planID, trigger: .manual)
+        #expect(await f.history().pendingEarlierRemoval == nil)
+        #expect(await f.operations().contains(.forgetSnapshots(ids: group.removeIDs)))
+        #expect(try await f.snapshotIDs().isDisjoint(with: group.removeIDs))
     }
 
     /// A lock held elsewhere when the first backup's turn comes: the choice waits for the next backup.

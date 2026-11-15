@@ -28,9 +28,12 @@ struct PasswordView: View {
                 ExistingRepositorySummary(model: model, report: report)
             case .ready:
                 Text("The repository is ready.").font(.headline)
-                Text(model.earlierNote == nil && model.stepError == nil
-                     ? "This setup made or adopted it before it was interrupted. Continue to the recovery kit."
-                     : "This setup has adopted it. Continue to the recovery kit.")
+                // From what the progress records, not from what the step last said.
+                Text(model.draft.progress.adoption != nil
+                     ? "This setup has adopted it. Continue to the recovery kit."
+                     : model.draft.progress.repositoryCreated
+                     ? "This setup created it. Continue to the recovery kit."
+                     : "This setup made or adopted it before it was interrupted. Continue to the recovery kit.")
                     .fixedSize(horizontal: false, vertical: true)
                 if model.draft.progress.adoption != nil {
                     EarlierSnapshotsOptIn(model: model, isOn: Binding(

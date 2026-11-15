@@ -116,7 +116,8 @@ extension SetupModel {
             FormValidation.hostLabel(hostLabel) == nil
         else { return }
         await act {
-            let adopted = SetupAdoption.adopted(saved, hostLabel: hostLabel.trimmingCharacters(in: .whitespaces))
+            let adopted = SetupAdoption.adopted(
+                saved, hostLabel: hostLabel.trimmingCharacters(in: .whitespaces), now: Date())
             if let problem = await save(adopted) { return problem }
             switch await supervisor.connection.adopt(saved.id) {
             case .failure(let error): return error.description

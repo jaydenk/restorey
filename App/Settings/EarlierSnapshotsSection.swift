@@ -48,6 +48,10 @@ struct EarlierSnapshotsSection: View {
             if let problem = removalProblem ?? problem {
                 Text(problem).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
+            if problem != nil {
+                Button("Try Again") { Task { await load() } }
+                    .disabled(working)
+            }
         }
         .task(id: inputs) { await load() }
     }
@@ -78,10 +82,14 @@ struct EarlierSnapshotsSection: View {
         }
     }
 
-    private func load() async {
+    /// `keepingRemovalProblem`: the preview right after a failed removal, which mustn't hide why it failed. A later
+    /// preview that succeeds (Try Again, a save, coming back to the tab) clears it.
+    private func load(keepingRemovalProblem: Bool = false) async {
         problem = nil
         switch await connection.previewEarlierSnapshots(plan.id) {
-        case .success(let found): preview = found
+        case .success(let found):
+            preview = found
+            if !keepingRemovalProblem { removalProblem = nil }
         case .failure(let error):
             preview = nil
             problem = FormValidation.sentence(error.description)
@@ -100,6 +108,6 @@ struct EarlierSnapshotsSection: View {
         case .success(let removal): outcome = EarlierSnapshotsText.removed(removal)
         case .failure(let error): removalProblem = FormValidation.sentence(error.description)
         }
-        await load()
+        await load(keepingRemovalProblem: true)
     }
 }
