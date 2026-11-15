@@ -250,13 +250,14 @@ path and pressing the button again runs all of it again. `SetupModel` keeps the 
 The adopt step also offers "Apply this plan's retention to existing snapshots from this Mac" (product spec §5.6),
 off by default. Switched on, "Use This Repository" adopts as usual, then asks the agent for a preview
 (`previewEarlierSnapshots`: a `forget --dry-run` that takes no lock and records nothing) and shows its own
-confirmation, "Remove N snapshots taken on <host> before Restorey?", with how many the plan's retention keeps, whether
-prune will free the space, and that it can't be undone; Cancel is the default button. The confirmed snapshot IDs are
+confirmation, "Remove N snapshots from before Restorey?", with how many the plan's retention keeps, whether prune will
+free the space, and that it can't be undone, in a few short sentences so the sheet fits the setup window. Cancel is
+the default button (Return, and Escape too); "Remove N Snapshots" is never the default (`DestructiveAlert`). The confirmed snapshot IDs are
 kept in the setup progress (`earlierRemoval`), and Done hands them to the agent before it confirms the kit
 (`removeEarlierSnapshotsAfterNextBackup`); the agent removes them only after the plan's first backup that succeeds
 with every file, so a setup that fails never deletes anything. The confirmation says that other tools' snapshots of
-these folders from this Mac before Restorey are included, and that other Macs', other Restorey plans' and other
-folders' never are. Nothing to remove, or Cancel, leaves the step on "The repository is
+these folders from this Mac are included, and that other Macs' and other folders' are not touched (another Restorey
+plan's never is either). Nothing to remove, or Cancel, leaves the step on "The repository is
 ready" saying so, with the switch there to try again.
 
 ### Settings
@@ -302,7 +303,7 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   them, **Earlier snapshots**: a preview, run when the tab appears and after a save changes the folders, host label or
   retention, lists each earlier group of the plan (its previous folder lists, and for an adopted plan this Mac's
   snapshots from before Restorey) with how many snapshots it holds and how many retention would remove, and an "Apply
-  Retention…" button that asks first ("Remove N snapshots from the previous folder list?", Cancel the default). With
+  Retention…" button that asks first ("Remove N snapshots of the previous folder list?", Cancel the default). With
   nothing to apply it says so in one line. It counts with the saved plan, so unsaved edits disable the buttons.
 - **Alerts**: the check-in URL (saved, Remove, or a new one) and "no successful backup in N days".
 - **History**: the History list for that plan.
@@ -447,7 +448,8 @@ the space. Each confirmed removal is a History row ("Removed 12 earlier snapshot
 removing", or "Couldn't remove earlier snapshots", a fresh preview that failed included) with its log; the preview
 records nothing. Setup's choice runs only after a backup that succeeded with every file (not one that left unreadable
 files out); a lock held elsewhere, an interruption or a preview that fails keeps it for the next backup (a line in
-`agent.log`, no row), and its row is added when it finally runs.
+`agent.log` at ERROR, no row), and its row is added when it finally runs (its success is an INFO line in
+`agent.log`).
 
 Every restic run has its own log in `~/Library/Logs/Restorey/runs/<plan ID>/` (`Restorey-Dev` for Debug builds),
 with secrets redacted. A log starts with the restic command (values hidden) and ends with the outcome; a

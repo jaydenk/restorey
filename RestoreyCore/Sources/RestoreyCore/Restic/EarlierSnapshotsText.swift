@@ -12,30 +12,28 @@ public enum EarlierSnapshotsText {
 
     /// The confirmation for `group`. `afterFirstBackup`: setup's, where the removal waits for the plan's first
     /// successful backup. Prune frees the space only where the plan prunes; otherwise the data stays.
+    ///
+    /// Kept short on purpose (fix round 2, live finding L3): macOS lays a modern alert out in a narrow column with its
+    /// buttons stacked, so every sentence adds lines, and the first wording (about 430 characters) made a 514 pt sheet,
+    /// taller than the setup window. The longest case stays under 240 characters (`DestructiveAlertTests`).
     public static func confirmation(
         _ group: EarlierSnapshotGroup, pruneEnabled: Bool, afterFirstBackup: Bool, home: String = NSHomeDirectory()
     ) -> Confirmation {
         let n = group.removeIDs.count
+        let keeps = group.keptCount == 0 ? "keeps none" : "keeps \(group.keptCount)"
         let title: String
-        let whose: String
+        var message: String
         switch group.scope {
         case .beforeAdoption:
-            title = "Remove \(snapshots(n)) taken on \(group.host) before Restorey?"
-            whose = "\(snapshots(group.total)) this Mac made of these folders before Restorey"
+            title = "Remove \(snapshots(n)) from before Restorey?"
+            message = "Retention \(keeps) of the \(snapshots(group.total)) on \(group.host), other tools' included"
+            message += afterFirstBackup ? "; the rest go after the first backup." : "."
+            message += " Other Macs and folders aren't touched."
         case .previousFolderList:
-            title = "Remove \(snapshots(n)) from the previous folder list?"
-            whose = "\(snapshots(group.total)) of \(folders(group.paths, home: home))"
+            title = "Remove \(snapshots(n)) of the previous folder list?"
+            message = "Retention \(keeps) of the \(snapshots(group.total)) of \(folders(group.paths, home: home))."
         }
-        let when = afterFirstBackup ? " once the first backup has succeeded" : ""
-        let keeps = group.keptCount == 0 ? "keeps none" : "keeps \(group.keptCount)"
-        var message = "Applied as if they were this plan's own, its retention removes \(n) of the \(whose)\(when), and \(keeps)."
-        if case .beforeAdoption = group.scope {
-            message += " That includes other tools' snapshots of these folders from this Mac before Restorey. Snapshots from"
-                + " other Macs, other Restorey plans and other folders are never touched."
-        }
-        message += pruneEnabled
-            ? " The space \(n == 1 ? "it uses" : "they use") is freed at the plan's next prune."
-            : " Their data stays in the repository while prune is off for this plan."
+        message += pruneEnabled ? " Prune frees the space later." : " Prune is off, so their data stays."
         message += " This can't be undone."
         return Confirmation(title: title, message: message, button: "Remove \(n) \(n == 1 ? "Snapshot" : "Snapshots")")
     }

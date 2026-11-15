@@ -299,22 +299,24 @@ struct EarlierSnapshotsTests {
     @Test func theAdoptionConfirmation() {
         let text = EarlierSnapshotsText.confirmation(
             sample(.beforeAdoption), pruneEnabled: false, afterFirstBackup: true, home: "/Users/x")
-        #expect(text.title == "Remove 12 snapshots taken on pepper before Restorey?")
-        #expect(text.message == "Applied as if they were this plan's own, its retention removes 12 of the 15 snapshots "
-            + "this Mac made of these folders before Restorey once the first backup has succeeded, and keeps 3. That "
-            + "includes other tools' snapshots of these folders from this Mac before Restorey. Snapshots from other Macs, "
-            + "other Restorey plans and other folders are never touched. Their data stays in the repository while prune "
-            + "is off for this plan. This can't be undone.")
+        #expect(text.title == "Remove 12 snapshots from before Restorey?")
+        #expect(text.message == "Retention keeps 3 of the 15 snapshots on pepper, other tools' included; the rest go "
+            + "after the first backup. Other Macs and folders aren't touched. Prune is off, so their data stays. "
+            + "This can't be undone.")
         #expect(text.button == "Remove 12 Snapshots")
+        let settings = EarlierSnapshotsText.confirmation(
+            sample(.beforeAdoption, kept: 0), pruneEnabled: true, afterFirstBackup: false, home: "/Users/x")
+        #expect(settings.message == "Retention keeps none of the 12 snapshots on pepper, other tools' included. "
+            + "Other Macs and folders aren't touched. Prune frees the space later. This can't be undone.")
     }
 
     @Test func thePreviousFolderListConfirmation() {
         let text = EarlierSnapshotsText.confirmation(
             sample(.previousFolderList(paths: ["/Users/x/Old", "/Users/x/Older"]), kept: 0, remove: 1),
             pruneEnabled: true, afterFirstBackup: false, home: "/Users/x")
-        #expect(text.title == "Remove 1 snapshot from the previous folder list?")
-        #expect(text.message == "Applied as if they were this plan's own, its retention removes 1 of the 1 snapshot of "
-            + "~/Old, ~/Older, and keeps none. The space it uses is freed at the plan's next prune. This can't be undone.")
+        #expect(text.title == "Remove 1 snapshot of the previous folder list?")
+        #expect(text.message == "Retention keeps none of the 1 snapshot of ~/Old, ~/Older. Prune frees the space later. "
+            + "This can't be undone.")
         #expect(text.button == "Remove 1 Snapshot")
     }
 

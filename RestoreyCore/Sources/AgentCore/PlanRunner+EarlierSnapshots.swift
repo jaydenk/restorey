@@ -175,7 +175,7 @@ extension PlanRunner {
         case .failed(let sentence):
             deps.agentLog("The confirmed removal of earlier snapshots for plan \(planID.uuidString) failed: \(sentence)")
         case .removed(let removal):
-            deps.agentLog(
+            deps.agentInfo(
                 "Removed \(removal.removed) earlier snapshots for plan \(planID.uuidString) after its backup (\(removal.leftAlone) confirmed ones left)")
         }
         await clearPendingEarlierRemoval(planID: planID, ifStill: pending)

@@ -269,6 +269,9 @@ struct EarlierSnapshotsRunnerTests {
         // The plan's ordinary forget ran after it, a group at a time, so only what it never touches is checked here.
         #expect(after.isSuperset(of: seeded.otherHost + seeded.otherPlan + seeded.superset))
         #expect(await f.history().pendingEarlierRemoval == nil)
+        // Fix round 2 (L2): a removal that went as asked is an INFO line, not an ERROR.
+        #expect(f.agentInfo.value.contains { $0.contains("Removed \(group.removeIDs.count) earlier snapshots") })
+        #expect(!f.agentLog.value.contains { $0.contains("earlier snapshots") })
         let ops = await f.operations()
         let backupIndex = try #require(ops.lastIndex(of: .backup))
         #expect(ops[backupIndex + 1] == .forgetSnapshots(ids: group.removeIDs), "\(ops)")

@@ -96,8 +96,10 @@ final class RunnerFixture: Sendable {
     let state: AgentState
     let runner: PlanRunner
     let dependencies: RunnerDependencies
-    /// Lines the runner wrote to the agent log.
+    /// Lines the runner wrote to the agent log at ERROR.
     let agentLog: Locked<[String]>
+    /// Lines the runner wrote to the agent log at INFO.
+    let agentInfo: Locked<[String]>
     /// "create" and "release" for each idle-sleep assertion the runner's `SleepPrevention` took.
     let sleepAssertions: Locked<[String]>
     let sleepPrevention: SleepPrevention
@@ -109,6 +111,7 @@ final class RunnerFixture: Sendable {
         root: URL, restic: URL, clock: FixtureClock, secrets: InMemorySecretStore, checkIn: RecordingCheckIn,
         fda: Locked<FDAProbeResult>, power: Locked<PowerState>, network: Locked<NetworkState>,
         supervisor: SupervisedProcesses, state: AgentState, runner: PlanRunner, dependencies: RunnerDependencies, agentLog: Locked<[String]>,
+        agentInfo: Locked<[String]>,
         sleepAssertions: Locked<[String]>, sleepPrevention: SleepPrevention, binaryReplaced: Locked<Bool>,
         planID: UUID
     ) {
@@ -133,6 +136,7 @@ final class RunnerFixture: Sendable {
         self.runner = runner
         self.dependencies = dependencies
         self.agentLog = agentLog
+        self.agentInfo = agentInfo
         self.sleepAssertions = sleepAssertions
         self.sleepPrevention = sleepPrevention
         self.binaryReplaced = binaryReplaced
@@ -194,6 +198,7 @@ final class RunnerFixture: Sendable {
         let secrets = InMemorySecretStore()
         let checkIn = RecordingCheckIn(delay: pingDelay)
         let agentLog = Locked<[String]>([])
+        let agentInfo = Locked<[String]>([])
         let fda = Locked<FDAProbeResult>(.granted)
         let power = Locked(PowerState(onBattery: false, percent: 100))
         let network = Locked(NetworkState.satisfied(constrained: false, expensive: false))
@@ -235,6 +240,7 @@ final class RunnerFixture: Sendable {
             interruptGracePeriod: gracePeriod,
             sleepPrevention: sleepPrevention,
             agentLog: { line in agentLog.mutate { $0.append(line) } },
+            agentInfo: { line in agentInfo.mutate { $0.append(line) } },
             binaryReplaced: { binaryReplaced.value },
             maintenanceRetryLock: retryLock)
         let runner = PlanRunner(dependencies: dependencies)
@@ -244,7 +250,7 @@ final class RunnerFixture: Sendable {
         let fixture = RunnerFixture(
             root: root, restic: restic, clock: clock, secrets: secrets, checkIn: checkIn, fda: fda,
             power: power, network: network, supervisor: supervisor, state: state, runner: runner, dependencies: dependencies,
-            agentLog: agentLog, sleepAssertions: sleepAssertions, sleepPrevention: sleepPrevention,
+            agentLog: agentLog, agentInfo: agentInfo, sleepAssertions: sleepAssertions, sleepPrevention: sleepPrevention,
             binaryReplaced: binaryReplaced, planID: plan.id)
         if createRepository { _ = try await runner.createRepository(planID: plan.id) }
         if confirmKit { _ = try await state.confirmRecoveryKit(plan.id) }

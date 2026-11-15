@@ -29,8 +29,11 @@ public struct RunnerDependencies: Sendable {
     public var interruptGracePeriod: Duration
     /// Held while each restic step runs, so the Mac doesn't idle-sleep mid-run (spec §8). Nil: none.
     public var sleepPrevention: SleepPrevention?
-    /// Writes a line to the agent's own log (`agent.log`), for problems the user may need to find.
+    /// Writes a line to the agent's own log (`agent.log`) at ERROR, for problems the user may need to find.
     public var agentLog: @Sendable (String) -> Void
+    /// Writes a line to `agent.log` at INFO, for something that went as asked but is worth a trace, such as setup's
+    /// confirmed removal of earlier snapshots after a backup (Task 14b).
+    public var agentInfo: @Sendable (String) -> Void
     /// True once the agent's executable on disk is no longer the one it was started from (an update
     /// replaced the bundle). Checked before every restic step and on every scheduler tick (Ruling R55).
     public var binaryReplaced: @Sendable () -> Bool
@@ -48,6 +51,7 @@ public struct RunnerDependencies: Sendable {
         interruptGracePeriod: Duration = .seconds(10),
         sleepPrevention: SleepPrevention? = nil,
         agentLog: @escaping @Sendable (String) -> Void = { _ in },
+        agentInfo: @escaping @Sendable (String) -> Void = { _ in },
         binaryReplaced: @escaping @Sendable () -> Bool = { false },
         maintenanceRetryLock: String = "5m"
     ) {
@@ -69,6 +73,7 @@ public struct RunnerDependencies: Sendable {
         self.interruptGracePeriod = interruptGracePeriod
         self.sleepPrevention = sleepPrevention
         self.agentLog = agentLog
+        self.agentInfo = agentInfo
         self.binaryReplaced = binaryReplaced
         self.maintenanceRetryLock = maintenanceRetryLock
     }

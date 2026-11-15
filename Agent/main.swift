@@ -145,6 +145,7 @@ do {
                 now: { Date() },
                 sleepPrevention: SleepPrevention(api: SystemObservers.sleepAssertions) { log.error($0) },
                 agentLog: { log.error($0) },
+                agentInfo: { log.info($0) },
                 binaryReplaced: { executableReplaced() }))
             keptAlive.append(runner)
             systemStop.attach(runner: runner)
