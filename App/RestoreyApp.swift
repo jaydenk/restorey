@@ -103,7 +103,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             router.supervisor = supervisor
             let statusItem = StatusItemController(supervisor: supervisor, router: router)
             #if DEBUG
-            let developer = DeveloperWindowController(supervisor: supervisor, identity: identity)
+            let developer = DeveloperWindowController(supervisor: supervisor, identity: identity) { [router] in
+                router.planDeleted($0)
+            }
             developerWindow = developer
             statusItem.setDeveloperAction { developer.show() }
             #endif

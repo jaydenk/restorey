@@ -48,7 +48,7 @@ struct SourcesEditor: View {
         panel.prompt = "Add"
         panel.message = "Choose the folders and drives to back up."
         Task { @MainActor in
-            guard await panel.begin() == .OK else { return }
+            guard await panel.presentForKeyWindow() == .OK else { return }
             sources = FormValidation.addingSources(panel.urls.map(\.path), to: sources)
         }
     }

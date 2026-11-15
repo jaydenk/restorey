@@ -150,7 +150,10 @@ diagnostics go to `diagnostics/` beside it.
 Restorey is a menu bar (accessory) app while none of its windows is open. While any is (setup, Settings, the recovery
 kit, Restore Files, an alert, or the Debug-only Developer window), it is an ordinary app: a Dock icon, a place in ⌘-Tab
 and its own menu bar, and it goes back to the menu bar when the last window closes (`WindowPresence`,
-`WindowActivation`). As an accessory app it had no menu bar, so Quit and Edit weren't there while its window was in
+`ActivationController`, `WindowActivation`). A minimised window still counts, and its own tile in the Dock brings it
+back; clicking Restorey's app icon in the Dock is a reopen, which opens Settings (below). Open panels are sheets on the
+window that asked, and the About panel counts while it is up, so no Restorey window is left on screen in a menu bar
+app. As an accessory app it had no menu bar, so Quit and Edit weren't there while its window was in
 use, and macOS passed it over when a Touch ID prompt went away, so the window that asked fell behind the app before
 (diagnosis in `.superpowers/sdd/2026-11-12-v0.1-ui/o1-diagnosis.md`). The main menu is the app menu (About, Hide,
 Quit), an Edit menu (Undo, Redo, Cut, Copy, Paste, Paste and Match Style, Delete, Select All) and a Window menu
@@ -158,10 +161,12 @@ Quit), an Edit menu (Undo, Redo, Cut, Copy, Paste, Paste and Match Style, Delete
 Settings, recovery kit, Restore Files) opens at most once: asking again brings the open one to the front. A window is
 ordered front and activation asked for once, while the click that opened it is handled. Since macOS 14 that request
 can be refused; then, on the next turn of the run loop, a window still on screen is ordered in front anyway
-(`orderFrontRegardless`), though it isn't key until clicked. None is restored at launch, and closing a
+(`orderFrontRegardless`), though it isn't key until clicked. A hidden Restorey (⌘H) is shown again first, without
+activating it, so that window can be seen either way. After a Touch ID prompt, only a window still open is made key
+again. None is restored at launch, and closing a
 window releases it, so a recovery kit's secrets go with it. The setup window follows its content's size from step to step.
 
-Opening Restorey again while it runs (from Finder, Spotlight or `open`) opens Settings, or brings an open Settings
+Opening Restorey again while it runs (from Finder, Spotlight, `open` or its Dock icon) opens Settings, or brings an open Settings
 window forward as it is, so the app can still be reached when its menu bar icon can't be seen. If the icon is hidden (System Settings → Menu Bar) when Restorey
 starts, it opens Settings at once, in General (as does opening it again while the icon is hidden), with the note "Restorey's menu bar icon is hidden. Show it in System
 Settings → Menu Bar." An icon squeezed out of a full menu bar isn't detected (macOS still reports it as visible), so

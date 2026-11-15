@@ -40,9 +40,13 @@ final class DeveloperModel {
     @ObservationIgnored let supervisor: AgentSupervisor
     @ObservationIgnored private let identity: Identity
 
-    init(supervisor: AgentSupervisor, identity: Identity) {
+    /// The router's `planDeleted`: closes a setup window on the plan and forgets progress naming it, as Settings does.
+    @ObservationIgnored let planDeleted: (UUID) -> Void
+
+    init(supervisor: AgentSupervisor, identity: Identity, planDeleted: @escaping (UUID) -> Void) {
         self.supervisor = supervisor
         self.identity = identity
+        self.planDeleted = planDeleted
     }
 
     var plans: [Plan] { supervisor.status?.plans.map(\.plan) ?? [] }
@@ -133,8 +137,8 @@ final class DeveloperModel {
         }
         run("Delete plan") { [connection = supervisor.connection] in
             let result = await connection.deletePlan(id)
-            // Setup progress naming the plan has nothing left to finish (live finding 2), as in Settings.
-            if case .success = result { SetupProgressStore(defaults: .standard).forget(planID: id) }
+            // Setup progress naming the plan has nothing left to finish (live finding 2, review M4), as in Settings.
+            if case .success = result { self.planDeleted(id) }
             if case .success = result, self.selectedPlanID == id { self.selectedPlanID = nil }
             return Self.describe(result)
         }

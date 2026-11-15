@@ -22,7 +22,12 @@ enum OwnerAuthentication {
     /// window is open (`WindowActivation`), and a request with no user input behind it is always refused anyway.
     static func confirm(reason: String, returningTo window: AppWindowKind) async -> Outcome {
         let outcome = await ask(reason: reason)
-        NSApplication.shared.windows.first { $0.identifier?.rawValue == window.rawValue }?.makeKeyAndOrderFront(nil)
+        // Only a window still on screen: one closed during the prompt stays closed (review M1). A closed window can
+        // outlive its closing (it isn't released when closed), and ordering it front again would show an empty
+        // window that Restorey's activation policy no longer counts.
+        NSApplication.shared.windows
+            .first { $0.identifier?.rawValue == window.rawValue && $0.isVisible }?
+            .makeKeyAndOrderFront(nil)
         return outcome
     }
 

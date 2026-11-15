@@ -113,7 +113,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             openSetup: { [weak self] in self?.showSetup(progress: $0) },
             addPlan: { [weak self] in self?.addPlan() },
             showRecoveryKit: { [weak self] in self?.showRecoveryKit(planID: $0) },
-            planDeleted: { [weak self] in self?.setupStore?.forget(planID: $0) })
+            planDeleted: { [weak self] in self?.planDeleted($0) })
         show(.settings, configure: { [weak self, state] window in
             window.styleMask.insert(.resizable)
             let toolbar = SettingsToolbar(state: state)
@@ -139,6 +139,16 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         }
         guard let plans = supervisor?.lastKnownStatus?.plans else { return nil }
         return SetupFlow.addingPlan(saved: setupStore?.load(), plans: plans, installed: true)
+    }
+
+    /// A plan was deleted (Settings or the Developer window). A setup window still on that plan closes first, so none of
+    /// its steps saves progress naming the plan again (review M4); then saved progress that names it is forgotten
+    /// (live finding 2). Closing setup keeps no progress of its own.
+    func planDeleted(_ planID: UUID) {
+        if let setupModel, setupModel.plan?.id == planID || setupModel.draft.progress.planID == planID {
+            slots.openWindow(for: .setup)?.close()
+        }
+        setupStore?.forget(planID: planID)
     }
 
     /// "Save Recovery Kit…" (a plan needing a new kit) and Settings' "Show recovery kit…".

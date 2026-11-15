@@ -67,7 +67,7 @@ struct ExclusionsSheet: View {
         panel.prompt = "Leave Out"
         panel.message = "Choose the folders to leave out of the backup."
         Task { @MainActor in
-            guard await panel.begin() == .OK else { return }
+            guard await panel.presentForKeyWindow() == .OK else { return }
             for url in panel.urls {
                 let pattern = DefaultExclusions.pattern(forFolder: url.path)
                 if !exclusions.contains(pattern) { exclusions.append(pattern) }

@@ -9,8 +9,8 @@ final class DeveloperWindowController: NSObject, NSWindowDelegate {
     private let model: DeveloperModel
     private var window: NSWindow?
 
-    init(supervisor: AgentSupervisor, identity: Identity) {
-        model = DeveloperModel(supervisor: supervisor, identity: identity)
+    init(supervisor: AgentSupervisor, identity: Identity, planDeleted: @escaping (UUID) -> Void) {
+        model = DeveloperModel(supervisor: supervisor, identity: identity, planDeleted: planDeleted)
         super.init()
     }
 

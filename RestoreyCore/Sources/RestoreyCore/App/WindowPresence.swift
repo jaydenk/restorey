@@ -17,8 +17,12 @@ public enum AppPolicy: Sendable, Equatable {
 /// the app the user was in before. An accessory app also has no menu bar, so Restorey's menu (Quit, Edit) never
 /// showed while its window was in use.
 ///
-/// "Open" means not closed: a minimised window keeps the Dock icon, which is how it is brought back. Whether
-/// Restorey is active when a window closes doesn't matter.
+/// "Open" means not closed: a minimised window keeps Restorey an ordinary app, and the window's own tile in the Dock
+/// brings it back. Whether Restorey is active when a window closes doesn't matter.
+///
+/// Every window Restorey shows on its own is tracked: its four windows, the Developer window, alerts run with
+/// `runModal`, and the About panel. Open panels are sheets on the window that asked (review M2), so they never
+/// outlive it.
 public struct WindowPresence: Sendable {
     public enum Window: Hashable, Sendable {
         case window(AppWindowKind)
@@ -26,6 +30,8 @@ public struct WindowPresence: Sendable {
         case developer
         /// An alert run on its own (not a sheet), for as long as it is up.
         case alert(UUID)
+        /// The standard About panel, from the app menu, until it closes.
+        case about
     }
 
     public private(set) var open: Set<Window> = []

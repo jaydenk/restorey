@@ -30,7 +30,9 @@ enum MainMenu {
     private static func appMenu() -> NSMenu {
         // The title of the first menu is ignored: macOS shows the app's name there.
         let menu = NSMenu(title: appName)
-        menu.addItem(item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
+        let about = item("About \(appName)", #selector(AboutTarget.showAbout(_:)))
+        about.target = AboutTarget.shared
+        menu.addItem(about)
         menu.addItem(.separator())
         menu.addItem(item("Hide \(appName)", #selector(NSApplication.hide(_:)), "h"))
         menu.addItem(.separator())
@@ -73,5 +75,16 @@ enum MainMenu {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
         item.keyEquivalentModifierMask = modifiers
         return item
+    }
+}
+
+/// The About item's target: the standard panel, shown through `WindowActivation` so it counts as one of Restorey's
+/// windows while it is up (review M2).
+@MainActor
+private final class AboutTarget: NSObject {
+    static let shared = AboutTarget()
+
+    @objc func showAbout(_ sender: Any?) {
+        WindowActivation.showAbout()
     }
 }
