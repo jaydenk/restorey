@@ -39,6 +39,9 @@ struct MessagesTests {
             agentVersion: "0.1.0", agentBuild: "12", executablePath: "/x", draining: false,
             notificationsAuthorised: true, executableFingerprint: "1:2:3:4.5", locationAuthorised: false))
         try roundTrip(HelloReply(
+            agentVersion: "0.1.0", agentBuild: "14", executablePath: "/x", draining: false,
+            notificationsAuthorised: true, locationAuthorised: nil, locationServicesEnabled: false))
+        try roundTrip(HelloReply(
             agentVersion: "0.1.0", agentBuild: "13", executablePath: "/x", draining: false,
             notificationsAuthorised: true, agentRun: UUID()))
     }
@@ -51,6 +54,7 @@ struct MessagesTests {
         #expect(reply.executableFingerprint == nil)
         #expect(reply.agentBuild == "1")
         #expect(reply.locationAuthorised == nil, "an agent older than Task 3 sends no Location field")
+        #expect(reply.locationServicesEnabled == nil, "an agent older than Task 15 sends no Location Services field")
         #expect(reply.agentRun == nil, "an agent older than Task 8 sends no run")
     }
 
@@ -257,6 +261,11 @@ struct MessagesTests {
         try roundTrip(LocationPermissionReply(authorised: true, status: "authorisedAlways"))
         #expect(try json(LocationPermissionReply(authorised: false, status: "denied"))
             == #"{"authorised":false,"status":"denied"}"#)
+        try roundTrip(LocationPermissionReply(authorised: false, status: "notDetermined", servicesEnabled: false))
+        // An agent older than Task 15 sends no servicesEnabled: it decodes as unknown.
+        let old = try XPCCoding.decode(
+            LocationPermissionReply.self, from: Data(#"{"authorised":false,"status":"denied"}"#.utf8))
+        #expect(old.servicesEnabled == nil)
     }
 
     @Test func repositoryProbeRoundTripsAndItsShapeIsPinned() throws {

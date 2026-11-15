@@ -72,6 +72,25 @@ for key in NSLocationUsageDescription NSLocationWhenInUseUsageDescription; do
   [[ "$(plist_get "$AGENT/Contents/Info.plist" "$key")" == "$location_text" ]] || fail "agent $key is not the Location usage text"
 done
 
+# The Developer window is Debug-only (project.yml excludes App/Developer from Release, and its uses are behind
+# #if DEBUG). Its Swift types' names are in a binary's metadata whenever it is compiled in, stripped or not, so a
+# Release bundle must have none of them, and a Debug one all three: the positive control that shows the check looks
+# in the right binaries (a Debug app's code is in Contents/MacOS/*.debug.dylib, not the main executable).
+developer_types='DeveloperModel|DeveloperWindowController|DeveloperView'
+developer_found=""
+while IFS= read -r -d '' binary; do
+  found=$(strings -a "$binary" | grep -oE "$developer_types" | sort -u | tr '\n' ' ' || true)
+  developer_found+="$found"
+done < <(find "$APP/Contents/MacOS" "$AGENT/Contents/MacOS" -type f -print0)
+developer_found=$(tr ' ' '\n' <<<"$developer_found" | grep -v '^$' | sort -u | tr '\n' ' ' || true)
+case "$root" in
+  com.jaydenkerr.restorey)
+    [[ -z "$developer_found" ]] || fail "the Release app contains the Developer window ($developer_found)" ;;
+  com.jaydenkerr.restorey.dev)
+    [[ "$developer_found" == "DeveloperModel DeveloperView DeveloperWindowController " ]] \
+      || fail "the Debug app's Developer window types weren't all found ('$developer_found'): the check would miss them" ;;
+esac
+
 # Launch agent plist.
 [[ "$(plist_get "$PLIST" Label)" == "$label" ]] || fail "plist Label differs from $label"
 prog=$(plist_get "$PLIST" BundleProgram)

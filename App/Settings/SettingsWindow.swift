@@ -24,7 +24,7 @@ struct SettingsContext {
 }
 
 /// The Settings window's content (UI design §6, mockup `v0.1-settings.html`): the section the toolbar picks.
-/// General and Plans are here; Network is the next build's.
+/// General, Plans, Network and History.
 struct SettingsWindow: View {
     /// The narrowest every section fits in: General and History need about 760, Plans its tabs (`PlansPane`), measured
     /// now. `WindowRouter` takes it once per window made (Task 14c R2), so a text-size change applies from the next one.
@@ -37,6 +37,8 @@ struct SettingsWindow: View {
     let minimumWidth: CGFloat
     @Bindable var state: ShellState
     let editorSlot: PlanEditorSlot
+    /// The Network section's unsaved edits, kept while the window is open.
+    @State private var networkSlot = NetworkEditorSlot()
 
     var body: some View {
         Group {
@@ -46,12 +48,9 @@ struct SettingsWindow: View {
             case .plans:
                 PlansPane(context: context, state: state, slot: editorSlot)
             case .network:
-                Text("The Network section isn't built yet.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                NetworkPane(supervisor: context.supervisor, slot: networkSlot)
             case .history:
-                HistoryList(planID: nil, filterRequest: state.historyFilter)
-                    .padding(16)
+                HistoryPane(filterRequest: state.historyFilter)
             }
         }
         // Wide enough for every section, Plans' row of seven tabs the widest (measured, not guessed: a fixed 760

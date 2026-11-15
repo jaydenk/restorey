@@ -62,6 +62,11 @@ targets:
         INFOPLIST_FILE: App/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_ENTITLEMENTS: App/App.entitlements
+      configs:
+        # The Developer window is Debug-only: a Release build doesn't compile its files at all (its uses are
+        # also behind #if DEBUG). ci.sh checks the built Release app has none of its types (verify-bundle.sh).
+        Release:
+          EXCLUDED_SOURCE_FILE_NAMES: $(SRCROOT)/App/Developer/*
     postBuildScripts:
       - name: Embed agent
         script: |

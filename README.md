@@ -3,10 +3,10 @@
 A free, open-source macOS menu bar app that puts an Arq/Backblaze-style front end on
 [restic](https://restic.net).
 
-> **Status: engine in alpha on the owner's Mac.** There is no app to download yet. The v0.1 engine (background
-> agent, scheduler, plans, Keychain secrets, check-ins and notifications) runs from a development build, with the
-> menu bar and a Debug-only Developer window; the setup and Settings screens come next. The alpha's results are in
-> [docs/v0.1-measurements.md](docs/v0.1-measurements.md). Nothing here is ready to protect your data.
+> **Status: v0.1 in testing on the owner's Mac.** There is no app to download yet. The engine (background agent,
+> scheduler, plans, Keychain secrets, check-ins and notifications) and the app (setup, the menu bar, Settings, the
+> recovery kit and Restore Files) run from a development build; the owner's live checks of the whole app are in
+> [docs/v0.1-measurements.md](docs/v0.1-measurements.md). Nothing here is ready to protect your data yet.
 
 ## What it will do
 
@@ -32,6 +32,49 @@ because the App Store sandbox rules out the Full Disk Access a backup tool needs
 - [Platform spike plan](docs/superpowers/plans/2026-11-10-platform-spike.md)
 - [Platform spike findings](docs/spike-findings.md) (throwaway spike code in [`spike/`](spike/))
 - [v0.1 engine plan](docs/superpowers/plans/2026-11-10-v0.1-engine.md), [measurements](docs/v0.1-measurements.md) and [rulings](docs/v0.1-rulings.md) (R1–R78)
+
+## Using Restorey
+
+This is what the app does, from the user's side. The sections under "Building from source" say how each part
+works.
+
+**Setup.** The first launch opens setup, which takes one plan from nothing to its first backup: move Restorey to
+Applications, grant Full Disk Access (and, optionally, notifications and Open at login), say where backups go (B2,
+S3, or any other restic location), set or enter the repository password (a new repository, or an existing one to
+adopt with its history), save the recovery kit somewhere other than this Mac, choose what to back up (the home
+folder by default, with the default exclusions) and the schedule (hourly by default, with retention and an
+optional check-in URL), then start the first backup. Quitting part-way resumes where you left off. "+ Add plan…" in
+Settings → Plans runs the same steps for another plan.
+
+**The menu.** The menu bar icon shows the worst state across all plans. The menu lists any problem first, each with
+its fix (Full Disk Access missing, notifications off, the agent not running or switched off, an unfinished setup, a
+recovery kit to save again, no off-Mac monitoring); then one entry per plan with its status, progress or next run,
+and destination (choosing it opens the plan in Settings, and a failed one has "Show Details…" for its history);
+then Resume, Back Up Now and Pause, Restore Files…, Settings… (⌘,) and Quit Restorey. Backups run from the background
+agent whether or not the app is open.
+
+**Settings** has four sections in its toolbar:
+
+- **General**: Open at login, Full Disk Access, notifications and the background agent, each with its fix, and the
+  logs folder.
+- **Plans**: the plans in a sidebar with "+ Add plan…", and the selected plan's tabs. **Overview** (its state, the
+  last and next backup, and Back Up Now, Pause, Resume and Restore Files…); **What** (folders, drives and
+  exclusions); **Schedule** (how often, the battery rule, the plan's own upload limit); **Storage** (the address,
+  read-only, the password and keys, the host label, and "Show recovery kit…"); **Keep** (retention, prune, and
+  **Earlier snapshots**: applying retention to the snapshots of the plan's previous folder lists, or from before
+  Restorey adopted the repository); **Alerts** (the check-in URL and "no successful backup in N days"); and
+  **History** (the plan's runs). Edits are saved with Save (⌘S) or undone with Revert; changing the password, a key
+  or the host label pauses backups until a new recovery kit is saved. Delete Plan… leaves the repository alone.
+- **Network**: rules for the whole Mac, for plans that back up to another machine (S3, B2, a restic server; never a
+  folder or drive): an upload limit shared by the backups uploading at once, skipping backups on a phone hotspot or
+  in Low Data Mode (on by default), and a list of Wi-Fi networks to skip backups on. Adding the first network asks
+  for Location permission, which macOS requires before it shows any app the Wi-Fi network's name.
+- **History**: every plan's runs, newest first, filtered by plan and by outcome, each with its log.
+
+The recovery kit and Restore Files ask for Touch ID or your login password before showing a plan's secrets.
+
+**The Developer window** is in Debug builds only (the `RestoreyDev` identity), from "Developer…" in the menu. A
+Release build doesn't compile it at all, and `scripts/ci.sh` fails if one contains it (below).
 
 ## Building from source
 
@@ -115,7 +158,12 @@ agents' order, while a late status can arrive at any time.
 registration and not even a status read, which on its own can re-point the registration at the copy. It only
 shows "Move Restorey to Applications". The app's log is `~/Library/Logs/Restorey-Dev/app.log`.
 
-A Debug build adds a "Developer…" menu item. Its window saves plans (S3, B2 or a raw local repository path such
+A Debug build adds a "Developer…" menu item; a Release build has neither the item nor the window. `project.yml`
+leaves `App/Developer/` out of the Release build (`EXCLUDED_SOURCE_FILE_NAMES`), its uses are behind `#if DEBUG`,
+and `scripts/verify-bundle.sh` (run by `scripts/ci.sh` on every build) fails a Release bundle whose binaries name
+any of its types (`DeveloperModel`, `DeveloperWindowController`, `DeveloperView`, which Swift's metadata keeps
+even in a stripped binary), and a Debug bundle missing any of them, so the check can't pass by looking in the wrong
+place. The window saves plans (S3, B2 or a raw local repository path such
 as `/tmp/restorey-dev-repo`), creates or adopts repositories, confirms the recovery details, backs up, pauses,
 resumes, asks for notification permission, and shows the agent's live status as JSON. Its fields are the real
 controls the setup flow and Settings use (`App/Controls/`): `PlainTextField` and `SecretField` (a secure field that
@@ -265,7 +313,7 @@ ready" saying so, with the switch there to try again.
 Settings (⌘, in the menu) is a window with a toolbar of sections, as macOS draws them for settings: **General**,
 **Plans**, **Network** and **History** (mockup `docs/mockups/v0.1-settings.html`). The menu's routes pick the section
 and plan: a plan's line opens it in Plans, "Show Details…" opens History for that plan, and "No off-Mac monitoring —
-Add…" opens the plan's Alerts tab. Network is still to come.
+Add…" opens the plan's Alerts tab.
 
 **General** has Open at login (the switch re-reads `SMAppService` after every change, so a Restorey switched off in
 System Settings → General → Login Items shows as off with a note and "Open Login Items…", never as what was asked),
@@ -331,6 +379,18 @@ to General and back keeps them. Delete Plan… asks with the developer window's 
 settings, saved passwords and keys, and history are removed. The repository and its snapshots aren't touched."); the
 agent also removes the plan's run logs, and setup's saved progress is forgotten if it names the deleted plan
 (`SetupProgressStore.forget`), as it is when the Developer window deletes one.
+
+**Network** edits the Mac-wide rules (`NetworkEdit` in `RestoreyCore`, held by `NetworkEditModel` for as long as
+the window is open, so going to another section and back keeps unsaved edits): "Upload limit for this Mac" in MB/s
+(empty, the default, is none), "Skip on a hotspot or in Low Data Mode" and "Skip on these Wi-Fi networks", saved
+with Save (⌘S) or undone with Revert, which apply only the fields you changed, as a plan's tabs do. A name is added
+trimmed, at most 32 bytes (an SSID's limit), and not twice ignoring case; the agent's own checks are shown before a
+save. Whether Restorey can see Wi-Fi names is `WiFiNameAccess`, from the agent's hello: adding a name while the
+agent has never been asked sends `requestLocationPermission` first ("Waiting for your answer to the Location
+question…") and adds the name only once it is allowed; with permission refused, or Location Services off for the
+whole Mac, the field is disabled and the list says why ("Restorey needs Location permission to see Wi-Fi names.")
+with "Open System Settings" (Privacy & Security → Location Services). This is read again whenever Restorey comes
+back to the front.
 
 **History** lists every plan's runs, newest first, with a plan filter (set again by each "Show Details…", and back to every plan once you pick a section yourself or
 close Settings) and
@@ -509,14 +569,20 @@ a name it can't read (no Location permission, or not on Wi-Fi) never skips a bac
 
 **Location permission.** macOS reveals the Wi-Fi network's name only to a process with Location Services
 permission, so the agent, which reads it, needs its own. Restorey asks for it only when you first add a Wi-Fi
-network to skip, never during setup; the app asks the agent over XPC (`requestLocationPermission`), and the prompt
+network to skip in Settings → Network, never during setup; the app asks the agent over XPC
+(`requestLocationPermission`), and the prompt
 names the agent's display name ("Restorey", or "Restorey Dev" for a Debug build) and says "Restorey checks the
 Wi-Fi network's name so it can skip backups on networks you've listed." Once you have answered, macOS doesn't
 ask again; change it in System Settings → Privacy & Security → Location Services. The agent carries the usage text
 under `NSLocationUsageDescription` and `NSLocationWhenInUseUsageDescription`, and the hardened runtime's
 `com.apple.security.personal-information.location` entitlement; `scripts/verify-bundle.sh` checks all three.
 The agent reports the authorisation in `hello` (`locationAuthorised`) from what Core Location last told it,
-never by asking, and logs each request's answer and whether the Wi-Fi name was then readable. A Release log
+never by asking, and logs each request's answer and whether the Wi-Fi name was then readable. With Location
+Services switched off for the whole Mac, macOS shows no prompt and can leave the agent undecided, so a request would
+otherwise wait out its 570-second bound: the agent checks `CLLocationManager.locationServicesEnabled()` first (off
+the main thread, which Apple asks for, since it is a synchronous call to locationd) and answers at once with
+`servicesEnabled: false`. The hello carries the last answer (`locationServicesEnabled`), read again in the
+background after each hello and each change Core Location reports, never waited on. A Release log
 never names the network; a Debug build's log does, and also logs each name a backup's checks read. The Debug
 developer window's "Request Location" button sends the request and shows the reply.
 Each plan also records when its setup finished (`setupCompletedAt`, set when its recovery kit is first confirmed

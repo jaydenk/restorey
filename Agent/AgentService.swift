@@ -43,6 +43,9 @@ final class AgentService: NSObject, AgentXPC, Sendable {
                 executableFingerprint: executableFingerprint)
             // The last authorisation Core Location reported, held in process: never a call to it (R68).
             hello.locationAuthorised = location.knownAuthorised
+            // Held in process too; a read for the next hello starts in the background and is never waited on.
+            hello.locationServicesEnabled = location.knownServicesEnabled
+            location.refreshServicesEnabled()
             return hello
         }
     }
@@ -250,7 +253,8 @@ final class AgentService: NSObject, AgentXPC, Sendable {
             // A Release log never names the network, which says where the user is.
             let readable = name == nil ? "not readable" : "readable"
             #endif
-            log.info("Location permission \(answer.status); the Wi-Fi name is \(readable)")
+            let services = answer.servicesEnabled == false ? " (Location Services is off for this Mac)" : ""
+            log.info("Location permission \(answer.status)\(services); the Wi-Fi name is \(readable)")
             return answer
         }
     }

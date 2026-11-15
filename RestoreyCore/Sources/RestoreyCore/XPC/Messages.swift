@@ -40,6 +40,10 @@ public struct HelloReply: Codable, Sendable, Equatable {
     /// Whether the agent may use Location Services, which macOS requires before it reveals the Wi-Fi
     /// network's name: nil until the user has been asked, and from an agent older than Task 3.
     public var locationAuthorised: Bool?
+    /// Whether Location Services is on for the whole Mac (System Settings → Privacy & Security → Location
+    /// Services), as the agent last read it off its main thread: with it off no app sees the Wi-Fi name, and
+    /// macOS can leave the agent's own authorisation undecided. Nil until read, and from an agent older than Task 15.
+    public var locationServicesEnabled: Bool?
     /// The same `agentRun` the agent stamps on its statuses. A new one means the agent was relaunched, so
     /// statuses from the run before are stale (Ruling R76). Nil from an agent older than Task 8.
     public var agentRun: UUID?
@@ -47,7 +51,7 @@ public struct HelloReply: Codable, Sendable, Equatable {
     public init(
         agentVersion: String, agentBuild: String, executablePath: String, draining: Bool,
         notificationsAuthorised: Bool?, executableFingerprint: String? = nil, locationAuthorised: Bool? = nil,
-        agentRun: UUID? = nil
+        locationServicesEnabled: Bool? = nil, agentRun: UUID? = nil
     ) {
         self.agentVersion = agentVersion
         self.agentBuild = agentBuild
@@ -56,6 +60,7 @@ public struct HelloReply: Codable, Sendable, Equatable {
         self.notificationsAuthorised = notificationsAuthorised
         self.executableFingerprint = executableFingerprint
         self.locationAuthorised = locationAuthorised
+        self.locationServicesEnabled = locationServicesEnabled
         self.agentRun = agentRun
     }
 }
@@ -464,9 +469,13 @@ public struct LocationPermissionReply: Codable, Sendable, Equatable {
     public var authorised: Bool
     /// "notDetermined", "restricted", "denied", "authorisedAlways", "authorisedWhenInUse" or "unknown".
     public var status: String
+    /// False when Location Services is off for the whole Mac: the agent then answers at once, without asking
+    /// macOS (which would show no prompt and leave the request waiting). Nil from an agent older than Task 15.
+    public var servicesEnabled: Bool?
 
-    public init(authorised: Bool, status: String) {
+    public init(authorised: Bool, status: String, servicesEnabled: Bool? = nil) {
         self.authorised = authorised
         self.status = status
+        self.servicesEnabled = servicesEnabled
     }
 }

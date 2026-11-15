@@ -31,6 +31,8 @@ swift test --package-path RestoreyCore
 step "Generate the Xcode project"
 xcodegen generate --quiet
 
+# verify-bundle.sh also checks the Developer window: in every Debug build (all its types found, the positive
+# control) and absent from every Release build, so a Release that compiled it in fails here.
 step "Build Debug (unsigned)"
 build Debug build/DerivedData-unsigned CODE_SIGNING_ALLOWED=NO
 scripts/verify-bundle.sh build/DerivedData-unsigned/Build/Products/Debug/RestoreyDev.app --skip-signature
