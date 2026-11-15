@@ -63,8 +63,8 @@ final class RestoreFilesModel {
     }
 
     /// "Show Passwords and Keys(…)" / "Hide Passwords and Keys". Showing asks for the owner first if this opening
-    /// hasn't yet; approving keeps them shown. After a prompt the window gets the key back only once macOS grants
-    /// the activation `OwnerAuthentication` asks for, so the order is `RevealOrder`'s: ask, wait for the window to be
+    /// hasn't yet; approving keeps them shown. After a prompt the window gets the key back only once macOS gives the
+    /// front back to Restorey (`OwnerAuthentication`), so the order is `RevealOrder`'s: ask, wait for the window to be
     /// back (up to `keyWait`), fetch, then show only if it is still key (fix round 3, N1). The opening is taken
     /// before the prompt, so a window closed (or a plan changed) during the prompt or the wait never fetches; `close`
     /// also ends the wait at once (fix round 4, I1).

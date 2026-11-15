@@ -2,8 +2,8 @@ import Foundation
 
 /// Whether a window is the key window, fed by its key notifications (`becameKey`, `resignedKey`), with a wait for
 /// it to become key. Restore Files and the kit window use it after a Touch ID or password prompt: the prompt takes
-/// the key window, and the window that asked gets it back only once macOS grants Restorey's activation, which
-/// happens asynchronously (fix round 3, N1).
+/// the key window, and the window that asked gets it back only once macOS gives the front back to Restorey when
+/// the prompt goes, which happens asynchronously (fix round 3, N1; O1 fix round).
 ///
 /// During a prompt (`RevealOrder` brackets it) the window counts as back only once it has resigned key and become
 /// key again (fix round 4, M1). The prompt's answer and the window's resign-key notification come from different

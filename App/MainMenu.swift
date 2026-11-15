@@ -5,8 +5,9 @@ import AppKit
 /// through a menu item. Every item sends its standard selector to the first responder (`target` nil), so
 /// text fields, SwiftUI's included, handle them as in any Mac app.
 ///
-/// The app stays `.accessory`, so this menu isn't there to be clicked through as a menu bar: its job is the key
-/// equivalents (⌘C, ⌘V, ⌘X, ⌘A, ⌘Z, ⇧⌘Z, ⌘W, ⌘Q).
+/// While one of its windows is open Restorey is an ordinary app (`WindowActivation`, O1), so this menu is also its
+/// menu bar then: the app menu (About, Hide, Quit), Edit and Window. With no window open it is a menu bar app again
+/// and shows no menu bar; the status item's menu has Quit.
 ///
 /// The entry point is `AppDelegate.main` driving `NSApplication` itself, not SwiftUI's `App`, so no scene
 /// replaces this menu after launch.
@@ -30,6 +31,8 @@ enum MainMenu {
         // The title of the first menu is ignored: macOS shows the app's name there.
         let menu = NSMenu(title: appName)
         menu.addItem(item("About \(appName)", #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
+        menu.addItem(.separator())
+        menu.addItem(item("Hide \(appName)", #selector(NSApplication.hide(_:)), "h"))
         menu.addItem(.separator())
         menu.addItem(item("Quit \(appName)", #selector(NSApplication.terminate(_:)), "q"))
         return menu

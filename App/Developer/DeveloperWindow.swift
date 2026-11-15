@@ -17,6 +17,7 @@ final class DeveloperWindowController: NSObject, NSWindowDelegate {
     /// The form's secrets don't outlive the window.
     func windowWillClose(_ notification: Notification) {
         model.clearSecrets()
+        WindowActivation.windowClosed(.developer)
     }
 
     func show() {
@@ -29,8 +30,7 @@ final class DeveloperWindowController: NSObject, NSWindowDelegate {
             made.delegate = self
             window = made
         }
-        NSApplication.shared.activate()
-        window?.makeKeyAndOrderFront(nil)
+        if let window { WindowActivation.bringForward(window, as: .developer) }
     }
 }
 

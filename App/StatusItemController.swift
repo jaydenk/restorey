@@ -264,8 +264,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
                 let alert = NSAlert()
                 alert.messageText = failureTitle
                 alert.informativeText = error.description
-                NSApplication.shared.activate()
-                alert.runModal()
+                WindowActivation.runModal(alert)
                 return
             }
         }

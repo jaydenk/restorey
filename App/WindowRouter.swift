@@ -190,7 +190,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             shownPlan[kind] = planID
         }
         if isNew { window.center() }
-        WindowActivation.bringForward(window)
+        WindowActivation.bringForward(window, as: .window(kind))
     }
 
     private func makeWindow(_ kind: AppWindowKind, content: NSViewController) -> NSWindow {
@@ -229,7 +229,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
     func askBeforeQuitting(_ reply: @escaping @MainActor (Bool) -> Void) -> QuitQuestion {
         guard let window = slots.openWindow(for: .settings), let editor = planEditorSlot?.editor, editor.edit.isDirty
         else { return .none }
-        WindowActivation.bringForward(window)
+        WindowActivation.bringForward(window, as: .window(.settings))
         if window.attachedSheet != nil { return .busy }
         askToSave(editor, in: window, then: reply)
         return .asked
@@ -298,4 +298,5 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         // The content (and anything secret it holds) goes now, not when AppKit lets go of the window.
         window.contentViewController = nil
     }
+        WindowActivation.windowClosed(.window(kind))
 }

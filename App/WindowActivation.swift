@@ -1,41 +1,75 @@
 import AppKit
 import RestoreyCore
 
-/// Brings one of the app's windows to the front as the key window of the active app (O1, fix round 1).
+/// Brings Restorey's windows to the front and keeps its activation policy in step with them (O1; diagnosis
+/// `.superpowers/sdd/2026-11-12-v0.1-ui/o1-diagnosis.md`, owner rulings of 15 Nov 2026).
 ///
-/// Why this is needed: since macOS 14, `NSApplication.activate()` is a request the system may refuse ("calling this
-/// method doesn't guarantee app activation", AppKit docs; "app activation is driven by user intent", macOS 14
-/// AppKit release notes). Restorey is an accessory app that is almost never active when asked for a window. The
-/// likely reasons its requests didn't stick (from the docs and the owner's report; not yet confirmed live):
-/// - from inside a status-item menu's action, while the menu is still tracking (event-tracking run-loop mode). When
-///   tracking ends, the system gives the focus back to the app that was active before the menu opened, so the
-///   window just ordered front ends up behind it. So the request is made once tracking is over: in the default
-///   run-loop mode, which doesn't run while a menu tracks.
-/// - after a Touch ID or password prompt (`OwnerAuthentication`): the prompt is another process's window, and when
-///   it goes, macOS returns the focus to whichever app was active before it, which for a request made while
-///   Restorey's own activation was still pending is the previous app. So whichever way the prompt ends, the window
-///   that asked is brought forward again.
-/// The window is ordered front at once either way, so it appears even if activation is refused.
+/// - While any of its windows is open, Restorey is an ordinary app (`.regular`: Dock icon, ⌘-Tab, its own menu bar),
+///   and a menu bar app (`.accessory`) once the last one closes (`WindowPresence`). As an accessory app it was passed
+///   over when a Touch ID prompt went away (WindowServer gives the front to the next regular app), and it had no menu
+///   bar for Quit and Edit.
+/// - Activation is asked for once, synchronously, while the request that opened the window is being handled (the
+///   status-item menu's action, a button). macOS may still refuse it ("calling this method doesn't guarantee app
+///   activation", `NSApplication.activate()`); then, on the next turn of the run loop, a window still on screen is
+///   ordered in front anyway with `orderFrontRegardless()`, though it isn't key until clicked.
 @MainActor
 enum WindowActivation {
-    static func bringForward(_ window: NSWindow) {
+    private static var presence = WindowPresence()
+
+    /// Shows `window` (one of Restorey's, `id`) in front and asks for the app to be activated.
+    static func bringForward(_ window: NSWindow, as id: WindowPresence.Window) {
+        windowShown(id)
         window.makeKeyAndOrderFront(nil)
-        let number = window.windowNumber
-        // Never inside a menu's tracking loop (event-tracking mode is left out). Default mode, and modal-panel mode,
-        // which is what runs while AppKit waits for the answer to a quit (`.terminateLater`): a Quit chosen from the
-        // status-item menu then shows its question on an active window (fix round 3, N4).
-        RunLoop.main.perform(inModes: [.default, .modalPanel]) {
-            MainActor.assumeIsolated {
-                NSApplication.shared.activate()
-                NSApplication.shared.window(withWindowNumber: number)?.makeKeyAndOrderFront(nil)
-            }
-        }
+        activate(showing: window)
     }
 
     /// The open window of `kind`, if there is one.
     static func bringForward(_ kind: AppWindowKind) {
         guard let window = NSApplication.shared.windows.first(where: { $0.identifier?.rawValue == kind.rawValue })
         else { return }
-        bringForward(window)
+        bringForward(window, as: .window(kind))
+    }
+
+    /// Runs `alert` as its own window (not a sheet), with Restorey active and an ordinary app while it is up.
+    @discardableResult
+    static func runModal(_ alert: NSAlert) -> NSApplication.ModalResponse {
+        let id = WindowPresence.Window.alert(UUID())
+        windowShown(id)
+        activate(showing: alert.window)
+        let response = alert.runModal()
+        windowClosed(id)
+        return response
+    }
+
+    /// One of Restorey's windows is about to show: the Dock icon and menu bar come first, so the activation that
+    /// follows is for an ordinary app.
+    static func windowShown(_ id: WindowPresence.Window) {
+        apply(presence.shown(id))
+    }
+
+    /// One of Restorey's windows closed: after the last one, Restorey is a menu bar app again. When it was active,
+    /// macOS hands the front back to the app before it.
+    static func windowClosed(_ id: WindowPresence.Window) {
+        apply(presence.closed(id))
+    }
+
+    private static func apply(_ change: AppPolicy?) {
+        switch change {
+        case .regular?: NSApplication.shared.setActivationPolicy(.regular)
+        case .accessory?: NSApplication.shared.setActivationPolicy(.accessory)
+        case nil: break
+        }
+    }
+
+    private static func activate(showing window: NSWindow) {
+        NSApplication.shared.activate()
+        // A main-actor task runs from the main queue, which runs in every run-loop mode, the modal ones (an alert's,
+        // a quit waiting on its question) included, so the fallback comes on the next turn whatever is running.
+        Task { @MainActor [weak window] in
+            guard let window else { return }
+            if WindowPresence.ordersFrontRegardless(isActive: NSApplication.shared.isActive, windowVisible: window.isVisible) {
+                window.orderFrontRegardless()
+            }
+        }
     }
 }

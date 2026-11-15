@@ -89,7 +89,7 @@ final class RecoveryKitWindowModel {
             if await approve() { _ = await load() }
             return
         }
-        // `RevealOrder` (fix rounds 3 and 4): the window is key again only once macOS grants the activation asked for
+        // `RevealOrder` (fix rounds 3 and 4): the window is key again only once macOS gives the front back to Restorey
         // after the prompt, so wait for that, then load, then show only if it is still key and still open.
         let show = await RevealOrder.reveal(
             waiter: kit.keyWaiter, prompts: true, timeout: RestoreFilesModel.keyWait,

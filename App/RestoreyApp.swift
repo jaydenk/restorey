@@ -63,10 +63,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func open(_ opening: ShellOpening) {
         guard opening == .damagedNotice else { return router.show(opening) }
-        NSApplication.shared.activate()
         let alert = NSAlert()
         alert.messageText = Self.damagedMessage
-        alert.runModal()
+        WindowActivation.runModal(alert)
     }
 
     private func setUp() {

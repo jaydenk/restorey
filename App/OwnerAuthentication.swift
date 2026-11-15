@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import LocalAuthentication
 import RestoreyCore
@@ -16,11 +17,12 @@ enum OwnerAuthentication {
     }
 
     /// `reason` completes macOS's "Restorey is trying to …", so it starts with a verb in lower case. When the
-    /// prompt has gone, whichever way it ended, the window of `returningTo` is made key and the app brought to the
-    /// front again: macOS hands the focus back to whichever app was active before the prompt otherwise (O1).
+    /// prompt has gone, whichever way it ended, the window of `returningTo` is made key again. Nothing asks for
+    /// activation here (O1 diagnosis): macOS itself gives the front back to Restorey, an ordinary app while the
+    /// window is open (`WindowActivation`), and a request with no user input behind it is always refused anyway.
     static func confirm(reason: String, returningTo window: AppWindowKind) async -> Outcome {
         let outcome = await ask(reason: reason)
-        WindowActivation.bringForward(window)
+        NSApplication.shared.windows.first { $0.identifier?.rawValue == window.rawValue }?.makeKeyAndOrderFront(nil)
         return outcome
     }
 
