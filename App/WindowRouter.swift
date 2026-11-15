@@ -112,7 +112,8 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             finishSetup: { [weak self] in self?.showSetup() },
             openSetup: { [weak self] in self?.showSetup(progress: $0) },
             addPlan: { [weak self] in self?.addPlan() },
-            showRecoveryKit: { [weak self] in self?.showRecoveryKit(planID: $0) })
+            showRecoveryKit: { [weak self] in self?.showRecoveryKit(planID: $0) },
+            planDeleted: { [weak self] in self?.setupStore?.forget(planID: $0) })
         show(.settings, configure: { [weak self, state] window in
             window.styleMask.insert(.resizable)
             let toolbar = SettingsToolbar(state: state)
@@ -297,6 +298,6 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         }
         // The content (and anything secret it holds) goes now, not when AppKit lets go of the window.
         window.contentViewController = nil
-    }
         WindowActivation.windowClosed(.window(kind))
+    }
 }

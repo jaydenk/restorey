@@ -265,7 +265,9 @@ note saying where to show it. These are read again whenever Restorey comes back 
 Setup keeps one saved progress, so `SetupFlow.addingPlan` decides what it opens: a new add, the add or first run
 already under way, or, when another plan's setup isn't finished, a question offering to finish that one first. An
 unfinished plan shows "Setup not finished" with "Finish Setup…" (setup is still making it, so it has no tabs); a plan
-needing a new kit shows "New recovery kit needed" with "Save Recovery Kit…". Every other plan has tabs:
+needing a new kit shows "New recovery kit needed" with "Save Recovery Kit…"; a plan the agent has stopped shows
+"Stopped" and its reason, as its line in the menu does. The sidebar notes the same under each plan's name, one at a
+time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`PlanNote`). Every other plan has tabs:
 
 - **What**: its name, the folders and drives, and the exclusions (setup's line and "Review Exclusions…" sheet).
 - **Schedule**: the interval, the battery rule and the plan's own upload limit in MB/s (empty, the default, is none;
@@ -299,14 +301,16 @@ the window or quitting Restorey asks Save, Don't Save or Cancel (a refused save 
 Settings already has a question up is cancelled, and the window brought forward so that question is answered first). The editor belongs to the window, so going
 to General and back keeps them. Delete Plan… asks with the developer window's words ("Its
 settings, saved passwords and keys, and history are removed. The repository and its snapshots aren't touched."); the
-agent also removes the plan's run logs.
+agent also removes the plan's run logs, and setup's saved progress is forgotten if it names the deleted plan
+(`SetupProgressStore.forget`), as it is when the Developer window deletes one.
 
 **History** lists every plan's runs, newest first, with a plan filter (set again by each "Show Details…", and back to every plan once you pick a section yourself or
 close Settings) and
 Everything, Backups, Problems or Skipped and paused (`HistoryPresentation`): local time, plan, the step (Backup, Tidy,
 Check…), how the run ended in the menu's wording ("Backed up", "Old snapshots
 tidied", "Skipped: Photos isn't connected", "Backup failed" with the menu's reason; never "failed" for a pause, a
-skip or a stop by the system), the size added and the time taken where known, and "Show Log", which opens the run's
+skip or a stop by the system; a probe finding no repository at an address, which is the answer setup expects for a
+new one, reads "No repository there yet" and isn't a problem), the size added and the time taken where known, and "Show Log", which opens the run's
 log only if its path stays inside the logs folder's `runs/`. The list is fetched again whenever a plan records a new
 run.
 

@@ -46,11 +46,14 @@ struct HistoryList: View {
                         ForEach(plans) { Text($0.name).tag(UUID?.some($0.id)) }
                     }
                     .fixedSize()
+                    // VoiceOver otherwise names the pop-up by its value ("All plans") (live finding 4).
+                    .accessibilityLabel("Plan")
                 }
                 Picker("Show", selection: $filter) {
                     ForEach(HistoryFilter.allCases) { Text($0.title).tag($0) }
                 }
                 .fixedSize()
+                .accessibilityLabel("Show")
                 Spacer()
             }
             List(rows) { row in

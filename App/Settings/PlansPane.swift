@@ -66,10 +66,8 @@ struct PlansPane: View {
                 ForEach(plans, id: \.plan.id) { plan in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(plan.plan.name).lineLimit(1)
-                        switch plan.setupState {
-                        case .unfinished: Text("Setup not finished").font(.caption).foregroundStyle(.orange)
-                        case .needsNewKit: Text("New recovery kit needed").font(.caption).foregroundStyle(.orange)
-                        case .complete: EmptyView()
+                        if let note = PlanNote.sidebar(plan) {
+                            Text(note.title).font(.caption).foregroundStyle(note.level == .error ? .red : .orange)
                         }
                     }
                     .tag(UUID?.some(plan.plan.id))
@@ -180,6 +178,9 @@ private struct PlanDetail: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(status.plan.name).font(.title3.weight(.semibold))
+            if let stop = PlanNote.stop(status) {
+                StopBanner(note: stop)
+            }
             if status.setupState == .needsNewKit {
                 NewKitBanner(planID: status.plan.id, context: context)
             }

@@ -125,6 +125,26 @@ struct HistoryPresentationTests {
         #expect(Self.row(Self.record(.failed(exitCode: 3, reason: "x"), .forget(dryRun: false))).outcome == "Tidy failed")
     }
 
+    /// Live finding 1 (build 812): a probe's `cat config` finding nothing is the answer setup expects for a new
+    /// address ("Nothing here yet."), not a failure, so it never shows under Problems. A backup that finds no
+    /// repository still fails.
+    @Test func aProbeFindingNoRepositoryIsAnAnswerNotAFailure() {
+        let probe = Self.record(.repositoryMissing, .catConfig, at: Self.at(14, 16))
+        let row = Self.row(probe)
+        #expect(row.operation == "Probe")
+        #expect(row.outcome == "No repository there yet")
+        #expect(row.detail == "7 s")
+        #expect(row.kind == .success)
+        let rows = HistoryPresentation.rows(
+            [probe, Self.record(.repositoryMissing, at: Self.at(13, 0))], plan: nil, filter: .problems,
+            planNames: Self.names, now: Self.now, calendar: Self.calendar, locale: Self.locale)
+        #expect(rows.map(\.outcome) == ["Backup failed"])
+        // Any other probe failure is still one.
+        let refused = Self.row(Self.record(.wrongPassword, .catConfig))
+        #expect(refused.outcome == "Probe failed")
+        #expect(refused.kind == .failure)
+    }
+
     // MARK: Time and plan
 
     @Test func earlierDaysShowTheirDate() {

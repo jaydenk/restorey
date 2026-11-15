@@ -105,6 +105,11 @@ public enum HistoryPresentation {
         case .locked:
             outcome = "Repository busy: another restic held its lock"
             kind = .warning
+        case .repositoryMissing where record.operation == .catConfig:
+            // Only probes run `cat config`, and nothing there is the answer setup expects for a new address
+            // ("Nothing here yet."), not a failure (live finding 1).
+            outcome = "No repository there yet"
+            kind = .success
         case .wrongPassword, .repositoryMissing, .credentialsUnavailable, .interrupted, .failed:
             outcome = "\(operationTitle(record.operation)) failed"
             if let reason = record.outcome.failureReason { details.append(reason) }

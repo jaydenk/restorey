@@ -55,6 +55,9 @@ struct GeneralPane: View {
         let login = SettingsGeneral.openAtLogin(loginStatus ?? context.loginItem.status)
         VStack(alignment: .leading, spacing: 4) {
             Toggle("Open at login", isOn: Binding(get: { login.isOn }, set: setOpenAtLogin))
+                // In a grouped form the switch's own label is drawn apart from it, and VoiceOver read the switch as
+                // "0" (live finding 4).
+                .accessibilityLabel("Open at login")
             if let note = login.note {
                 HStack(alignment: .firstTextBaseline) {
                     Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

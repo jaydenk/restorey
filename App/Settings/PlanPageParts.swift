@@ -1,7 +1,7 @@
 import RestoreyCore
 import SwiftUI
 
-// The pieces of a plan's page in Settings → Plans around its tabs: the new-kit banner, the save bar, Delete Plan…,
+// The pieces of a plan's page in Settings → Plans around its tabs: the stop and new-kit banners, the save bar, Delete Plan…,
 // and an unfinished plan's page.
 
 /// "New recovery kit needed" (the menu's banner, UI design §6.2): backups wait until the new kit is confirmed.
@@ -24,6 +24,29 @@ struct NewKitBanner: View {
         }
         .padding(10)
         .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+/// "Stopped" and the agent's reason (the menu's plan line, live finding 3): nothing runs until the cause is fixed,
+/// a wrong password typed in Storage, say.
+struct StopBanner: View {
+    let note: PlanNote
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(note.title).font(.headline)
+                if let detail = note.detail {
+                    Text(detail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        } icon: {
+            Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -99,7 +122,9 @@ struct DeletePlanButton: View {
         problem = nil
         defer { deleting = false }
         switch await context.supervisor.connection.deletePlan(planID) {
-        case .success: deleted()
+        case .success:
+            context.planDeleted(planID)
+            deleted()
         case .failure(let error): problem = FormValidation.sentence(error.description)
         }
     }

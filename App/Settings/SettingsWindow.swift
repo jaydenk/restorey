@@ -17,6 +17,8 @@ struct SettingsContext {
     /// forward instead.
     let addPlan: () -> AddPlanStart?
     let showRecoveryKit: (UUID) -> Void
+    /// A plan was deleted: setup progress that names it is forgotten (live finding 2).
+    let planDeleted: (UUID) -> Void
 }
 
 /// The Settings window's content (UI design §6, mockup `v0.1-settings.html`): the section the toolbar picks.

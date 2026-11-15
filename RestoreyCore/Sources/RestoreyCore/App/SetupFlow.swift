@@ -264,4 +264,10 @@ public struct SetupProgressStore {
     public func clear() {
         defaults.removeObject(forKey: Self.key)
     }
+
+    /// A plan was deleted: progress that names it goes, since there is nothing left to finish (live finding 2).
+    /// Progress for another plan, or for none yet, stays.
+    public func forget(planID: UUID) {
+        if load()?.planID == planID { clear() }
+    }
 }

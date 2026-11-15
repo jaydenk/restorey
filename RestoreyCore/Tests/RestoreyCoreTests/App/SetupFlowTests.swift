@@ -235,6 +235,28 @@ import Testing
         }
     }
 
+    /// Live finding 2 (build 812): deleting a plan forgets setup progress that names it, and only that.
+    @Test func deletingThePlanForgetsItsSetupProgress() {
+        Self.withStore { store, _ in
+            let deleted = UUID()
+            store.save(SetupProgress(planID: deleted, step: .sources, addingPlan: true, kitSaved: true))
+            store.forget(planID: UUID())
+            #expect(store.load()?.planID == deleted)
+            store.forget(planID: deleted)
+            #expect(store.load() == nil)
+        }
+    }
+
+    /// Progress from before "Check" saved a plan names none, so no deletion forgets it.
+    @Test func deletingAPlanKeepsProgressThatNamesNone() {
+        Self.withStore { store, _ in
+            let progress = SetupProgress(planID: nil, step: .storage, addingPlan: true, kitSaved: false)
+            store.save(progress)
+            store.forget(planID: UUID())
+            #expect(store.load() == progress)
+        }
+    }
+
     @Test func theStoreUsesTheSetupProgressKey() {
         #expect(SetupProgressStore.key == "setupProgress")
     }

@@ -133,6 +133,8 @@ final class DeveloperModel {
         }
         run("Delete plan") { [connection = supervisor.connection] in
             let result = await connection.deletePlan(id)
+            // Setup progress naming the plan has nothing left to finish (live finding 2), as in Settings.
+            if case .success = result { SetupProgressStore(defaults: .standard).forget(planID: id) }
             if case .success = result, self.selectedPlanID == id { self.selectedPlanID = nil }
             return Self.describe(result)
         }
