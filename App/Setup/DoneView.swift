@@ -21,6 +21,9 @@ struct DoneView: View {
                 PlanSummary(plan: plan)
                 Text("The first backup reads every file, so it can take hours. Restorey backs up \(ScheduleForm.title(hours: plan.intervalHours).lowercased()) after that.")
                     .fixedSize(horizontal: false, vertical: true)
+                if let summary = model.earlierRemovalSummary {
+                    Text(summary).fixedSize(horizontal: false, vertical: true)
+                }
             } else {
                 ProgressView().controlSize(.small)
             }

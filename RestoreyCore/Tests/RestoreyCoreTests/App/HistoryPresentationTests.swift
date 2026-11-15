@@ -109,6 +109,26 @@ struct HistoryPresentationTests {
         #expect(row.kind == .warning)
     }
 
+    /// Task 14b: a confirmed removal of earlier snapshots reads as what it did, counted from the IDs restic removed.
+    @Test func aRemovalOfEarlierSnapshotsSaysHowManyWent() {
+        let ids = (0..<12).map { String(repeating: String($0 % 10), count: 64) }
+        let row = Self.row(Self.record(.success(snapshotID: nil), .forgetSnapshots(ids: ids)))
+        #expect(row.operation == "Tidy")
+        #expect(row.outcome == "Removed 12 earlier snapshots")
+        #expect(row.kind == .success)
+        #expect(Self.row(Self.record(.success(snapshotID: nil), .forgetSnapshots(ids: [ids[0]]))).outcome
+            == "Removed 1 earlier snapshot")
+        #expect(Self.row(Self.record(.success(snapshotID: nil), .forgetSnapshots(ids: []), logFile: "")).outcome
+            == "No earlier snapshots needed removing")
+        let failed = Self.row(Self.record(.failed(exitCode: 1, reason: "the backend is unreachable"), .forgetSnapshots(ids: ids)))
+        #expect(failed.outcome == "Couldn't remove earlier snapshots")
+        #expect(failed.detail == "the backend is unreachable · 7 s")
+        #expect(failed.kind == .failure)
+        let locked = Self.row(Self.record(.locked, .forgetSnapshots(ids: ids)))
+        #expect(locked.outcome == "Repository busy: another restic held its lock")
+        #expect(locked.kind == .warning)
+    }
+
     // MARK: Failures, with the menu's reasons
 
     @Test func failuresNameTheStepAndTheMenusReason() {

@@ -59,6 +59,34 @@ extension AgentState {
         return try await requireRunner().checkCredentials(planID: id, candidates: values)
     }
 
+    /// What the plan's retention would remove from its earlier snapshots (Task 14b): those this Mac made before an
+    /// adoption, and those of the plan's previous folder lists. A dry run that takes no lock: nothing is removed or
+    /// recorded.
+    public func previewEarlierSnapshots(_ id: UUID) async throws -> EarlierSnapshotsPreview {
+        try requireRunnable(id)
+        return try await requireRunner().previewEarlierSnapshots(planID: id)
+    }
+
+    /// Removes the confirmed earlier snapshots that a fresh preview still puts in the confirmation's action, and
+    /// records it (Task 14b). A confirmation the plan can't have (`EarlierSnapshotsConfirmation.problem`) is refused
+    /// before restic runs.
+    public func removeEarlierSnapshots(_ request: EarlierSnapshotsRequest) async throws -> EarlierSnapshotsRemoval {
+        try requireRunnable(request.planID)
+        let plan = try requirePlan(request.planID)
+        if let problem = request.confirmation.problem(for: plan) { throw AgentError.invalidRequest(problem) }
+        return try await requireRunner().removeEarlierSnapshots(planID: plan.id, confirmation: request.confirmation)
+    }
+
+    /// Setup's confirmed removal (Task 14b): kept with the plan's history and run after its next backup that saves the
+    /// data, so a setup that fails never deletes anything. A later confirmation replaces an earlier one.
+    public func removeEarlierSnapshotsAfterNextBackup(_ request: EarlierSnapshotsRequest) async throws -> AgentStatus {
+        try requireRunnable(request.planID)
+        let plan = try requirePlan(request.planID)
+        if let problem = request.confirmation.problem(for: plan) { throw AgentError.invalidRequest(problem) }
+        let confirmation = request.confirmation
+        return try await updateHistory(plan.id) { $0.pendingEarlierRemoval = confirmation }
+    }
+
     /// The secrets that open a plan's repository.
     static func credentialKeys(of plan: Plan) -> Set<SecretKey> {
         var keys: Set<SecretKey> = [.repositoryPassword(plan.id)]

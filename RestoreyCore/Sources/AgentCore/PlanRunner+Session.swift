@@ -49,7 +49,8 @@ extension PlanRunner {
         }
         let context = ResticContext(
             cacheDirectory: deps.cacheDirectory, helperExecutable: deps.helperExecutable,
-            credentialsFile: credentialsFile, rawEnvironment: environment, homeDirectory: deps.homeDirectory)
+            credentialsFile: credentialsFile, rawEnvironment: environment, homeDirectory: deps.homeDirectory,
+            maintenanceRetryLock: deps.maintenanceRetryLock)
         return .ready(RunSession(
             plan: plan, context: context, redactor: redactor, key: RepositoryQueues.key(for: plan.repository)))
     }

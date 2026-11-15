@@ -122,6 +122,27 @@ final class AgentConnection {
         return await call(RepositoryProbe.self, timeout: .seconds(1200)) { $0.probeRepositoryCredentials(data, withReply: $1) }
     }
 
+    /// What the plan's retention would remove from its earlier snapshots (Task 14b). 20 minutes, like the probes: it
+    /// waits its turn in the repository's queue, and restic retries an unreachable backend for up to 15.
+    func previewEarlierSnapshots(_ planID: UUID) async -> Result<EarlierSnapshotsPreview, AgentCallError> {
+        await call(EarlierSnapshotsPreview.self, timeout: .seconds(1200)) {
+            $0.previewEarlierSnapshots(planID.uuidString, withReply: $1)
+        }
+    }
+
+    /// Removes the confirmed earlier snapshots still in scope. No timeout: it waits behind any backup in the repository's
+    /// queue and for another client's lock, and a timeout here would say "unreachable" while the agent goes on removing.
+    func removeEarlierSnapshots(_ request: EarlierSnapshotsRequest) async -> Result<EarlierSnapshotsRemoval, AgentCallError> {
+        guard let data = try? XPCCoding.encode(request) else { return .failure(.badReply("earlier snapshots request")) }
+        return await call(EarlierSnapshotsRemoval.self, timeout: nil) { $0.removeEarlierSnapshots(data, withReply: $1) }
+    }
+
+    /// Setup's confirmed removal, run by the agent after the plan's next successful backup.
+    func removeEarlierSnapshotsAfterNextBackup(_ request: EarlierSnapshotsRequest) async -> Result<AgentStatus, AgentCallError> {
+        guard let data = try? XPCCoding.encode(request) else { return .failure(.badReply("earlier snapshots request")) }
+        return await statusCall(timeout: .seconds(60)) { $0.removeEarlierSnapshotsAfterNextBackup(data, withReply: $1) }
+    }
+
     /// One plan's run records, or every plan's when `planID` is nil, newest first.
     func history(_ planID: UUID?) async -> Result<[RunRecord], AgentCallError> {
         await call([RunRecord].self, timeout: .seconds(10)) { $0.history(planID?.uuidString, withReply: $1) }

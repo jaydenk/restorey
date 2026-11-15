@@ -173,6 +173,47 @@ struct ResticInvocationTests {
         #expect(!args.contains("--prune"))
     }
 
+    /// Task 14b: the earlier-snapshots previews are dry runs that take no lock (restic 0.19.1 allows `--no-lock` with
+    /// `forget --dry-run` only), each over a timeline that puts the earlier snapshots with the plan's current ones:
+    /// before adoption, every snapshot of the host by `host,paths` (no `--tag`, so untagged ones are in it); previous
+    /// folder lists, the plan's own tag by `host,tags`, folders left out.
+    @Test func forgetPreviewsAreDryRunsWithoutALock() {
+        var p = plan()
+        p.retention = Retention(hourly: 1, daily: 2, weekly: 3, monthly: 4)
+        let keep = ["--keep-hourly", "1", "--keep-daily", "2", "--keep-weekly", "3", "--keep-monthly", "4"]
+        let before = inv(.forgetPreview(.beforeAdoption), p).arguments
+        #expect(before == ["forget", "--json", "--cache-dir", Self.cache, "--no-lock", "--dry-run", "--host=pepper",
+                           "--group-by", "host,paths"] + keep)
+        #expect(!before.contains { $0.hasPrefix("--tag") })
+        let previous = inv(.forgetPreview(.previousFolderLists), p).arguments
+        #expect(previous == ["forget", "--json", "--cache-dir", Self.cache, "--no-lock", "--dry-run", "--host=pepper",
+                             "--tag=\(tag)", "--group-by", "host,tags"] + keep)
+        #expect(!(before + previous).contains("--prune"))
+    }
+
+    /// Task 14b: the confirmed removal names the snapshots and nothing else: no policy, no filter (restic ignores
+    /// filters given with IDs, and says so), after `--` so an ID can never be read as a flag, and with the
+    /// maintenance lock wait.
+    @Test func forgetSnapshotsNamesOnlyTheConfirmedIDs() {
+        let ids = [String(repeating: "a", count: 64), String(repeating: "b", count: 64)]
+        let args = inv(.forgetSnapshots(ids: ids)).arguments
+        #expect(args == ["forget", "--json", "--cache-dir", Self.cache, "--retry-lock", "5m", "--"] + ids)
+        #expect(!args.contains { $0.hasPrefix("--keep") || $0.hasPrefix("--host") || $0.hasPrefix("--tag") })
+        #expect(!args.contains("--prune") && !args.contains("--dry-run"))
+    }
+
+    /// Tests shorten the lock wait; the agent keeps restic's five minutes.
+    @Test func theMaintenanceLockWaitComesFromTheContext() {
+        var context = Self.context
+        #expect(context.maintenanceRetryLock == "5m")
+        context.maintenanceRetryLock = "2s"
+        for op in [ResticOperation.forget(dryRun: false), .forgetSnapshots(ids: ["x"]), .prune, .check, .stats] {
+            let args = inv(op, nil, context).arguments
+            let i = args.firstIndex(of: "--retry-lock")
+            #expect(i.map { args[$0 + 1] } == "2s", "\(op)")
+        }
+    }
+
     @Test func pruneAndCheckRetryLock() {
         #expect(inv(.prune).arguments.starts(with: ["prune", "--json", "--cache-dir", Self.cache]))
         #expect(inv(.prune).arguments.contains("--retry-lock"))
@@ -194,7 +235,10 @@ struct ResticInvocationTests {
     }
 
     @Test func retryLockOnlyOnMaintenanceCommands() {
-        for op in [ResticOperation.backup, .initRepository, .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig] {
+        for op in [
+            ResticOperation.backup, .initRepository, .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock,
+            .catConfig, .forgetPreview(.beforeAdoption), .forgetPreview(.previousFolderLists),
+        ] {
             #expect(!inv(op).arguments.contains("--retry-lock"), "\(op)")
         }
     }
@@ -202,7 +246,8 @@ struct ResticInvocationTests {
     @Test func everyOperationPassesJSONAndCacheDirectory() {
         let ops: [ResticOperation] = [
             .initRepository, .backup, .forget(dryRun: false), .forget(dryRun: true), .prune, .check,
-            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig, .stats,
+            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig, .stats, .forgetPreview(.beforeAdoption),
+            .forgetPreview(.previousFolderLists), .forgetSnapshots(ids: ["x"]),
         ]
         for op in ops {
             let args = inv(op).arguments
@@ -317,12 +362,16 @@ struct ResticInvocationTests {
         #expect(try json(.unlock) == #"{"type":"unlock"}"#)
         #expect(try json(.catConfig) == #"{"type":"catConfig"}"#)
         #expect(try json(.stats) == #"{"type":"stats"}"#)
+        #expect(try json(.forgetPreview(.beforeAdoption)) == #"{"of":"beforeAdoption","type":"forgetPreview"}"#)
+        #expect(try json(.forgetPreview(.previousFolderLists)) == #"{"of":"previousFolderLists","type":"forgetPreview"}"#)
+        #expect(try json(.forgetSnapshots(ids: ["a1", "b2"])) == #"{"ids":["a1","b2"],"type":"forgetSnapshots"}"#)
     }
 
     @Test func operationRoundTripsAndRejectsUnknown() throws {
         let ops: [ResticOperation] = [
             .initRepository, .backup, .forget(dryRun: false), .forget(dryRun: true), .prune, .check,
-            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig, .stats,
+            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig, .stats, .forgetPreview(.beforeAdoption),
+            .forgetPreview(.previousFolderLists), .forgetSnapshots(ids: []), .forgetSnapshots(ids: ["a1", "b2"]),
         ]
         for op in ops {
             let data = try JSONEncoder().encode(op)
@@ -333,6 +382,9 @@ struct ResticInvocationTests {
         }
         #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(ResticOperation.self, from: Data(#"{"type":"forget"}"#.utf8))
+        }
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(ResticOperation.self, from: Data(#"{"type":"forgetSnapshots"}"#.utf8))
         }
     }
 

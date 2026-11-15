@@ -76,6 +76,22 @@ import Testing
         #expect(draft.probe == RepositoryProbe(state: .passwordRejected))
     }
 
+    /// Task 14b: the adoption step's confirmed opt-in is kept in the progress until Done hands it to the agent, and
+    /// goes with the repository when the address changes.
+    @Test func theEarlierSnapshotsChoiceIsRecordedAndGoesWithTheRepository() throws {
+        var draft = Self.draft(at: .password)
+        let choice = EarlierSnapshotsConfirmation(scope: .beforeAdoption, snapshotIDs: [String(repeating: "c", count: 64)])
+        draft.setEarlierRemoval(choice)
+        #expect(draft.progress.earlierRemoval == choice)
+        let decoded = try JSONDecoder().decode(SetupProgress.self, from: JSONEncoder().encode(draft.progress))
+        #expect(decoded.earlierRemoval == choice)
+        draft.forgetRepository()
+        #expect(draft.progress.earlierRemoval == nil)
+        draft.setEarlierRemoval(choice)
+        draft.setEarlierRemoval(nil)
+        #expect(draft.progress.earlierRemoval == nil)
+    }
+
     @Test func environmentValuesFollowTheirRowNotItsName() {
         // Typed into a row before its name is final: renaming the row must not orphan the value.
         var draft = Self.draft()

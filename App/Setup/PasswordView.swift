@@ -28,8 +28,15 @@ struct PasswordView: View {
                 ExistingRepositorySummary(model: model, report: report)
             case .ready:
                 Text("The repository is ready.").font(.headline)
-                Text("This setup made or adopted it before it was interrupted. Continue to the recovery kit.")
+                Text(model.earlierNote == nil && model.stepError == nil
+                     ? "This setup made or adopted it before it was interrupted. Continue to the recovery kit."
+                     : "This setup has adopted it. Continue to the recovery kit.")
                     .fixedSize(horizontal: false, vertical: true)
+                if model.draft.progress.adoption != nil {
+                    EarlierSnapshotsOptIn(model: model, isOn: Binding(
+                        get: { model.earlierRemoval != nil },
+                        set: { on in Task { await model.switchEarlierRemoval(on) } }))
+                }
             }
             SetupStepStatus(model: model)
             Spacer(minLength: 12)
@@ -152,6 +159,26 @@ private struct ExistingRepositorySummary: View {
             Label(warning, systemImage: "exclamationmark.triangle")
                 .foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+        EarlierSnapshotsOptIn(model: model, isOn: $model.applyRetentionToEarlier)
+    }
+}
+
+/// "Apply this plan's retention to existing snapshots from this Mac" (product spec §5.6, Task 14b): off by default,
+/// and nothing goes without its own confirmation, which counts what would.
+private struct EarlierSnapshotsOptIn: View {
+    @Bindable var model: SetupModel
+    let isOn: Binding<Bool>
+
+    var body: some View {
+        Toggle("Apply this plan's retention to existing snapshots from this Mac", isOn: isOn)
+            .disabled(model.working)
+        Text(model.earlierRemoval.map {
+            "You confirmed removing \($0.snapshotIDs.count) of them. They go after the first backup succeeds."
+        } ?? "Off: this Mac's snapshots from before Restorey are kept as they are. On, you'll see how many would be removed before anything is.")
+            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        if let note = model.earlierNote {
+            Text(note).font(.callout).fixedSize(horizontal: false, vertical: true)
         }
     }
 }

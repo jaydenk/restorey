@@ -184,4 +184,6 @@ final class LineCollector: Sendable {
     }
 
     var last: String? { lines.withLock { $0.last } }
+
+    var all: [String] { lines.withLock { $0 } }
 }

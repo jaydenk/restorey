@@ -245,7 +245,7 @@ extension PlanRunner {
         }
     }
 
-    private func measurementEnded(planID: UUID, handle: RunHandle) {
+    func measurementEnded(planID: UUID, handle: RunHandle) {
         measurementHandles[planID]?.removeAll { $0 === handle }
         if measurementHandles[planID]?.isEmpty == true { measurementHandles[planID] = nil }
     }
@@ -292,7 +292,7 @@ extension PlanRunner {
     }
 
     /// `overrides`: typed credentials to use (and redact) in place of the keychain's (a credential check).
-    private func actionSession(
+    func actionSession(
         planID: UUID, overrides: [SecretKey: String] = [:]
     ) async -> Result<RunSession, AgentError> {
         guard let plan = try? await deps.state.runInputs(planID).plan else { return .failure(.unknownPlan) }

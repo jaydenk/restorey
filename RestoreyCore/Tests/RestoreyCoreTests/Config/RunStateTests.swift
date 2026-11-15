@@ -203,6 +203,20 @@ struct RunStateTests {
         #expect(try JSONDecoder().decode(PlanRunHistory.self, from: Data("{}".utf8)).repositorySize == nil)
     }
 
+    /// Task 14b: setup's confirmed removal of pre-adoption snapshots waits in the history for the first successful
+    /// backup. State written before it existed has none, and one naming a scope only a newer build knows is dropped
+    /// (nothing is removed), not fatal.
+    @Test func pendingEarlierRemovalRoundTripsAndANewerScopeIsDropped() throws {
+        var history = PlanRunHistory()
+        history.pendingEarlierRemoval = EarlierSnapshotsConfirmation(
+            scope: .beforeAdoption, snapshotIDs: [String(repeating: "a", count: 64)])
+        let data = try JSONEncoder().encode(history)
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: data) == history)
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: Data("{}".utf8)).pendingEarlierRemoval == nil)
+        let newer = #"{"pendingEarlierRemoval":{"scope":{"type":"fromTheFuture"},"snapshotIDs":["x"]}}"#
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: Data(newer.utf8)).pendingEarlierRemoval == nil)
+    }
+
     /// Review fix 1: more skips than `recentLimit` push the backup out of `recent`, not out of
     /// `lastBackupRecord`, and that survives the state file.
     @Test func lastBackupOutlivesMoreThanFiftySkips() throws {

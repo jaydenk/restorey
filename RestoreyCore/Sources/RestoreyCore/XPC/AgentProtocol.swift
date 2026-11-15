@@ -7,9 +7,10 @@ import Foundation
 /// error a sentence in Australian English to show as is. Plan IDs are UUID strings.
 ///
 /// Mutating calls (`savePlan`, `deletePlan`, `pause`, `resume`, `confirmRecoveryKit`, `backUpNow`,
-/// `createRepository`, `saveNetworkSettings`, `dismissOffMacNote`) reply with the new `AgentStatus`. While
-/// a config error is reported, all of them are refused, and so are `history` and `recoveryKit`. While draining, all of them,
-/// `adopt` and `probeRepository` are refused, except `pause`: the user can still pause a long first backup,
+/// `createRepository`, `saveNetworkSettings`, `dismissOffMacNote`, `removeEarlierSnapshotsAfterNextBackup`) reply with
+/// the new `AgentStatus`. While a config error is reported, all of them are refused, and so are `history`, `recoveryKit`
+/// and the earlier-snapshots calls. While draining, all of them, `adopt`, `probeRepository` and the earlier-snapshots
+/// calls are refused, except `pause`: the user can still pause a long first backup,
 /// the run then ends paused, the drain completes and the next agent honours `pausedUntil`.
 ///
 /// Only `recoveryKit` replies with secrets, and only to this connection, which the listener accepts from
@@ -45,6 +46,17 @@ import Foundation
     /// `CredentialProbeRequest` → `RepositoryProbe`: what `probeRepository` would find with these credentials in place
     /// of the keychain's, which are left as they are. A check, not a run: nothing is saved or recorded.
     func probeRepositoryCredentials(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
+    /// → `EarlierSnapshotsPreview` (Task 14b): what the plan's retention would remove from its earlier snapshots (from
+    /// before an adoption, and of previous folder lists). A `forget --dry-run` that takes no lock: nothing is removed
+    /// and nothing is recorded.
+    func previewEarlierSnapshots(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
+    /// `EarlierSnapshotsRequest` → `EarlierSnapshotsRemoval` (Task 14b): removes the confirmed snapshots a fresh preview
+    /// still puts in the confirmation's action, and nothing else. Recorded in History. Waits its turn in the repository's
+    /// queue and for another client's lock (`--retry-lock`), so it can take minutes.
+    func removeEarlierSnapshots(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
+    /// `EarlierSnapshotsRequest` → `AgentStatus` (Task 14b): setup's confirmed removal, kept with the plan and run after
+    /// its next backup that saves the data.
+    func removeEarlierSnapshotsAfterNextBackup(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// → `[RunRecord]`, newest first: one plan's records, or every plan's when `planID` is nil.
     func history(_ planID: String?, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// → `RecoveryKitSecrets`: the plan and every secret stored for it, for the recovery kit. The only call

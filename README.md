@@ -247,9 +247,15 @@ report is recorded only once the pre-filled sources are saved too, so a failure 
 path and pressing the button again runs all of it again. `SetupModel` keeps the shared state; each step's actions are in their own file
 (`SetupModel+Storage`, `+Password`, `+Sources`, `+Schedule`, `+Done`).
 
-Applying a plan's retention to snapshots from before it adopted the repository (product spec §5.6's opt-in, with a
-`forget --dry-run` count) needs an engine call that doesn't exist yet, so setup doesn't offer it; until it does,
-`forget` only ever touches snapshots tagged with the plan's own ID.
+The adopt step also offers "Apply this plan's retention to existing snapshots from this Mac" (product spec §5.6),
+off by default. Switched on, "Use This Repository" adopts as usual, then asks the agent for a preview
+(`previewEarlierSnapshots`: a `forget --dry-run` that takes no lock and records nothing) and shows its own
+confirmation, "Remove N snapshots taken on <host> before Restorey?", with how many the plan's retention keeps, whether
+prune will free the space, and that it can't be undone; Cancel is the default button. The confirmed snapshot IDs are
+kept in the setup progress (`earlierRemoval`), and Done hands them to the agent before it confirms the kit
+(`removeEarlierSnapshotsAfterNextBackup`); the agent removes them only after the plan's first backup that succeeds,
+so a setup that fails never deletes anything. Nothing to remove, or Cancel, leaves the step on "The repository is
+ready" saying so, with the switch there to try again.
 
 ### Settings
 
@@ -290,7 +296,12 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   and storage keys or environment values (empty keeps what's saved; a new S3 or B2 key needs both halves), the host
   label, the pack size (read-only) and "Show recovery kit…". Entering the repository password doesn't change the
   repository's: it is for one changed outside Restorey.
-- **Keep**: retention, the prune switch, and for an adopted repository how often old snapshots are tidied.
+- **Keep**: retention, the prune switch, and for an adopted repository how often old snapshots are tidied. Below
+  them, **Earlier snapshots**: a preview, run when the tab appears and after a save changes the folders, host label or
+  retention, lists each earlier group of the plan (its previous folder lists, and for an adopted plan this Mac's
+  snapshots from before Restorey) with how many snapshots it holds and how many retention would remove, and an "Apply
+  Retention…" button that asks first ("Remove N snapshots from the previous folder list?", Cancel the default). With
+  nothing to apply it says so in one line. It counts with the saved plan, so unsaved edits disable the buttons.
 - **Alerts**: the check-in URL (saved, Remove, or a new one) and "no successful backup in N days".
 - **History**: the History list for that plan.
 
@@ -411,6 +422,23 @@ doesn't exist and the key is allowed to create buckets (a key scoped to one buck
 create the bucket in your provider's console first. Restorey never runs `init` on its own. Adopting a repository
 only lists its snapshots; it replies with them at once and then measures the size with `restic stats` as the
 next job in the repository's queue (the plan stays idle meanwhile, and a pause or delete stops it).
+
+**Earlier snapshots** (product spec §5.6, Task 14b). The plan's ordinary `forget` never touches snapshots outside its
+own group. Two opt-in actions can: the snapshots this Mac made before Restorey adopted the repository (exactly the
+plan's folders, no `restorey:` tag), and those the plan made of a previous folder list (its own tag alone, other
+folders). "Apply retention" means as if they were the plan's own: the preview is `forget --dry-run --no-lock --host
+<label>` with the plan's retention over a timeline that holds them and the plan's current snapshots together
+(`--group-by host,paths` for the snapshots from before adoption; `--tag restorey:<id> --group-by host,tags` for
+previous folder lists), since the plan's ordinary `forget`, a group at a time, already thins each old group on its own.
+`EarlierSnapshots` (RestoreyCore) then decides snapshot by snapshot, from each one's own host, paths and tags, so
+another Mac's snapshots, another plan's, a superset of the plan's folders, the plan's current snapshots, or the plan's
+tag with the user's own beside it are never removable. A confirmed removal runs a fresh preview in the same turn of the
+repository's queue and then `forget --retry-lock 5m -- <ids>` with no policy and no filter, for exactly the confirmed
+IDs that preview still puts in the action: a snapshot added after the confirmation is never taken, and one gone
+meanwhile is left out (restic itself skips a missing ID with `Ignoring "<id>"` and exits 0). A lock another client
+holds past the wait removes nothing, says so, and is never broken. Nothing is pruned; the plan's prune schedule frees
+the space. Each confirmed removal is a History row ("Removed 12 earlier snapshots", or "No earlier snapshots needed
+removing") with its log; the preview records nothing.
 
 Every restic run has its own log in `~/Library/Logs/Restorey/runs/<plan ID>/` (`Restorey-Dev` for Debug builds),
 with secrets redacted. A log starts with the restic command (values hidden) and ends with the outcome; a

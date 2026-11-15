@@ -163,6 +163,36 @@ final class AgentService: NSObject, AgentXPC, Sendable {
         }
     }
 
+    func previewEarlierSnapshots(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "previewEarlierSnapshots") { [state, log] in
+            let preview = try await state.previewEarlierSnapshots(try Self.planID(planID))
+            // Counts only: the IDs are in the reply, and a dry run removed nothing.
+            let counts = preview.groups.map { "\($0.removeIDs.count) of \($0.total)" }.joined(separator: ", ")
+            log.info("Counted earlier snapshots for plan \(planID): \(preview.groups.count) groups, retention would remove [\(counts)]")
+            return preview
+        }
+    }
+
+    func removeEarlierSnapshots(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "removeEarlierSnapshots") { [state, log] in
+            let decoded = try Self.decode(EarlierSnapshotsRequest.self, from: request)
+            let removal = try await state.removeEarlierSnapshots(decoded)
+            log.info(
+                "Removed \(removal.removed) earlier snapshots for plan \(decoded.planID.uuidString) (\(removal.leftAlone) confirmed ones left)")
+            return removal
+        }
+    }
+
+    func removeEarlierSnapshotsAfterNextBackup(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "removeEarlierSnapshotsAfterNextBackup") { [state, log] in
+            let decoded = try Self.decode(EarlierSnapshotsRequest.self, from: request)
+            let status = try await state.removeEarlierSnapshotsAfterNextBackup(decoded)
+            log.info(
+                "Plan \(decoded.planID.uuidString) removes \(decoded.confirmation.snapshotIDs.count) confirmed earlier snapshots after its next backup")
+            return status
+        }
+    }
+
     func history(_ planID: String?, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
         // Not logged: the app reads it whenever a history view is shown.
         respond(reply, "history") { [state] in try await state.history(try planID.map(Self.planID)) }

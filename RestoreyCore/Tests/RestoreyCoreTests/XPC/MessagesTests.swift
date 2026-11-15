@@ -342,4 +342,19 @@ struct MessagesTests {
         }
         #expect(String(describing: request).contains(Self.planID.uuidString))
     }
+
+    /// Task 14b: the earlier-snapshots calls carry snapshot IDs, host names, paths and counts, never a secret.
+    @Test func earlierSnapshotsMessagesRoundTripWithExplicitJSON() throws {
+        let id = String(repeating: "a", count: 64)
+        let group = EarlierSnapshotGroup(
+            scope: .previousFolderList(paths: ["/Users/me/Old"]), host: "mac", paths: ["/Users/me/Old"], tags: [],
+            keptCount: 3, removeIDs: [id])
+        try roundTrip(EarlierSnapshotsPreview(groups: [group]))
+        try roundTrip(EarlierSnapshotsRemoval(removed: 12, leftAlone: 1))
+        let request = EarlierSnapshotsRequest(planID: Self.planID, confirmation: EarlierSnapshotsConfirmation(group))
+        try roundTrip(request)
+        #expect(try json(request) == #"{"confirmation":{"scope":{"paths":["/Users/me/Old"],"type":"previousFolderList"},"#
+            + #""snapshotIDs":["\#(id)"]},"planID":"6F1C2E1A-0000-4000-8000-000000000001"}"#)
+        #expect(try json(EarlierSnapshotsRemoval(removed: 12, leftAlone: 1)) == #"{"leftAlone":1,"removed":12}"#)
+    }
 }

@@ -194,6 +194,10 @@ import Testing
         let json = #"{"planID":"\#(id.uuidString)","step":"password","addingPlan":true}"#
         let decoded = try JSONDecoder().decode(SetupProgress.self, from: Data(json.utf8))
         #expect(decoded == SetupProgress(planID: id, step: .password, addingPlan: true, kitSaved: false))
+        #expect(decoded.earlierRemoval == nil)
+        // A choice whose scope only a newer build knows is dropped, so nothing unclassifiable is ever removed.
+        let newer = #"{"planID":"\#(id.uuidString)","step":"password","addingPlan":true,"earlierRemoval":{"scope":{"type":"x"},"snapshotIDs":[]}}"#
+        #expect(try JSONDecoder().decode(SetupProgress.self, from: Data(newer.utf8)).earlierRemoval == nil)
     }
 
     @Test func progressAheadOfAnUninstalledAppGoesBackToMoveToApplications() {

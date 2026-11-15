@@ -81,6 +81,11 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
     /// failures longer than `recentLimit` can't push it out. Set by `record(_:)`. State written before it
     /// existed decodes it from `recent`.
     public var lastBackupRecord: RunRecord?
+    /// Setup's confirmed removal of the snapshots from before adoption (Task 14b), waiting for the plan's next
+    /// successful backup so a setup that fails never deletes anything. The runner clears it once it has run with a
+    /// verdict; a lock held elsewhere or an interruption leaves it for the backup after. Nil in state written before
+    /// it existed.
+    public var pendingEarlierRemoval: EarlierSnapshotsConfirmation?
 
     public static let recentLimit = 50
 
@@ -110,7 +115,7 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case lastSuccessAt, lastAttemptAt, lastSnapshotAt, lastForgetAt, lastPruneAt, lastCheckAt
         case runningRecordID, runningRecord, recent, activeAlerts, stoppedReason, pausedUntil, repositorySize
-        case lastBackupRecord
+        case lastBackupRecord, pendingEarlierRemoval
     }
 
     public init(from decoder: any Decoder) throws {
@@ -149,6 +154,12 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
             lastBackup = nil
         }
         lastBackupRecord = lastBackup ?? recent.first(where: Self.savedData)
+        // A scope only a newer build knows: dropped, so nothing this build can't classify is ever removed.
+        do {
+            pendingEarlierRemoval = try c.decodeIfPresent(EarlierSnapshotsConfirmation.self, forKey: .pendingEarlierRemoval)
+        } catch where UnknownCase.isUnknownCase(error) {
+            pendingEarlierRemoval = nil
+        }
     }
 }
 

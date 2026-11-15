@@ -34,10 +34,14 @@ public struct SetupProgress: Codable, Sendable, Equatable {
     /// kept for the sources step's new-group warning after a quit. Set only once `adopt` has succeeded. Host names
     /// and folder paths, no secret.
     public var adoption: AdoptReport?
+    /// The adoption step's confirmed opt-in to apply the plan's retention to this Mac's snapshots from before
+    /// Restorey (Task 14b): exactly the IDs its confirmation counted. Nil when off, the default. Done hands it to the
+    /// agent, which runs it after the plan's first successful backup. Snapshot IDs, no secret.
+    public var earlierRemoval: EarlierSnapshotsConfirmation?
 
     public init(
         planID: UUID?, step: SetupStep, addingPlan: Bool, kitSaved: Bool = false, openAtLogin: Bool? = nil,
-        repositoryCreated: Bool = false, adoption: AdoptReport? = nil
+        repositoryCreated: Bool = false, adoption: AdoptReport? = nil, earlierRemoval: EarlierSnapshotsConfirmation? = nil
     ) {
         self.planID = planID
         self.step = step
@@ -46,10 +50,11 @@ public struct SetupProgress: Codable, Sendable, Equatable {
         self.openAtLogin = openAtLogin
         self.repositoryCreated = repositoryCreated
         self.adoption = adoption
+        self.earlierRemoval = earlierRemoval
     }
 
     private enum CodingKeys: String, CodingKey {
-        case planID, step, addingPlan, kitSaved, openAtLogin, repositoryCreated, adoption
+        case planID, step, addingPlan, kitSaved, openAtLogin, repositoryCreated, adoption, earlierRemoval
     }
 
     /// Progress stored before `kitSaved`, `openAtLogin`, `repositoryCreated` or `adoption` existed still decodes:
@@ -63,6 +68,11 @@ public struct SetupProgress: Codable, Sendable, Equatable {
         openAtLogin = try c.decodeIfPresent(Bool.self, forKey: .openAtLogin)
         repositoryCreated = try c.decodeIfPresent(Bool.self, forKey: .repositoryCreated) ?? false
         adoption = try c.decodeIfPresent(AdoptReport.self, forKey: .adoption)
+        do {
+            earlierRemoval = try c.decodeIfPresent(EarlierSnapshotsConfirmation.self, forKey: .earlierRemoval)
+        } catch where UnknownCase.isUnknownCase(error) {
+            earlierRemoval = nil
+        }
     }
 }
 

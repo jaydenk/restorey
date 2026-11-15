@@ -155,6 +155,7 @@ final class RunnerFixture: Sendable {
         stableAncestors: Bool = false,
         pingDelay: Duration = .zero,
         networkSettings: NetworkSettings = .defaults,
+        retryLock: String = "5m",
         change: (inout Plan) -> Void = { _ in }
     ) async throws -> RunnerFixture {
         let fm = FileManager.default
@@ -164,7 +165,7 @@ final class RunnerFixture: Sendable {
             return try await make(
                 root: root, origin: origin, executable: executable, createRepository: createRepository,
                 confirmKit: confirmKit, gracePeriod: gracePeriod, pingDelay: pingDelay,
-                networkSettings: networkSettings, change: change)
+                networkSettings: networkSettings, retryLock: retryLock, change: change)
         } catch {
             // The caller's `defer { remove() }` isn't in place yet.
             try? fm.removeItem(at: root)
@@ -174,7 +175,8 @@ final class RunnerFixture: Sendable {
 
     private static func make(
         root: URL, origin: RepositoryOrigin, executable: URL?, createRepository: Bool, confirmKit: Bool,
-        gracePeriod: Duration, pingDelay: Duration, networkSettings: NetworkSettings, change: (inout Plan) -> Void
+        gracePeriod: Duration, pingDelay: Duration, networkSettings: NetworkSettings, retryLock: String,
+        change: (inout Plan) -> Void
     ) async throws -> RunnerFixture {
         let fm = FileManager.default
         for name in ["source", "cache", "home", "logs", "support"] {
@@ -233,7 +235,8 @@ final class RunnerFixture: Sendable {
             interruptGracePeriod: gracePeriod,
             sleepPrevention: sleepPrevention,
             agentLog: { line in agentLog.mutate { $0.append(line) } },
-            binaryReplaced: { binaryReplaced.value })
+            binaryReplaced: { binaryReplaced.value },
+            maintenanceRetryLock: retryLock)
         let runner = PlanRunner(dependencies: dependencies)
         await runner.recoverAfterStart()
         await state.attach(runner: runner)

@@ -34,6 +34,9 @@ public struct RunnerDependencies: Sendable {
     /// True once the agent's executable on disk is no longer the one it was started from (an update
     /// replaced the bundle). Checked before every restic step and on every scheduler tick (Ruling R55).
     public var binaryReplaced: @Sendable () -> Bool
+    /// restic's `--retry-lock` for the maintenance commands (`ResticContext.maintenanceRetryLock`): five minutes;
+    /// tests that hold a lock shorten it.
+    public var maintenanceRetryLock: String
 
     public init(
         state: AgentState, secrets: any SecretStore, queues: RepositoryQueues, supervisor: SupervisedProcesses,
@@ -45,7 +48,8 @@ public struct RunnerDependencies: Sendable {
         interruptGracePeriod: Duration = .seconds(10),
         sleepPrevention: SleepPrevention? = nil,
         agentLog: @escaping @Sendable (String) -> Void = { _ in },
-        binaryReplaced: @escaping @Sendable () -> Bool = { false }
+        binaryReplaced: @escaping @Sendable () -> Bool = { false },
+        maintenanceRetryLock: String = "5m"
     ) {
         self.state = state
         self.secrets = secrets
@@ -66,6 +70,7 @@ public struct RunnerDependencies: Sendable {
         self.sleepPrevention = sleepPrevention
         self.agentLog = agentLog
         self.binaryReplaced = binaryReplaced
+        self.maintenanceRetryLock = maintenanceRetryLock
     }
 }
 
@@ -78,7 +83,8 @@ public struct RunnerDependencies: Sendable {
 /// 5. the backup, classified (there is no check-in `/start` ping, Ruling R57);
 /// 6. history and alerts (written after every step, so an agent that dies mid-run loses nothing);
 /// 7. the check-in end ping, as soon as the backup's record is committed (Ruling R37);
-/// 8. in the same queue slot, after a successful backup: `forget`, `prune` (then `stats`, for the
+/// 8. in the same queue slot, after a successful backup: setup's confirmed removal of earlier snapshots
+///    when one is waiting (PlanRunner+EarlierSnapshots.swift), then `forget`, `prune` (then `stats`, for the
 ///    repository size, when it succeeded) and a plain `unlock` followed by `check`, when each is due
 ///    (`maintenance`).
 ///
@@ -454,6 +460,14 @@ public actor PlanRunner {
         queueEndPing(backup, redactor: session.redactor)
 
         guard handle.intent == nil, let history = try? await deps.state.runInputs(plan.id).history else {
+            return backup
+        }
+        // Setup's confirmed removal of the snapshots from before adoption waits for a backup that saved the data
+        // (Task 14b), and comes first, so a prune due now frees their space. Without a verdict (a lock held
+        // elsewhere, an interruption) it and the maintenance wait for the next backup.
+        if let pending = history.pendingEarlierRemoval, PlanRunHistory.savedData(backup.record), !(await isWindingDown()),
+            !(await runPendingEarlierRemoval(pending, session: session, handle: handle, trigger: trigger))
+        {
             return backup
         }
         for op in Self.maintenance(plan: plan, history: history, after: backup.record.outcome, now: deps.now()) {

@@ -58,6 +58,11 @@ final class SetupModel {
     var hostLabel = ""
     /// The schedule step's "Remove" for a check-in URL saved before setup was interrupted.
     var removeCheckInURL = false
+    /// The adoption step's "Apply this plan's retention to existing snapshots from this Mac" before "Use This
+    /// Repository" (SetupModel+EarlierSnapshots). Off by default; the confirmed choice itself is in the progress.
+    var applyRetentionToEarlier = false
+    /// What the opt-in found when it removes nothing (none beyond retention, or Cancel).
+    var earlierNote: String?
     // Set by the step extensions (SetupModel+Storage, +Password, +Sources, +Schedule, +Done), which live in
     // their own files, so these setters are internal rather than private; the views only read them.
     /// What the step's last action reported, as a sentence; cleared when an action starts and on a step change.
@@ -340,6 +345,11 @@ final class SetupModel {
 
     func recordAdoption(_ report: AdoptReport) {
         draft.setAdoption(report)
+        saveProgress()
+    }
+
+    func recordEarlierRemoval(_ confirmation: EarlierSnapshotsConfirmation?) {
+        draft.setEarlierRemoval(confirmation)
         saveProgress()
     }
 

@@ -53,6 +53,13 @@ public struct SetupDraft: Sendable, Equatable, CustomStringConvertible, CustomDe
         probe = nil
         progress.repositoryCreated = false
         progress.adoption = nil
+        progress.earlierRemoval = nil
+    }
+
+    /// The adoption step's "Apply this plan's retention to existing snapshots from this Mac", confirmed (or turned off
+    /// with nil). Done hands it to the agent (Task 14b).
+    public mutating func setEarlierRemoval(_ confirmation: EarlierSnapshotsConfirmation?) {
+        progress.earlierRemoval = confirmation
     }
 
     /// "Create New Repository" succeeded.

@@ -19,6 +19,14 @@ extension SetupModel {
         guard step == .done, draft.progress.kitSaved, let plan = draft.plan, let supervisor else { return }
         await act {
             if planStatus?.plan != plan, let problem = await save(plan) { return problem }
+            // Handed over before the kit is confirmed, so the scheduler can't start the first backup without it. The
+            // agent removes these only after a backup that succeeds (Task 14b).
+            if let choice = draft.progress.earlierRemoval {
+                let request = EarlierSnapshotsRequest(planID: plan.id, confirmation: choice)
+                if case .failure(let error) = await supervisor.connection.removeEarlierSnapshotsAfterNextBackup(request) {
+                    return error.description
+                }
+            }
             let baseline = FirstBackupProgress.Baseline(planStatus)
             switch await supervisor.connection.confirmRecoveryKit(plan.id) {
             case .failure(let error): return error.description

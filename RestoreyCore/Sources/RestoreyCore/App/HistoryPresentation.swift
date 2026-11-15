@@ -111,7 +111,11 @@ public enum HistoryPresentation {
             outcome = "No repository there yet"
             kind = .success
         case .wrongPassword, .repositoryMissing, .credentialsUnavailable, .interrupted, .failed:
-            outcome = "\(operationTitle(record.operation)) failed"
+            if case .forgetSnapshots = record.operation {
+                outcome = "Couldn't remove earlier snapshots"
+            } else {
+                outcome = "\(operationTitle(record.operation)) failed"
+            }
             if let reason = record.outcome.failureReason { details.append(reason) }
             kind = .failure
         }
@@ -145,13 +149,16 @@ public enum HistoryPresentation {
         case .initRepository: "Repository created"
         case .snapshots: "Snapshots listed"
         case .catConfig: "Repository found"
+        // Never recorded (a dry run records nothing), but named in case one ever is.
+        case .forgetPreview: "Earlier snapshots counted"
+        case .forgetSnapshots(let ids): EarlierSnapshotsText.historyOutcome(removed: ids.count)
         }
     }
 
     private static func operationTitle(_ operation: ResticOperation) -> String {
         switch operation {
         case .backup: "Backup"
-        case .forget: "Tidy"
+        case .forget, .forgetPreview, .forgetSnapshots: "Tidy"
         case .prune: "Prune"
         case .check: "Check"
         case .unlock: "Unlock"

@@ -127,6 +127,12 @@ extension SetupModel {
                 // adopt path, and pressing the button again runs all of it again.
                 if let problem = await save(prefilled) { return problem }
                 recordAdoption(report)
+                // The opt-in asks now, with the plan as adopted and pre-filled. Only a confirmed choice moves on: after
+                // nothing to remove, a Cancel or a failure the step stays (now "ready") and says why.
+                if applyRetentionToEarlier {
+                    if let problem = await chooseEarlierRemoval(draft.plan ?? prefilled) { return problem }
+                    guard earlierRemoval != nil else { return nil }
+                }
                 go(to: .recoveryKit)
                 return nil
             }

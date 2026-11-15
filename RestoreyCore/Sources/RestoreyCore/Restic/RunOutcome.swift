@@ -309,7 +309,7 @@ public func classify(
         // step, not unreadable files (final review M9). Any other operation has no documented 3.
         switch operation {
         case .backup: return .warning(unreadable: errors.count)
-        case .forget:
+        case .forget, .forgetSnapshots:
             return .failed(exitCode: 3, reason: exitErrorMessage.map(errorSentence) ?? errors.first?.message
                 ?? "restic couldn't remove every snapshot it was asked to forget")
         default: break

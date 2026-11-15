@@ -100,6 +100,10 @@ struct ResticInvocationAcceptanceTests {
             ("snapshots-all", .snapshots(allHosts: true)),
             ("forget-dry", .forget(dryRun: true)),
             ("forget", .forget(dryRun: false)),
+            ("forget-preview", .forgetPreview(.beforeAdoption)),
+            ("forget-preview-previous", .forgetPreview(.previousFolderLists)),
+            // An ID no snapshot has: restic skips it ("Ignoring …") and still exits 0 (Task 14b).
+            ("forget-snapshots", .forgetSnapshots(ids: [String(repeating: "0", count: 64)])),
             ("prune", .prune),
             ("check", .check),
             ("stats", .stats),
@@ -128,6 +132,24 @@ struct ResticInvocationAcceptanceTests {
                 #expect(snaps.contains { $0.hostname == "testhost" && ($0.tags ?? []) == [otherTag] }, "(c) lost")
                 #expect(snaps.filter { $0.hostname == "testhost" && ($0.tags ?? []) == [own] }.count == 1,
                         "own group should be reduced to one snapshot")
+            }
+            if name == "forget-preview" {
+                // One timeline per host and folder list, every tag in it (so untagged snapshots are there), and
+                // nothing from the other host.
+                let line = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                #expect(ForgetReport.isReport(line), "\(r.stdout)")
+                let groups = try ForgetReport.groups(from: line)
+                #expect(groups.map(\.host) == ["testhost"])
+                #expect(groups.allSatisfy { $0.tags.isEmpty && $0.paths == [sourcePath] })
+            }
+            if name == "forget-preview-previous" {
+                let line = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                let groups = try ForgetReport.groups(from: line)
+                #expect(groups.map(\.tags) == [["restorey:\(plan.id.uuidString)"]], "\(r.stdout)")
+                #expect(groups.allSatisfy { $0.paths.isEmpty && $0.host == "testhost" })
+            }
+            if name == "forget-snapshots" {
+                #expect(r.stderr.contains("Ignoring \""), "\(r.stderr)")
             }
             if name == "stats" {
                 #expect(try StatsSummary.parse(r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)).totalSize > 0)

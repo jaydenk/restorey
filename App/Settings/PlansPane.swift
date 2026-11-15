@@ -244,7 +244,7 @@ private struct PlanDetail: View {
         case .what: PlanWhatTab(model: model, identity: context.supervisor.identity)
         case .schedule: PlanScheduleTab(model: model)
         case .storage: PlanStorageTab(model: model) { context.showRecoveryKit(status.plan.id) }
-        case .keep: PlanKeepTab(model: model)
+        case .keep: PlanKeepTab(model: model, connection: context.supervisor.connection)
         case .alerts: PlanAlertsTab(model: model)
         case .history: EmptyView()
         }
