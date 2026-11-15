@@ -372,34 +372,45 @@ public enum MenuPresentation {
             return
         }
 
-        var details: [String] = []
+        let facts = settledFacts(status, format)
+        line.status = facts.status
+        // A skip with no backup yet is the status itself, so it isn't repeated in the detail.
+        var details = facts.issues.filter { $0 != facts.status }
+        if details.isEmpty, let next = status.nextRunAt { details = [Words.next(next, format)] }
+        line.detail = details.isEmpty ? nil : details.joined(separator: " · ")
+        line.severity = facts.severity
+    }
+
+    /// What a settled plan (no failure alert, not stopped) shows, apart from its next run: the status, what needs
+    /// attention (a skip first, then warnings and errors) and how much. One source for the menu's plan line and the
+    /// Overview's headline and reason, so a coloured Overview headline always has its reason (re-review N1).
+    fileprivate struct SettledFacts {
+        var status: String
+        var issues: [String]
         var severity: Severity?
+    }
+
+    fileprivate static func settledFacts(_ status: PlanStatus, _ format: TextContext) -> SettledFacts {
+        let alerts = Set(status.alerts)
+        var facts = SettledFacts(status: Words.noBackup(status), issues: [], severity: nil)
         func flag(_ text: String, _ level: Severity) {
-            details.append(text)
-            severity = max(severity ?? level, level)
+            facts.issues.append(text)
+            facts.severity = max(facts.severity ?? level, level)
         }
 
         if let backup = status.lastBackup {
-            line.status = Words.backedUp(backup, format)
+            facts.status = Words.backedUp(backup, format)
             if let unreadable = Words.unreadable(backup) { flag(unreadable, .warning) }
-        } else {
-            line.status = Words.noBackup(status)
         }
         if case .skipped(let reason) = status.phase {
-            if status.lastBackup == nil {
-                line.status = reason.summary
-            } else {
-                details.insert(reason.summary, at: 0)
-            }
-            if reason != .agentUpdating { severity = max(severity ?? .warning, .warning) }
+            if status.lastBackup == nil { facts.status = reason.summary }
+            facts.issues.insert(reason.summary, at: 0)
+            if reason != .agentUpdating { facts.severity = max(facts.severity ?? .warning, .warning) }
         }
         if alerts.contains(.checkInRejected) { flag("The check-in service rejected the last ping", .warning) }
         if alerts.contains(.checkFailed) { flag("The repository check failed", .error) }
         if alerts.contains(.configurationError) { flag("There's a problem with this plan's settings", .error) }
-
-        if details.isEmpty, let next = status.nextRunAt { details = [Words.next(next, format)] }
-        line.detail = details.isEmpty ? nil : details.joined(separator: " · ")
-        line.severity = severity
+        return facts
     }
 
     // MARK: Destination
@@ -629,11 +640,12 @@ extension MenuPresentation {
             overview.headline = "Waiting for a new recovery kit"
             overview.severity = .warning
         } else {
-            // The menu's details for a settled plan end in "Next …" when nothing else is wrong; that time is the row's.
-            let next = plan.nextRunAt.map { Words.next($0, format) }
-            let reason = line.detail == next ? nil : line.detail
-            overview.reason = reason
-            if line.severity != nil {
+            // The same facts as the menu's line, without its "Next …" (that time is the row's): every warning or
+            // error is in the reason, a first run's skip included (re-review N1).
+            let facts = settledFacts(plan, format)
+            overview.reason = facts.issues.isEmpty ? nil : facts.issues.joined(separator: " · ")
+            overview.severity = facts.severity
+            if facts.severity != nil {
                 overview.headline = "Needs attention"
             } else {
                 overview.headline = plan.lastBackup == nil ? Words.noBackup(plan) : "Up to date"

@@ -43,10 +43,10 @@ struct PlansPane: View {
     /// The plan page's padding on each side.
     static let pagePadding: CGFloat = 16
 
-    /// The narrowest the pane can be with every tab showing in full: the sidebar, its divider, and the tab row inside
-    /// the page's padding. The Settings window's minimum width comes from it (Task 14c R1).
-    @MainActor static var minimumWidth: CGFloat {
-        sidebarWidth + 1 + 2 * pagePadding + PlanTabPicker.naturalWidth
+    /// The narrowest the pane can be with every tab showing in full: the sidebar, its divider, and the tab row
+    /// (`tabRowWidth`, measured) inside the page's padding. The Settings window's minimum width comes from it (Task 14c R1).
+    static func minimumWidth(tabRowWidth: CGFloat) -> CGFloat {
+        sidebarWidth + 1 + 2 * pagePadding + tabRowWidth
     }
 
     var body: some View {
@@ -196,9 +196,12 @@ struct PlanTabPicker: View {
         .fixedSize()
     }
 
-    /// The row's natural width, measured once with the system's fonts.
-    @MainActor static let naturalWidth: CGFloat = NSHostingView(rootView: PlanTabPicker(tab: .constant(.overview)))
-        .fittingSize.width
+    /// The row's natural width with the system's fonts as they are now. Measured each time a Settings window is made
+    /// (`WindowRouter.showSettings`), so a change to the text size applies from the next window; one off-screen
+    /// layout of a seven-segment control, so cheap.
+    @MainActor static func naturalWidth() -> CGFloat {
+        NSHostingView(rootView: PlanTabPicker(tab: .constant(.overview))).fittingSize.width
+    }
 }
 
 /// A plan that finished setup: its tabs, then Delete Plan… and Save.

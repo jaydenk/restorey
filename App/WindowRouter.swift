@@ -129,7 +129,9 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             let slot = PlanEditorSlot()
             self?.planEditorSlot = slot
             let controller = NSHostingController(
-                rootView: SettingsWindow(context: context, state: state, editorSlot: slot))
+                rootView: SettingsWindow(
+                    context: context, minimumWidth: SettingsWindow.measuredMinimumWidth(), state: state,
+                    editorSlot: slot))
             // The window may be made larger than the content's minimum, never smaller.
             controller.sizingOptions = [.minSize]
             return controller

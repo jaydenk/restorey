@@ -281,7 +281,8 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   itself needs attention; then the times, only in the Last backup and Next backup rows ("Today at 17:10", "Tomorrow
   at 09:00"); and Back Up Now, Pause while a backup runs, Resume while paused and Restore Files…, enabled as the menu's
   items are and asking the agent the same way (`MenuPresentation.overview`, `AgentActions`). It follows the agent
-  live, progress included. The window is at least as wide as the row of seven tabs, measured with the system's fonts.
+  live, progress included. The window is at least as wide as the row of seven tabs, measured with the system's fonts each time a Settings
+  window opens, so a text-size change applies from the next one.
 - **What**: its name, the folders and drives, and the exclusions (setup's line and "Review Exclusions…" sheet).
 - **Schedule**: the interval, the battery rule and the plan's own upload limit in MB/s (empty, the default, is none;
   a networked repository also gets its share of the Mac-wide limit, the smaller winning, Ruling P2-7).

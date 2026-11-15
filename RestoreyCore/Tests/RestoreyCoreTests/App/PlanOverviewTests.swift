@@ -196,23 +196,61 @@ struct PlanOverviewTests {
         #expect(older.nextBackup?.value == "18 Nov at 09:00")
     }
 
-    /// Ruling R1 (b): a coloured headline always comes with its reason, or is the reason itself.
+    /// Re-review N1: a plan with no backup yet whose first run was skipped says why, not just "Needs attention".
+    @Test func aSkippedFirstRunSaysWhy() {
+        let overview = Self.overview(Self.status(phase: .skipped(.onBattery), backup: nil))
+        #expect(overview.headline == "Needs attention")
+        #expect(overview.reason == SkipReason.onBattery.summary)
+        #expect(overview.nextBackup == .init(value: "Today at 15:16", detail: nil))
+    }
+
+    /// Ruling R1 (b), exhaustively (re-review N1): over every phase, every combination of the alerts that colour a
+    /// plan, a backup absent, good or with a warning, a failed run known or not, and every kit state, a coloured
+    /// headline always comes with its reason or is the reason itself. Also with the agent unable to answer.
     @Test func aColouredHeadlineAlwaysSaysWhy() {
+        let progress = BackupStatus(percentDone: 0.5, totalBytes: 100, bytesDone: 50)
+        let phases: [PlanPhase] = [
+            .idle, .running(nil, retrying: nil), .running(progress, retrying: "Can't reach it"),
+            .paused(until: Self.at(16, 0)), .stopped(reason: "The repository password is wrong"),
+            .skipped(.onBattery), .skipped(.agentUpdating), .skipped(.volumeNotMounted("Photos")),
+        ]
+        let colouring: [AlertCondition] = [
+            .backupFailed, .noRecentSuccess, .checkInRejected, .checkFailed, .configurationError,
+        ]
+        let alertSets = (0..<(1 << colouring.count)).map { mask in
+            colouring.enumerated().filter { mask & (1 << $0.offset) != 0 }.map(\.element)
+        }
+        let backups: [RunOutcome?] = [nil, .success(snapshotID: "a"), .warning(unreadable: 3)]
+        let failures: [RunOutcome?] = [nil, .wrongPassword]
+        let kits = [true, false]
+        let healths: [AgentHealthState] = [.healthy, .notRunning(reachable: true), .switchedOff]
         let selfExplaining: Set<String> = [
             "Backup failed", "Stopped", "Waiting for a new recovery kit", "No successful backup in 3 days",
+            "The background agent isn't running", "The background agent is switched off",
         ]
-        let states = [
-            Self.status(), Self.status(Self.plan(checkIn: false)), Self.status(backup: .warning(unreadable: 1)),
-            Self.status(phase: .skipped(.onBattery)), Self.status(failed: .wrongPassword, alerts: [.backupFailed]),
-            Self.status(phase: .stopped(reason: "x")), Self.status(Self.plan(kit: false)),
-            Self.status(alerts: [.noRecentSuccess]), Self.status(alerts: [.checkFailed]),
-        ]
-        for state in states {
-            let overview = Self.overview(state)
-            if overview.severity != nil {
-                #expect(overview.reason != nil || selfExplaining.contains(overview.headline), "\(overview.headline)")
+        var checked = 0
+        for phase in phases {
+            for alerts in alertSets {
+                for backup in backups {
+                    for failure in failures {
+                        for kit in kits {
+                            for health in healths {
+                                let state = Self.status(
+                                    Self.plan(kit: kit), phase: phase, backup: backup, failed: failure, alerts: alerts)
+                                let overview = Self.overview(state, health: health)
+                                checked += 1
+                                guard overview.severity != nil else { continue }
+                                #expect(
+                                    overview.reason != nil || selfExplaining.contains(overview.headline),
+                                    "\(overview.headline) for \(phase), \(alerts), backup \(String(describing: backup)), kit \(kit), \(health)")
+                                #expect(overview.headline.isEmpty == false)
+                            }
+                        }
+                    }
+                }
             }
         }
+        #expect(checked == phases.count * alertSets.count * backups.count * failures.count * kits.count * healths.count)
     }
 
     // MARK: The agent not answering, and the buttons
