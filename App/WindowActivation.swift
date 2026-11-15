@@ -37,16 +37,17 @@ enum WindowActivation {
     }
 
     /// The app menu's About: the standard panel, counted as a window until it closes (review M2), so closing the last
-    /// of Restorey's own windows doesn't leave it on screen in a menu bar app.
+    /// of Restorey's own windows doesn't leave it on screen in a menu bar app. Hidden when Restorey deactivates, it
+    /// is still open: only its close ends the count.
     static func showAbout() {
-        let before = Set(NSApplication.shared.windows.filter(\.isVisible).map(ObjectIdentifier.init))
+        let before = snapshots()
         NSApplication.shared.orderFrontStandardAboutPanel(nil)
-        // The panel AppKit just put on screen: visible now and not before, and none of Restorey's own windows (those
-        // have an identifier). Shown again while open, it is already counted.
+        // The panel AppKit just put on screen (`AboutPanel`): AppKit names it itself ("_NS:149"), so it is found as
+        // the window that appeared with the call, other than Restorey's own. Shown again while open, it is counted.
+        let own = Set(AppWindowKind.allCases.map(\.rawValue))
         guard aboutObserver == nil,
-              let panel = NSApplication.shared.windows.first(where: {
-                  $0.isVisible && $0.identifier == nil && !before.contains(ObjectIdentifier($0))
-              })
+              let number = AboutPanel.find(before: before, after: snapshots(), ownIdentifiers: own),
+              let panel = NSApplication.shared.window(withWindowNumber: number)
         else { return }
         controller.shown(.about)
         aboutObserver = NotificationCenter.default.addObserver(
@@ -57,6 +58,14 @@ enum WindowActivation {
                 aboutObserver = nil
                 controller.closed(.about)
             }
+        }
+    }
+}
+
+private extension WindowActivation {
+    static func snapshots() -> [WindowSnapshot] {
+        NSApplication.shared.windows.map {
+            WindowSnapshot(number: $0.windowNumber, identifier: $0.identifier?.rawValue, isVisible: $0.isVisible)
         }
     }
 }
