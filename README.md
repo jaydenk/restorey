@@ -160,8 +160,8 @@ shows "Move Restorey to Applications". The app's log is `~/Library/Logs/Restorey
 
 A Debug build adds a "Developer…" menu item; a Release build has neither the item nor the window. `project.yml`
 leaves `App/Developer/` out of the Release build (`EXCLUDED_SOURCE_FILE_NAMES`), its uses are behind `#if DEBUG`,
-and `scripts/verify-bundle.sh` (run by `scripts/ci.sh` on every build) fails a Release bundle whose binaries name
-any of its types (`DeveloperModel`, `DeveloperWindowController`, `DeveloperView`, which Swift's metadata keeps
+and `scripts/verify-bundle.sh` (run by `scripts/ci.sh` on every build) reads every Mach-O file under the bundle's `Contents`
+and fails a Release bundle that names any of its types (`DeveloperModel`, `DeveloperWindowController`, `DeveloperView`, which Swift's metadata keeps
 even in a stripped binary), and a Debug bundle missing any of them, so the check can't pass by looking in the wrong
 place. The window saves plans (S3, B2 or a raw local repository path such
 as `/tmp/restorey-dev-repo`), creates or adopts repositories, confirms the recovery details, backs up, pauses,
@@ -381,16 +381,20 @@ agent also removes the plan's run logs, and setup's saved progress is forgotten 
 (`SetupProgressStore.forget`), as it is when the Developer window deletes one.
 
 **Network** edits the Mac-wide rules (`NetworkEdit` in `RestoreyCore`, held by `NetworkEditModel` for as long as
-the window is open, so going to another section and back keeps unsaved edits): "Upload limit for this Mac" in MB/s
+the window is open, so going to another section and back keeps unsaved edits; closing the window or quitting with
+unsaved Network edits asks Save, Don't Save or Cancel, after a plan's question if both have edits,
+`UnsavedSettings`): "Upload limit for this Mac" in MB/s
 (empty, the default, is none), "Skip on a hotspot or in Low Data Mode" and "Skip on these Wi-Fi networks", saved
 with Save (⌘S) or undone with Revert, which apply only the fields you changed, as a plan's tabs do. A name is added
 trimmed, at most 32 bytes (an SSID's limit), and not twice ignoring case; the agent's own checks are shown before a
-save. Whether Restorey can see Wi-Fi names is `WiFiNameAccess`, from the agent's hello: adding a name while the
-agent has never been asked sends `requestLocationPermission` first ("Waiting for your answer to the Location
-question…") and adds the name only once it is allowed; with permission refused, or Location Services off for the
-whole Mac, the field is disabled and the list says why ("Restorey needs Location permission to see Wi-Fi names.")
-with "Open System Settings" (Privacy & Security → Location Services). This is read again whenever Restorey comes
-back to the front.
+save. Whether Restorey can see Wi-Fi names is `WiFiNameAccess`, from the agent's `locationAccess` reply (asked, never
+prompting, when the pane appears and whenever Restorey comes back to the front), else its hello: adding a name while
+the agent has never been asked sends `requestLocationPermission` first ("Waiting for your answer to the Location
+question…", the field disabled meanwhile, and the name submitted is the one added) and adds the name only once it is
+allowed. With permission refused, or Location Services off for the whole Mac, the field is disabled and the list says
+why ("Restorey needs Location permission to see Wi-Fi names.") with "Open System Settings" (Privacy & Security →
+Location Services); Location restricted by a configuration profile or Screen Time says so, with no button, since
+System Settings can't change it.
 
 **History** lists every plan's runs, newest first, with a plan filter (set again by each "Show Details…", and back to every plan once you pick a section yourself or
 close Settings) and
@@ -580,9 +584,13 @@ The agent reports the authorisation in `hello` (`locationAuthorised`) from what 
 never by asking, and logs each request's answer and whether the Wi-Fi name was then readable. With Location
 Services switched off for the whole Mac, macOS shows no prompt and can leave the agent undecided, so a request would
 otherwise wait out its 570-second bound: the agent checks `CLLocationManager.locationServicesEnabled()` first (off
-the main thread, which Apple asks for, since it is a synchronous call to locationd) and answers at once with
-`servicesEnabled: false`. The hello carries the last answer (`locationServicesEnabled`), read again in the
-background after each hello and each change Core Location reports, never waited on. A Release log
+the main thread, which Apple asks for, since it is a synchronous call to locationd, and for 3 seconds at most before
+taking the last value known) and answers at once with `servicesEnabled: false`, making no other Core Location call
+(the status is the one Core Location last reported). The switch is read only on events: each change Core Location
+reports, and each `locationAccess` call, which the Network pane makes when it appears and whenever Restorey comes
+to the front, and which answers at once with the switch and the authorisation, never asking. The hello carries the
+last value read (`locationServicesEnabled`) and never reads it. The logic is `LocationAccess` (AgentCore), tested
+against a fake Core Location; `Agent/LocationPermission.swift` wraps the one `CLLocationManager` around it. A Release log
 never names the network; a Debug build's log does, and also logs each name a backup's checks read. The Debug
 developer window's "Request Location" button sends the request and shows the reply.
 Each plan also records when its setup finished (`setupCompletedAt`, set when its recovery kit is first confirmed

@@ -162,7 +162,10 @@ struct NetworkEditTests {
     @Test func accessAfterTheAgentsAnswer() {
         #expect(WiFiNameAccess(reply: LocationPermissionReply(authorised: true, status: "authorisedAlways")) == .allowed)
         #expect(WiFiNameAccess(reply: LocationPermissionReply(authorised: false, status: "denied")) == .refused)
-        #expect(WiFiNameAccess(reply: LocationPermissionReply(authorised: false, status: "restricted")) == .refused)
+        // Restricted by a profile or Screen Time: the user can't change it, so it isn't "refused" (fix round 1, M3).
+        #expect(WiFiNameAccess(reply: LocationPermissionReply(authorised: false, status: "restricted")) == .restricted)
+        #expect(WiFiNameAccess(reply: LocationPermissionReply(
+            authorised: false, status: "restricted", servicesEnabled: true)) == .restricted)
         #expect(WiFiNameAccess(reply: LocationPermissionReply(authorised: false, status: "notDetermined")) == .notAsked)
         #expect(WiFiNameAccess(reply: LocationPermissionReply(
             authorised: false, status: "notDetermined", servicesEnabled: false)) == .servicesOff)
@@ -177,6 +180,7 @@ struct NetworkEditTests {
         #expect(WiFiNameAccess.allowed.addStep == .add)
         #expect(WiFiNameAccess.refused.addStep == .blocked)
         #expect(WiFiNameAccess.servicesOff.addStep == .blocked)
+        #expect(WiFiNameAccess.restricted.addStep == .blocked)
     }
 
     @Test func whatTheListSaysForEachAccess() {
@@ -194,6 +198,11 @@ struct NetworkEditTests {
         #expect(WiFiNameAccess.refused.opensSystemSettings)
         #expect(WiFiNameAccess.servicesOff.opensSystemSettings)
         #expect(!WiFiNameAccess.notAsked.opensSystemSettings)
+        #expect(!WiFiNameAccess.restricted.opensSystemSettings, "System Settings can't change a restriction")
+        #expect(WiFiNameAccess.restricted.note(listed: 0)
+            == "Location is restricted on this Mac, by a configuration profile or Screen Time, so Restorey can't see "
+            + "Wi-Fi names. Whoever manages this Mac can lift it.")
+        #expect(WiFiNameAccess.restricted.note(listed: 1)!.hasSuffix(" Until then, backups aren't skipped on these networks."))
         #expect(!WiFiNameAccess.allowed.opensSystemSettings)
         #expect(WiFiNameAccess.unanswered
             == "There was no answer about Location permission, so the network wasn't added. Add it again to be asked again.")

@@ -4,7 +4,8 @@ import RestoreyCore
 
 /// Settings → Network's edits (`NetworkEdit`, where every decision is made), the save in flight, and the Location
 /// question asked when a Wi-Fi network is first added (UI design §6.3). Held by the Settings window
-/// (`NetworkEditorSlot`), so going to another section and back keeps unsaved edits; closing the window drops them.
+/// (`NetworkEditorSlot`), so going to another section and back keeps unsaved edits; closing the window or quitting
+/// asks about them first, as for a plan's (`WindowRouter.askToSave`).
 @MainActor
 @Observable
 final class NetworkEditModel {
@@ -21,14 +22,13 @@ final class NetworkEditModel {
         didSet { if newName != oldValue { addNote = nil } }
     }
 
-    /// The agent's answer to the last Location question, until the next hello says the same or the user comes back
-    /// to Restorey (the answer can change in System Settings).
-    @ObservationIgnored private var answered: WiFiNameAccess?
     @ObservationIgnored private let supervisor: AgentSupervisor
+    @ObservationIgnored let location: LocationAccessState
 
-    init(settings: NetworkSettings, supervisor: AgentSupervisor) {
+    init(settings: NetworkSettings, supervisor: AgentSupervisor, location: LocationAccessState) {
         edit = NetworkEdit(settings: settings)
         self.supervisor = supervisor
+        self.location = location
     }
 
     var fields: NetworkEdit.Fields {
@@ -39,20 +39,13 @@ final class NetworkEditModel {
         }
     }
 
-    /// Whether Restorey can see Wi-Fi names: the agent's last answer to a question, else its hello.
-    var access: WiFiNameAccess { answered ?? WiFiNameAccess(hello: supervisor.lastHello) }
+    var access: WiFiNameAccess { location.access }
 
     /// The problem with the name typed, shown once something is typed.
     var newNameProblem: String? { newName.isEmpty ? nil : edit.newNameProblem(newName) }
 
     /// The agent sent newer settings.
     func rebase(on settings: NetworkSettings) { edit.rebase(on: settings) }
-
-    /// Restorey came back to the front: the user may have changed Location in System Settings.
-    func reread() async {
-        answered = nil
-        await supervisor.refreshHello()
-    }
 
     func remove(_ name: String) {
         edit.remove(name: name)
@@ -65,9 +58,11 @@ final class NetworkEditModel {
     }
 
     /// Adds the typed name. The first time, while the agent has never been asked, the agent asks macOS for Location
-    /// permission first, and the name is added only once it is allowed (the "ask now?" decision is `addStep`).
+    /// permission first, and the name is added only once it is allowed (the "ask now?" decision is `addStep`). The
+    /// name is the one submitted: it is taken before asking, and the field is disabled while the question is up.
     func addName() async {
-        guard !asking, edit.newNameProblem(newName) == nil else { return }
+        let name = newName
+        guard !asking, edit.newNameProblem(name) == nil else { return }
         switch access.addStep {
         case .blocked:
             return
@@ -80,16 +75,14 @@ final class NetworkEditModel {
             switch result {
             case .success(let reply):
                 let now = WiFiNameAccess(reply: reply)
-                answered = now
-                await supervisor.refreshHello()
-                if WiFiNameAccess(hello: supervisor.lastHello) == now { answered = nil }
+                location.answered(now)
                 switch now {
                 case .allowed: break
                 case .notAsked, .checking:
                     addNote = WiFiNameAccess.unanswered
                     return
-                case .refused, .servicesOff:
-                    // The list's note says why, with the button to System Settings.
+                case .refused, .restricted, .servicesOff:
+                    // The list's note says why.
                     return
                 }
             case .failure(let error):
@@ -97,8 +90,8 @@ final class NetworkEditModel {
                 return
             }
         }
-        if edit.add(name: newName) {
-            newName = ""
+        if edit.add(name: name) {
+            if newName == name { newName = "" }
             saveError = nil
         }
     }
@@ -127,9 +120,46 @@ final class NetworkEditModel {
     }
 }
 
-/// Holds the Network section's model while the Settings window is open.
+/// Whether Restorey can see Wi-Fi names, as the Network pane shows it: the agent's `locationAccess` answer (asked
+/// when the pane appears and whenever Restorey comes to the front, since the user may have changed Location in
+/// System Settings), else its hello. The answer carries the full status, so a restriction is told apart from a
+/// refusal; the hello's Bool can't.
+@MainActor
+@Observable
+final class LocationAccessState {
+    private var checked: WiFiNameAccess?
+    @ObservationIgnored private let supervisor: AgentSupervisor
+
+    init(supervisor: AgentSupervisor) {
+        self.supervisor = supervisor
+    }
+
+    var access: WiFiNameAccess { checked ?? WiFiNameAccess(hello: supervisor.lastHello) }
+
+    /// Asks the agent now, never prompting. A failed call leaves the hello's answer.
+    func refresh() async {
+        switch await supervisor.connection.locationAccess() {
+        case .success(let reply): checked = WiFiNameAccess(reply: reply)
+        case .failure: checked = nil
+        }
+    }
+
+    /// The answer to a Location question just asked.
+    func answered(_ access: WiFiNameAccess) { checked = access }
+}
+
+/// Holds the Network section's model and Location state while the Settings window is open. The router reads it to
+/// ask about unsaved edits when the window closes or Restorey quits.
 @MainActor
 @Observable
 final class NetworkEditorSlot {
     var model: NetworkEditModel?
+    let location: LocationAccessState
+
+    init(supervisor: AgentSupervisor) {
+        location = LocationAccessState(supervisor: supervisor)
+    }
+
+    /// The edits go with the window.
+    func close() { model = nil }
 }

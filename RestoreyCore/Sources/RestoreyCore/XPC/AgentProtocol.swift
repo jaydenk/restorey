@@ -73,6 +73,10 @@ import Foundation
     /// → `LocationPermissionReply` once the user has answered. Asks from the agent, which is what reads the
     /// Wi-Fi name: macOS reveals it only to a process with Location Services authorisation.
     func requestLocationPermission(withReply reply: @escaping @Sendable (Data?, String?) -> Void)
+    /// → `LocationPermissionReply` at once, never asking: whether Location Services is on for the Mac (read afresh,
+    /// for a few seconds at most, else the last value known) and the agent's authorisation. The Network pane asks
+    /// when it appears and whenever Restorey comes to the front (Task 15 fix round 1).
+    func locationAccess(withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// → `DrainReply` once no run is in flight. No timeout: a long first backup is waited for, and no
     /// new run starts meanwhile. The agent then exits and launchd starts the new binary.
     func prepareForRestart(withReply reply: @escaping @Sendable (Data?, String?) -> Void)

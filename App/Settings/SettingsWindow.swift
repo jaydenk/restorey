@@ -37,8 +37,8 @@ struct SettingsWindow: View {
     let minimumWidth: CGFloat
     @Bindable var state: ShellState
     let editorSlot: PlanEditorSlot
-    /// The Network section's unsaved edits, kept while the window is open.
-    @State private var networkSlot = NetworkEditorSlot()
+    /// The Network section's unsaved edits, held by the router while the window is open.
+    let networkSlot: NetworkEditorSlot
 
     var body: some View {
         Group {

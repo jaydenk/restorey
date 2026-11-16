@@ -75,13 +75,19 @@ done
 # The Developer window is Debug-only (project.yml excludes App/Developer from Release, and its uses are behind
 # #if DEBUG). Its Swift types' names are in a binary's metadata whenever it is compiled in, stripped or not, so a
 # Release bundle must have none of them, and a Debug one all three: the positive control that shows the check looks
-# in the right binaries (a Debug app's code is in Contents/MacOS/*.debug.dylib, not the main executable).
+# in the right binaries (a Debug app's code is in Contents/MacOS/*.debug.dylib, not the main executable). Every
+# Mach-O file under Contents is read, so an embedded framework or helper added later is covered too.
 developer_types='DeveloperModel|DeveloperWindowController|DeveloperView'
 developer_found=""
-while IFS= read -r -d '' binary; do
-  found=$(strings -a "$binary" | grep -oE "$developer_types" | sort -u | tr '\n' ' ' || true)
+developer_scanned=0
+while IFS= read -r -d '' file; do
+  [[ "$(file -b "$file")" == Mach-O* ]] || continue
+  developer_scanned=$((developer_scanned + 1))
+  found=$(strings -a "$file" | grep -oE "$developer_types" | sort -u | tr '\n' ' ' || true)
   developer_found+="$found"
-done < <(find "$APP/Contents/MacOS" "$AGENT/Contents/MacOS" -type f -print0)
+done < <(find "$APP/Contents" -type f -print0)
+# The app, the agent and restic at least.
+(( developer_scanned >= 3 )) || fail "only $developer_scanned Mach-O files found under $APP/Contents"
 developer_found=$(tr ' ' '\n' <<<"$developer_found" | grep -v '^$' | sort -u | tr '\n' ' ' || true)
 case "$root" in
   com.jaydenkerr.restorey)

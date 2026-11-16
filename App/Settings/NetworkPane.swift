@@ -7,7 +7,8 @@ import SwiftUI
 /// them. Every decision is `NetworkEdit`'s and `WiFiNameAccess`'s; `NetworkEditModel` does the calls.
 ///
 /// Location permission is asked for only when the user first adds a network, and what the list says without it is
-/// read again whenever Restorey comes back to the front (the user may have changed it in System Settings).
+/// asked of the agent (`locationAccess`, never a prompt) when the pane appears and whenever Restorey comes back to the
+/// front, since the user may have changed it in System Settings.
 struct NetworkPane: View {
     let supervisor: AgentSupervisor
     let slot: NetworkEditorSlot
@@ -36,12 +37,13 @@ struct NetworkPane: View {
             if let model = slot.model {
                 model.rebase(on: network)
             } else {
-                slot.model = NetworkEditModel(settings: network, supervisor: supervisor)
+                slot.model = NetworkEditModel(settings: network, supervisor: supervisor, location: slot.location)
             }
         }
-        .task { await slot.model?.reread() }
+        // The slot's Location state, not the model's: it exists before the first status makes the model.
+        .task { await slot.location.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { await slot.model?.reread() }
+            Task { await slot.location.refresh() }
         }
     }
 
@@ -126,7 +128,8 @@ private struct NetworkForm: View {
                 Button("Add") { Task { await model.addName() } }
                     .disabled(model.newName.isEmpty || model.newNameProblem != nil || model.asking)
             }
-            .disabled(blocked)
+            // Also while the Location question is up, so the name added is the one submitted.
+            .disabled(blocked || model.asking)
             if model.asking {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
@@ -146,7 +149,7 @@ private struct NetworkForm: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(note)
                     .font(.caption)
-                    .foregroundStyle(access.opensSystemSettings ? .orange : .secondary)
+                    .foregroundStyle(access.addStep == .blocked ? .orange : .secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if access.opensSystemSettings {
                     Spacer()

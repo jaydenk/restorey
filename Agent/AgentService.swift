@@ -43,9 +43,8 @@ final class AgentService: NSObject, AgentXPC, Sendable {
                 executableFingerprint: executableFingerprint)
             // The last authorisation Core Location reported, held in process: never a call to it (R68).
             hello.locationAuthorised = location.knownAuthorised
-            // Held in process too; a read for the next hello starts in the background and is never waited on.
+            // Held in process too: read again on each change Core Location reports and on each `locationAccess`.
             hello.locationServicesEnabled = location.knownServicesEnabled
-            location.refreshServicesEnabled()
             return hello
         }
     }
@@ -257,6 +256,11 @@ final class AgentService: NSObject, AgentXPC, Sendable {
             log.info("Location permission \(answer.status)\(services); the Wi-Fi name is \(readable)")
             return answer
         }
+    }
+
+    func locationAccess(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        // Not logged: the Network pane asks each time it appears or Restorey comes to the front.
+        respond(reply, "locationAccess") { [location] in await location.current() }
     }
 
     func prepareForRestart(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {

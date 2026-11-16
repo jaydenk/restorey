@@ -134,8 +134,11 @@ public enum WiFiNameAccess: Sendable, Equatable {
     /// The agent has never been asked (or macOS has no answer yet).
     case notAsked
     case allowed
-    /// Refused or restricted for the agent; only System Settings can change it now.
+    /// Refused for the agent; only System Settings can change it now.
     case refused
+    /// Restricted (a configuration profile or Screen Time): the user can't change it, so no button is offered. Only
+    /// the `locationAccess` reply carries it; a hello's Bool reads it as `refused`.
+    case restricted
     /// Location Services is off for the whole Mac. No app sees the Wi-Fi name, and macOS shows no prompt.
     case servicesOff
 
@@ -161,7 +164,11 @@ public enum WiFiNameAccess: Sendable, Equatable {
         } else if reply.authorised {
             self = .allowed
         } else {
-            self = reply.status == "notDetermined" ? .notAsked : .refused
+            switch reply.status {
+            case "notDetermined": self = .notAsked
+            case "restricted": self = .restricted
+            default: self = .refused
+            }
         }
     }
 
@@ -180,7 +187,7 @@ public enum WiFiNameAccess: Sendable, Equatable {
         switch self {
         case .allowed: .add
         case .notAsked, .checking: .askFirst
-        case .refused, .servicesOff: .blocked
+        case .refused, .restricted, .servicesOff: .blocked
         }
     }
 
@@ -193,6 +200,9 @@ public enum WiFiNameAccess: Sendable, Equatable {
             return "Adding a network asks for Location permission: macOS shows the Wi-Fi network's name only to apps "
                 + "allowed to use Location."
         case .refused: return "Restorey needs Location permission to see Wi-Fi names." + unused
+        case .restricted:
+            return "Location is restricted on this Mac, by a configuration profile or Screen Time, so Restorey can't "
+                + "see Wi-Fi names. Whoever manages this Mac can lift it." + unused
         case .servicesOff:
             return "Location Services is off for this Mac, so Restorey can't see Wi-Fi names. Turn it on in System "
                 + "Settings → Privacy & Security → Location Services." + unused

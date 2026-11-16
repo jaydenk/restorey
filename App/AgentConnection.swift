@@ -175,6 +175,11 @@ final class AgentConnection {
         }
     }
 
+    /// Whether Location Services is on for the Mac and the agent's authorisation, without asking.
+    func locationAccess() async -> Result<LocationPermissionReply, AgentCallError> {
+        await call(LocationPermissionReply.self, timeout: .seconds(15)) { $0.locationAccess(withReply: $1) }
+    }
+
     /// Drops the connection, e.g. after `unregister()`; the next call makes a new one.
     /// The supervisor fetches `status` again once the agent is healthy (`shouldRefetchStatus`), which
     /// resubscribes, so a pending back-off retry is no longer needed.

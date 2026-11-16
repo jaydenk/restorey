@@ -68,6 +68,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
     /// The Settings window's toolbar of sections, and the plan editor it holds, while the window is open.
     private var settingsToolbar: SettingsToolbar?
     private var planEditorSlot: PlanEditorSlot?
+    private var networkEditorSlot: NetworkEditorSlot?
     /// The open setup window's model, told when the window closes so its secrets go at once.
     private var setupModel: SetupModel?
     /// The installed copy's supervisor (`AppDelegate` sets it): the recovery kit and Restore Files windows ask the
@@ -128,10 +129,12 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         }) { [weak self, state] in
             let slot = PlanEditorSlot()
             self?.planEditorSlot = slot
+            let network = NetworkEditorSlot(supervisor: supervisor)
+            self?.networkEditorSlot = network
             let controller = NSHostingController(
                 rootView: SettingsWindow(
                     context: context, minimumWidth: SettingsWindow.measuredMinimumWidth(), state: state,
-                    editorSlot: slot))
+                    editorSlot: slot, networkSlot: network))
             // The window may be made larger than the content's minimum, never smaller.
             controller.sizingOptions = [.minSize]
             return controller
@@ -223,12 +226,11 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         return window
     }
 
-    /// Ruling R1: closing Settings with unsaved plan edits asks Save, Don't Save or Cancel, as switching plans asks.
+    /// Ruling R1: closing Settings with unsaved edits asks Save, Don't Save or Cancel, as switching plans asks: a
+    /// plan's, then the Network section's (Task 15 fix round 1, I1).
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard sender.identifier?.rawValue == AppWindowKind.settings.rawValue, let editor = planEditorSlot?.editor,
-            editor.edit.isDirty
-        else { return true }
-        askToSave(editor, in: sender) { proceed in if proceed { sender.close() } }
+        guard sender.identifier?.rawValue == AppWindowKind.settings.rawValue, !unsavedSettings.isEmpty else { return true }
+        askToSave(unsavedSettings, in: sender) { proceed in if proceed { sender.close() } }
         return false
     }
 
@@ -243,24 +245,50 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         case busy
     }
 
-    /// Fix round 2: quitting with unsaved plan edits asks the same question, over the Settings window. `reply` gets
-    /// whether the quit may go on: after a save that worked or "Don't Save", not after Cancel or a refused save.
+    /// Fix round 2: quitting with unsaved edits asks the same questions, over the Settings window. `reply` gets
+    /// whether the quit may go on: after every question is answered with a save that worked or "Don't Save", not after
+    /// Cancel or a refused save.
     func askBeforeQuitting(_ reply: @escaping @MainActor (Bool) -> Void) -> QuitQuestion {
-        guard let window = slots.openWindow(for: .settings), let editor = planEditorSlot?.editor, editor.edit.isDirty
-        else { return .none }
+        guard let window = slots.openWindow(for: .settings), !unsavedSettings.isEmpty else { return .none }
         WindowActivation.bringForward(window, as: .window(.settings))
         if window.attachedSheet != nil { return .busy }
-        askToSave(editor, in: window, then: reply)
+        askToSave(unsavedSettings, in: window, then: reply)
         return .asked
     }
 
-    /// Save, Don't Save or Cancel for `editor`'s unsaved edits, as a sheet on `window`. `then` gets true once the
-    /// edits are saved or discarded, false for Cancel or a save that was refused (shown in Plans, where it says why).
-    private func askToSave(_ editor: PlanEditModel, in window: NSWindow, then: @escaping @MainActor (Bool) -> Void) {
+    /// The Settings sections with unsaved edits, in the order they are asked about (`UnsavedSettings.toAsk`).
+    private var unsavedSettings: [UnsavedSettings] {
+        UnsavedSettings.toAsk(
+            plan: planEditorSlot?.editor?.edit.isDirty == true,
+            network: networkEditorSlot?.model?.edit.isDirty == true)
+    }
+
+    /// Save, Don't Save or Cancel for each of `sections` in turn, as sheets on `window`. `then` gets true once every
+    /// one's edits are saved or discarded, false for Cancel or a save that was refused (the section is then shown,
+    /// where it says why).
+    private func askToSave(
+        _ sections: [UnsavedSettings], in window: NSWindow, then: @escaping @MainActor (Bool) -> Void
+    ) {
+        guard let section = sections.first else { return then(true) }
+        let rest = Array(sections.dropFirst())
+        let question: SaveQuestion
+        let save: @MainActor () async -> Bool
+        let discard: @MainActor () -> Void
+        switch section {
+        case .plan:
+            guard let editor = planEditorSlot?.editor else { return askToSave(rest, in: window, then: then) }
+            question = .plan(name: editor.saved.name, pausesBackups: editor.edit.pausesBackups)
+            save = { await editor.save(); return !editor.edit.isDirty }
+            discard = { editor.revert() }
+        case .network:
+            guard let model = networkEditorSlot?.model else { return askToSave(rest, in: window, then: then) }
+            question = .network
+            save = { await model.save(); return !model.edit.isDirty }
+            discard = { model.revert() }
+        }
         let alert = NSAlert()
-        alert.messageText = "Do you want to save the changes to “\(editor.saved.name)”?"
-        let lost = "If you don't save, your changes are lost."
-        alert.informativeText = editor.edit.pausesBackups ? "\(PlanEdit.pauseWarning) \(lost)" : lost
+        alert.messageText = question.message
+        alert.informativeText = question.information
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Don't Save")
         alert.addButton(withTitle: "Cancel")
@@ -268,17 +296,17 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             switch response {
             case .alertFirstButtonReturn:
                 Task { @MainActor in
-                    await editor.save()
-                    if editor.edit.isDirty {
-                        self?.state.settingsSection = .plans
-                        then(false)
+                    if await save() {
+                        self?.askToSave(rest, in: window, then: then)
                     } else {
-                        then(true)
+                        self?.state.settingsSection = section.section
+                        then(false)
                     }
                 }
             case .alertSecondButtonReturn:
-                editor.revert()
-                then(true)
+                discard()
+                // The next question's sheet once this one has gone, on the next turn of the run loop.
+                Task { @MainActor in self?.askToSave(rest, in: window, then: then) }
             default:
                 then(false)
             }
@@ -314,6 +342,8 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             state.settingsPlanTab = .overview
             planEditorSlot?.close()
             planEditorSlot = nil
+            networkEditorSlot?.close()
+            networkEditorSlot = nil
             settingsToolbar = nil
         }
         // The content (and anything secret it holds) goes now, not when AppKit lets go of the window.
