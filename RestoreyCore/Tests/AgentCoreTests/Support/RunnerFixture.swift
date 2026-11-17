@@ -162,7 +162,9 @@ final class RunnerFixture: Sendable {
         retryLock: String = "5m",
         change: (inout Plan) -> Void = { _ in },
         cloudOnlySkipped: @escaping @Sendable ([String], [String]) -> CloudOnlyCounter.Result? = { _, _ in nil },
-        cloudOnlyDeadline: TimeInterval = 10
+        cloudOnlyDeadline: TimeInterval = 10,
+        markedItems: (any MarkedItemsFinding)? = nil,
+        markedItemsDeadline: TimeInterval = 10
     ) async throws -> RunnerFixture {
         let fm = FileManager.default
         let base = stableAncestors ? URL(fileURLWithPath: "/Users/Shared", isDirectory: true) : fm.temporaryDirectory
@@ -172,7 +174,8 @@ final class RunnerFixture: Sendable {
                 root: root, origin: origin, executable: executable, createRepository: createRepository,
                 confirmKit: confirmKit, gracePeriod: gracePeriod, pingDelay: pingDelay,
                 networkSettings: networkSettings, retryLock: retryLock, cloudOnlySkipped: cloudOnlySkipped,
-                cloudOnlyDeadline: cloudOnlyDeadline, change: change)
+                cloudOnlyDeadline: cloudOnlyDeadline, markedItems: markedItems,
+                markedItemsDeadline: markedItemsDeadline, change: change)
         } catch {
             // The caller's `defer { remove() }` isn't in place yet.
             try? fm.removeItem(at: root)
@@ -185,6 +188,7 @@ final class RunnerFixture: Sendable {
         gracePeriod: Duration, pingDelay: Duration, networkSettings: NetworkSettings, retryLock: String,
         cloudOnlySkipped: @escaping @Sendable ([String], [String]) -> CloudOnlyCounter.Result?,
         cloudOnlyDeadline: TimeInterval,
+        markedItems: (any MarkedItemsFinding)?, markedItemsDeadline: TimeInterval,
         change: (inout Plan) -> Void
     ) async throws -> RunnerFixture {
         let fm = FileManager.default
@@ -248,6 +252,7 @@ final class RunnerFixture: Sendable {
             agentInfo: { line in agentInfo.mutate { $0.append(line) } },
             binaryReplaced: { binaryReplaced.value },
             cloudOnlySkipped: cloudOnlySkipped, cloudOnlyDeadline: cloudOnlyDeadline,
+            markedItems: markedItems, markedItemsDeadline: markedItemsDeadline,
             maintenanceRetryLock: retryLock)
         let runner = PlanRunner(dependencies: dependencies)
         await runner.recoverAfterStart()

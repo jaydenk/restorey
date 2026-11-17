@@ -287,7 +287,7 @@ holds only "Check"'s stand-in, so the step says so and offers Back instead of a 
 saved it somewhere other than this Mac" can be set once the kit has shown; it is recorded in the progress and lets
 setup go on, and the agent confirms the kit only at "Start First Backup". **What to back up** has the
 home folder by default (or the adopted snapshot's folders, with the new-group warning when they're changed), the
-exclusions in one line (`ExclusionsSummary`) and "Review Exclusions…" (folders, with Restorey's own two kept; file
+exclusions in one line (`ExclusionsSummary`, which also names the items apps mark as not for backup) and "Review Exclusions…" (folders, with Restorey's own two kept; file
 types; one file system). **Schedule** has the interval (hourly by default; 1, 2, 4, 6, 12 or 24 hours), the battery
 rule, retention and the optional check-in URL with why it matters (`ScheduleForm`). **Done**'s "Start First Backup"
 saves anything left, confirms the kit, then backs up: confirming makes the plan due, so the scheduler may start it
@@ -353,7 +353,9 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   items are and asking the agent the same way (`MenuPresentation.overview`, `AgentActions`). It follows the agent
   live, progress included. The window is at least as wide as the row of seven tabs, measured with the system's fonts each time a Settings
   window opens, so a text-size change applies from the next one.
-- **What**: its name, the folders and drives, and the exclusions (setup's line and "Review Exclusions…" sheet).
+- **What**: its name, the folders and drives, the exclusions (setup's line and "Review Exclusions…" sheet), and a
+  line counting the items apps mark as not for backup ("Also skipped: 1,145 items apps mark as not for backup") with
+  "Show…", a sheet with the plan's switch for them and the list, each with "Back up anyway".
 - **Schedule**: the interval, the battery rule and the plan's own upload limit in MB/s (empty, the default, is none;
   a networked repository also gets its share of the Mac-wide limit, the smaller winning, Ruling P2-7).
 - **Storage**: the repository address, read-only (a different repository is a new plan), the repository password
@@ -572,6 +574,16 @@ reasons are in the design spec, §5.7):
   invalid. The agent stores entries trimmed, in lower case and without duplicates.
 - **Other filesystems mounted under a source** (`--one-file-system`, on by default), such as `~/OrbStack` or a
   connected iPhone's DeviceFS. A drive listed as a source is still backed up.
+- **Items apps mark as not for backup**: Time Machine's per-item exclusion attribute
+  (`com_apple_backup_excludeItem`), which macOS and apps set on data they can rebuild or download again, such as
+  Lightroom previews, virtual machine disks, build folders and app caches. Restorey skips them as Time Machine does
+  (`MarkedNotForBackup.swift`). Before each backup the agent asks Spotlight for them within the plan's sources, checks
+  each still carries the attribute, folds items inside another (or inside an excluded folder) away, and passes the
+  list to restic in a per-run file (`--exclude-file`, removed when restic finishes). Each plan has a switch for this
+  (on by default) and a "Back up anyway" list (Settings → What → Show…). Spotlight is the source, so items in folders
+  Spotlight doesn't index (indexing off, an unindexed drive, a folder on Spotlight's privacy list) are backed up.
+  If the look takes over 10 seconds or finds over 100,000 items, that backup includes them all. The count
+  is recorded on the backup's run record and is never a warning.
 
 restic also skips folders tagged with `CACHEDIR.TAG` (`--exclude-caches`) and iCloud files that aren't
 downloaded to this Mac (`--exclude-cloud-files`). Time Machine's own exclusion list can't be read on macOS 27,

@@ -15,39 +15,43 @@ public enum PrivateFile {
         public let description: String
     }
 
-    /// - Parameter beforeRename: called with the finished temporary file just before it replaces the target, for
-    ///   tests to look at it (or fail the write); throwing aborts the write.
-    public static func write(_ data: Data, to url: URL, beforeRename: (URL) throws -> Void = { _ in }) throws {
+    /// - Parameters:
+    ///   - what: what the file is, for the failure's description ("Restorey couldn't save <what> to …").
+    ///   - beforeRename: called with the finished temporary file just before it replaces the target, for tests to look
+    ///     at it (or fail the write); throwing aborts the write.
+    public static func write(
+        _ data: Data, to url: URL, what: String = "the recovery kit", beforeRename: (URL) throws -> Void = { _ in }
+    ) throws {
         let folder = url.deletingLastPathComponent()
         var template = Array(folder.appendingPathComponent(".\(url.lastPathComponent).XXXXXX").path.utf8CString)
         let descriptor = template.withUnsafeMutableBufferPointer { mkstemp($0.baseAddress!) }
-        guard descriptor >= 0 else { throw failure(url, errno) }
+        guard descriptor >= 0 else { throw failure(what, url, errno) }
         let path = String(decoding: template.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
         let temporary = URL(fileURLWithPath: path)
         var open = true
         do {
             defer { if open { Darwin.close(descriptor) } }
             // mkstemp already makes it 0600; say so explicitly rather than rely on it.
-            guard fchmod(descriptor, 0o600) == 0 else { throw failure(url, errno) }
+            guard fchmod(descriptor, 0o600) == 0 else { throw failure(what, url, errno) }
             try data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
                 var offset = 0
                 while offset < buffer.count {
                     let written = Darwin.write(descriptor, buffer.baseAddress! + offset, buffer.count - offset)
                     if written < 0 {
                         if errno == EINTR { continue }
-                        throw failure(url, errno)
+                        throw failure(what, url, errno)
                     }
                     // write(2) returning 0 for a non-empty request makes no progress: looping would never end. It is
                     // an I/O failure, not a retry.
-                    if written == 0 { throw failure(url, EIO) }
+                    if written == 0 { throw failure(what, url, EIO) }
                     offset += written
                 }
             }
-            guard fsync(descriptor) == 0 else { throw failure(url, errno) }
+            guard fsync(descriptor) == 0 else { throw failure(what, url, errno) }
             open = false
-            guard Darwin.close(descriptor) == 0 else { throw failure(url, errno) }
+            guard Darwin.close(descriptor) == 0 else { throw failure(what, url, errno) }
             try beforeRename(temporary)
-            guard rename(temporary.path, url.path) == 0 else { throw failure(url, errno) }
+            guard rename(temporary.path, url.path) == 0 else { throw failure(what, url, errno) }
         } catch {
             unlink(temporary.path)
             throw error
@@ -59,7 +63,7 @@ public enum PrivateFile {
         return Array(UnsafeBufferPointer(start: text, count: strlen(text))).map { UInt8(bitPattern: $0) }
     }
 
-    private static func failure(_ url: URL, _ code: Int32) -> Failure {
-        Failure(description: "Restorey couldn't save the recovery kit to \(url.path): \(String(decoding: strerrorBytes(code), as: UTF8.self))")
+    private static func failure(_ what: String, _ url: URL, _ code: Int32) -> Failure {
+        Failure(description: "Restorey couldn't save \(what) to \(url.path): \(String(decoding: strerrorBytes(code), as: UTF8.self))")
     }
 }

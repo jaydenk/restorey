@@ -221,11 +221,15 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
     /// the data; nil when not counted, or the count gave up. Information only. Omitted from JSON when nil, so
     /// records written before it existed still decode.
     public var cloudOnlySkipped: CloudOnlyCount?
+    /// How many items apps mark as not for backup this backup skipped: the collapsed list passed to restic
+    /// (`MarkedNotForBackup`, Task 15c). Nil when the plan's switch is off, the look gave up, or the run isn't a backup.
+    public var markedNotForBackupSkipped: Int?
 
     public init(
         id: UUID, planID: UUID, operation: ResticOperation, trigger: RunTrigger,
         startedAt: Date, endedAt: Date, outcome: RunOutcome, summary: BackupSummary?, logFile: String,
-        droppedLogLines: Int = 0, cloudOnlySkipped: CloudOnlyCount? = nil
+        droppedLogLines: Int = 0, cloudOnlySkipped: CloudOnlyCount? = nil,
+        markedNotForBackupSkipped: Int? = nil
     ) {
         self.id = id
         self.planID = planID
@@ -238,10 +242,12 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
         self.logFile = logFile
         self.droppedLogLines = droppedLogLines
         self.cloudOnlySkipped = cloudOnlySkipped
+        self.markedNotForBackupSkipped = markedNotForBackupSkipped
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, planID, operation, trigger, startedAt, endedAt, outcome, summary, logFile, droppedLogLines, cloudOnlySkipped
+        case markedNotForBackupSkipped
     }
 
     public init(from decoder: any Decoder) throws {
@@ -257,6 +263,7 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
         logFile = try c.decode(String.self, forKey: .logFile)
         droppedLogLines = try c.decodeIfPresent(Int.self, forKey: .droppedLogLines) ?? 0
         cloudOnlySkipped = try c.decodeIfPresent(CloudOnlyCount.self, forKey: .cloudOnlySkipped)
+        markedNotForBackupSkipped = try c.decodeIfPresent(Int.self, forKey: .markedNotForBackupSkipped)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -272,6 +279,7 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
         try c.encode(logFile, forKey: .logFile)
         if droppedLogLines != 0 { try c.encode(droppedLogLines, forKey: .droppedLogLines) }
         try c.encodeIfPresent(cloudOnlySkipped, forKey: .cloudOnlySkipped)
+        try c.encodeIfPresent(markedNotForBackupSkipped, forKey: .markedNotForBackupSkipped)
     }
 }
 

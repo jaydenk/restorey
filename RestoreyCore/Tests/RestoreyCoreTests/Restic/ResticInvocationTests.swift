@@ -49,6 +49,23 @@ struct ResticInvocationTests {
         ])
     }
 
+    /// Task 15c: the list of items apps mark as not for backup goes in a file, only when there is one.
+    @Test func theNotForBackupListIsPassedAsAnExcludeFileOnlyWhenThereIsOne() {
+        let p = plan()
+        #expect(!inv(.backup, p).arguments.contains { $0.hasPrefix("--exclude-file") })
+        var ctx = Self.context
+        ctx.notForBackupExcludeFile = URL(fileURLWithPath: "/Users/x/Library/Application Support/Restorey/not-for-backup/a.txt")
+        let args = inv(.backup, p, ctx).arguments
+        let flag = "--exclude-file=/Users/x/Library/Application Support/Restorey/not-for-backup/a.txt"
+        #expect(args.filter { $0.hasPrefix("--exclude-file") } == [flag])
+        // Before the sources, with the other exclusions.
+        #expect(args.firstIndex(of: flag)! < args.firstIndex(of: "--")!)
+        // Only the backup reads it.
+        for op in [ResticOperation.forget(dryRun: false), .prune, .check, .snapshots(allHosts: false), .stats] {
+            #expect(!inv(op, p, ctx).arguments.contains { $0.hasPrefix("--exclude-file") }, "\(op)")
+        }
+    }
+
     @Test func adoptedBackupOmitsPackSize() {
         let args = inv(.backup, plan(origin: .adopted)).arguments
         #expect(!args.contains("--pack-size"))

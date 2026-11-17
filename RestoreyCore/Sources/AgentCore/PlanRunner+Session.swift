@@ -6,7 +6,7 @@ extension PlanRunner {
     /// What a step needs that comes from the plan and the keychain.
     struct RunSession: Sendable {
         let plan: Plan
-        let context: ResticContext
+        var context: ResticContext
         let redactor: Redactor
         /// `RepositoryQueues.key(for:)` of the plan's repository.
         let key: String

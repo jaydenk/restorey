@@ -119,6 +119,13 @@ public enum CloudOnlyScope {
     /// `DefaultExclusions` writes the home folder), or nil for a glob or a relative pattern. The count is an
     /// approximation and says nothing about restic's pattern semantics, so globs are ignored.
     static func literalPath(_ pattern: String) -> String? {
+        unescapedLiteral(pattern).map(normalised)
+    }
+
+    /// The path a literal absolute pattern names, backslash escapes undone, with no other change; nil for a glob or a
+    /// relative pattern. `MarkedNotForBackup` compares it with paths exactly as Spotlight and restic see them, so it
+    /// isn't standardised (that would turn `/private/var` into `/var`).
+    static func unescapedLiteral(_ pattern: String) -> String? {
         guard pattern.hasPrefix("/") else { return nil }
         var result = ""
         var escaped = false
@@ -134,7 +141,7 @@ public enum CloudOnlyScope {
                 result.append(character)
             }
         }
-        return escaped ? nil : normalised(result)
+        return escaped ? nil : result
     }
 
     static func normalised(_ path: String) -> String {

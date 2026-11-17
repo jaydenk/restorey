@@ -221,4 +221,56 @@ struct ResticInvocationAcceptanceTests {
         for relative in excluded { #expect(!paths.contains(relative), "\(relative) should be excluded") }
         #expect(!paths.contains("VMs/Windows.pvm"), "a .pvm bundle directory is excluded whole")
     }
+
+    /// Task 15c: the exclude file `MarkedNotForBackup.excludeFile` writes means exactly its paths under real restic
+    /// 0.19.1 (readPatternsFromFiles trims, skips `#` lines and expands `$VAR`): names with `$`, glob characters, a
+    /// backslash and `#` are excluded, and their look-alike siblings are kept. `HOME` is set, so an unescaped `$HOME`
+    /// would have expanded.
+    @Test func theNotForBackupExcludeFileMatchesExactlyUnderRealRestic() async throws {
+        let restic = try TestBinaries.requireRestic()
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("restorey-marked-\(UUID().uuidString)")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let helper = dir.appendingPathComponent("fake-helper.sh")
+        try "#!/bin/sh\necho test-password-not-a-secret\n".write(to: helper, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+
+        let source = dir.appendingPathComponent("source")
+        let marked = ["$HOME", "a$b", "x[1]", "star*", "back\\slash", "#hash", "sp ace", "deep/inner$", "ends$"]
+        let kept = ["HOMEx", "ab", "x1", "starry", "backslash", "hash", "space", "deep/keep", "ends"]
+        for relative in marked + kept {
+            let url = source.appendingPathComponent(relative).appendingPathComponent("f.txt")
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try relative.write(to: url, atomically: true, encoding: .utf8)
+        }
+        let file = MarkedNotForBackup.excludeFile(marked.map { source.appendingPathComponent($0).path })
+        #expect(file.unrepresentable.isEmpty)
+        let list = dir.appendingPathComponent("not-for-backup.txt")
+        try file.text.write(to: list, atomically: true, encoding: .utf8)
+
+        let plan = Plan.newHotPlan(
+            name: "T", repository: .raw(repository: dir.appendingPathComponent("repo").path, environmentNames: []),
+            origin: .created, hostLabel: "testhost", sources: [source.path], exclusions: [], now: Date())
+        var context = ResticContext(
+            cacheDirectory: dir.appendingPathComponent("cache"), helperExecutable: helper,
+            credentialsFile: nil, rawEnvironment: [:], homeDirectory: dir)
+        context.notForBackupExcludeFile = list
+        for (name, op) in [("init", ResticOperation.initRepository), ("backup", .backup)] {
+            let r = try await run(restic, makeInvocation(op, plan: plan, context: context), dir: dir, tag: name)
+            #expect(r.status == 0, "\(name) exited \(r.status): \(r.stderr)")
+        }
+        var ls = makeInvocation(.check, plan: plan, context: context)
+        ls.arguments = ["ls", "--json", "latest"]
+        let listed = try await run(restic, ls, dir: dir, tag: "ls")
+        #expect(listed.status == 0, "\(listed.stderr)")
+        let paths = Set(listed.stdout.split(separator: "\n").compactMap { line -> String? in
+            guard let node = try? JSONDecoder().decode(Node.self, from: Data(line.utf8)),
+                node.struct_type == "node", let path = node.path, path.hasPrefix(source.path + "/")
+            else { return nil }
+            return String(path.dropFirst(source.path.count + 1))
+        })
+        for relative in kept { #expect(paths.contains(relative + "/f.txt"), "\(relative) should be backed up") }
+        for relative in marked { #expect(!paths.contains(relative), "\(relative) should be excluded") }
+    }
 }

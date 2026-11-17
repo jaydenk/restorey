@@ -22,6 +22,12 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
     /// iPhone's DeviceFS) are skipped, while every source's own filesystem, such as a USB drive listed as
     /// a source, is still backed up (Ruling R64c).
     public var oneFileSystem: Bool
+    /// Skips items apps mark as not for backup (Time Machine's per-item attribute; `MarkedNotForBackup`, Task 15c).
+    /// True for new plans, and for a plan saved before the field existed.
+    public var skipsItemsMarkedNotForBackup: Bool
+    /// Absolute paths the person chose to back up although they are marked not for backup; an entry also covers
+    /// everything under it. Kept when the switch is off, so turning it back on restores the choices.
+    public var backUpAnyway: [String]
     public var schedule: Schedule
     public var conditions: Conditions
     public var retention: Retention
@@ -56,6 +62,8 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         exclusions: [String],
         fileTypeExclusions: [String],
         oneFileSystem: Bool,
+        skipsItemsMarkedNotForBackup: Bool = true,
+        backUpAnyway: [String] = [],
         schedule: Schedule,
         conditions: Conditions,
         retention: Retention,
@@ -80,6 +88,8 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         self.exclusions = exclusions
         self.fileTypeExclusions = fileTypeExclusions
         self.oneFileSystem = oneFileSystem
+        self.skipsItemsMarkedNotForBackup = skipsItemsMarkedNotForBackup
+        self.backUpAnyway = backUpAnyway
         self.schedule = schedule
         self.conditions = conditions
         self.retention = retention
@@ -98,6 +108,7 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, repository, origin, hostLabel, sources, exclusions, fileTypeExclusions, oneFileSystem
+        case skipsItemsMarkedNotForBackup, backUpAnyway
         case schedule, conditions, retention, pruneEnabled, forgetCadence, uploadLimitKiB, packSizeMiB
         case noSuccessAlertDays, hasCheckInURL, recoveryKitConfirmedAt, setupCompletedAt, offMacNoteDismissed
         case createdAt, adoptedAt
@@ -119,6 +130,9 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         exclusions = try c.decode([String].self, forKey: .exclusions)
         fileTypeExclusions = try c.decode([String].self, forKey: .fileTypeExclusions)
         oneFileSystem = try c.decode(Bool.self, forKey: .oneFileSystem)
+        // Added after schema 3 with no migration (additive, like `adoptedAt`): absent means the defaults.
+        skipsItemsMarkedNotForBackup = try c.decodeIfPresent(Bool.self, forKey: .skipsItemsMarkedNotForBackup) ?? true
+        backUpAnyway = try c.decodeIfPresent([String].self, forKey: .backUpAnyway) ?? []
         schedule = try c.decode(Schedule.self, forKey: .schedule)
         conditions = try c.decode(Conditions.self, forKey: .conditions)
         retention = try c.decode(Retention.self, forKey: .retention)

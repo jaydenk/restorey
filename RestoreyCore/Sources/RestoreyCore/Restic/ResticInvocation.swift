@@ -32,6 +32,9 @@ public struct ResticContext: Sendable {
     /// How long the maintenance commands (`forget`, `prune`, `check`, `stats`) wait for a lock another client
     /// holds, as restic's `--retry-lock` duration. Five minutes in the agent; tests shorten it.
     public var maintenanceRetryLock: String
+    /// This run's list of items apps mark as not for backup (`MarkedNotForBackup.excludeFile`), passed to `backup` as
+    /// `--exclude-file`. Nil when there is nothing to skip: the flag is then left out.
+    public var notForBackupExcludeFile: URL?
 
     public init(
         cacheDirectory: URL,
@@ -41,7 +44,8 @@ public struct ResticContext: Sendable {
         homeDirectory: URL,
         macWideUploadLimitKiB: Int? = nil,
         networkedBackupsRunning: Int = 1,
-        maintenanceRetryLock: String = "5m"
+        maintenanceRetryLock: String = "5m",
+        notForBackupExcludeFile: URL? = nil
     ) {
         self.cacheDirectory = cacheDirectory
         self.helperExecutable = helperExecutable
@@ -51,6 +55,7 @@ public struct ResticContext: Sendable {
         self.macWideUploadLimitKiB = macWideUploadLimitKiB
         self.networkedBackupsRunning = networkedBackupsRunning
         self.maintenanceRetryLock = maintenanceRetryLock
+        self.notForBackupExcludeFile = notForBackupExcludeFile
     }
 }
 
@@ -189,6 +194,8 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
             : plan.uploadLimitKiB
         if let limit { args += ["--limit-upload", String(limit)] }
         for pattern in plan.exclusions { args.append("--exclude=\(pattern)") }
+        // Items apps mark as not for backup (Task 15c): literal patterns, one per line, written for this run.
+        if let file = context.notForBackupExcludeFile { args.append("--exclude-file=\(file.path)") }
         // A relative pattern matches a whole path component at any depth (restic 0.19.1
         // internal/filter/filter.go), so `*.pvm` also excludes a `.pvm` bundle directory; `--iexclude`
         // lower-cases pattern and path. Invalid entries never get here: the plan fails validation.

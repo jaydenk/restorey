@@ -1,6 +1,5 @@
 import Darwin
 import Foundation
-import Synchronization
 import RestoreyCore
 
 /// Walks a folder with `fts`, reading `lstat` metadata only: no file is opened, no symlink followed (`FTS_PHYSICAL`),
@@ -50,20 +49,5 @@ public enum CloudOnlySkipped {
             let counter = CloudOnlyCounter(walker: FTSCloudOnlyWalker())
             return counter.count(roots: roots, exclusions: exclusions)
         }
-    }
-}
-
-/// Resumes a continuation the first time it is asked to, and ignores every later call.
-final class ResumeOnce<Value: Sendable>: Sendable {
-    private let continuation: Mutex<CheckedContinuation<Value, Never>?>
-
-    init(_ continuation: CheckedContinuation<Value, Never>) { self.continuation = Mutex(continuation) }
-
-    func resume(_ value: Value) {
-        let taken = continuation.withLock { state -> CheckedContinuation<Value, Never>? in
-            defer { state = nil }
-            return state
-        }
-        taken?.resume(returning: value)
     }
 }

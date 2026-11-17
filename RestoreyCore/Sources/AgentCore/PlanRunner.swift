@@ -45,6 +45,15 @@ public struct RunnerDependencies: Sendable {
     /// Seconds the runner waits for the count before carrying on without it, even if the walk is stuck in one system
     /// call. The walk may finish later on its own thread; its result is discarded.
     public var cloudOnlyDeadline: TimeInterval
+    /// Finds the items apps mark as not for backup before each backup of a plan that skips them (Task 15c); the agent
+    /// passes `SpotlightMarkedItems`. Nil: none are looked for, so none are skipped and nothing is recorded.
+    public var markedItems: (any MarkedItemsFinding)?
+    /// Seconds the look for marked items may take before the backup carries on without it (`MarkedItemsScan.offPool`).
+    public var markedItemsDeadline: TimeInterval
+    /// Where each backup's list of marked items is written (`<planID>.txt`, 0600, in a 0700 folder) for restic's
+    /// `--exclude-file`, and removed once restic has finished. Leftovers from an agent that died mid-run go at the
+    /// next start (`recoverAfterStart`). Defaults to `<credentialsDirectory>/not-for-backup`.
+    public var notForBackupDirectory: URL
     /// restic's `--retry-lock` for the maintenance commands (`ResticContext.maintenanceRetryLock`): five minutes;
     /// tests that hold a lock shorten it.
     public var maintenanceRetryLock: String
@@ -63,6 +72,9 @@ public struct RunnerDependencies: Sendable {
         binaryReplaced: @escaping @Sendable () -> Bool = { false },
         cloudOnlySkipped: @escaping @Sendable ([String], [String]) -> CloudOnlyCounter.Result? = { _, _ in nil },
         cloudOnlyDeadline: TimeInterval = CloudOnlyCounter.defaultTimeLimit,
+        markedItems: (any MarkedItemsFinding)? = nil,
+        markedItemsDeadline: TimeInterval = MarkedNotForBackup.timeLimit,
+        notForBackupDirectory: URL? = nil,
         maintenanceRetryLock: String = "5m"
     ) {
         self.state = state
@@ -87,6 +99,10 @@ public struct RunnerDependencies: Sendable {
         self.binaryReplaced = binaryReplaced
         self.cloudOnlySkipped = cloudOnlySkipped
         self.cloudOnlyDeadline = cloudOnlyDeadline
+        self.markedItems = markedItems
+        self.markedItemsDeadline = markedItemsDeadline
+        self.notForBackupDirectory = notForBackupDirectory
+            ?? credentialsDirectory.appendingPathComponent("not-for-backup", isDirectory: true)
         self.maintenanceRetryLock = maintenanceRetryLock
     }
 }
@@ -97,10 +113,12 @@ public struct RunnerDependencies: Sendable {
 /// 2. `preflight`;
 /// 3. the Full Disk Access probe (missing: a failure and the `fullDiskAccessMissing` alert, no restic);
 /// 4. the repository's queue; in its slot, a plain `unlock` first if a restic died there by a signal;
-/// 5. the backup, classified (there is no check-in `/start` ping, Ruling R57);
-/// 6. history and alerts (written after every step, so an agent that dies mid-run loses nothing);
-/// 7. the check-in end ping, as soon as the backup's record is committed (Ruling R37);
-/// 8. in the same queue slot, after a successful backup: setup's confirmed removal of earlier snapshots
+/// 5. the items apps mark as not for backup, looked for (bounded, off the cooperative pool) when the plan skips them,
+///    and passed to restic in a file of their own, removed when restic has finished (Task 15c);
+/// 6. the backup, classified (there is no check-in `/start` ping, Ruling R57);
+/// 7. history and alerts (written after every step, so an agent that dies mid-run loses nothing);
+/// 8. the check-in end ping, as soon as the backup's record is committed (Ruling R37);
+/// 9. in the same queue slot, after a successful backup: setup's confirmed removal of earlier snapshots
 ///    when one is waiting (PlanRunner+EarlierSnapshots.swift), then `forget`, `prune` (then `stats`, for the
 ///    repository size, when it succeeded) and a plain `unlock` followed by `check`, when each is due
 ///    (`maintenance`).
@@ -137,6 +155,8 @@ public actor PlanRunner {
     let logger: Logger
     /// Runs in flight, by plan.
     private var handles: [UUID: RunHandle] = [:]
+    /// Marked items already logged as backed up because restic can't be given their names exactly: each is logged once.
+    private var loggedUnrepresentable: Set<String> = []
     /// The latest background run `backUpNow` started, by plan.
     private var background: [UUID: Task<RunRecord, Never>] = [:]
     /// Plans to back up (trigger `.manual`) as soon as their run, being paused, has ended: a Resume that
@@ -243,6 +263,8 @@ public actor PlanRunner {
     // MARK: Recovery
 
     private func recover() async {
+        // Lists of marked items left by an agent that died while restic ran: no restic of this plan is running now.
+        try? FileManager.default.removeItem(at: deps.notForBackupDirectory)
         let entries = await deps.state.allRunInputs()
         let now = deps.now()
         var interrupted: Set<UUID> = []
@@ -470,9 +492,20 @@ public actor PlanRunner {
             await commit(unlock.record, plan: plan)
         }
 
-        if await isWindingDown() { return await skippedForUpdate() }
-        var backup = await runStep(.backup, trigger: trigger, session: session, handle: handle, progress: true)
+        // Looked for first, so the check for winding down still comes right before restic starts.
+        let marked = await notForBackupList(plan: plan)
+        if await isWindingDown() {
+            removeNotForBackupList(marked.file)
+            return await skippedForUpdate()
+        }
+        var backupSession = session
+        backupSession.context.notForBackupExcludeFile = marked.file
+        var backup = await runStep(.backup, trigger: trigger, session: backupSession, handle: handle, progress: true)
+        // restic has exited (or never started), however the step ended: success, failure, a cancel, a pause or the
+        // system stopping the agent (which waits for the run to end before it exits).
+        removeNotForBackupList(marked.file)
         handle.backupStepEnded()
+        if Self.savedData(backup.record.outcome) { backup.record.markedNotForBackupSkipped = marked.count }
         backup.record.cloudOnlySkipped = await countCloudOnly(after: backup.record, plan: plan)
         await commit(backup.record, plan: plan, fda: fda, stoppedReason: backup.stoppedReason)
         queueEndPing(backup, redactor: session.redactor)
@@ -516,10 +549,7 @@ public actor PlanRunner {
     /// only: nil for any other run, and when the count gives up, which is logged at INFO. It runs on a background
     /// thread and is bounded, so it never blocks or fails the run (Task 15b).
     private func countCloudOnly(after record: RunRecord, plan: Plan) async -> CloudOnlyCount? {
-        switch record.outcome {
-        case .success(snapshotID: .some), .unchanged, .warning: break
-        default: return nil
-        }
+        guard Self.savedData(record.outcome) else { return nil }
         let count = deps.cloudOnlySkipped
         let (sources, exclusions) = (plan.sources, plan.exclusions)
         // On a dispatch thread, not a Swift concurrency one: the walk blocks in system calls. The first of the walk and
@@ -538,6 +568,60 @@ public actor PlanRunner {
             return nil
         case nil: return nil
         }
+    }
+
+    /// True for a backup restic finished with a snapshot (`success` with one, or `warning`), or found unchanged (no
+    /// snapshot, but its exclusions applied all the same): the runs whose skipped-item counts are recorded.
+    static func savedData(_ outcome: RunOutcome) -> Bool {
+        switch outcome {
+        case .success(snapshotID: .some), .unchanged, .warning: true
+        default: false
+        }
+    }
+
+    /// The items apps mark as not for backup that this backup skips (Task 15c), written for restic's `--exclude-file`,
+    /// and how many: the plan's sources looked up in Spotlight on a thread of its own within the bound
+    /// (`MarkedItemsScan.offPool`: 10 seconds, 100,000 results), each still carrying the attribute, collapsed for the
+    /// plan (`MarkedNotForBackup.collapse`). Never fails or delays the backup beyond the bound: nil file and count when
+    /// the plan doesn't skip them, there is no finder, the look gives up (logged at INFO) or the file can't be written
+    /// (logged at ERROR), so the items are backed up, the safe direction. No file, and a count of 0, when none are found.
+    private func notForBackupList(plan: Plan) async -> (file: URL?, count: Int?) {
+        guard plan.skipsItemsMarkedNotForBackup, let finder = deps.markedItems else { return (nil, nil) }
+        let id = plan.id.uuidString
+        let verified: [String]
+        switch await MarkedItemsScan.offPool(finder: finder, sources: plan.sources, deadline: deps.markedItemsDeadline) {
+        case .found(let found): verified = found
+        case .gaveUp:
+            deps.agentInfo(
+                "Gave up looking for items apps mark as not for backup for plan \(id) (too many, too slow, or Spotlight "
+                    + "couldn't answer), so this backup includes them")
+            return (nil, nil)
+        }
+        let collapsed = MarkedNotForBackup.collapse(
+            verified, sources: plan.sources, exclusions: plan.exclusions, backUpAnyway: plan.backUpAnyway)
+        let file = MarkedNotForBackup.excludeFile(collapsed)
+        let unlogged = file.unrepresentable.filter { loggedUnrepresentable.insert($0).inserted }
+        if !unlogged.isEmpty {
+            deps.agentInfo(
+                "Backing up \(unlogged.count) item(s) apps mark as not for backup, because restic can't be given their "
+                    + "names exactly (plan \(id)): " + unlogged.map(\.debugDescription).joined(separator: ", "))
+        }
+        guard !file.written.isEmpty else { return (nil, 0) }
+        let url = deps.notForBackupDirectory.appendingPathComponent("\(id).txt")
+        do {
+            try FileManager.default.createDirectory(
+                at: deps.notForBackupDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try PrivateFile.write(Data(file.text.utf8), to: url, what: "the list of items marked not for backup")
+        } catch {
+            deps.agentLog("\(error), so this backup of plan \(id) includes the items apps mark as not for backup")
+            return (nil, nil)
+        }
+        return (url, file.written.count)
+    }
+
+    private func removeNotForBackupList(_ file: URL?) {
+        guard let file else { return }
+        try? FileManager.default.removeItem(at: file)
     }
 
     /// `restic stats --mode raw-data`, recorded, and its total kept as the plan's repository size with the
