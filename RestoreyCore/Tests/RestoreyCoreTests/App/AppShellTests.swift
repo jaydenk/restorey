@@ -60,6 +60,40 @@ struct AppShellTests {
         #expect(settingsRoute(open: nil, section: nil, planID: nil) == SettingsRoute(section: .plans, planID: nil))
     }
 
+    @Test func newSettingsWindowStartsAtTheSectionLastViewed() {
+        let remembered = SettingsRoute(section: .history)
+        #expect(settingsRoute(open: nil, section: nil, planID: nil, initial: remembered) == remembered)
+        // An open window and an explicit request are unaffected.
+        let open = SettingsRoute(section: .network)
+        #expect(settingsRoute(open: open, section: nil, planID: nil, initial: remembered) == open)
+        #expect(settingsRoute(open: nil, section: .general, planID: nil, initial: remembered) == SettingsRoute(section: .general))
+    }
+
+    @Test func theLastSectionIsKeptBetweenLaunches() throws {
+        let name = "RestoreyCoreTests.settingsPane.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let preference = SettingsPanePreference(defaults: defaults)
+        #expect(preference.load() == .plans, "nothing saved yet: Plans")
+        for section in SettingsSection.allCases {
+            preference.save(section)
+            #expect(SettingsPanePreference(defaults: defaults).load() == section)
+        }
+        defaults.set("a section removed in a later version", forKey: "settingsSection")
+        #expect(preference.load() == .plans)
+    }
+
+    /// F4: the window is titled with the pane, as Apple's Settings windows are.
+    @Test func theSettingsWindowIsTitledWithThePane() {
+        #expect(SettingsSection.allCases.map(\.title) == ["General", "Plans", "Network", "History"])
+        #expect(!SettingsSection.allCases.map(\.title).contains { $0.contains("Settings") })
+    }
+
+    /// F3: Settings has no Minimise button; the task windows keep theirs.
+    @Test func onlySettingsLacksMinimise() {
+        #expect(AppWindowKind.allCases.filter { !$0.isMiniaturizable } == [.settings])
+    }
+
     @Test func explicitRequestsReplaceWhatIsShown() {
         let open = SettingsRoute(section: .plans, planID: Self.planA)
         #expect(settingsRoute(open: open, section: .general, planID: nil) == SettingsRoute(section: .general))

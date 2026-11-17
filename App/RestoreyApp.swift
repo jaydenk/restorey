@@ -33,7 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
-        MainMenu.install()
+        MainMenu.install(
+            canShowSettings: { [weak self] in self?.mode == .running },
+            showSettings: { [weak self] in self?.router.showSettings() })
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

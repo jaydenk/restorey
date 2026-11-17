@@ -56,6 +56,7 @@ struct ExclusionsSheet: View {
             }
         }
         .padding(20)
+        .dismissesOnEscape()
         .frame(width: 520)
     }
 

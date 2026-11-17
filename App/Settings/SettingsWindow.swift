@@ -155,6 +155,6 @@ final class SettingsToolbar: NSObject, NSToolbarDelegate {
             Task { @MainActor in self?.follow() }
         }
         toolbar.selectedItemIdentifier = Self.identifier(section)
-        window?.title = "\(AppWindowKind.settings.title) — \(section.title)"
+        window?.title = section.title
     }
 }

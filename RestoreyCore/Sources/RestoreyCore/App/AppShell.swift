@@ -11,6 +11,8 @@ public enum SettingsSection: String, CaseIterable, Sendable, Equatable {
     case network
     case history
 
+    /// The pane's name: the toolbar item's label and, as in Apple's Settings windows, the window's title while the
+    /// pane shows (HIG Settings: "update the window's title to reflect the currently visible pane").
     public var title: String {
         switch self {
         case .general: "General"
@@ -19,6 +21,25 @@ public enum SettingsSection: String, CaseIterable, Sendable, Equatable {
         case .history: "History"
         }
     }
+
+    /// The section remembered from an earlier run, `.plans` (where a new window has always started) when nothing
+    /// was saved or the saved name isn't a section any more.
+    public init(remembered rawValue: String?) {
+        self = rawValue.flatMap(SettingsSection.init(rawValue:)) ?? SettingsRoute.initial.section
+    }
+}
+
+/// Where the last-viewed Settings section is kept between launches (HIG Settings: "restore the most recently
+/// viewed pane"). Only the section: not the plan or its tab, which a new window starts afresh.
+public struct SettingsPanePreference {
+    static let key = "settingsSection"
+    private let defaults: UserDefaults
+
+    public init(defaults: UserDefaults) { self.defaults = defaults }
+
+    public func load() -> SettingsSection { SettingsSection(remembered: defaults.string(forKey: Self.key)) }
+
+    public func save(_ section: SettingsSection) { defaults.set(section.rawValue, forKey: Self.key) }
 }
 
 /// The app's windows. There is at most one window of each kind: asking for one that is open brings it to the
@@ -37,6 +58,10 @@ public enum AppWindowKind: String, CaseIterable, Sendable, Hashable {
         case .restoreFiles: "Restore Files"
         }
     }
+
+    /// Whether the window has a Minimise button. Settings has none (HIG Settings: "dim a settings window's minimize
+    /// and maximize buttons"): it needs no place in the Dock. The task windows keep theirs.
+    public var isMiniaturizable: Bool { self != .settings }
 }
 
 /// The note the General section shows while the status item is hidden (UI design §8).
@@ -99,11 +124,14 @@ public struct SettingsRoute: Sendable, Equatable {
 /// What Settings shows after a request for `section` and `planID` (nil when not asked for). `open` is what an
 /// open window shows, nil when there is none.
 /// - Nothing asked for: an open window keeps what it shows (a reopen brings it forward unchanged); a new one
-///   starts at Plans.
+///   starts at `initial` (Plans, or the section last viewed).
 /// - A plan asked for: that plan, in `section` or Plans.
 /// - Only a section asked for: that section, with no plan selected.
-public func settingsRoute(open: SettingsRoute?, section: SettingsSection?, planID: UUID?) -> SettingsRoute {
-    if section == nil, planID == nil { return open ?? .initial }
+/// `initial` is what a new window starts at when asked for nothing: the section last viewed.
+public func settingsRoute(
+    open: SettingsRoute?, section: SettingsSection?, planID: UUID?, initial: SettingsRoute = .initial
+) -> SettingsRoute {
+    if section == nil, planID == nil { return open ?? initial }
     return SettingsRoute(section: section ?? .plans, planID: planID)
 }
 

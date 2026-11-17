@@ -35,6 +35,7 @@ struct NotForBackupSheet: View {
             }
         }
         .padding(20)
+        .dismissesOnEscape()
         .frame(width: 560)
         .task { result = await MarkedItemsScan.offPool(finder: SpotlightMarkedItems(), sources: sources) }
     }

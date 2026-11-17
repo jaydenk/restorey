@@ -43,6 +43,7 @@ struct UnreadableFilesSheet: View {
             }
         }
         .padding(20)
+        .dismissesOnEscape()
         .frame(width: 620)
     }
 

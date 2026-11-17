@@ -81,6 +81,19 @@ wordlist="$APP/Contents/Resources/RestoreyCore_RestoreyCore.bundle/Contents/Reso
 wordlist_lines=$(wc -l <"$wordlist" | tr -d ' ')
 [[ "$wordlist_lines" == "7776" ]] || fail "the password word list has $wordlist_lines lines, expected 7776"
 
+# The About panel's copyright line and credits (restic's BSD 2-Clause licence, which binary redistribution must
+# reproduce, and the EFF word list's attribution). AppKit's standard About panel shows Credits.rtf by itself.
+[[ "$(plist_get "$INFO" NSHumanReadableCopyright)" == "Copyright © "*" Jayden Kerr" ]] \
+  || fail "NSHumanReadableCopyright is missing or isn't the copyright line"
+credits="$APP/Contents/Resources/Credits.rtf"
+[[ -f "$credits" ]] || fail "Credits.rtf is missing from the app ($credits)"
+credits_text=$(textutil -convert txt -stdout "$credits" | tr -s '[:space:]' ' ')
+for needle in "restic 0.19.1" "BSD 2-Clause License" "Copyright (c) 2014, Alexander Neumann" \
+              "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS" \
+              "EFF Large Wordlist" "Creative Commons Attribution"; do
+  [[ "$credits_text" == *"$needle"* ]] || fail "Credits.rtf lacks '$needle'"
+done
+
 # The Developer window is Debug-only (project.yml excludes App/Developer from Release, and its uses are behind
 # #if DEBUG). Its Swift types' names are in a binary's metadata whenever it is compiled in, stripped or not, so a
 # Release bundle must have none of them, and a Debug one all three: the positive control that shows the check looks

@@ -9,7 +9,11 @@ import SwiftUI
 @MainActor
 @Observable
 final class ShellState {
-    var settingsSection: SettingsSection = SettingsRoute.initial.section
+    /// The section shown. Every change is kept for the next launch (`SettingsPanePreference`, P1).
+    var settingsSection: SettingsSection {
+        didSet { if settingsSection != oldValue { panePreference.save(settingsSection) } }
+    }
+    @ObservationIgnored private let panePreference: SettingsPanePreference
     /// The plan Plans shows. Every change goes through `requestPlan`, so unsaved edits are never dropped unasked.
     private(set) var planSelection = PlanSelection<PlanTab>(selected: SettingsRoute.initial.planID)
     var settingsPlanID: UUID? { planSelection.selected }
@@ -22,6 +26,11 @@ final class ShellState {
     /// The status item's `isVisible` is false: the user hid it (System Settings → Menu Bar, or dragged it out).
     /// A status item squeezed out of a full menu bar still reads visible (`NSStatusItem.isVisible`).
     var statusItemHidden = false
+
+    init(defaults: UserDefaults = .standard) {
+        panePreference = SettingsPanePreference(defaults: defaults)
+        settingsSection = panePreference.load()
+    }
 
     /// The one way to change the plan Plans shows: from the sidebar, the menu's routes and a reopen. `editing` is
     /// the plan with unsaved edits, if any (`PlanEditorSlot.unsavedPlanID`); a request for another then waits for
@@ -100,7 +109,9 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         let open = slots.openWindow(for: .settings).map { _ in
             SettingsRoute(section: state.settingsSection, planID: state.settingsPlanID)
         }
-        let route = settingsRoute(open: open, section: section, planID: planID)
+        // A new window asked for nothing opens at the section last viewed, this run's or an earlier one's (P1).
+        let route = settingsRoute(
+            open: open, section: section, planID: planID, initial: SettingsRoute(section: state.settingsSection))
         state.settingsSection = route.section
         if route.section == .history {
             // A plan asked for in History is the list's filter, not the plan Plans shows.
@@ -123,9 +134,13 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             planDeleted: { [weak self] in self?.planDeleted($0) })
         show(.settings, configure: { [weak self, state] window in
             window.styleMask.insert(.resizable)
+            // Plans and History need room, so it stays resizable, but a settings window has no full screen: its
+            // Zoom button is dimmed too (HIG Settings: "dim a settings window's minimize and maximize buttons").
+            window.standardWindowButton(.zoomButton)?.isEnabled = false
             let toolbar = SettingsToolbar(state: state)
             toolbar.attach(to: window)
             self?.settingsToolbar = toolbar
+            self?.followEditedState(of: window)
         }) { [weak self, state] in
             let slot = PlanEditorSlot()
             self?.planEditorSlot = slot
@@ -211,7 +226,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             if !isNew, shownPlan[kind] != planID { window.contentViewController = content() }
             shownPlan[kind] = planID
         }
-        if isNew { window.center() }
+        if isNew, !restoreFrame(of: window, kind) { window.center() }
         WindowActivation.bringForward(window, as: .window(kind))
     }
 
@@ -219,11 +234,40 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         let window = NSWindow(contentViewController: content)
         window.identifier = NSUserInterfaceItemIdentifier(kind.rawValue)
         window.title = kind.title
-        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.styleMask = kind.isMiniaturizable ? [.titled, .closable, .miniaturizable] : [.titled, .closable]
+        // No tabs (Show Tab Bar, Merge All Windows) and no full screen for any of these windows: each is one task.
+        window.tabbingMode = .disallowed
+        window.collectionBehavior.insert(.fullScreenNone)
         window.isRestorable = false
         window.isReleasedWhenClosed = false
         window.delegate = self
         return window
+    }
+
+    /// Settings keeps its frame between launches (P1). `setFrameAutosaveName` only saves; `setFrameUsingName` loads the
+    /// saved one (appkit-gotchas: window frame autosave). Returns whether one was restored, else the caller centres.
+    /// The other windows size themselves to their content and open centred.
+    private func restoreFrame(of window: NSWindow, _ kind: AppWindowKind) -> Bool {
+        guard kind == .settings else { return false }
+        let name = "RestoreySettings"
+        _ = window.setFrameAutosaveName(name)
+        return window.setFrameUsingName(name)
+    }
+
+    /// The dot in Settings' close button while a plan or the Network section has unsaved edits (P7): the same state
+    /// the close and quit questions ask about. Re-reads whenever any of it changes; stops with the window.
+    private func followEditedState(of window: NSWindow) {
+        let edited = withObservationTracking {
+            UnsavedSettings.isEdited(
+                plan: planEditorSlot?.editor?.edit.isDirty == true,
+                network: networkEditorSlot?.model?.edit.isDirty == true)
+        } onChange: { [weak self, weak window] in
+            Task { @MainActor in
+                guard let self, let window, window.isVisible || window.isMiniaturized else { return }
+                self.followEditedState(of: window)
+            }
+        }
+        window.isDocumentEdited = edited
     }
 
     /// Ruling R1: closing Settings with unsaved edits asks Save, Don't Save or Cancel, as switching plans asks: a

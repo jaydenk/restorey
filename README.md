@@ -212,9 +212,16 @@ back; clicking Restorey's app icon in the Dock is a reopen, which opens Settings
 window that asked, and the About panel counts while it is up, so no Restorey window is left on screen in a menu bar
 app. As an accessory app it had no menu bar, so Quit and Edit weren't there while its window was in
 use, and macOS passed it over when a Touch ID prompt went away, so the window that asked fell behind the app before
-(diagnosis in `.superpowers/sdd/2026-11-12-v0.1-ui/o1-diagnosis.md`). The main menu is the app menu (About, Hide,
-Quit), an Edit menu (Undo, Redo, Cut, Copy, Paste, Paste and Match Style, Delete, Select All) and a Window menu
-(Minimise, Close), so ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V, ⌘A, ⌘H, ⌘W and ⌘Q work in its windows. Each kind of window (setup,
+(diagnosis in `.superpowers/sdd/2026-11-12-v0.1-ui/o1-diagnosis.md`). The main menu is the app menu (About Restorey,
+Settings… ⌘, which opens Settings from any of the windows and is dimmed in a copy outside /Applications, which has
+none, Services, Hide, Hide Others, Show All, Quit), an Edit menu (Undo, Redo, Cut, Copy, Paste, Paste and Match
+Style, Delete, Select All), a Window menu (Minimise, Zoom, Close, Bring All to Front; Minimise and Zoom dim for a
+window that doesn't allow them, and there are no tab items: every window opts out of tabbing and full screen) and a
+Help menu, so ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V, ⌘A, ⌘, ⌘H, ⌥⌘H, ⌘W and ⌘Q work in its windows. "Restorey Help" (⌘?) opens
+the README's "Using Restorey" section on GitHub (<https://github.com/jaydenk/restorey#using-restorey>): Restorey has
+no Help Book, and the repository is public. The About panel shows the copyright line and `App/Credits.rtf`, which
+carries restic's BSD 2-Clause licence (verbatim from its v0.19.1 LICENSE) and the EFF word list's attribution;
+`scripts/verify-bundle.sh` checks both are in every build, Release included. Each kind of window (setup,
 Settings, recovery kit, Restore Files) opens at most once: asking again brings the open one to the front. A window is
 ordered front and activation asked for once, while the click that opened it is handled. Since macOS 14 that request
 can be refused; then, on the next turn of the run loop, a window still on screen is ordered in front anyway
@@ -330,8 +337,16 @@ ready" saying so, with the switch there to try again.
 
 ### Settings
 
-Settings (⌘, in the menu) is a window with a toolbar of sections, as macOS draws them for settings: **General**,
-**Plans**, **Network** and **History** (mockup `docs/mockups/v0.1-settings.html`). The menu's routes pick the section
+Settings (⌘, in the app menu, and in the status item's menu) is a window with a toolbar of sections, as macOS draws
+them for settings: **General**, **Plans**, **Network** and **History** (mockup `docs/mockups/v0.1-settings.html`).
+As Apple's Settings windows do, it is titled with the pane showing ("Plans", not "Restorey Settings — Plans"); has no
+Minimise button, a dimmed Zoom button and no full screen or tabs (it stays resizable, since Plans and History need
+room); opens at the section last viewed and at the size and place it was left (`SettingsPanePreference` in
+`UserDefaults`; the frame autosaves as `RestoreySettings`, and a window with no saved frame is centred); and shows
+the dot in its close button while a plan or the Network section has unsaved edits, the same state the Save, Don't
+Save or Cancel question on close and quit asks about (`UnsavedSettings.isEdited`). Esc closes the sheets that have
+only a Done button (exclusions, items marked not for backup, biggest additions, files that couldn't be read) as
+Done does; the two that edit apply into the page's unsaved fields, so the page's Revert is their way back. The menu's routes pick the section
 and plan: a plan's line opens it in Plans, "Show Details…" opens History for that plan, and "No off-Mac monitoring —
 Add…" opens the plan's Alerts tab.
 
@@ -938,6 +953,8 @@ Generated repository passwords use the Electronic Frontier Foundation's large wo
 (`RestoreyCore/Sources/RestoreyCore/Resources/eff_large_wordlist.txt`, 7,776 words, vendored unchanged from
 <https://www.eff.org/files/2016/07/18/eff_large_wordlist.txt>, SHA-256
 `addd35536511597a02fa0a9ff1e5284677b8883b83e986e43f15a3db996b903e`), © Electronic Frontier Foundation, used under the
-Creative Commons Attribution licence (CC BY 3.0 US when EFF published the list in 2016; EFF's copyright policy now
-offers its original material under CC BY 4.0, <https://www.eff.org/copyright>). A password is six words drawn with
+Creative Commons Attribution licence: EFF's copyright policy offers its original material under CC BY 4.0
+(<https://www.eff.org/copyright>), and its 2016 announcement of the list carries only a "Copyright (CC BY)" footer, so
+the version is the current policy's. The attribution is in the About panel and `THIRD_PARTY_NOTICES`, which also
+reproduces restic's licence verbatim. A password is six words drawn with
 the system's secure random number generator, joined by hyphens: about 77.5 bits.

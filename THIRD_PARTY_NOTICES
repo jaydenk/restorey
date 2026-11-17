@@ -1,6 +1,10 @@
-Restorey bundles unmodified upstream binaries. Their licences follow.
+Restorey bundles unmodified upstream material. Their licences follow. The same notices are shown in the About
+panel (App/Credits.rtf).
 
 restic 0.19.1 (https://restic.net, https://github.com/restic/restic)
+Licence text reproduced verbatim from https://github.com/restic/restic/blob/v0.19.1/LICENSE
+
+BSD 2-Clause License
 
 Copyright (c) 2014, Alexander Neumann <alexander@bumpern.de>
 All rights reserved.
@@ -8,12 +12,12 @@ All rights reserved.
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
 
-1. Redistributions of source code must retain the above copyright notice, this
-   list of conditions and the following disclaimer.
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
 
-2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -25,3 +29,9 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+EFF Large Wordlist for Passphrases (eff_large_wordlist.txt, unmodified)
+Source: https://www.eff.org/deeplinks/2016/07/new-wordlists-random-passphrases
+Copyright Electronic Frontier Foundation. Licensed under the Creative Commons Attribution 4.0 International License
+(CC BY 4.0), as EFF states for its original material at https://www.eff.org/copyright
+Licence: https://creativecommons.org/licenses/by/4.0/
