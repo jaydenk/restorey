@@ -35,6 +35,21 @@ public struct HistoryRow: Sendable, Equatable, Identifiable {
     public var biggestAdditions: BiggestAdditionsSummary?
 }
 
+/// A "Show…" link on a History row (Task 16d review m2): one per sheet, and worded apart when a row has both.
+public struct HistoryLink: Sendable, Equatable, Identifiable {
+    public enum Kind: Sendable, Equatable {
+        /// "Files that couldn't be read" (Task 16b).
+        case unreadable
+        /// "Biggest additions" (Task 16d).
+        case biggestAdditions
+    }
+
+    public var kind: Kind
+    public var title: String
+    public var accessibilityLabel: String
+    public var id: String { "\(kind)" }
+}
+
 /// Which runs the History list shows.
 public enum HistoryFilter: String, CaseIterable, Sendable, Identifiable {
     case everything
@@ -183,6 +198,27 @@ public enum HistoryPresentation {
             return "Yesterday, \(clock)"
         }
         return "\(DisplayFormat.dayAndMonth(date, calendar: calendar, locale: locale)), \(clock)"
+    }
+
+    /// The row's "Show…" links, in order. The couldn't-read one only where `offersUnreadable` (a plan's own list, which
+    /// has an editor to add exclusions to); the biggest-additions one in every list. A row with both names each
+    /// ("Show Unreadable Files…", "Show Biggest Additions…"), so two identical links never sit side by side.
+    public static func links(for row: HistoryRow, offersUnreadable: Bool) -> [HistoryLink] {
+        let unreadable = offersUnreadable && row.unreadable != nil
+        let additions = row.biggestAdditions != nil
+        let both = unreadable && additions
+        var links: [HistoryLink] = []
+        if unreadable {
+            links.append(HistoryLink(
+                kind: .unreadable, title: both ? "Show Unreadable Files…" : "Show…",
+                accessibilityLabel: "Show the files that couldn't be read"))
+        }
+        if additions {
+            links.append(HistoryLink(
+                kind: .biggestAdditions, title: both ? "Show Biggest Additions…" : "Show…",
+                accessibilityLabel: "Show the biggest additions"))
+        }
+        return links
     }
 
     /// The run's log file to open, or nil. The path comes from the agent, relative to the logs folder; only a file

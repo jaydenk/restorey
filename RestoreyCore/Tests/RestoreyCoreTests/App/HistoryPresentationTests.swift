@@ -93,6 +93,29 @@ struct HistoryPresentationTests {
         #expect(Self.row(check).biggestAdditions == nil)
     }
 
+    /// Review m2: one link per sheet, worded apart only when a row has both.
+    @Test func aRowHasOneLinkPerSheetToldApartWhenItHasBoth() {
+        var both = Self.record(.warning(unreadable: 1))
+        both.unreadableItems = [UnreadableItem(path: "/Users/me/a", reason: "operation not permitted")]
+        both.biggestAdditions = Self.additions
+        let row = Self.row(both)
+        let links = HistoryPresentation.links(for: row, offersUnreadable: true)
+        #expect(links.map(\.kind) == [.unreadable, .biggestAdditions])
+        #expect(links.map(\.title) == ["Show Unreadable Files…", "Show Biggest Additions…"])
+        #expect(Set(links.map(\.accessibilityLabel)).count == 2)
+        // The all-plans list has no editor, so only the additions link, plain.
+        #expect(HistoryPresentation.links(for: row, offersUnreadable: false).map(\.title) == ["Show…"])
+        #expect(HistoryPresentation.links(for: row, offersUnreadable: false).map(\.kind) == [.biggestAdditions])
+        // One sheet: "Show…".
+        var additionsOnly = Self.record(.success(snapshotID: "a"))
+        additionsOnly.biggestAdditions = Self.additions
+        #expect(HistoryPresentation.links(for: Self.row(additionsOnly), offersUnreadable: true).map(\.title) == ["Show…"])
+        var unreadableOnly = Self.record(.warning(unreadable: 1))
+        unreadableOnly.unreadableItems = both.unreadableItems
+        #expect(HistoryPresentation.links(for: Self.row(unreadableOnly), offersUnreadable: true).map(\.kind) == [.unreadable])
+        #expect(HistoryPresentation.links(for: Self.row(Self.record(.success(snapshotID: "a"))), offersUnreadable: true).isEmpty)
+    }
+
     @Test func theSheetsRowsAreHomeShortenedWithSizesAndFinderWhereThePathExists() {
         let rows = BiggestAdditionsText.rows(
             Self.additions.files, home: URL(fileURLWithPath: "/Users/me"), locale: Self.locale,

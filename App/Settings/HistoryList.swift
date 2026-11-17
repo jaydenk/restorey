@@ -17,8 +17,9 @@ struct HistoryList: View {
     @State private var planFilter: UUID?
     @State private var filter: HistoryFilter = .everything
     @State private var missingLog = false
-    /// The plan's editor in a plan's own History tab, where "Show…" can add an exclusion to it (Task 16b); nil in the
-    /// all-plans list, which has no editor, so it offers no "Show…".
+    /// The plan's editor in a plan's own History tab, where the couldn't-read "Show…" can add an exclusion to it (Task
+    /// 16b); nil in the all-plans list, which has no editor, so it offers that one no "Show…". The biggest-additions
+    /// "Show…" changes nothing, so every list offers it (Task 16d).
     let editor: PlanEditModel?
     @State private var unreadable: UnreadableShown?
     @State private var additions: AdditionsShown?
@@ -74,8 +75,8 @@ struct HistoryList: View {
             }
             List(rows) { row in
                 HistoryRowView(
-                    row: row, showsPlan: planID == nil, showLog: { open(row) }, showUnreadable: unreadableAction(row),
-                    showAdditions: additionsAction(row))
+                    row: row, showsPlan: planID == nil, links: HistoryPresentation.links(for: row, offersUnreadable: editor != nil),
+                    showLog: { open(row) }, show: { show($0, row) })
             }
             .listStyle(.bordered)
             .overlay {
@@ -102,16 +103,14 @@ struct HistoryList: View {
         }
     }
 
-    /// "Show…" for a warning's unreadable files, where there is an editor to add an exclusion to.
-    private func unreadableAction(_ row: HistoryRow) -> (() -> Void)? {
-        guard editor != nil, let summary = row.unreadable else { return nil }
-        return { unreadable = UnreadableShown(id: row.id, summary: summary) }
-    }
-
-    /// "Show…" for a backup's biggest additions (Task 16d): information only, so offered in every list.
-    private func additionsAction(_ row: HistoryRow) -> (() -> Void)? {
-        guard let summary = row.biggestAdditions else { return nil }
-        return { additions = AdditionsShown(id: row.id, additions: summary.additions) }
+    /// Opens the sheet behind one of the row's links (`HistoryPresentation.links`).
+    private func show(_ kind: HistoryLink.Kind, _ row: HistoryRow) {
+        switch kind {
+        case .unreadable:
+            if let summary = row.unreadable { unreadable = UnreadableShown(id: row.id, summary: summary) }
+        case .biggestAdditions:
+            if let summary = row.biggestAdditions { additions = AdditionsShown(id: row.id, additions: summary.additions) }
+        }
     }
 
     private func load() async {
@@ -140,11 +139,10 @@ struct HistoryList: View {
 private struct HistoryRowView: View {
     let row: HistoryRow
     let showsPlan: Bool
+    /// The row's "Show…" links, from `HistoryPresentation.links`.
+    let links: [HistoryLink]
     let showLog: () -> Void
-    /// "Show…" for the files a warning backup couldn't read; nil when there are none to show.
-    let showUnreadable: (() -> Void)?
-    /// "Show…" for a backup's biggest additions; nil when there are none to show.
-    let showAdditions: (() -> Void)?
+    let show: (HistoryLink.Kind) -> Void
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -168,22 +166,14 @@ private struct HistoryRowView: View {
                     Text(detail).font(.caption).foregroundStyle(.secondary)
                 }
                 if let additions = row.biggestAdditions {
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(additions.line).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
-                        if let showAdditions {
-                            Button("Show…", action: showAdditions)
-                                .buttonStyle(.link)
-                                .font(.caption)
-                                .accessibilityLabel("Show the biggest additions")
-                        }
-                    }
+                    Text(additions.line).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
                 }
             }
             Spacer()
-            if let showUnreadable {
-                Button("Show…", action: showUnreadable)
+            ForEach(links) { link in
+                Button(link.title) { show(link.kind) }
                     .buttonStyle(.link)
-                    .accessibilityLabel("Show the files that couldn't be read")
+                    .accessibilityLabel(link.accessibilityLabel)
             }
             if row.logFile != nil {
                 Button("Show Log", action: showLog)

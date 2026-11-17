@@ -10,6 +10,8 @@ import Testing
 /// biggest-additions reader, then changes 1,000 files and backs up both again. restic runs under `/usr/bin/time -l` for
 /// its own CPU and peak memory; the reader's CPU is this process's, and its memory this process's footprint. Each
 /// message goes through what the runner does with it (`StepLog.lines`, the collector). Prints one line per backup.
+/// It deletes everything it wrote under `RESTOREY_MEASURE_DIR` (about 1 GB) when it ends, pass or fail; remove the
+/// empty folder yourself.
 struct BiggestAdditionsMeasurement {
     private static let environment = ProcessInfo.processInfo.environment
     private static let fileCount = 100_000
@@ -40,6 +42,12 @@ struct BiggestAdditionsMeasurement {
         let root = URL(fileURLWithPath: try #require(Self.environment["RESTOREY_MEASURE_DIR"]), isDirectory: true)
         let fm = FileManager.default
         #expect(try fm.contentsOfDirectory(atPath: root.path).isEmpty, "RESTOREY_MEASURE_DIR must be empty")
+        defer {
+            for name in (try? fm.contentsOfDirectory(atPath: root.path)) ?? [] {
+                try? fm.removeItem(at: root.appendingPathComponent(name))
+            }
+            print("MEASURE16D deleted the test data under \(root.path); remove that folder when done")
+        }
         let source = root.appendingPathComponent("source")
         try writeTree(at: source)
 
