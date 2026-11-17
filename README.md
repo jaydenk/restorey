@@ -350,7 +350,8 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   "Waiting for a new recovery kit", "No backup yet") and the menu's reason under it, coloured only when the plan
   itself needs attention; then the times, only in the Last backup and Next backup rows ("Today at 17:10", "Tomorrow
   at 09:00"); and Back Up Now, Pause while a backup runs, Resume while paused and Restore Files…, enabled as the menu's
-  items are and asking the agent the same way (`MenuPresentation.overview`, `AgentActions`). It follows the agent
+  items are and asking the agent the same way (`MenuPresentation.overview`, `AgentActions`). After a backup that
+  couldn't read some files, "Show…" under the reason opens "Files that couldn't be read" (see below). It follows the agent
   live, progress included. The window is at least as wide as the row of seven tabs, measured with the system's fonts each time a Settings
   window opens, so a text-size change applies from the next one.
 - **What**: its name, the folders and drives, the exclusions (setup's line and "Review Exclusions…" sheet), and a
@@ -379,7 +380,7 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   Retention…" button that asks first ("Remove N snapshots of the previous folder list?", Cancel the default). With
   nothing to apply it says so in one line. It counts with the saved plan, so unsaved edits disable the buttons.
 - **Alerts**: the check-in URL (saved, Remove, or a new one) and "no successful backup in N days".
-- **History**: the History list for that plan.
+- **History**: the History list for that plan; a warning row has "Show…" for the files that couldn't be read.
 
 The tabs edit a copy (`PlanEdit` in `RestoreyCore`, held by `PlanEditModel`): the fields keep exactly what is typed,
 and trimming and parsing happen only when Save (⌘S) builds the request, which applies only the fields the user
@@ -550,6 +551,19 @@ choice, resets the count.
 while archiving (`"during":"archival"` in its `--json` output). Errors from its scanner, which only estimates totals for
 the progress figure (for example files deleted before the backup reached them), never change the snapshot or its exit
 status, so they are in the run log but not counted. An exit status 3 with no archival error still reads "1 file".
+
+The warning's record keeps those files (`UnreadableItems`, Task 16b): each distinct archival `item` with the short end of
+restic's message ("operation not permitted"; restic 0.19.1 `internal/ui/backup/json.go` and
+`internal/archiver/archiver.go`), the first 100 only, while the count stays exact ("and N more" in the list). Records
+written before this have none, and their line stays text. A "Show…" button next to the line (on the Overview, and on the
+row in a plan's History tab; the all-plans History list has no plan editor to change, so it has none) opens
+"Files that couldn't be read": each path (`~` for your home folder), why in plain words ("Restorey isn't allowed to read
+this" for operation not permitted or permission denied, "It was deleted while the backup ran" for no such file,
+otherwise restic's text), "Open in Finder" where the path still exists, and "Don't back this up". That adds the path's
+exclusion pattern (`DefaultExclusions.pattern(forFolder:)`, glob characters escaped) to the plan's exclusions as an
+unsaved edit, with Save, Revert and the close and quit guard as in the What tab; the row then reads "Won't be backed up
+from the next backup" with Undo (once the plan is saved). A file deleted while the backup ran has no button, and a path
+the plan already excludes reads "Already not backed up". This is information only: no outcome, icon, alert or ping changes.
 
 Every restic run has its own log in `~/Library/Logs/Restorey/runs/<plan ID>/` (`Restorey-Dev` for Debug builds),
 with secrets redacted. A log starts with the restic command (values hidden) and ends with the outcome; a

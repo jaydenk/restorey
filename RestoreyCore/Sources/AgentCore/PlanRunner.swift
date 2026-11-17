@@ -788,10 +788,17 @@ public actor PlanRunner {
         let record = RunRecord(
             id: id, planID: plan.id, operation: op, trigger: trigger, startedAt: startedAt, endedAt: deps.now(),
             outcome: outcome, summary: op == .backup ? termination?.summary : nil, logFile: logFile,
-            droppedLogLines: log.droppedLineCount)
+            droppedLogLines: log.droppedLineCount,
+            unreadableItems: Self.unreadableItems(op, outcome, termination))
         var tail = termination?.stderrTail ?? []
         if let helperFailure { tail.append(helperFailure) }
         return StepResult(record: record, stoppedReason: stoppedReason, tail: tail)
+    }
+
+    /// The files a backup couldn't read, for its record (Task 16b): only a backup that ended as a warning has any.
+    static func unreadableItems(_ op: ResticOperation, _ outcome: RunOutcome, _ termination: ResticTermination?) -> [UnreadableItem]? {
+        guard case .backup = op, case .warning = outcome, let termination else { return nil }
+        return UnreadableItems.collect(termination.messages)
     }
 
     // MARK: History and alerts

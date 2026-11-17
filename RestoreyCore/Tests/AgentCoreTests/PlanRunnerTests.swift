@@ -558,6 +558,46 @@ struct PlanRunnerTests {
         }
     }
 
+    /// Task 16b: a backup that ends as a warning keeps the distinct unreadable items, with restic's short reason, on its
+    /// record; a backup that doesn't end as one keeps none.
+    @Test func aWarningBackupKeepsTheItemsItCouldntRead() async throws {
+        let stub = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-unreadable-\(UUID().uuidString).sh")
+        let error = { (path: String, text: String, during: String) in
+            #"{"message_type":"error","error":{"message":"\#(text)"},"during":"\#(during)","item":"\#(path)"}"#
+        }
+        try """
+            #!/bin/sh
+            [ "$1" = cat ] && exit 10
+            [ "$1" = backup ] || exit 0
+            echo '\(error("/Users/me/a", "open /Users/me/a: operation not permitted", "archival"))' >&2
+            echo '\(error("/Users/me/a", "open /Users/me/a: operation not permitted", "archival"))' >&2
+            echo '\(error("/Users/me/b", "lstat /Users/me/b: no such file or directory", "archival"))' >&2
+            echo '\(error("/Users/me/c", "lstat /Users/me/c: no such file or directory", "scan"))' >&2
+            exit 3
+
+            """.write(to: stub, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+        defer { try? FileManager.default.removeItem(at: stub) }
+        let f = try await RunnerFixture.make(executable: stub)
+        defer { f.remove() }
+
+        let record = try await f.runner.runBackup(planID: f.planID, trigger: .manual)
+        #expect(record.outcome == .warning(unreadable: 2))
+        #expect(record.unreadableItems == [
+            UnreadableItem(path: "/Users/me/a", reason: "operation not permitted"),
+            UnreadableItem(path: "/Users/me/b", reason: "no such file or directory"),
+        ])
+    }
+
+    @Test func onlyAWarningBackupKeepsUnreadableItems() {
+        let messages = [ResticItemError(message: "open /a: permission denied", during: "archival", item: "/a")]
+        let termination = ResticTermination(exitCode: 3, messages: messages, pid: 1)
+        #expect(PlanRunner.unreadableItems(.backup, .warning(unreadable: 1), termination)?.count == 1)
+        #expect(PlanRunner.unreadableItems(.backup, .success(snapshotID: "a"), termination) == nil)
+        #expect(PlanRunner.unreadableItems(.check, .warning(unreadable: 1), termination) == nil)
+        #expect(PlanRunner.unreadableItems(.backup, .warning(unreadable: 1), nil) == nil)
+    }
+
     /// Ruling P2-6: the constrained-network rule is the Mac-wide one in `config.json`, not the plan's.
     @Test func theConstrainedNetworkRuleComesFromTheConfigsNetworkSettings() async throws {
         // Fails at once instead of trying the unreachable repository.

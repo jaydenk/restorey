@@ -600,6 +600,9 @@ public struct PlanOverview: Sendable, Equatable {
     /// snapshots you chose: <reason>. Restorey will try again after the next backup."). Information: no colour, and the menu
     /// icon is unchanged. Nil otherwise.
     public var earlierRemovalNote: String?
+    /// The files the last backup couldn't read, for the "Show…" beside the line that says so (Task 16b). Nil unless that
+    /// backup is shown and its record kept the items (an older record didn't). Information only.
+    public var unreadable: UnreadableSummary?
     /// When the next backup is due, or when a pause ends; nil while one runs, while the plan is stopped or waits for
     /// a new kit, or when nothing is due.
     public var nextBackup: Row?
@@ -624,7 +627,7 @@ extension MenuPresentation {
         var overview = PlanOverview(
             headline: "", reason: nil, progress: nil, severity: nil, isPaused: false,
             lastBackup: lastBackupRow(plan, format), cloudOnlyNote: cloudOnlyNote(plan, locale: locale),
-            earlierRemovalNote: earlierRemovalNote(plan),
+            earlierRemovalNote: earlierRemovalNote(plan), unreadable: unreadableSummary(plan),
             nextBackup: nextBackupRow(plan, format), buttons: [])
         if let line = content.plans.first(where: { $0.id == planID }) {
             headline(plan, line, format, into: &overview)
@@ -708,6 +711,12 @@ extension MenuPresentation {
             let label = CloudOnlyText.accessibilityLabel(count)
         else { return nil }
         return .init(line: line, detail: detail, accessibilityLabel: label)
+    }
+
+    /// The menu's "N files couldn't be read" line is built from `lastBackup` (`settledFacts`), so the items come from the
+    /// same record.
+    private static func unreadableSummary(_ plan: PlanStatus) -> UnreadableSummary? {
+        plan.lastBackup.flatMap(UnreadableSummary.init(record:))
     }
 
     private static func earlierRemovalNote(_ plan: PlanStatus) -> String? {

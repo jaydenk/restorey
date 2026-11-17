@@ -8,6 +8,9 @@ import SwiftUI
 struct PlanOverviewTab: View {
     let planID: UUID
     let context: SettingsContext
+    /// The plan's editor, so the unreadable-files sheet can add an exclusion to it (Task 16b).
+    let model: PlanEditModel
+    @State private var showingUnreadable = false
 
     private var supervisor: AgentSupervisor { context.supervisor }
 
@@ -39,6 +42,11 @@ struct PlanOverviewTab: View {
                 if let reason = overview.reason {
                     Text(reason).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
+                if overview.unreadable != nil {
+                    Button("Show…") { showingUnreadable = true }
+                        .buttonStyle(.link)
+                        .accessibilityLabel("Show the files that couldn't be read")
+                }
                 if let progress = overview.progress {
                     ProgressView(value: progress).accessibilityLabel("Backup progress")
                 }
@@ -61,6 +69,9 @@ struct PlanOverviewTab: View {
                         .disabled(!button.enabled)
                 }
             }
+        }
+        .sheet(isPresented: $showingUnreadable) {
+            if let unreadable = overview.unreadable { UnreadableFilesSheet(summary: unreadable, model: model) }
         }
     }
 

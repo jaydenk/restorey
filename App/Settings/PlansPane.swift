@@ -223,7 +223,7 @@ private struct PlanDetail: View {
             }
             PlanTabPicker(tab: $tab)
             if tab == .history {
-                HistoryList(planID: status.plan.id)
+                HistoryList(planID: status.plan.id, editor: model)
             } else {
                 ScrollView {
                     tabContent
@@ -240,7 +240,7 @@ private struct PlanDetail: View {
 
     @ViewBuilder private var tabContent: some View {
         switch tab {
-        case .overview: PlanOverviewTab(planID: status.plan.id, context: context)
+        case .overview: PlanOverviewTab(planID: status.plan.id, context: context, model: model)
         case .what:
             PlanWhatTab(
                 model: model, identity: context.supervisor.identity,

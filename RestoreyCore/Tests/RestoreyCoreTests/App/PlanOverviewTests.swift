@@ -307,4 +307,23 @@ struct PlanOverviewTests {
             status: AgentStatus(plans: [plan], configError: nil, fdaMissing: false, generatedAt: Self.now),
             notificationsAuthorised: true, now: Self.now, calendar: Self.calendar, locale: Self.locale).icon == .ok)
     }
+
+    // MARK: Task 16b: the files that couldn't be read
+
+    @Test func aWarningBackupsItemsAreOnTheOverview() {
+        let items = [UnreadableItem(path: "/Users/me/a", reason: "operation not permitted")]
+        let plan = Self.plan()
+        var withItems = Self.status(plan, backup: .warning(unreadable: 2))
+        var record = withItems.lastBackup!
+        record.unreadableItems = items
+        withItems.lastBackup = record
+        let overview = Self.overview(withItems)
+        #expect(overview.unreadable == UnreadableSummary(count: 2, items: items))
+        // The line itself is the menu's, unchanged.
+        #expect(overview.reason?.contains("2 files couldn't be read") == true)
+        #expect(overview.severity == .warning)
+        // Nothing kept (an older record): the line stays text.
+        #expect(Self.overview(Self.status(plan, backup: .warning(unreadable: 2))).unreadable == nil)
+        #expect(Self.overview(Self.status(plan)).unreadable == nil)
+    }
 }

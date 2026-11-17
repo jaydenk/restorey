@@ -17,13 +17,23 @@ struct HistoryList: View {
     @State private var planFilter: UUID?
     @State private var filter: HistoryFilter = .everything
     @State private var missingLog = false
+    /// The plan's editor in a plan's own History tab, where "Show…" can add an exclusion to it (Task 16b); nil in the
+    /// all-plans list, which has no editor, so it offers no "Show…".
+    let editor: PlanEditModel?
+    @State private var unreadable: UnreadableShown?
+
+    private struct UnreadableShown: Identifiable {
+        let id: UUID
+        let summary: UnreadableSummary
+    }
 
     /// The all-plans list's requested filter (the menu's "Show Details…"), applied when the list appears and
     /// again whenever a new request arrives while it is open.
     let filterRequest: HistoryFilterRequest?
 
-    init(planID: UUID?, filterRequest: HistoryFilterRequest? = nil) {
+    init(planID: UUID?, filterRequest: HistoryFilterRequest? = nil, editor: PlanEditModel? = nil) {
         self.planID = planID
+        self.editor = editor
         self.filterRequest = filterRequest
         _planFilter = State(initialValue: planID == nil ? filterRequest?.planID : nil)
     }
@@ -57,7 +67,8 @@ struct HistoryList: View {
                 Spacer()
             }
             List(rows) { row in
-                HistoryRowView(row: row, showsPlan: planID == nil) { open(row) }
+                HistoryRowView(
+                    row: row, showsPlan: planID == nil, showLog: { open(row) }, showUnreadable: unreadableAction(row))
             }
             .listStyle(.bordered)
             .overlay {
@@ -73,11 +84,20 @@ struct HistoryList: View {
         }
         .task(id: newestRecords) { await load() }
         .onChange(of: filterRequest) { if planID == nil { planFilter = filterRequest?.planID } }
+        .sheet(item: $unreadable) { shown in
+            if let editor { UnreadableFilesSheet(summary: shown.summary, model: editor) }
+        }
         .alert("This run's log is no longer there.", isPresented: $missingLog) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Run logs are kept for 400 days, and go with their plan when it is deleted.")
         }
+    }
+
+    /// "Show…" for a warning's unreadable files, where there is an editor to add an exclusion to.
+    private func unreadableAction(_ row: HistoryRow) -> (() -> Void)? {
+        guard editor != nil, let summary = row.unreadable else { return nil }
+        return { unreadable = UnreadableShown(id: row.id, summary: summary) }
     }
 
     private func load() async {
@@ -107,6 +127,8 @@ private struct HistoryRowView: View {
     let row: HistoryRow
     let showsPlan: Bool
     let showLog: () -> Void
+    /// "Show…" for the files a warning backup couldn't read; nil when there are none to show.
+    let showUnreadable: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -131,6 +153,11 @@ private struct HistoryRowView: View {
                 }
             }
             Spacer()
+            if let showUnreadable {
+                Button("Show…", action: showUnreadable)
+                    .buttonStyle(.link)
+                    .accessibilityLabel("Show the files that couldn't be read")
+            }
             if row.logFile != nil {
                 Button("Show Log", action: showLog)
                     .buttonStyle(.link)

@@ -35,6 +35,23 @@ struct HistoryPresentationTests {
         HistoryPresentation.row(record, planNames: names, now: now, calendar: calendar, locale: locale)
     }
 
+    // MARK: Task 16b: the files that couldn't be read
+
+    @Test func aWarningRowWithItemsCarriesThemForTheSheet() {
+        let items = [UnreadableItem(path: "/Users/me/a", reason: "operation not permitted")]
+        var warning = Self.record(.warning(unreadable: 3))
+        warning.unreadableItems = items
+        let row = Self.row(warning)
+        #expect(row.unreadable == UnreadableSummary(count: 3, items: items))
+        // The words are unchanged.
+        #expect(row.detail == "3 files couldn't be read · 7 s")
+        // An older record has none, and so has any other outcome.
+        #expect(Self.row(Self.record(.warning(unreadable: 3))).unreadable == nil)
+        var success = Self.record(.success(snapshotID: "a"))
+        success.unreadableItems = items
+        #expect(Self.row(success).unreadable == nil)
+    }
+
     // MARK: The mockup's rows
 
     @Test func aBackupShowsWhatItAddedAndHowLongItTook() {

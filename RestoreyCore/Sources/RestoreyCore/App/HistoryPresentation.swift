@@ -27,6 +27,9 @@ public struct HistoryRow: Sendable, Equatable, Identifiable {
     /// The run's log, relative to the logs folder (`HistoryPresentation.logURL`); nil when the run never reached
     /// restic.
     public var logFile: String?
+    /// The files a warning backup couldn't read, for the row's "Show…" (Task 16b); nil for any other run and for records
+    /// written before the items were kept.
+    public var unreadable: UnreadableSummary?
 }
 
 /// Which runs the History list shows.
@@ -127,7 +130,7 @@ public enum HistoryPresentation {
             id: record.id, planID: record.planID, time: time(record.endedAt, now: now, calendar: calendar, locale: locale),
             plan: planNames[record.planID] ?? "Deleted plan", operation: operationTitle(record.operation),
             outcome: outcome, detail: details.isEmpty ? nil : details.joined(separator: " · "), kind: kind,
-            logFile: record.logFile.isEmpty ? nil : record.logFile)
+            logFile: record.logFile.isEmpty ? nil : record.logFile, unreadable: UnreadableSummary(record: record))
     }
 
     /// restic's own measure for a backup, otherwise the record's start to end. A run that never started (a skip)

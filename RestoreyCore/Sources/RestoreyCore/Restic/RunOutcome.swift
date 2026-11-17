@@ -224,12 +224,16 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
     /// How many items apps mark as not for backup this backup skipped: the collapsed list passed to restic
     /// (`MarkedNotForBackup`, Task 15c). Nil when the plan's switch is off, the look gave up, or the run isn't a backup.
     public var markedNotForBackupSkipped: Int?
+    /// The files a warning backup couldn't read (Task 16b): the distinct items restic reported while archiving, with a
+    /// short reason, the first 100 (the warning's own count stays exact). Nil for any other run and for records written
+    /// before it existed. Omitted from JSON when nil.
+    public var unreadableItems: [UnreadableItem]?
 
     public init(
         id: UUID, planID: UUID, operation: ResticOperation, trigger: RunTrigger,
         startedAt: Date, endedAt: Date, outcome: RunOutcome, summary: BackupSummary?, logFile: String,
         droppedLogLines: Int = 0, cloudOnlySkipped: CloudOnlyCount? = nil,
-        markedNotForBackupSkipped: Int? = nil
+        markedNotForBackupSkipped: Int? = nil, unreadableItems: [UnreadableItem]? = nil
     ) {
         self.id = id
         self.planID = planID
@@ -243,11 +247,12 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
         self.droppedLogLines = droppedLogLines
         self.cloudOnlySkipped = cloudOnlySkipped
         self.markedNotForBackupSkipped = markedNotForBackupSkipped
+        self.unreadableItems = unreadableItems
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, planID, operation, trigger, startedAt, endedAt, outcome, summary, logFile, droppedLogLines, cloudOnlySkipped
-        case markedNotForBackupSkipped
+        case markedNotForBackupSkipped, unreadableItems
     }
 
     public init(from decoder: any Decoder) throws {
@@ -264,6 +269,7 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
         droppedLogLines = try c.decodeIfPresent(Int.self, forKey: .droppedLogLines) ?? 0
         cloudOnlySkipped = try c.decodeIfPresent(CloudOnlyCount.self, forKey: .cloudOnlySkipped)
         markedNotForBackupSkipped = try c.decodeIfPresent(Int.self, forKey: .markedNotForBackupSkipped)
+        unreadableItems = try c.decodeIfPresent([UnreadableItem].self, forKey: .unreadableItems)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -280,6 +286,7 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
         if droppedLogLines != 0 { try c.encode(droppedLogLines, forKey: .droppedLogLines) }
         try c.encodeIfPresent(cloudOnlySkipped, forKey: .cloudOnlySkipped)
         try c.encodeIfPresent(markedNotForBackupSkipped, forKey: .markedNotForBackupSkipped)
+        try c.encodeIfPresent(unreadableItems, forKey: .unreadableItems)
     }
 }
 
