@@ -5,12 +5,17 @@ import SwiftUI
 /// default). The hotspot and Low Data Mode rule is Mac-wide, in Settings → Network.
 struct PlanScheduleTab: View {
     @Bindable var model: PlanEditModel
+    /// The plan as the agent last reported it: its last backup and next run, for the line under the interval.
+    let status: PlanStatus
 
     var body: some View {
         Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
             GridRow {
                 Text("Back up")
-                IntervalPicker(hours: $model.fields.schedule.intervalHours)
+                VStack(alignment: .leading, spacing: 4) {
+                    IntervalPicker(hours: $model.fields.schedule.intervalHours)
+                    scheduleCaption
+                }
             }
             GridRow {
                 Text("On battery")
@@ -30,6 +35,17 @@ struct PlanScheduleTab: View {
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+    }
+
+    /// "Last backup at 14:16 · next at 15:16" for the saved schedule (`MenuPresentation.scheduleCaption`, Task 16a). The
+    /// times move on without news from the agent, as the Overview's do.
+    private var scheduleCaption: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { timeline in
+            Text(MenuPresentation.scheduleCaption(
+                status, hasUnsavedEdits: model.edit.isDirty, now: timeline.date, calendar: .autoupdatingCurrent,
+                locale: .autoupdatingCurrent))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
 

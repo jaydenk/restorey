@@ -357,12 +357,22 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   line counting the items apps mark as not for backup ("Also skipped: 1,145 items apps mark as not for backup") with
   "Show…", a sheet with the plan's switch for them and the list, each with "Back up anyway".
 - **Schedule**: the interval, the battery rule and the plan's own upload limit in MB/s (empty, the default, is none;
-  a networked repository also gets its share of the Mac-wide limit, the smaller winning, Ruling P2-7).
+  a networked repository also gets its share of the Mac-wide limit, the smaller winning, Ruling P2-7). Under the
+  interval, one quiet line gives the plan's last backup and next run in the menu's words ("Last backup at 14:16 ·
+  next at 15:16"; "No backup yet · first at …"; paused, a skipping battery, network, Wi-Fi or drive rule, and a plan
+  waiting for a recovery kit are each said). It describes the saved schedule: while edits are unsaved it adds "Next
+  run time updates when you save." (`MenuPresentation.scheduleCaption`).
 - **Storage**: the repository address, read-only (a different repository is a new plan), the repository password
   and storage keys or environment values (empty keeps what's saved; a new S3 or B2 key needs both halves), the host
   label, the pack size (read-only) and "Show recovery kit…". Entering the repository password doesn't change the
   repository's: it is for one changed outside Restorey.
-- **Keep**: retention, the prune switch, and for an adopted repository how often old snapshots are tidied. Below
+- **Keep**: retention, with a plain-English summary under the counts that updates as you type ("Keeps the newest
+  backup of each hour for the last 24 hours that have one, each day for the last 30 days that have one, …"; restic
+  counts the hours, days, weeks and months that *have* a backup, not the last 24 hours of wall time, a count of 0
+  leaves a rule out, and `RetentionSummary` words it); one quiet sentence that the weekly `restic check` (no
+  `--read-data`) downloads the repository's snapshots, index and folder lists (tree data) with a temporary cache, never
+  your files' contents, so it uses a little download allowance (restic 0.19.1 `check`); the prune switch, and for an
+  adopted repository how often old snapshots are tidied. Below
   them, **Earlier snapshots**: a preview, run when the tab appears and after a save changes the folders, host label or
   retention, lists each earlier group of the plan (its previous folder lists, and for an adopted plan this Mac's
   snapshots from before Restorey) with how many snapshots it holds and how many retention would remove, and an "Apply

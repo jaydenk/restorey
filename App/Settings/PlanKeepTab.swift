@@ -19,6 +19,12 @@ struct PlanKeepTab: View {
                     RetentionFields(form: $model.fields.schedule)
                 }
             }
+            if let summary = RetentionSummary.text(
+                form: model.fields.schedule, cadence: adopted ? model.fields.forgetCadence : .afterEachBackup,
+                locale: .autoupdatingCurrent)
+            {
+                Text(summary).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             Text("The newest snapshot of each hour, day, week and month, up to these counts. Only this plan's own snapshots of its current folders from this Mac are thinned: those of other Macs and other tools are never touched, and earlier ones only when you apply retention to them below.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 
@@ -34,6 +40,8 @@ struct PlanKeepTab: View {
                 Text("Tidying (restic forget) locks the repository too, so a repository other clients use is tidied once a day.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            Text(RetentionSummary.weeklyCheckNote)
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Divider().padding(.vertical, 4)
             EarlierSnapshotsSection(plan: model.saved, unsavedEdits: model.edit.isDirty, connection: connection)
         }

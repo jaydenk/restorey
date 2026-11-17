@@ -729,6 +729,43 @@ extension MenuPresentation {
     }
 }
 
+// MARK: Schedule caption
+
+extension MenuPresentation {
+    /// The line under the Schedule tab's interval control (Task 16a): the plan's last backup and next run, as the menu
+    /// words and times them ("Last backup at 14:16 · next at 15:16"). It describes the saved schedule; while the form
+    /// has unsaved edits it adds that the next run time changes when they are saved. A rule skipping the last attempt
+    /// (battery, network, Wi-Fi, drive) is named beside the next run; the agent's own update is not a rule, so isn't.
+    public static func scheduleCaption(
+        _ status: PlanStatus, hasUnsavedEdits: Bool, now: Date, calendar: Calendar, locale: Locale
+    ) -> String {
+        let format = TextContext(now: now, calendar: calendar, locale: locale)
+        var parts = [status.lastBackup.map { "Last backup \(format.when($0.endedAt))" } ?? "No backup yet"]
+        switch status.phase {
+        case .running:
+            parts.append("backing up now")
+        case .paused(let until):
+            parts.append("paused, resumes by itself \(format.when(until))")
+        case .stopped:
+            parts.append("stopped, so nothing is scheduled")
+        case .idle, .skipped:
+            if case .skipped(let reason) = status.phase, reason != .agentUpdating { parts.append(reason.summary) }
+            switch status.setupState {
+            case .unfinished: parts.append("setup isn't finished")
+            case .needsNewKit: parts.append("waiting for a new recovery kit")
+            case .complete:
+                if let next = status.nextRunAt {
+                    parts.append("\(status.lastBackup == nil ? "first" : "next") \(format.when(next))")
+                } else {
+                    parts.append("no next run")
+                }
+            }
+        }
+        let caption = parts.joined(separator: " · ")
+        return hasUnsavedEdits ? caption + ". Next run time updates when you save." : caption
+    }
+}
+
 /// The inputs that shape text: the time, calendar and locale.
 private struct TextContext {
     var now: Date
@@ -752,11 +789,14 @@ private struct TextContext {
         return "\(DisplayFormat.dayAndMonth(date, calendar: calendar, locale: locale)) at \(time(date))"
     }
 
-    /// "at 14:16" today, "yesterday at 09:05", otherwise "9 Nov at 09:05".
+    /// "at 14:16" today, "yesterday at 09:05", "tomorrow at 09:00", otherwise "9 Nov at 09:05".
     func when(_ date: Date) -> String {
         if calendar.isDate(date, inSameDayAs: now) { return "at \(time(date))" }
         if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
             return "yesterday at \(time(date))"
+        }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now), calendar.isDate(date, inSameDayAs: tomorrow) {
+            return "tomorrow at \(time(date))"
         }
         return "\(DisplayFormat.dayAndMonth(date, calendar: calendar, locale: locale)) at \(time(date))"
     }

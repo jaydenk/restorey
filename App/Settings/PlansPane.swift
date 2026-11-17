@@ -245,7 +245,7 @@ private struct PlanDetail: View {
             PlanWhatTab(
                 model: model, identity: context.supervisor.identity,
                 fullDiskAccessMissing: context.supervisor.lastKnownStatus?.fdaMissing == true)
-        case .schedule: PlanScheduleTab(model: model)
+        case .schedule: PlanScheduleTab(model: model, status: status)
         case .storage: PlanStorageTab(model: model) { context.showRecoveryKit(status.plan.id) }
         case .keep: PlanKeepTab(model: model, connection: context.supervisor.connection)
         case .alerts: PlanAlertsTab(model: model)
