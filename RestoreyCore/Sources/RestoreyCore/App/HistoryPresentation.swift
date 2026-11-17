@@ -30,6 +30,9 @@ public struct HistoryRow: Sendable, Equatable, Identifiable {
     /// The files a warning backup couldn't read, for the row's "Show…" (Task 16b); nil for any other run and for records
     /// written before the items were kept.
     public var unreadable: UnreadableSummary?
+    /// A backup's biggest additions, for the line under its detail and its "Show…" (Task 16d); nil for any other run,
+    /// for a backup whose files added nothing, and for records written before they were kept. Information only.
+    public var biggestAdditions: BiggestAdditionsSummary?
 }
 
 /// Which runs the History list shows.
@@ -130,7 +133,8 @@ public enum HistoryPresentation {
             id: record.id, planID: record.planID, time: time(record.endedAt, now: now, calendar: calendar, locale: locale),
             plan: planNames[record.planID] ?? "Deleted plan", operation: operationTitle(record.operation),
             outcome: outcome, detail: details.isEmpty ? nil : details.joined(separator: " · "), kind: kind,
-            logFile: record.logFile.isEmpty ? nil : record.logFile, unreadable: UnreadableSummary(record: record))
+            logFile: record.logFile.isEmpty ? nil : record.logFile, unreadable: UnreadableSummary(record: record),
+            biggestAdditions: BiggestAdditionsText.summary(record: record, locale: locale))
     }
 
     /// restic's own measure for a backup, otherwise the record's start to end. A run that never started (a skip)

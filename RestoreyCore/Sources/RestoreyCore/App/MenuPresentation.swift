@@ -604,6 +604,10 @@ public struct PlanOverview: Sendable, Equatable {
     /// only where the reason carries that line (the settled headline, never a failure, a stop, a pause, a running backup
     /// or a plan waiting for a kit), and nil when the record kept no items (an older record). Information only.
     public var unreadable: UnreadableSummary?
+    /// The last backup's biggest additions, under its row (Task 16d): only when it added more than 100 MB to the
+    /// repository (`BiggestAdditionsText.overviewThreshold`), and, like the cloud-only note, while that backup is the one
+    /// the row shows (not after a failure). Information only.
+    public var biggestAdditions: BiggestAdditionsSummary?
     /// When the next backup is due, or when a pause ends; nil while one runs, while the plan is stopped or waits for
     /// a new kit, or when nothing is due.
     public var nextBackup: Row?
@@ -629,6 +633,7 @@ extension MenuPresentation {
             headline: "", reason: nil, progress: nil, severity: nil, isPaused: false,
             lastBackup: lastBackupRow(plan, format), cloudOnlyNote: cloudOnlyNote(plan, locale: locale),
             earlierRemovalNote: earlierRemovalNote(plan),
+            biggestAdditions: biggestAdditions(plan, locale: locale),
             nextBackup: nextBackupRow(plan, format), buttons: [])
         if let line = content.plans.first(where: { $0.id == planID }) {
             headline(plan, line, format, into: &overview)
@@ -714,6 +719,11 @@ extension MenuPresentation {
             let label = CloudOnlyText.accessibilityLabel(count)
         else { return nil }
         return .init(line: line, detail: detail, accessibilityLabel: label)
+    }
+
+    private static func biggestAdditions(_ plan: PlanStatus, locale: Locale) -> BiggestAdditionsSummary? {
+        guard !plan.alerts.contains(.backupFailed), let backup = plan.lastBackup else { return nil }
+        return BiggestAdditionsText.overviewSummary(record: backup, locale: locale)
     }
 
     private static func earlierRemovalNote(_ plan: PlanStatus) -> String? {

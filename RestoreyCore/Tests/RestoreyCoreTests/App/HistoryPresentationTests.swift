@@ -52,6 +52,61 @@ struct HistoryPresentationTests {
         #expect(Self.row(success).unreadable == nil)
     }
 
+    // MARK: Task 16d: the biggest additions
+
+    private static let additions = BiggestAdditions(
+        files: [
+            .init(path: "/Users/me/Pictures/Photos Library.photoslibrary/database/Photos.sqlite", bytesAdded: 1_100_000_000),
+            .init(path: "/Users/me/Pictures/Lightroom/Lightroom Catalog.lrcat", bytesAdded: 312_000_000),
+            .init(path: "/Users/me/Library/Logs/big.log", bytesAdded: 45_600_000),
+            .init(path: "/Users/me/notes.txt", bytesAdded: 900),
+        ],
+        folders: [.init(path: "/Users/me/Pictures/Photos Library.photoslibrary", bytesAdded: 1_100_000_000)],
+        totalBytesAdded: 1_457_600_900)
+
+    @Test func aBackupRowNamesItsThreeBiggestFilesWithTheListsBehindShow() {
+        var record = Self.record(.success(snapshotID: "a"), summary: BackupSummary(dataAdded: 2_100_000, totalDuration: 7, snapshotID: "a"))
+        record.biggestAdditions = Self.additions
+        let row = Self.row(record)
+        #expect(row.biggestAdditions == BiggestAdditionsSummary(
+            line: "Biggest additions: Photos.sqlite 1.1 GB, Lightroom Catalog.lrcat 312 MB, big.log 46 MB",
+            additions: Self.additions))
+        // The detail line is unchanged.
+        #expect(row.detail == "2.1 MB · 7 s")
+        // A warning's row has them too.
+        var warning = Self.record(.warning(unreadable: 1))
+        warning.biggestAdditions = Self.additions
+        #expect(Self.row(warning).biggestAdditions?.additions == Self.additions)
+    }
+
+    @Test func fewerFilesAreNamedAsTheyAreAndNoneMeansNoLine() {
+        var one = Self.record(.success(snapshotID: "a"))
+        one.biggestAdditions = BiggestAdditions(files: [.init(path: "/a/b.txt", bytesAdded: 640)], folders: [], totalBytesAdded: 640)
+        #expect(Self.row(one).biggestAdditions?.line == "Biggest additions: b.txt 640 B")
+        var none = Self.record(.success(snapshotID: "a"))
+        none.biggestAdditions = BiggestAdditions(files: [], folders: [], totalBytesAdded: 0)
+        #expect(Self.row(none).biggestAdditions == nil)
+        // A record from before Task 16d, and any other step, have none.
+        #expect(Self.row(Self.record(.success(snapshotID: "a"))).biggestAdditions == nil)
+        var check = Self.record(.success(snapshotID: nil), .check)
+        check.biggestAdditions = Self.additions
+        #expect(Self.row(check).biggestAdditions == nil)
+    }
+
+    @Test func theSheetsRowsAreHomeShortenedWithSizesAndFinderWhereThePathExists() {
+        let rows = BiggestAdditionsText.rows(
+            Self.additions.files, home: URL(fileURLWithPath: "/Users/me"), locale: Self.locale,
+            exists: { $0.hasSuffix(".log") })
+        #expect(rows.map(\.display) == [
+            "~/Pictures/Photos Library.photoslibrary/database/Photos.sqlite", "~/Pictures/Lightroom/Lightroom Catalog.lrcat",
+            "~/Library/Logs/big.log", "~/notes.txt",
+        ])
+        #expect(rows.map(\.size) == ["1.1 GB", "312 MB", "46 MB", "900 B"])
+        #expect(rows.map(\.canOpenInFinder) == [false, false, true, false])
+        #expect(BiggestAdditionsText.caption(Self.additions, locale: Self.locale)
+            == "Files added 1.5 GB to the repository, after compression. These added the most.")
+    }
+
     // MARK: The mockup's rows
 
     @Test func aBackupShowsWhatItAddedAndHowLongItTook() {

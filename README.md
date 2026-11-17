@@ -387,7 +387,8 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   Retention…" button that asks first ("Remove N snapshots of the previous folder list?", Cancel the default). With
   nothing to apply it says so in one line. It counts with the saved plan, so unsaved edits disable the buttons.
 - **Alerts**: the check-in URL (saved, Remove, or a new one) and "no successful backup in N days".
-- **History**: the History list for that plan; a warning row has "Show…" for the files that couldn't be read.
+- **History**: the History list for that plan; a warning row has "Show…" for the files that couldn't be read, and a
+  backup row "Show…" for its biggest additions.
 
 The tabs edit a copy (`PlanEdit` in `RestoreyCore`, held by `PlanEditModel`): the fields keep exactly what is typed,
 and trimming and parsing happen only when Save (⌘S) builds the request, which applies only the fields the user
@@ -437,7 +438,9 @@ tidied", "Skipped: Photos isn't connected", "Backup failed" with the menu's reas
 skip or a stop by the system; a probe finding no repository at an address, which is the answer setup expects for a
 new one, reads "No repository there yet" and isn't a problem), the size added and the time taken where known, and "Show Log", which opens the run's
 log only if its path stays inside the logs folder's `runs/`. The list is fetched again whenever a plan records a new
-run.
+run. A backup that made a snapshot also names its biggest additions under its detail ("Biggest additions:
+Photos.sqlite 1.1 GB, Lightroom Catalog.lrcat 312 MB, big.log 46 MB"), with "Show…" (see "What each backup added"
+below).
 
 ### The menu bar
 
@@ -572,6 +575,22 @@ exclusion pattern (`DefaultExclusions.pattern(forFolder:)`, glob characters esca
 unsaved edit, with Save, Revert and the close and quit guard as in the What tab; the row then reads "Won't be backed up
 from the next backup" with Undo, which removes it again; nothing changes until you save the plan. A file deleted while the backup ran has no button, and a path
 the plan already excludes reads "Already not backed up". This is information only: no outcome, icon, alert or ping changes.
+
+**What each backup added** (Task 16d). Every backup runs with restic's `--verbose`, so `backup --json` prints a
+`verbose_status` line for each file and folder it finishes (restic 0.19.1 `internal/ui/backup/json.go`); a new or
+changed file's line carries `data_size_in_repo`, what its data took in the repository after compression and
+encryption. The agent reads them as they stream and keeps only the 10 files that added the most, the total, and the
+top 5 folders: each file counts towards its folder up to three levels below the deepest source holding it, stopping
+early at the package it is in
+(`~/Pictures/Photos Library.photoslibrary`, `~/Library/Application Support/BeeperTexts`), so a library of many small
+files shows up. Unchanged items, most of the lines (about 2 million on a home folder), are dropped by a byte comparison
+before any decoding, and none of the lines reaches the run log, which gets one "Biggest additions …" line instead.
+The record of a backup that made a snapshot keeps them (`biggestAdditions`). History names the three biggest files on
+the backup's row, the Overview does under Last backup when that backup added more than 100 MB to the repository, and
+"Show…" lists the files and folders with their sizes and "Open in Finder". Information only: nothing changes an
+outcome, the icon, an alert or a ping, and it is there to tell which exclusion would help. It has a cost: restic
+printing a line per item adds CPU time to every backup (measured on a 100k-file test, `BiggestAdditionsMeasurement`,
+run only with `RESTOREY_MEASURE_16D=1`).
 
 Every restic run has its own log in `~/Library/Logs/Restorey/runs/<plan ID>/` (`Restorey-Dev` for Debug builds),
 with secrets redacted. A log starts with the restic command (values hidden) and ends with the outcome; a

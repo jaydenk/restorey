@@ -11,6 +11,7 @@ struct PlanOverviewTab: View {
     /// The plan's editor, so the unreadable-files sheet can add an exclusion to it (Task 16b).
     let model: PlanEditModel
     @State private var showingUnreadable = false
+    @State private var showingAdditions = false
 
     private var supervisor: AgentSupervisor { context.supervisor }
 
@@ -58,6 +59,15 @@ struct PlanOverviewTab: View {
                 if let next = overview.nextBackup { row("Next backup", next) }
             }
 
+            if let additions = overview.biggestAdditions {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(additions.line).font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Show…") { showingAdditions = true }
+                        .buttonStyle(.link)
+                        .accessibilityLabel("Show the biggest additions")
+                }
+            }
             if let note = overview.cloudOnlyNote { CloudOnlyNoteView(note: note) }
             if let note = overview.earlierRemovalNote {
                 Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -72,6 +82,9 @@ struct PlanOverviewTab: View {
         }
         .sheet(isPresented: $showingUnreadable) {
             if let unreadable = overview.unreadable { UnreadableFilesSheet(summary: unreadable, model: model) }
+        }
+        .sheet(isPresented: $showingAdditions) {
+            if let additions = overview.biggestAdditions { BiggestAdditionsSheet(additions: additions.additions) }
         }
     }
 

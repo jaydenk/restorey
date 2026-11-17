@@ -345,4 +345,37 @@ struct PlanOverviewTests {
         #expect(Self.overview(warning(phase: .running(nil, retrying: nil))).unreadable == nil)
         #expect(Self.overview(warning(plan: Self.plan(kit: false))).unreadable == nil)
     }
+
+    // MARK: Task 16d: the biggest additions
+
+    private static let additions = BiggestAdditions(
+        files: [.init(path: "/Users/me/Pictures/P.photoslibrary/database/Photos.sqlite", bytesAdded: 150_000_000)],
+        folders: [.init(path: "/Users/me/Pictures/P.photoslibrary", bytesAdded: 150_000_000)], totalBytesAdded: 150_000_000)
+
+    private static func withAdditions(
+        packed: Int, _ backup: RunOutcome = .success(snapshotID: "a"), alerts: [AlertCondition] = []
+    ) -> PlanStatus {
+        var status = Self.status(Self.plan(), backup: backup, alerts: alerts)
+        var record = status.lastBackup!
+        record.summary = BackupSummary(dataAddedPacked: packed, snapshotID: "a")
+        record.biggestAdditions = Self.additions
+        status.lastBackup = record
+        return status
+    }
+
+    @Test func theLastBackupsBiggestAdditionsShowWhenItAddedMoreThan100MB() {
+        let shown = Self.overview(Self.withAdditions(packed: 100_000_001))
+        #expect(shown.biggestAdditions == BiggestAdditionsSummary(
+            line: "Biggest additions: Photos.sqlite 150 MB", additions: Self.additions))
+        // Information only: the headline, its colour and the reason are as without it.
+        let quiet = Self.overview(Self.withAdditions(packed: 100_000_000))
+        #expect(quiet.biggestAdditions == nil)
+        #expect(shown.headline == quiet.headline)
+        #expect(shown.severity == quiet.severity)
+        #expect(shown.reason == quiet.reason)
+        // A warning backup too; none while the row shows a failure, and none without a record of them.
+        #expect(Self.overview(Self.withAdditions(packed: 200_000_000, .warning(unreadable: 1))).biggestAdditions != nil)
+        #expect(Self.overview(Self.withAdditions(packed: 200_000_000, alerts: [.backupFailed])).biggestAdditions == nil)
+        #expect(Self.overview(Self.status()).biggestAdditions == nil)
+    }
 }

@@ -21,6 +21,12 @@ struct HistoryList: View {
     /// all-plans list, which has no editor, so it offers no "Show…".
     let editor: PlanEditModel?
     @State private var unreadable: UnreadableShown?
+    @State private var additions: AdditionsShown?
+
+    private struct AdditionsShown: Identifiable {
+        let id: UUID
+        let additions: BiggestAdditions
+    }
 
     private struct UnreadableShown: Identifiable {
         let id: UUID
@@ -68,7 +74,8 @@ struct HistoryList: View {
             }
             List(rows) { row in
                 HistoryRowView(
-                    row: row, showsPlan: planID == nil, showLog: { open(row) }, showUnreadable: unreadableAction(row))
+                    row: row, showsPlan: planID == nil, showLog: { open(row) }, showUnreadable: unreadableAction(row),
+                    showAdditions: additionsAction(row))
             }
             .listStyle(.bordered)
             .overlay {
@@ -87,6 +94,7 @@ struct HistoryList: View {
         .sheet(item: $unreadable) { shown in
             if let editor { UnreadableFilesSheet(summary: shown.summary, model: editor) }
         }
+        .sheet(item: $additions) { BiggestAdditionsSheet(additions: $0.additions) }
         .alert("This run's log is no longer there.", isPresented: $missingLog) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -98,6 +106,12 @@ struct HistoryList: View {
     private func unreadableAction(_ row: HistoryRow) -> (() -> Void)? {
         guard editor != nil, let summary = row.unreadable else { return nil }
         return { unreadable = UnreadableShown(id: row.id, summary: summary) }
+    }
+
+    /// "Show…" for a backup's biggest additions (Task 16d): information only, so offered in every list.
+    private func additionsAction(_ row: HistoryRow) -> (() -> Void)? {
+        guard let summary = row.biggestAdditions else { return nil }
+        return { additions = AdditionsShown(id: row.id, additions: summary.additions) }
     }
 
     private func load() async {
@@ -129,6 +143,8 @@ private struct HistoryRowView: View {
     let showLog: () -> Void
     /// "Show…" for the files a warning backup couldn't read; nil when there are none to show.
     let showUnreadable: (() -> Void)?
+    /// "Show…" for a backup's biggest additions; nil when there are none to show.
+    let showAdditions: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -150,6 +166,17 @@ private struct HistoryRowView: View {
                 Text(row.outcome)
                 if let detail = row.detail {
                     Text(detail).font(.caption).foregroundStyle(.secondary)
+                }
+                if let additions = row.biggestAdditions {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(additions.line).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                        if let showAdditions {
+                            Button("Show…", action: showAdditions)
+                                .buttonStyle(.link)
+                                .font(.caption)
+                                .accessibilityLabel("Show the biggest additions")
+                        }
+                    }
                 }
             }
             Spacer()
