@@ -15,7 +15,7 @@ public enum SetupStep: String, Codable, Sendable, CaseIterable {
 }
 
 /// Where an interrupted setup was left, saved so quitting the window (or the app) can resume it.
-/// `addingPlan` is true for "+ Add plan…", which starts at `.storage` and never repeats the permissions.
+/// `addingPlan` is true for "Add Plan…", which starts at `.storage` and never repeats the permissions.
 public struct SetupProgress: Codable, Sendable, Equatable {
     /// Nil until "Check" has saved the plan (Ruling P2-2), and on a first run before that.
     public var planID: UUID?
@@ -176,7 +176,7 @@ public enum SetupFlow {
     /// Only `.unfinished` plans count. A `.needsNewKit` plan finished setup once and is the recovery-kit
     /// window's job, so it is treated like `.complete` here. Saved progress for a plan that no longer
     /// exists, or is no longer unfinished, is discarded. With several unfinished plans the saved one wins,
-    /// otherwise the first in `plans`. "+ Add plan…" progress resumes as adding a plan, at its saved step.
+    /// otherwise the first in `plans`. "Add Plan…" progress resumes as adding a plan, at its saved step.
     /// A saved step past `.recoveryKit` needs `kitSaved`, otherwise it resumes at `.recoveryKit`. `.done` is
     /// valid while the plan is unfinished: "Start first backup" hasn't been pressed yet.
     public static func resume(saved: SetupProgress?, plans: [PlanStatus], installed: Bool) -> SetupProgress? {
@@ -200,7 +200,7 @@ public enum SetupFlow {
         return resume(saved: saved, plans: plans, installed: installed) ?? first
     }
 
-    /// What "+ Add plan…" in Settings opens. Setup keeps one saved progress, so a setup still to finish is carried
+    /// What "Add Plan…" in Settings opens. Setup keeps one saved progress, so a setup still to finish is carried
     /// on rather than overwritten: an unfinished plan's is finished first (the caller says so and offers it), and
     /// one with no plan saved yet (an add before "Check", or a first run with no plans) simply reopens. Otherwise a
     /// new add starts at `.storage`.

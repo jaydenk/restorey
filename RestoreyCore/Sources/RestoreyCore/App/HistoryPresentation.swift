@@ -67,7 +67,7 @@ public enum HistoryFilter: String, CaseIterable, Sendable, Identifiable {
         case .everything: "Everything"
         case .backups: "Backups"
         case .problems: "Problems"
-        case .notRun: "Skipped and paused"
+        case .notRun: "Skipped and Paused"
         }
     }
 }
@@ -109,7 +109,7 @@ public enum HistoryPresentation {
             kind = .success
         case .warning(let unreadable):
             outcome = succeeded(record.operation)
-            details.append("\(unreadable) \(unreadable == 1 ? "file" : "files") couldn't be read")
+            details.append("\(unreadable) \(unreadable == 1 ? "file" : "files") couldn’t be read")
             kind = .warning
         case .paused:
             outcome = "Paused"
@@ -133,7 +133,7 @@ public enum HistoryPresentation {
             kind = .success
         case .wrongPassword, .repositoryMissing, .credentialsUnavailable, .interrupted, .failed:
             if case .forgetSnapshots = record.operation {
-                outcome = "Couldn't remove earlier snapshots"
+                outcome = "Couldn’t remove earlier snapshots"
             } else {
                 outcome = "\(operationTitle(record.operation)) failed"
             }
@@ -211,7 +211,7 @@ public enum HistoryPresentation {
         if unreadable {
             links.append(HistoryLink(
                 kind: .unreadable, title: both ? "Show Unreadable Files…" : "Show…",
-                accessibilityLabel: "Show the files that couldn't be read"))
+                accessibilityLabel: "Show the files that couldn’t be read"))
         }
         if additions {
             links.append(HistoryLink(

@@ -23,12 +23,12 @@ public enum BannerAction: Sendable, Equatable {
     /// The words on the banner's (or line's) button.
     public var buttonTitle: String {
         switch self {
-        case .openFullDiskAccess: "Fix…"
-        case .restartAgent: "Restart Agent"
-        case .openLoginItems: "Open Login Items…"
-        case .turnOnNotifications: "Turn On…"
+        case .openFullDiskAccess: "Open System Settings"
+        case .restartAgent: "Restart Backups"
+        case .openLoginItems: "Open System Settings"
+        case .turnOnNotifications: "Open System Settings"
         case .addCheckInURL: "Add…"
-        case .dismissOffMacNote: "Don't Show This Again"
+        case .dismissOffMacNote: "Don’t Show This Again"
         case .finishSetup, .setUp: "Finish Setup…"
         case .saveRecoveryKit: "Save Recovery Kit…"
         case .showDetails: "Show Details…"
@@ -170,15 +170,15 @@ public enum MenuPresentation {
         let format = TextContext(now: now, calendar: calendar, locale: locale)
         switch health {
         case .checking:
-            return MenuContent(icon: .ok, message: "Connecting to the background agent…")
+            return MenuContent(icon: .ok, message: "Connecting to Restorey’s background process…")
         case .waitingForUpdate:
-            return MenuContent(icon: .ok, message: "Updating the background agent…")
+            return MenuContent(icon: .ok, message: "Updating Restorey’s background process…")
         case .updating:
             return updating(status: status, format: format)
         case .switchedOff:
             let banner = MenuBanner(
-                severity: .error, title: "The background agent is switched off",
-                detail: "No backups will happen.", action: .openLoginItems)
+                severity: .error, title: "Backups are switched off",
+                detail: "Switch Restorey back on in Login Items. No backups will happen.", action: .openLoginItems)
             return MenuContent(icon: .error, banners: [banner], message: lastKnown(status, format))
         case .notRunning(let reachable):
             // Only a backup that was running makes the silence plausible (R68). A status from the future (clock
@@ -189,17 +189,17 @@ public enum MenuPresentation {
                 return notAnswering(status: status, format: format)
             }
             let banner = MenuBanner(
-                severity: .error, title: "The background agent isn't running",
+                severity: .error, title: "Backups aren’t running",
                 detail: "No backups will happen.", action: .restartAgent)
             return MenuContent(icon: .error, banners: [banner], message: lastKnown(status, format))
         case .damaged:
             return MenuContent(
-                icon: .error, message: "Restorey's installation is damaged — reinstall it from the download")
+                icon: .error, message: "Restorey’s installation is damaged — reinstall it from the download")
         case .failed(let sentence):
             return MenuContent(icon: .error, message: sentence)
         case .healthy:
             // Healthy again, with the fresh status still on its way (`shouldRefetchStatus`).
-            guard let status else { return MenuContent(icon: .ok, message: "Connecting to the background agent…") }
+            guard let status else { return MenuContent(icon: .ok, message: "Connecting to Restorey’s background process…") }
             return healthy(status: status, notificationsAuthorised: notificationsAuthorised, format: format)
         }
     }
@@ -210,7 +210,7 @@ public enum MenuPresentation {
         status: AgentStatus, notificationsAuthorised: Bool?, format: TextContext
     ) -> MenuContent {
         if let configError = status.configError {
-            return MenuContent(icon: .error, message: "Restorey can't read its settings: \(configError)")
+            return MenuContent(icon: .error, message: "Restorey can’t read its settings: \(configError)")
         }
         let banners = banners(status: status, notificationsAuthorised: notificationsAuthorised)
         let lines = status.plans.map { line(for: $0, format: format) }
@@ -266,7 +266,7 @@ public enum MenuPresentation {
         }
         if notificationsAuthorised == false || alerts.contains(.notificationsOff) {
             banners.append(MenuBanner(
-                severity: .warning, title: "Notifications are off — Restorey can't alert you",
+                severity: .warning, title: "Notifications are off — Restorey can’t alert you",
                 detail: "Turn them on so a problem with a backup reaches you.", action: .turnOnNotifications))
         }
         for plan in status.plans {
@@ -418,7 +418,7 @@ public enum MenuPresentation {
         if status.lastBackup == nil, case .idle = status.phase, let next = status.nextRunAt,
             let outcome = status.latestBackupRecord?.outcome, Words.interruptsFirstBackup(outcome)
         {
-            facts.issues.append("The first backup was interrupted. It carries on at \(format.time(next)), keeping what's already uploaded.")
+            facts.issues.append("The first backup was interrupted. It carries on at \(format.time(next)), keeping what’s already uploaded.")
         }
         if case .skipped(let reason) = status.phase {
             if status.lastBackup == nil { facts.status = reason.summary }
@@ -427,7 +427,7 @@ public enum MenuPresentation {
         }
         if alerts.contains(.checkInRejected) { flag("The check-in service rejected the last ping", .warning) }
         if alerts.contains(.checkFailed) { flag("The repository check failed", .error) }
-        if alerts.contains(.configurationError) { flag("There's a problem with this plan's settings", .error) }
+        if alerts.contains(.configurationError) { flag("There’s a problem with this plan’s settings", .error) }
         return facts
     }
 
@@ -468,12 +468,12 @@ public enum MenuPresentation {
     private static func updating(status: AgentStatus?, format: TextContext) -> MenuContent {
         let running = (status?.plans ?? []).filter { $0.phase.isRunning }
         guard !running.isEmpty else {
-            return MenuContent(icon: .ok, message: "Updating the background agent…")
+            return MenuContent(icon: .ok, message: "Updating Restorey’s background process…")
         }
         let lines = running.map { plan -> PlanLine in
             var line = PlanLine(
                 id: plan.plan.id, name: plan.plan.name,
-                status: "Finishing the current backup before updating the agent", destination: destination(plan, format))
+                status: "Finishing the current backup before updating", destination: destination(plan, format))
             // Time left means nothing until restic has finished counting (Task 16e).
             if case .running(let progress?, _) = plan.phase, progress.scanFinished, let seconds = progress.secondsRemaining {
                 line.detail = "\(DisplayFormat.remaining(seconds: seconds)) left"
@@ -485,10 +485,10 @@ public enum MenuPresentation {
 
     /// R68: the agent didn't answer but its last status is recent, so it is shown as it was, marked.
     private static func notAnswering(status: AgentStatus, format: TextContext) -> MenuContent {
-        let lines = status.plans.map { line(for: $0, format: format, suffix: "(agent not answering)") }
+        let lines = status.plans.map { line(for: $0, format: format, suffix: "(not responding)") }
         let banner = MenuBanner(
-            severity: .warning, title: "The background agent isn't answering",
-            detail: "Showing the last state it reported.", action: .restartAgent)
+            severity: .warning, title: "Backups aren’t responding",
+            detail: "Showing the last state reported.", action: .restartAgent)
         let icon = max(.warning, icon(banners: [], plans: status.plans, lines: lines))
         return MenuContent(icon: icon, banners: [banner], plans: lines)
     }
@@ -519,7 +519,7 @@ private enum Words {
 
     static func unreadable(_ backup: RunRecord) -> String? {
         guard case .warning(let unreadable) = backup.outcome else { return nil }
-        return "\(unreadable) \(unreadable == 1 ? "file" : "files") couldn't be read"
+        return "\(unreadable) \(unreadable == 1 ? "file" : "files") couldn’t be read"
     }
 
     /// A backup that ended without a verdict because something stopped it (the system, the user's pause, a crash).
@@ -747,7 +747,7 @@ extension MenuPresentation {
     private static func earlierRemovalNote(_ plan: PlanStatus) -> String? {
         guard var reason = plan.earlierRemovalProblem else { return nil }
         while reason.hasSuffix(".") { reason.removeLast() }
-        return "Couldn't remove the earlier snapshots you chose: \(reason). Restorey will try again after the next backup."
+        return "Couldn’t remove the earlier snapshots you chose: \(reason). Restorey will try again after the next backup."
     }
 
     private static func nextBackupRow(_ plan: PlanStatus, _ format: TextContext) -> PlanOverview.Row? {
@@ -788,7 +788,7 @@ extension MenuPresentation {
                 parts.append(reason.summary.prefix(1).lowercased() + reason.summary.dropFirst())
             }
             switch status.setupState {
-            case .unfinished: parts.append("setup isn't finished")
+            case .unfinished: parts.append("setup isn’t finished")
             case .needsNewKit: parts.append("waiting for a new recovery kit")
             case .complete:
                 if let next = status.nextRunAt {

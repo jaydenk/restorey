@@ -44,7 +44,7 @@ struct HistoryPresentationTests {
         let row = Self.row(warning)
         #expect(row.unreadable == UnreadableSummary(count: 3, items: items))
         // The words are unchanged.
-        #expect(row.detail == "3 files couldn't be read · 7 s")
+        #expect(row.detail == "3 files couldn’t be read · 7 s")
         // An older record has none, and so has any other outcome.
         #expect(Self.row(Self.record(.warning(unreadable: 3))).unreadable == nil)
         var success = Self.record(.success(snapshotID: "a"))
@@ -140,7 +140,7 @@ struct HistoryPresentationTests {
         #expect(BiggestAdditionsText.listingsNote(additions, locale: Self.locale) == nil)
         additions.listingsBytesAdded = 1_290_000_000
         #expect(BiggestAdditionsText.listingsNote(additions, locale: Self.locale)
-            == "Folder listings: 1.3 GB — restic records each changed folder's list of files; a change anywhere in a folder "
+            == "Folder listings: 1.3 GB — restic records each changed folder’s list of files; a change anywhere in a folder "
             + "rewrites its list and the lists of the folders above it.")
     }
 
@@ -206,9 +206,9 @@ struct HistoryPresentationTests {
     @Test func aWarningSaysHowManyFilesCouldntBeRead() {
         let row = Self.row(Self.record(.warning(unreadable: 3), summary: BackupSummary(dataAdded: 640, totalDuration: 5)))
         #expect(row.outcome == "Backed up")
-        #expect(row.detail == "3 files couldn't be read · 640 B · 5 s")
+        #expect(row.detail == "3 files couldn’t be read · 640 B · 5 s")
         #expect(row.kind == .warning)
-        #expect(Self.row(Self.record(.warning(unreadable: 1))).detail == "1 file couldn't be read · 7 s")
+        #expect(Self.row(Self.record(.warning(unreadable: 1))).detail == "1 file couldn’t be read · 7 s")
     }
 
     @Test func maintenanceStepsSayWhatTheyDid() {
@@ -225,7 +225,7 @@ struct HistoryPresentationTests {
 
     @Test func aSkipIsItsReasonWithNoLogAndNoDuration() {
         let row = Self.row(Self.record(.skipped(.volumeNotMounted("Photos")), plan: Self.photos, seconds: 0, logFile: ""))
-        #expect(row.outcome == "Skipped: Photos isn't connected")
+        #expect(row.outcome == "Skipped: Photos isn’t connected")
         #expect(row.plan == "Photos drive → B2")
         #expect(row.detail == nil)
         #expect(row.logFile == nil)
@@ -267,7 +267,7 @@ struct HistoryPresentationTests {
         #expect(Self.row(Self.record(.success(snapshotID: nil), .forgetSnapshots(ids: []), logFile: "")).outcome
             == "No earlier snapshots needed removing")
         let failed = Self.row(Self.record(.failed(exitCode: 1, reason: "the backend is unreachable"), .forgetSnapshots(ids: ids)))
-        #expect(failed.outcome == "Couldn't remove earlier snapshots")
+        #expect(failed.outcome == "Couldn’t remove earlier snapshots")
         #expect(failed.detail == "the backend is unreachable · 7 s")
         #expect(failed.kind == .failure)
         let locked = Self.row(Self.record(.locked, .forgetSnapshots(ids: ids)))
@@ -340,11 +340,11 @@ struct HistoryPresentationTests {
             ).map(\.outcome)
         }
         #expect(outcomes(nil, .everything).count == 6)
-        #expect(outcomes(Self.photos, .everything) == ["Skipped: Photos isn't connected", "Backup failed"])
+        #expect(outcomes(Self.photos, .everything) == ["Skipped: Photos isn’t connected", "Backup failed"])
         #expect(outcomes(nil, .backups) == ["Backed up", "Backed up"])
         #expect(outcomes(nil, .problems) == ["Backup failed", "Backed up"])
-        #expect(outcomes(nil, .notRun) == ["Skipped: Photos isn't connected", "Paused"])
-        #expect(HistoryFilter.allCases.map(\.title) == ["Everything", "Backups", "Problems", "Skipped and paused"])
+        #expect(outcomes(nil, .notRun) == ["Skipped: Photos isn’t connected", "Paused"])
+        #expect(HistoryFilter.allCases.map(\.title) == ["Everything", "Backups", "Problems", "Skipped and Paused"])
     }
 
     @Test func rowsAreNewestFirstWhateverOrderTheyArrive() {

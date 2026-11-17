@@ -26,7 +26,7 @@ public enum FullDiskAccessGuide {
     /// What is missed without it: the folders the agent's probe lists (`FullDiskAccessProbe.protectedDirectories`:
     /// Safari, Mail, Messages) are the ones named. "Other protected folders" is Apple's wider set (Photos, Notes,
     /// Time Machine backups and so on), which Full Disk Access also covers.
-    public static let why = "Without it, Restorey can't back up Mail, Messages, Safari and other protected folders."
+    public static let why = "Without it, Restorey can’t back up Mail, Messages, Safari and other protected folders."
 
     /// Under the tile.
     public static let dragCaption = "Drag this into the list, then switch it on."

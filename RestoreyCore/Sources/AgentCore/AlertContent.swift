@@ -28,7 +28,7 @@ public struct AlertContent: Sendable, Equatable {
     public static func loadError(_ message: String) -> AlertContent {
         AlertContent(
             identifier: "alert.agent.loadError", threadIdentifier: agentThread,
-            title: "Restorey has stopped — its settings can't be read", body: message)
+            title: "Restorey has stopped — its settings can’t be read", body: message)
     }
 
     private init(identifier: String, threadIdentifier: String, title: String, body: String) {
@@ -48,20 +48,20 @@ public struct AlertContent: Sendable, Equatable {
         switch condition {
         case .backupFailed:
             title = "Backup failed — \(name)"
-            body = Self.reason(of: .backup, in: history) ?? "The last backup didn't finish."
+            body = Self.reason(of: .backup, in: history) ?? "The last backup didn’t finish."
         case .checkFailed:
             title = "Repository check failed — \(name)"
             body = Self.reason(of: .check, in: history) ?? "restic found a problem when it checked the repository."
         case .checkInRejected:
             title = "Check-in URL rejected — \(name)"
             let answer = checkInStatus.map { "returned HTTP \($0)" } ?? "rejected the last ping"
-            body = "The monitoring service \(answer), so it won't alert you if backups stop. Check the URL in this plan's settings."
+            body = "The monitoring service \(answer), so it won’t alert you if backups stop. Check the URL in this plan’s settings."
         case .configurationError:
             title = "\(name) has stopped — \(history.stoppedReason ?? "a setting needs fixing")"
-            body = "Backups of this plan won't run until it's fixed in Restorey."
+            body = "Backups of this plan won’t run until it’s fixed in Restorey."
         case .fullDiskAccessMissing:
-            title = "Full Disk Access is missing — Restorey can't read your files"
-            body = "Backups can't run until Restorey is turned on in System Settings › Privacy & Security › Full Disk Access."
+            title = "Full Disk Access is missing — Restorey can’t read your files"
+            body = "Backups can’t run until Restorey is turned on in System Settings › Privacy & Security › Full Disk Access."
             agentWide = true
         case .noRecentSuccess:
             let reference = history.lastSuccessAt ?? plan.createdAt
@@ -69,8 +69,8 @@ public struct AlertContent: Sendable, Equatable {
             let span = days == 1 ? "1 day" : "\(days) days"
             title = "No backup in \(span) — \(name)"
             body = history.lastSuccessAt == nil
-                ? "This plan hasn't finished a backup since it was set up. Open Restorey to see why."
-                : "This plan hasn't finished a backup for \(span). Open Restorey to see why."
+                ? "This plan hasn’t finished a backup since it was set up. Open Restorey to see why."
+                : "This plan hasn’t finished a backup for \(span). Open Restorey to see why."
         case .notificationsOff:
             return nil
         }

@@ -239,7 +239,7 @@ struct EarlierSnapshotsRunnerTests {
         }
         #expect(try await f.snapshotIDs() == before)
         #expect(await f.history().recent.first?.outcome == .locked)
-        #expect(!f.lockFiles().isEmpty, "the other client's lock is never broken")
+        #expect(!f.lockFiles().isEmpty, "the other client’s lock is never broken")
         await holder.release()
     }
 
@@ -289,7 +289,7 @@ struct EarlierSnapshotsRunnerTests {
         let group = try #require(try await f.state.previewEarlierSnapshots(f.planID).group(.beforeAdoption))
         #expect(Set(group.removeIDs) == Set(seeded.beforeAdoption + seeded.beforeAdoptionTagged))
         #expect(!group.removeIDs.contains(later))
-        #expect(group.keptCount == 0, "a snapshot from after the adoption isn't counted as kept from before it either")
+        #expect(group.keptCount == 0, "a snapshot from after the adoption isn’t counted as kept from before it either")
         _ = try await f.state.removeEarlierSnapshots(
             EarlierSnapshotsRequest(planID: f.planID, confirmation: EarlierSnapshotsConfirmation(group)))
         #expect(try await f.snapshotIDs().isSuperset(of: [later, latest]))

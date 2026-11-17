@@ -92,9 +92,9 @@ struct UnreadableItemsTests {
     // MARK: Words
 
     @Test func commonErrnoTextsAreInPlainWords() {
-        #expect(UnreadableList.reasonWords("operation not permitted") == "Restorey isn't allowed to read this")
-        #expect(UnreadableList.reasonWords("permission denied") == "Restorey isn't allowed to read this")
-        #expect(UnreadableList.reasonWords("Permission Denied") == "Restorey isn't allowed to read this")
+        #expect(UnreadableList.reasonWords("operation not permitted") == "Restorey isn’t allowed to read this")
+        #expect(UnreadableList.reasonWords("permission denied") == "Restorey isn’t allowed to read this")
+        #expect(UnreadableList.reasonWords("Permission Denied") == "Restorey isn’t allowed to read this")
         #expect(UnreadableList.reasonWords("no such file or directory") == "It was deleted while the backup ran")
         // Anything else is restic's text, starting with a capital.
         #expect(UnreadableList.reasonWords("input/output error") == "Input/output error")
@@ -123,7 +123,7 @@ struct UnreadableItemsTests {
     @Test func aRowShowsTheTildePathReasonAndOffersTheExclusion() throws {
         let row = try #require(rows([permission], existing: [permission.path]).first)
         #expect(row.display == "~/Library/Caches/Speech")
-        #expect(row.reason == "Restorey isn't allowed to read this")
+        #expect(row.reason == "Restorey isn’t allowed to read this")
         #expect(row.action == .dontBackUp(pattern: DefaultExclusions.pattern(forFolder: permission.path)))
         #expect(row.canOpenInFinder)
     }

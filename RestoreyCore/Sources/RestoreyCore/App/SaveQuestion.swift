@@ -11,7 +11,7 @@ public struct SaveQuestion: Sendable, Equatable {
         self.information = information
     }
 
-    private static let lost = "If you don't save, your changes are lost."
+    private static let lost = "If you don’t save, your changes are lost."
 
     public static func plan(name: String, pausesBackups: Bool) -> SaveQuestion {
         SaveQuestion(

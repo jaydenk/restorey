@@ -33,7 +33,7 @@ struct AppShellTests {
     }
 
     @Test func hiddenNoteWording() {
-        #expect(statusItemHiddenNote == "Restorey's menu bar icon is hidden. Show it in System Settings → Menu Bar.")
+        #expect(statusItemHiddenNote == "Restorey’s menu bar icon is hidden. Show it in System Settings → Menu Bar.")
     }
 
     @Test func eachWindowKindHasItsOwnTitle() {

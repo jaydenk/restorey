@@ -123,5 +123,5 @@ public enum RecoveryKitLocation {
 
     /// The sentence shown after saving to the Mac's own disk.
     public static let internalDiskWarning =
-        "This copy is on this Mac's own disk, so it would be lost with the Mac. Once the kit is stored somewhere else (a password manager, a drive you keep elsewhere, or paper), delete this file."
+        "This copy is on this Mac’s own disk, so it would be lost with the Mac. Once the kit is stored somewhere else (a password manager, a drive you keep elsewhere, or paper), delete this file."
 }

@@ -22,10 +22,10 @@ public struct HelperResponder: Sendable {
 
         public var description: String {
             switch self {
-            case .malformedRequest: "the request couldn't be read"
-            case .invalidPlanID: "the plan ID isn't a UUID"
-            case .notSupervised: "the caller wasn't started by a restic run Restorey is supervising for that plan"
-            case .unknownPlan: "there's no plan with that ID"
+            case .malformedRequest: "the request couldn’t be read"
+            case .invalidPlanID: "the plan ID isn’t a UUID"
+            case .notSupervised: "the caller wasn’t started by a restic run Restorey is supervising for that plan"
+            case .unknownPlan: "there’s no plan with that ID"
             case .secretUnavailable(let reason): reason
             }
         }
@@ -75,7 +75,7 @@ public struct HelperResponder: Sendable {
                 do {
                     return try makeCredentialProcessJSON(accessKeyID: keyID, secret: secret, now: now())
                 } catch {
-                    throw .secretUnavailable("Restorey couldn't encode the S3 credentials")
+                    throw .secretUnavailable("Restorey couldn’t encode the S3 credentials")
                 }
             }
         }
@@ -91,9 +91,9 @@ public struct HelperResponder: Sendable {
             value = try secrets.read(key)
         } catch {
             throw .secretUnavailable(
-                "Restorey couldn't read the \(Self.name(of: key)) from the Keychain: \(Self.describe(error))")
+                "Restorey couldn’t read the \(Self.name(of: key)) from the Keychain: \(Self.describe(error))")
         }
-        guard let value else { throw .secretUnavailable("The \(Self.name(of: key)) isn't in the Keychain") }
+        guard let value else { throw .secretUnavailable("The \(Self.name(of: key)) isn’t in the Keychain") }
         return value
     }
 
@@ -111,7 +111,7 @@ public struct HelperResponder: Sendable {
     private static func describe(_ error: any Error) -> String {
         switch error as? SecretStoreError {
         case .keychain(let status, let message)?: "keychain error \(status) (\(message))"
-        case .undecodableValue?: "the stored value isn't valid UTF-8"
+        case .undecodableValue?: "the stored value isn’t valid UTF-8"
         case nil: String(describing: type(of: error))
         }
     }

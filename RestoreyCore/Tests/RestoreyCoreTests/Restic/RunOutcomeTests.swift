@@ -129,7 +129,7 @@ struct RunOutcomeTests {
     /// Final review M9: exit 3 is "files couldn't be read" only for a backup.
     @Test func forgetExitThreeIsAFailureToRemoveSnapshots() {
         #expect(outcome(3, op: .forget(dryRun: false))
-            == .failed(exitCode: 3, reason: "restic couldn't remove every snapshot it was asked to forget"))
+            == .failed(exitCode: 3, reason: "restic couldn’t remove every snapshot it was asked to forget"))
         #expect(outcome(3, op: .forget(dryRun: false), message: "Fatal: unable to remove snapshot abc")
             == .failed(exitCode: 3, reason: "Fatal: unable to remove snapshot abc"))
         #expect(outcome(3, op: .check) == .failed(exitCode: 3, reason: "restic exited with status 3."))
@@ -279,7 +279,7 @@ struct RunOutcomeTests {
         #expect(SkipReason.batteryBelow(20).summary == "Skipped: battery below 20%")
         #expect(SkipReason.constrainedNetwork.summary == "Skipped on a low data network")
         #expect(SkipReason.noNetwork.summary == "Skipped: no network")
-        #expect(SkipReason.volumeNotMounted("Backup").summary == "Skipped: Backup isn't connected")
+        #expect(SkipReason.volumeNotMounted("Backup").summary == "Skipped: Backup isn’t connected")
         #expect(SkipReason.agentUpdating.summary == "Skipped: Restorey was updating")
         #expect(SkipReason.skippedWiFi("Café").summary == "Skipped on Wi-Fi “Café”")
     }

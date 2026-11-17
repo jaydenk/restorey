@@ -87,8 +87,8 @@ public enum SetupAdoption {
     /// first backup continues the latest snapshot's group, and when `sources` is nil (not chosen yet: only the
     /// host label is checked). `report.latestPathsForHost` must be for `hostLabel`.
     public static func newGroupWarning(hostLabel: String, sources: [String]?, report: AdoptReport) -> String? {
-        let reread = "so the first backup starts a new snapshot group: restic reads every file again (it doesn't upload "
-            + "them again), and this plan's retention won't thin the old group."
+        let reread = "so the first backup starts a new snapshot group: restic reads every file again (it doesn’t upload "
+            + "them again), and this plan’s retention won’t thin the old group."
         guard report.snapshotCount > 0 else { return nil }
         guard report.hosts.contains(hostLabel) else { return "No snapshots here are from “\(hostLabel)”, \(reread)" }
         guard let sources, !report.latestPathsForHost.isEmpty else { return nil }

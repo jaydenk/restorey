@@ -124,8 +124,8 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
     /// A new host label starts a new `host,paths` group.
     public var hostLabelWarning: String? {
         guard let label = newHostLabel else { return nil }
-        return "Backups under “\(label)” start a new snapshot group: the next backup reads every file again (it doesn't "
-            + "upload them again), and this plan's retention no longer thins the snapshots under “\(saved.hostLabel)”, "
+        return "Backups under “\(label)” start a new snapshot group: the next backup reads every file again (it doesn’t "
+            + "upload them again), and this plan’s retention no longer thins the snapshots under “\(saved.hostLabel)”, "
             + "which are kept as they are. Saving pauses backups until you save a new recovery kit, since its restore "
             + "commands name the host label."
     }
@@ -137,7 +137,7 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
         let after = Set(FormValidation.addingSources(fields.sources, to: []))
         guard before != after else { return nil }
         return "A different list of folders starts a new snapshot group: the next backup reads every file again (it "
-            + "doesn't upload them again), and this plan's retention no longer thins the snapshots of the previous "
+            + "doesn’t upload them again), and this plan’s retention no longer thins the snapshots of the previous "
             + "folders, which are kept as they are."
     }
 
@@ -146,7 +146,7 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
     public var nameProblem: String? {
         let name = fields.name.trimmingCharacters(in: .whitespacesAndNewlines)
         if name.isEmpty { return "The plan needs a name." }
-        if name.contains(where: \.isNewline) { return "The plan's name must be on one line." }
+        if name.contains(where: \.isNewline) { return "The plan’s name must be on one line." }
         return nil
     }
 
@@ -245,8 +245,8 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
     public static func passwordProblem(after probe: RepositoryProbe.State) -> String? {
         switch probe {
         case .existing: nil
-        case .passwordRejected: "The repository doesn't open with this password. Nothing was saved."
-        case .empty: "There's no repository at this plan's address, so the password can't be checked. Nothing was saved."
+        case .passwordRejected: "The repository doesn’t open with this password. Nothing was saved."
+        case .empty: "There’s no repository at this plan’s address, so the password can’t be checked. Nothing was saved."
         }
     }
 

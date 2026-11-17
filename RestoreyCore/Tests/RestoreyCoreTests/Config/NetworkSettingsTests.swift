@@ -40,7 +40,7 @@ struct NetworkSettingsTests {
 
     @Test func eachProblemReadsAsASentence() {
         #expect(NetworkSettingsError.limitNotPositive.message == "The upload limit must be more than 0 KiB/s")
-        #expect(NetworkSettingsError.emptyWiFiName.message == "A Wi-Fi network name can't be empty")
+        #expect(NetworkSettingsError.emptyWiFiName.message == "A Wi-Fi network name can’t be empty")
         #expect(NetworkSettingsError.duplicateWiFiName("home").message
             == "The Wi-Fi network “home” is in the list more than once")
     }

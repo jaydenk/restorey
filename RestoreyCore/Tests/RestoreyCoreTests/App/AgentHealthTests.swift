@@ -174,7 +174,7 @@ struct AgentHealthTests {
         #expect(decideAgentHealth(reachable) == .reregisterAfterDrain)
     }
 
-    /// A fault that survives one repair waits for the user ("Restart Agent").
+    /// A fault that survives one repair waits for the user ("Restart Backups").
     @Test func enabledUnreachableRepairsAtMostHourly() {
         #expect(decideAgentHealth(Self.input(heartbeat: .unreachable, repairAttemptedRecently: true, unreachableFor: 600))
             == .showNotRunning(canRepair: true))

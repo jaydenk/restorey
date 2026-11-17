@@ -107,7 +107,7 @@ extension PlanRunner {
         let base: String
         switch outcome {
         case .wrongPassword: base = "The repository password is wrong"
-        case .repositoryMissing: base = "There's no restic repository at this plan's address"
+        case .repositoryMissing: base = "There’s no restic repository at this plan’s address"
         case .credentialsUnavailable: base = keychainUnreadable
         default: return nil
         }
@@ -120,10 +120,10 @@ extension PlanRunner {
         switch outcome {
         case .success(let snapshotID): return snapshotID.map { "Succeeded, snapshot \($0)" } ?? "Succeeded"
         case .unchanged: return "Nothing changed, so restic made no snapshot"
-        case .warning(let unreadable): return "Finished, but \(unreadable) files couldn't be read"
+        case .warning(let unreadable): return "Finished, but \(unreadable) files couldn’t be read"
         case .paused: return "Paused"
         case .cancelled: return "Cancelled"
-        case .locked: return "Another restic holds the repository's lock"
+        case .locked: return "Another restic holds the repository’s lock"
         case .interrupted: return "Interrupted"
         case .stoppedBySystem: return "Stopped because the Mac was logging out, restarting or shutting down"
         case .skipped(let reason): return reason.summary

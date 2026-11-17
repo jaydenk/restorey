@@ -64,6 +64,6 @@ public enum PrivateFile {
     }
 
     private static func failure(_ what: String, _ url: URL, _ code: Int32) -> Failure {
-        Failure(description: "Restorey couldn't save \(what) to \(url.path): \(String(decoding: strerrorBytes(code), as: UTF8.self))")
+        Failure(description: "Restorey couldn’t save \(what) to \(url.path): \(String(decoding: strerrorBytes(code), as: UTF8.self))")
     }
 }

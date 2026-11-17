@@ -35,7 +35,7 @@ public enum NetworkSettingsError: Equatable, Sendable {
     public var message: String {
         switch self {
         case .limitNotPositive: "The upload limit must be more than 0 KiB/s"
-        case .emptyWiFiName: "A Wi-Fi network name can't be empty"
+        case .emptyWiFiName: "A Wi-Fi network name can’t be empty"
         case .duplicateWiFiName(let name): "The Wi-Fi network “\(name)” is in the list more than once"
         }
     }

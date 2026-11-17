@@ -69,7 +69,7 @@ public enum RestoreCommands {
             Command(
                 title: "Tell restic where the repository is", text: masked.joined(separator: "\n"),
                 revealedText: revealed.joined(separator: "\n"), needsSecrets: !secretVariables.isEmpty),
-            Command(title: "List this Mac's snapshots", text: snapshots, revealedText: snapshots, needsSecrets: false),
+            Command(title: "List this Mac’s snapshots", text: snapshots, revealedText: snapshots, needsSecrets: false),
             Command(
                 title: "Restore the latest snapshot to Restored in your home folder", text: restore, revealedText: restore,
                 needsSecrets: false),

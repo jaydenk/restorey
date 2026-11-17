@@ -8,7 +8,7 @@ struct FormValidationTests {
     /// restic trims `RESTIC_PASSWORD_COMMAND` output, so a password with whitespace at an end can't round-trip.
     @Test(arguments: [" secret", "secret ", " secret ", "\tsecret", "secret\n", "  ", "secret\u{00A0}", "\u{2003}secret"])
     func aPasswordWithWhitespaceAtAnEndIsRefused(_ password: String) {
-        #expect(FormValidation.newRepositoryPassword(password) == "A password can't start or end with a space.")
+        #expect(FormValidation.newRepositoryPassword(password) == "A password can’t start or end with a space.")
     }
 
     @Test(arguments: ["secret", "two words", "correct-horse-battery-staple", "a b", "p@ss word!", "x"])
@@ -50,13 +50,13 @@ struct FormValidationTests {
 
     @Test func bucketsMustStartAndEndWithALetterOrNumber() {
         for bucket in ["-abc", "abc-", ".abc", "abc."] {
-            #expect(FormValidation.bucket(bucket) == "Bucket names can't start or end with a hyphen or a dot.", "\(bucket)")
+            #expect(FormValidation.bucket(bucket) == "Bucket names can’t start or end with a hyphen or a dot.", "\(bucket)")
         }
     }
 
     @Test func bucketsCantHaveDoubleDotsOrLookLikeIPAddresses() {
-        #expect(FormValidation.bucket("my..bucket") == "Bucket names can't have two dots in a row.")
-        #expect(FormValidation.bucket("192.168.5.4") == "Bucket names can't look like an IP address.")
+        #expect(FormValidation.bucket("my..bucket") == "Bucket names can’t have two dots in a row.")
+        #expect(FormValidation.bucket("192.168.5.4") == "Bucket names can’t look like an IP address.")
         #expect(FormValidation.bucket("192.168.5.four") == nil)
         #expect(FormValidation.bucket("a.b-c.d") == nil)
     }
@@ -116,8 +116,8 @@ struct FormValidationTests {
         #expect(FormValidation.endpoint("ftp://x") == "The endpoint must start with https:// or http://.")
         #expect(FormValidation.endpoint("s3://bucket") == "The endpoint must start with https:// or http://.")
         #expect(FormValidation.endpoint("") == "Enter the endpoint.")
-        #expect(FormValidation.endpoint("https://") == "That endpoint isn't a web address.")
-        #expect(FormValidation.endpoint("https://exa mple.com") == "That endpoint isn't a web address.")
+        #expect(FormValidation.endpoint("https://") == "That endpoint isn’t a web address.")
+        #expect(FormValidation.endpoint("https://exa mple.com") == "That endpoint isn’t a web address.")
         #expect(FormValidation.normalisedEndpoint("ftp://x") == nil)
         #expect(FormValidation.normalisedEndpoint("") == nil)
     }
@@ -125,9 +125,9 @@ struct FormValidationTests {
     // MARK: Host label
 
     @Test func hostLabelMustHaveSomethingInIt() {
-        #expect(FormValidation.hostLabel("Jayden's MacBook") == nil)
-        #expect(FormValidation.hostLabel("") == "The host label can't be empty.")
-        #expect(FormValidation.hostLabel("  \n ") == "The host label can't be empty.")
+        #expect(FormValidation.hostLabel("Jayden’s MacBook") == nil)
+        #expect(FormValidation.hostLabel("") == "The host label can’t be empty.")
+        #expect(FormValidation.hostLabel("  \n ") == "The host label can’t be empty.")
         #expect(FormValidation.hostLabel("two\nlines") == "The host label must be on one line.")
     }
 
@@ -180,9 +180,9 @@ struct FormValidationTests {
         #expect(result.types == ["dmg"])
         #expect(result.rejected == [".iso", "*.zip", "a/b"])
         #expect(FormValidation.fileTypeProblem(rejected: [".iso"])
-            == "\".iso\" isn't a file type to exclude: give the extension alone, such as dmg or tar.gz, with no leading dot, slash, wildcard or space")
+            == "“.iso” isn’t a file type to exclude: give the extension alone, such as dmg or tar.gz, with no leading dot, slash, wildcard or space")
         #expect(FormValidation.fileTypeProblem(rejected: ["a/b", "*.zip"])
-            == "\"a/b\", \"*.zip\" aren't file types to exclude: give the extension alone, such as dmg or tar.gz, with no leading dot, slash, wildcard or space")
+            == "“a/b”, “*.zip” aren’t file types to exclude: give the extension alone, such as dmg or tar.gz, with no leading dot, slash, wildcard or space")
     }
 
     @Test func nothingTypedAddsNothing() {

@@ -80,7 +80,7 @@ struct RetentionSummaryTests {
     /// sizes, and reads no file contents unless `--read-data` is given.
     @Test func theWeeklyCheckNoteSaysWhatIsDownloadedAndWhatIsNot() {
         #expect(RetentionSummary.weeklyCheckNote
-            == "Once a week Restorey checks the backup's structure. This downloads its index and folder lists, not "
-            + "your files, so it uses a little download allowance.")
+            == "Once a week Restorey checks the backup’s structure. It downloads indexes and folder lists, not "
+            + "your files, so it uses little data.")
     }
 }

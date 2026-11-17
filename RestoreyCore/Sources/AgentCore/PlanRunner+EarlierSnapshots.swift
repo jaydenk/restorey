@@ -65,13 +65,13 @@ extension PlanRunner {
                 recorded: false)
             guard case .success = step.record.outcome else {
                 return .failure(.operationFailed(
-                    "Restorey couldn't count the earlier snapshots: \(Self.explain(step.record.outcome, stoppedReason: step.stoppedReason))"))
+                    "Restorey couldn’t count the earlier snapshots: \(Self.explain(step.record.outcome, stoppedReason: step.stoppedReason))"))
             }
             do {
                 // restic prints no reply at all when no snapshot matches.
                 groups += try EarlierSnapshots.groups(fromForgetReply: collector.last ?? "[]", kind: kind, plan: session.plan)
             } catch {
-                return .failure(.operationFailed("Restorey couldn't read restic's list of snapshots to remove"))
+                return .failure(.operationFailed("Restorey couldn’t read restic’s list of snapshots to remove"))
             }
         }
         return .success(EarlierSnapshots.sorted(groups))
@@ -96,7 +96,7 @@ extension PlanRunner {
             return .failed(sentence)
         }
         if let problem = confirmation.problem(for: plan) {
-            return await failedRow("Restorey can't remove those snapshots: \(problem)")
+            return await failedRow("Restorey can’t remove those snapshots: \(problem)")
         }
         let groups: [EarlierSnapshotGroup]
         switch await earlierGroups([confirmation.scope.kind], session: session, handle: handle) {
@@ -133,11 +133,11 @@ extension PlanRunner {
         await commit(step.record, plan: plan)
         switch step.record.outcome {
         case .locked:
-            return .notFinished(.locked, "Another program is using the repository and holds its lock, so no snapshots were removed. Restorey never breaks another program's lock: try again once it has finished")
+            return .notFinished(.locked, "Another program is using the repository and holds its lock, so no snapshots were removed. Restorey never breaks another program’s lock: try again once it has finished")
         case .paused, .cancelled, .stoppedBySystem:
             return .notFinished(step.record.outcome, Self.stoppedSentence)
         case let outcome:
-            return .failed("Restorey couldn't remove the earlier snapshots: \(Self.explain(outcome, stoppedReason: step.stoppedReason))")
+            return .failed("Restorey couldn’t remove the earlier snapshots: \(Self.explain(outcome, stoppedReason: step.stoppedReason))")
         }
     }
 

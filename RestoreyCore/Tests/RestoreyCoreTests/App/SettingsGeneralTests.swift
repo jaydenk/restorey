@@ -6,7 +6,7 @@ import Testing
 /// wording where the menu says the same thing.
 struct SettingsGeneralTests {
     @Test func fullDiskAccessFixKeepsTheMenusWords() {
-        #expect(GeneralAction.openFullDiskAccess.buttonTitle == "Fix…")
+        #expect(GeneralAction.openFullDiskAccess.buttonTitle == "Open System Settings")
     }
 
     private static func hello(notifications: Bool?) -> HelloReply {
@@ -19,12 +19,12 @@ struct SettingsGeneralTests {
     @Test func notifications() {
         #expect(SettingsGeneral.notifications(hello: Self.hello(notifications: true)) == .init("Allowed"))
         #expect(SettingsGeneral.notifications(hello: Self.hello(notifications: false))
-            == .init("Off — Restorey can't alert you", severity: .warning, action: .openNotificationSettings))
+            == .init("Off — Restorey can’t alert you", severity: .warning, action: .openNotificationSettings))
         #expect(SettingsGeneral.notifications(hello: Self.hello(notifications: nil))
             == .init("Not asked yet", severity: .warning, action: .askForNotifications))
         #expect(SettingsGeneral.notifications(hello: nil) == .init("Checking…"))
-        #expect(GeneralAction.openNotificationSettings.buttonTitle == "Turn On…")
-        #expect(GeneralAction.askForNotifications.buttonTitle == "Turn On…")
+        #expect(GeneralAction.openNotificationSettings.buttonTitle == "Open System Settings")
+        #expect(GeneralAction.askForNotifications.buttonTitle == "Allow…")
     }
 
     @Test func theAgentLineCarriesItsVersion() {
@@ -40,11 +40,11 @@ struct SettingsGeneralTests {
         #expect(SettingsGeneral.agent(health: .notRunning(reachable: false), hello: nil)
             == .init("Not running — no backups will happen", severity: .error, action: .restartAgent))
         #expect(SettingsGeneral.agent(health: .damaged, hello: nil)
-            == .init("Restorey's installation is damaged — reinstall it from the download", severity: .error))
-        #expect(SettingsGeneral.agent(health: .failed("Restorey couldn't register its agent."), hello: nil)
-            == .init("Restorey couldn't register its agent.", severity: .error))
-        #expect(GeneralAction.restartAgent.buttonTitle == "Restart Agent")
-        #expect(GeneralAction.openLoginItems.buttonTitle == "Open Login Items…")
+            == .init("Restorey’s installation is damaged — reinstall it from the download", severity: .error))
+        #expect(SettingsGeneral.agent(health: .failed("Restorey couldn’t register its agent."), hello: nil)
+            == .init("Restorey couldn’t register its agent.", severity: .error))
+        #expect(GeneralAction.restartAgent.buttonTitle == "Restart Backups")
+        #expect(GeneralAction.openLoginItems.buttonTitle == "Open System Settings")
     }
 
     /// `requiresApproval`: the user switched Restorey off in Login Items, and only they can switch it back on.

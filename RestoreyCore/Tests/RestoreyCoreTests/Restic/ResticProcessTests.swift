@@ -209,7 +209,7 @@ struct ResticProcessTests {
         defer { FileManager.default.createFile(atPath: releaseFile.path, contents: nil) }
         var readyIterator = ready.makeAsyncIterator()
         await readyIterator.next()
-        let pid = try #require(await repo.supervisor.all().first, "restic can't have exited yet, so it is supervised")
+        let pid = try #require(await repo.supervisor.all().first, "restic can’t have exited yet, so it is supervised")
 
         FileManager.default.createFile(atPath: exitFile.path, contents: nil)
         let deadline = ContinuousClock.now + .seconds(30)

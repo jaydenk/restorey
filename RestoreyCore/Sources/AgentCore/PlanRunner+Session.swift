@@ -43,7 +43,7 @@ extension PlanRunner {
                 credentialsFile = try CredentialsFile.write(
                     planID: plan.id, helper: deps.helperExecutable, directory: deps.credentialsDirectory)
             } catch {
-                let reason = "Restorey couldn't write the S3 credentials file: \(error)"
+                let reason = "Restorey couldn’t write the S3 credentials file: \(error)"
                 return .failed(.failed(exitCode: Self.startFailureExitCode, reason: reason), reason: reason, redactor: redactor)
             }
         }
@@ -77,10 +77,10 @@ extension PlanRunner {
                         environment[name] = value
                         known.append(value)
                     } else {
-                        problems.append("The environment value \(name) isn't in the Keychain")
+                        problems.append("The environment value \(name) isn’t in the Keychain")
                     }
                 } catch {
-                    problems.append("Restorey couldn't read the environment value \(name): \(error)")
+                    problems.append("Restorey couldn’t read the environment value \(name): \(error)")
                 }
             }
         }

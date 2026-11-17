@@ -13,7 +13,7 @@ public enum ExclusionsSummary {
         if defaults {
             return "Skipped by default: caches, Trash, node_modules, VM and disk images, iCloud files not on this Mac"
                 + (marked ? ", items apps mark as not for backup" : "")
-                + " (Time Machine's list, plus Backblaze's file types)."
+                + " (Time Machine’s list, plus Backblaze’s file types)."
         }
         var parts = [
             count(plan.exclusions.count, "folder", "folders"),

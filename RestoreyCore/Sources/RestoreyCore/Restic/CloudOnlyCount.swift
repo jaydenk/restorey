@@ -234,7 +234,7 @@ public enum CloudOnlyText {
         let number = count.skipped.formatted(.number.locale(locale))
         let place = count.includesOtherProviders ? "iCloud Drive or other cloud storage" : "iCloud Drive"
         let subject = count.skipped == 1 ? "1 file" : "\(number) files"
-        let verb = count.skipped == 1 ? "isn't" : "aren't"
+        let verb = count.skipped == 1 ? "isn’t" : "aren’t"
         let pronoun = count.skipped == 1 ? "it" : "them"
         return "\(subject) in \(place) \(verb) on this Mac, so this backup skipped \(pronoun). "
             + "To include \(pronoun), download \(pronoun) in Finder (Download Now) or turn off Optimise Mac Storage."

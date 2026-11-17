@@ -220,7 +220,7 @@ extension AgentState {
                 return "\(error)"
             }
         }
-        return outcome ?? "the notification centre didn't answer within \(timeout)"
+        return outcome ?? "the notification centre didn’t answer within \(timeout)"
     }
 
     /// `work`'s result within `timeout`, or nil. Nil at once, without calling, while the last call with

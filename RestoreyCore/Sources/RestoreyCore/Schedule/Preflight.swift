@@ -103,7 +103,7 @@ public func preflight(plan: Plan, env: PreflightEnvironment) -> PreflightResult 
         }
     }
     if let missing = plan.sources.first(where: { !env.fileExists($0) }) {
-        return .fail("\(missing) doesn't exist")
+        return .fail("\(missing) doesn’t exist")
     }
     return .run
 }

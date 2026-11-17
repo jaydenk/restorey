@@ -63,7 +63,7 @@ import Testing
         let plan = Self.s3Plan()
         let commands = RestoreCommands.make(plan: plan, secrets: Self.secrets(plan))
         #expect(commands.map(\.title) == [
-            "Tell restic where the repository is", "List this Mac's snapshots",
+            "Tell restic where the repository is", "List this Mac’s snapshots",
             "Restore the latest snapshot to Restored in your home folder",
         ])
         #expect(commands[0].revealedText.contains(

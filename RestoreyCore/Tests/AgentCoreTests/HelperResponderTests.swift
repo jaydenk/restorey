@@ -191,7 +191,7 @@ struct HelperResponderTests {
             Issue.record("expected secretUnavailable, got \(result)")
             return
         }
-        #expect(reason == "The repository password isn't in the Keychain")
+        #expect(reason == "The repository password isn’t in the Keychain")
         #expect(!reason.contains(f.planID.uuidString))
         #expect(await f.state.takeHelperFailure(planID: f.planID) == reason)
     }
@@ -205,7 +205,7 @@ struct HelperResponderTests {
             Issue.record("expected secretUnavailable, got \(result)")
             return
         }
-        #expect(reason == "The S3 secret access key isn't in the Keychain")
+        #expect(reason == "The S3 secret access key isn’t in the Keychain")
         #expect(!reason.contains(f.planID.uuidString))
         #expect(await f.state.takeHelperFailure(planID: f.planID) == reason)
     }
@@ -219,7 +219,7 @@ struct HelperResponderTests {
             Issue.record("expected secretUnavailable, got \(result)")
             return
         }
-        #expect(reason == "Restorey couldn't read the repository password from the Keychain: keychain error -25308 (User interaction is not allowed.)")
+        #expect(reason == "Restorey couldn’t read the repository password from the Keychain: keychain error -25308 (User interaction is not allowed.)")
         #expect(!reason.contains(f.planID.uuidString))
         #expect(await f.state.takeHelperFailure(planID: f.planID) == reason)
         #expect(await f.state.takeHelperFailure(planID: f.planID) == nil)

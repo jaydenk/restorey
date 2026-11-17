@@ -107,9 +107,9 @@ struct NetworkEditTests {
 
     @Test func aNameToAddMustBeNewAndOnOneLine() {
         var edit = NetworkEdit(settings: Self.saved)
-        #expect(edit.newNameProblem("   ") == "Enter the Wi-Fi network's name.")
+        #expect(edit.newNameProblem("   ") == "Enter the Wi-Fi network’s name.")
         #expect(edit.newNameProblem(" CAFE") == "“CAFE” is already in the list.")
-        #expect(edit.newNameProblem("Two\nlines") == "A Wi-Fi network's name is on one line.")
+        #expect(edit.newNameProblem("Two\nlines") == "A Wi-Fi network’s name is on one line.")
         #expect(edit.newNameProblem("Home") == nil)
         let added = edit.add(name: "cafe")
         #expect(!added)
@@ -122,7 +122,7 @@ struct NetworkEditTests {
         let edit = NetworkEdit(settings: .defaults)
         #expect(edit.newNameProblem(String(repeating: "a", count: 32)) == nil)
         #expect(edit.newNameProblem(String(repeating: "a", count: 33))
-            == "A Wi-Fi network's name is at most 32 bytes long.")
+            == "A Wi-Fi network’s name is at most 32 bytes long.")
         // "é" is two bytes in UTF-8.
         #expect(edit.newNameProblem(String(repeating: "é", count: 17)) != nil)
     }
@@ -187,24 +187,24 @@ struct NetworkEditTests {
         #expect(WiFiNameAccess.allowed.note(listed: 1) == nil)
         #expect(WiFiNameAccess.checking.note(listed: 0) == nil)
         #expect(WiFiNameAccess.notAsked.note(listed: 0)
-            == "Adding a network asks for Location permission: macOS shows the Wi-Fi network's name only to apps "
+            == "Adding a network asks for Location permission: macOS shows the Wi-Fi network’s name only to apps "
             + "allowed to use Location.")
         #expect(WiFiNameAccess.refused.note(listed: 0) == "Restorey needs Location permission to see Wi-Fi names.")
         #expect(WiFiNameAccess.refused.note(listed: 2)
-            == "Restorey needs Location permission to see Wi-Fi names. Until then, backups aren't skipped on these networks.")
+            == "Restorey needs Location permission to see Wi-Fi names. Until then, backups aren’t skipped on these networks.")
         #expect(WiFiNameAccess.servicesOff.note(listed: 0)
-            == "Location Services is off for this Mac, so Restorey can't see Wi-Fi names. Turn it on in System Settings "
+            == "Location Services is off for this Mac, so Restorey can’t see Wi-Fi names. Turn it on in System Settings "
             + "→ Privacy & Security → Location Services.")
         #expect(WiFiNameAccess.refused.opensSystemSettings)
         #expect(WiFiNameAccess.servicesOff.opensSystemSettings)
         #expect(!WiFiNameAccess.notAsked.opensSystemSettings)
-        #expect(!WiFiNameAccess.restricted.opensSystemSettings, "System Settings can't change a restriction")
+        #expect(!WiFiNameAccess.restricted.opensSystemSettings, "System Settings can’t change a restriction")
         #expect(WiFiNameAccess.restricted.note(listed: 0)
-            == "Location is restricted on this Mac, by a configuration profile or Screen Time, so Restorey can't see "
+            == "Location is restricted on this Mac, by a configuration profile or Screen Time, so Restorey can’t see "
             + "Wi-Fi names. Whoever manages this Mac can lift it.")
-        #expect(WiFiNameAccess.restricted.note(listed: 1)!.hasSuffix(" Until then, backups aren't skipped on these networks."))
+        #expect(WiFiNameAccess.restricted.note(listed: 1)!.hasSuffix(" Until then, backups aren’t skipped on these networks."))
         #expect(!WiFiNameAccess.allowed.opensSystemSettings)
         #expect(WiFiNameAccess.unanswered
-            == "There was no answer about Location permission, so the network wasn't added. Add it again to be asked again.")
+            == "There was no answer about Location permission, so the network wasn’t added. Add it again to be asked again.")
     }
 }

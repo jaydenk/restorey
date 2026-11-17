@@ -293,7 +293,7 @@ struct AgentStateAlertTests {
         _ = try await fixture.runner.runBackup(planID: fixture.planID, trigger: .scheduled)
         await fixture.state.alertsDelivered()
         #expect(await notifier.titles == [
-            "Backup failed — Fixture", "Full Disk Access is missing — Restorey can't read your files",
+            "Backup failed — Fixture", "Full Disk Access is missing — Restorey can’t read your files",
         ])
 
         fixture.clock.advance(30 * 60)
@@ -330,7 +330,7 @@ struct AgentStateAlertTests {
         // The backup, and the maintenance that followed it in the same run.
         let latest = try #require(await fixture.history().recent.first { $0.operation == .backup })
         guard case .success = latest.outcome else {
-            Issue.record("expected the tick's backup to succeed, got \(latest.outcome)")
+            Issue.record("expected the tick’s backup to succeed, got \(latest.outcome)")
             return
         }
 
@@ -366,9 +366,9 @@ struct AgentStateAlertTests {
         await state.attach(notifier: notifier, log: { _ in })
         await state.deliverAlerts()
         let posted = await notifier.posted
-        #expect(posted.map(\.title) == ["Restorey has stopped — its settings can't be read"])
+        #expect(posted.map(\.title) == ["Restorey has stopped — its settings can’t be read"])
         #expect(posted.first?.identifier == "alert.agent.loadError")
-        #expect(posted.first?.body.hasPrefix("config.json can't be read") == true)
+        #expect(posted.first?.body.hasPrefix("config.json can’t be read") == true)
 
         clock.advance(59 * 60)
         await state.deliverAlerts()
@@ -389,7 +389,7 @@ struct AgentStateAlertTests {
         #expect(await state.status().plans.first?.alerts == [.configurationError])
         await state.attach(notifier: world.notifier, log: { _ in })
         await state.deliverAlerts()
-        #expect(await world.notifier.titles == ["Restorey has stopped — its settings can't be read"])
+        #expect(await world.notifier.titles == ["Restorey has stopped — its settings can’t be read"])
     }
 
     // MARK: Check-in results (Ruling R46)

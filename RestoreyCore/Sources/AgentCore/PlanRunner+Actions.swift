@@ -133,7 +133,7 @@ extension PlanRunner {
         guard let created else { return .failure(.draining) }
         if case .success = created.record.outcome { return .success(()) }
         return .failure(.operationFailed(
-            "Restorey couldn't create the repository: \(Self.explain(created.record.outcome, stoppedReason: created.stoppedReason))"))
+            "Restorey couldn’t create the repository: \(Self.explain(created.record.outcome, stoppedReason: created.stoppedReason))"))
     }
 
     /// What the app shows when `cat config` failed with something other than "nothing there". Init never
@@ -148,10 +148,10 @@ extension PlanRunner {
         if case .s3(let location) = repository {
             let text = (stderr + [explain(outcome, stoppedReason: stoppedReason)]).joined(separator: "\n")
             if missingBucketMarkers.contains(where: { text.localizedCaseInsensitiveContains($0) }) {
-                return "The bucket \(location.bucket) doesn't exist or this key can't see it. Create it in your provider's console first"
+                return "The bucket \(location.bucket) doesn’t exist or this key can’t see it. Create it in your provider’s console first"
             }
         }
-        return "Restorey couldn't check the repository address: \(explain(outcome, stoppedReason: stoppedReason))"
+        return "Restorey couldn’t check the repository address: \(explain(outcome, stoppedReason: stoppedReason))"
     }
 
     /// minio-go's text for S3's `NoSuchBucket` ("The specified bucket does not exist.") and the code itself.
@@ -226,7 +226,7 @@ extension PlanRunner {
         do {
             return .success(try SnapshotListing.report(from: collector.last ?? "[]", hostLabel: session.plan.hostLabel))
         } catch {
-            return .failure(.operationFailed("Restorey couldn't read restic's list of snapshots"))
+            return .failure(.operationFailed("Restorey couldn’t read restic’s list of snapshots"))
         }
     }
 

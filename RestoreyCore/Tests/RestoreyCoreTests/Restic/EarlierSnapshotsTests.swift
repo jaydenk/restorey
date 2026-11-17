@@ -270,7 +270,7 @@ struct EarlierSnapshotsTests {
         }
         let current = EarlierSnapshotsConfirmation(
             scope: .previousFolderList(paths: ["/Users/x/Documents", "/Users/x/Code"]), snapshotIDs: [Self.id("a1")])
-        #expect(current.problem(for: plan()) != nil, "the current folder list is the plan's own group")
+        #expect(current.problem(for: plan()) != nil, "the current folder list is the plan’s own group")
     }
 
     // MARK: Coding
@@ -300,14 +300,14 @@ struct EarlierSnapshotsTests {
         let text = EarlierSnapshotsText.confirmation(
             sample(.beforeAdoption), pruneEnabled: false, afterFirstBackup: true, home: "/Users/x")
         #expect(text.title == "Remove 12 snapshots from before Restorey?")
-        #expect(text.message == "Retention keeps 3 of the 15 snapshots of these folders from this Mac, other tools' included; "
-            + "the rest go after the first successful backup. Other Macs and folders aren't touched. Prune is off: the data stays. "
-            + "This can't be undone.")
+        #expect(text.message == "Retention keeps 3 of the 15 snapshots of these folders from this Mac, other tools’ included; "
+            + "the rest go after the first successful backup. Other Macs and folders aren’t touched. Prune is off: the data stays. "
+            + "This can’t be undone.")
         #expect(text.button == "Remove 12 Snapshots")
         let settings = EarlierSnapshotsText.confirmation(
             sample(.beforeAdoption, kept: 0), pruneEnabled: true, afterFirstBackup: false, home: "/Users/x")
-        #expect(settings.message == "Retention keeps none of the 12 snapshots of these folders from this Mac, other tools' included. "
-            + "Other Macs and folders aren't touched. Prune frees the space later. This can't be undone.")
+        #expect(settings.message == "Retention keeps none of the 12 snapshots of these folders from this Mac, other tools’ included. "
+            + "Other Macs and folders aren’t touched. Prune frees the space later. This can’t be undone.")
     }
 
     @Test func thePreviousFolderListConfirmation() {
@@ -316,7 +316,7 @@ struct EarlierSnapshotsTests {
             pruneEnabled: true, afterFirstBackup: false, home: "/Users/x")
         #expect(text.title == "Remove 1 snapshot of the previous folder list?")
         #expect(text.message == "Retention keeps none of the 1 snapshot of ~/Old, ~/Older. Prune frees the space later. "
-            + "This can't be undone.")
+            + "This can’t be undone.")
         #expect(text.button == "Remove 1 Snapshot")
     }
 

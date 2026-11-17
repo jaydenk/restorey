@@ -36,27 +36,27 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
 
     public var message: String {
         switch self {
-        case .configUnavailable: "Restorey can't change its settings until the problem with them is fixed"
-        case .draining: "Restorey is finishing the current backup before updating the agent"
-        case .restarting: "Restorey's agent is restarting to finish an update. Try again in a moment"
+        case .configUnavailable: "Restorey can’t change its settings until the problem with them is fixed"
+        case .draining: "Restorey is finishing the current backup before updating"
+        case .restarting: "Restorey is restarting to finish an update. Try again in a moment"
         case .invalidPlan(let errors):
             errors.map(Self.message(for:)).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
                 .joined(separator: ". ")
         case .invalidNetworkSettings(let errors): errors.map(\.message).joined(separator: ". ")
-        case .unknownPlan: "There's no plan with that ID"
+        case .unknownPlan: "There’s no plan with that ID"
         case .planRunning(let name): "\(name) is backing up. Wait for it to finish, then delete it"
         case .alreadyRunning(let name): "\(name) is already backing up"
         case .planDeleting(let name): "\(name) is being deleted"
         case .foreignSecret: "A secret in the request belongs to a different plan"
-        case .runnerUnavailable: "Restorey's agent is still starting up. Try again in a moment"
+        case .runnerUnavailable: "Restorey is still starting up. Try again in a moment"
         case .recoveryKitNotConfirmed(let name, setupFinished: false):
-            "Confirm you've saved the recovery kit for \(name) before its first backup"
+            "Confirm you’ve saved the recovery kit for \(name) before its first backup"
         case .recoveryKitNotConfirmed(let name, setupFinished: true):
             "Save a new recovery kit for \(name) — the saved one has the old keys"
         case .repositoryAlreadyExists: "A repository already exists there"
         case .operationFailed(let detail): detail
         case .storage(let detail): detail
-        case .invalidRequest(let detail): "Restorey couldn't read the request: \(detail)"
+        case .invalidRequest(let detail): "Restorey couldn’t read the request: \(detail)"
         }
     }
 
@@ -64,10 +64,10 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
 
     static func message(for error: PlanValidationError) -> String {
         switch error {
-        case .emptyHostLabel: "The host label can't be empty"
+        case .emptyHostLabel: "The host label can’t be empty"
         case .noSources: "Choose at least one source folder"
         case .relativeSource: "Source folders must be absolute paths"
-        case .intervalTooShort: "Backups can't run more often than every 5 minutes"
+        case .intervalTooShort: "Backups can’t run more often than every 5 minutes"
         case .invalidFileType(let entry): FormValidation.fileTypeProblem(rejected: [entry])
         case .uploadLimitNotPositive: "The upload limit must be more than 0 KiB/s"
         }

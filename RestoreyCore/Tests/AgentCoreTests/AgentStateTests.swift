@@ -206,9 +206,9 @@ struct AgentStateTests {
     }
 
     @Test(arguments: [
-        ("emptyHostLabel", "The host label can't be empty"),
+        ("emptyHostLabel", "The host label can’t be empty"),
         ("noSources", "Choose at least one source folder"),
-        ("intervalTooShort", "Backups can't run more often than every 5 minutes"),
+        ("intervalTooShort", "Backups can’t run more often than every 5 minutes"),
         ("uploadLimitZero", "The upload limit must be more than 0 KiB/s"),
         ("uploadLimitNegative", "The upload limit must be more than 0 KiB/s"),
     ])
@@ -239,7 +239,7 @@ struct AgentStateTests {
         await #expect {
             try await state.savePlan(Self.request(plan))
         } throws: {
-            Self.message($0) == "The host label can't be empty. Source folders must be absolute paths"
+            Self.message($0) == "The host label can’t be empty. Source folders must be absolute paths"
         }
     }
 
@@ -601,7 +601,7 @@ struct AgentStateTests {
         (NetworkSettings(uploadLimitKiB: 0, skipOnConstrainedNetwork: true, skippedWiFiNames: []),
          "The upload limit must be more than 0 KiB/s"),
         (NetworkSettings(uploadLimitKiB: nil, skipOnConstrainedNetwork: true, skippedWiFiNames: ["  "]),
-         "A Wi-Fi network name can't be empty"),
+         "A Wi-Fi network name can’t be empty"),
         (NetworkSettings(uploadLimitKiB: -5, skipOnConstrainedNetwork: true, skippedWiFiNames: ["Home", "home"]),
          "The upload limit must be more than 0 KiB/s. The Wi-Fi network “home” is in the list more than once"),
     ])
@@ -694,7 +694,7 @@ struct AgentStateTests {
 
         await #expect {
             try await state.deletePlan(doomed.id)
-        } throws: { Self.message($0) == "There's no plan with that ID" }
+        } throws: { Self.message($0) == "There’s no plan with that ID" }
     }
 
     /// The plan's run logs go with it, not 400 days later; other plans' logs stay.
@@ -734,7 +734,7 @@ struct AgentStateTests {
 
         await #expect {
             try await state.deletePlan(plan.id)
-        } throws: { Self.message($0)?.hasPrefix("Home was deleted, but Restorey couldn't remove its run logs") == true }
+        } throws: { Self.message($0)?.hasPrefix("Home was deleted, but Restorey couldn’t remove its run logs") == true }
         #expect(await state.status().plans.isEmpty)
         #expect(try secrets.read(.repositoryPassword(plan.id)) == nil)
     }
@@ -775,7 +775,7 @@ struct AgentStateTests {
         _ = try await delete.value
         await #expect {
             try await state.beginRun(planID: plan.id)
-        } throws: { Self.message($0) == "There's no plan with that ID" }
+        } throws: { Self.message($0) == "There’s no plan with that ID" }
         #expect(await state.status().plans.isEmpty)
     }
 
@@ -807,7 +807,7 @@ struct AgentStateTests {
 
         await #expect {
             try await state.pause(UUID())
-        } throws: { Self.message($0) == "There's no plan with that ID" }
+        } throws: { Self.message($0) == "There’s no plan with that ID" }
     }
 
     @Test func statusReportsNextRunOnlyOnceTheRecoveryKitIsConfirmed() async throws {
@@ -923,9 +923,9 @@ struct AgentStateTests {
         #expect(status.configError != nil)
         #expect(status.configError?.contains("newer") == true)
         #expect(status.plans.isEmpty)
-        #expect(status.network == nil, "config.json couldn't be read")
+        #expect(status.network == nil, "config.json couldn’t be read")
 
-        let refused = "Restorey can't change its settings until the problem with them is fixed"
+        let refused = "Restorey can’t change its settings until the problem with them is fixed"
         await #expect { try await state.savePlan(Self.request(plan)) } throws: { Self.message($0) == refused }
         await #expect { try await state.deletePlan(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.pause(plan.id) } throws: { Self.message($0) == refused }
@@ -971,7 +971,7 @@ struct AgentStateTests {
         }
         #expect(reason.contains("state.json"))
         #expect(status.plans.first?.nextRunAt == nil)
-        let refused = "Restorey can't change its settings until the problem with them is fixed"
+        let refused = "Restorey can’t change its settings until the problem with them is fixed"
         await #expect { try await state.pause(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.savePlan(Self.request(plan)) } throws: { Self.message($0) == refused }
         await #expect { try await state.deletePlan(plan.id) } throws: { Self.message($0) == refused }
@@ -1101,7 +1101,7 @@ struct AgentStateTests {
         await #expect(throws: AgentError.runnerUnavailable) { _ = try await state.adopt(plan.id) }
         await #expect(throws: AgentError.runnerUnavailable) { _ = try await state.probeRepository(plan.id) }
         await #expect(throws: AgentError.runnerUnavailable) { try await state.probeFullDiskAccess() }
-        #expect(AgentError.runnerUnavailable.message == "Restorey's agent is still starting up. Try again in a moment")
+        #expect(AgentError.runnerUnavailable.message == "Restorey is still starting up. Try again in a moment")
     }
 
     // MARK: Drain (Review Focus 3)
@@ -1137,7 +1137,7 @@ struct AgentStateTests {
         }
         try await Self.waitUntilDraining(state)
 
-        let refused = "Restorey is finishing the current backup before updating the agent"
+        let refused = "Restorey is finishing the current backup before updating"
         await #expect { try await state.backUpNow(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.backUpNow(nil) } throws: { Self.message($0) == refused }
         await #expect { try await state.createRepository(plan.id) } throws: { Self.message($0) == refused }
@@ -1313,7 +1313,7 @@ extension AgentStateTests {
         while exits.value == 0 { try await Task.sleep(for: .milliseconds(10)) }
         try await Task.sleep(for: .milliseconds(200))
         #expect(exits.value == 1)
-        #expect(AgentError.restarting.message == "Restorey's agent is restarting to finish an update. Try again in a moment")
+        #expect(AgentError.restarting.message == "Restorey is restarting to finish an update. Try again in a moment")
     }
 
     @Test func reregistrationIsRefusedDuringTheAppsRestartDrain() async throws {

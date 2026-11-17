@@ -26,7 +26,7 @@ public enum SkipReason: Codable, Sendable, Equatable {
         case .batteryBelow(let percent): "Skipped: battery below \(percent)%"
         case .constrainedNetwork: "Skipped on a low data network"
         case .noNetwork: "Skipped: no network"
-        case .volumeNotMounted(let volume): "Skipped: \(volume) isn't connected"
+        case .volumeNotMounted(let volume): "Skipped: \(volume) isn’t connected"
         case .agentUpdating: "Skipped: Restorey was updating"
         case .skippedWiFi(let name): "Skipped on Wi-Fi “\(name)”"
         }
@@ -341,7 +341,7 @@ public func classify(
         case .backup: return .warning(unreadable: unreadableFileCount(errors))
         case .forget, .forgetSnapshots:
             return .failed(exitCode: 3, reason: exitErrorMessage.map(errorSentence) ?? errors.first?.message
-                ?? "restic couldn't remove every snapshot it was asked to forget")
+                ?? "restic couldn’t remove every snapshot it was asked to forget")
         default: break
         }
     case 10: return .repositoryMissing

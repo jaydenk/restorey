@@ -166,7 +166,7 @@ struct ConfigMigrationTests {
         }
         let state = await AgentState(directory: dir.url, secrets: InMemorySecretStore(), now: { Self.now })
         let error = try #require(await state.status().configError)
-        #expect(error.hasPrefix("config.json couldn't be upgraded from schema 1"), "\(error)")
+        #expect(error.hasPrefix("config.json couldn’t be upgraded from schema 1"), "\(error)")
         #expect(try Data(contentsOf: dir.config) == bad)
     }
 }

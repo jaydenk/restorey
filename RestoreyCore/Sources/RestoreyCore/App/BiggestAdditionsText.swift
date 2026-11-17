@@ -76,7 +76,7 @@ public enum BiggestAdditionsText {
     /// The sheet's line under its lists about the folder listings (Task 16f); nil when the record has none to tell.
     public static func listingsNote(_ additions: BiggestAdditions, locale: Locale) -> String? {
         guard let listings = additions.listingsBytesAdded, listings > 0 else { return nil }
-        return "Folder listings: \(DisplayFormat.size(listings, locale: locale)) — restic records each changed folder's list "
+        return "Folder listings: \(DisplayFormat.size(listings, locale: locale)) — restic records each changed folder’s list "
             + "of files; a change anywhere in a folder rewrites its list and the lists of the folders above it."
     }
 

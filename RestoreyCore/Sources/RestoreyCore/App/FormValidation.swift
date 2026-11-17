@@ -30,11 +30,11 @@ public enum FormValidation {
             return "Bucket names are 3 to 63 characters of lower case letters, numbers, hyphens and dots."
         }
         if "-.".contains(bucket.first!) || "-.".contains(bucket.last!) {
-            return "Bucket names can't start or end with a hyphen or a dot."
+            return "Bucket names can’t start or end with a hyphen or a dot."
         }
-        if bucket.contains("..") { return "Bucket names can't have two dots in a row." }
+        if bucket.contains("..") { return "Bucket names can’t have two dots in a row." }
         if bucket.wholeMatch(of: /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/) != nil {
-            return "Bucket names can't look like an IP address."
+            return "Bucket names can’t look like an IP address."
         }
         return nil
     }
@@ -67,7 +67,7 @@ public enum FormValidation {
         }
         guard let components = URLComponents(string: withScheme(typed)), let host = components.host, !host.isEmpty,
             !host.contains(where: \.isWhitespace)
-        else { return "That endpoint isn't a web address." }
+        else { return "That endpoint isn’t a web address." }
         if components.user != nil || components.password != nil {
             return "Leave the user name and password out of the endpoint: the access keys have their own fields."
         }
@@ -112,7 +112,7 @@ public enum FormValidation {
     /// The name restic records on every snapshot. Anything on one line will do.
     public static func hostLabel(_ text: String) -> String? {
         let label = trimmed(text)
-        if label.isEmpty { return "The host label can't be empty." }
+        if label.isEmpty { return "The host label can’t be empty." }
         if label.contains(where: \.isNewline) { return "The host label must be on one line." }
         return nil
     }
@@ -123,7 +123,7 @@ public enum FormValidation {
     /// An empty field has no sentence of its own here: setup keeps its button disabled instead.
     public static func newRepositoryPassword(_ password: String) -> String? {
         guard let first = password.first, let last = password.last else { return nil }
-        if first.isWhitespace || last.isWhitespace { return "A password can't start or end with a space." }
+        if first.isWhitespace || last.isWhitespace { return "A password can’t start or end with a space." }
         return nil
     }
 
@@ -172,8 +172,8 @@ public enum FormValidation {
     /// What is shown for entries `addingFileTypes` rejected. The wording the agent uses when it refuses a plan
     /// with such an entry (`AgentError`), from this one place.
     public static func fileTypeProblem(rejected: [String]) -> String {
-        let quoted = rejected.map { "\"\($0)\"" }.joined(separator: ", ")
-        let subject = rejected.count == 1 ? "\(quoted) isn't a file type" : "\(quoted) aren't file types"
+        let quoted = rejected.map { "“\($0)”" }.joined(separator: ", ")
+        let subject = rejected.count == 1 ? "\(quoted) isn’t a file type" : "\(quoted) aren’t file types"
         return "\(subject) to exclude: give the extension alone, such as dmg or tar.gz, with no leading dot, slash, wildcard or space"
     }
 

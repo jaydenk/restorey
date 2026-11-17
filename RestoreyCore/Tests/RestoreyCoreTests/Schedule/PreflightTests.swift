@@ -171,7 +171,7 @@ struct PreflightTests {
     @Test func mountedVolumeWithMissingFolderFails() {
         let p = plan(sources: ["/Volumes/Media/Photos"])
         let e = env(mounted: ["/Volumes/Media"], existing: ["/Volumes/Media"])
-        #expect(preflight(plan: p, env: e) == .fail("/Volumes/Media/Photos doesn't exist"))
+        #expect(preflight(plan: p, env: e) == .fail("/Volumes/Media/Photos doesn’t exist"))
     }
 
     @Test func staleDirectoryOnUnmountedVolumeSkips() {
@@ -202,12 +202,12 @@ struct PreflightTests {
 
     @Test func missingNonVolumePathFails() {
         let p = plan(sources: ["/Users/me", "/Users/me/Gone"])
-        #expect(preflight(plan: p, env: env()) == .fail("/Users/me/Gone doesn't exist"))
+        #expect(preflight(plan: p, env: env()) == .fail("/Users/me/Gone doesn’t exist"))
     }
 
     @Test func firstMissingPathIsReported() {
         let p = plan(sources: ["/a", "/b"])
-        #expect(preflight(plan: p, env: env(existing: [])) == .fail("/a doesn't exist"))
+        #expect(preflight(plan: p, env: env(existing: [])) == .fail("/a doesn’t exist"))
     }
 
     @Test func unmountedVolumeBeatsAnEarlierMissingPath() {

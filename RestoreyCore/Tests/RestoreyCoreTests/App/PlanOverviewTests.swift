@@ -176,7 +176,7 @@ struct PlanOverviewTests {
         let plan = Self.status(backup: .warning(unreadable: 2))
         let overview = Self.overview(plan)
         #expect(overview.headline == "Needs attention")
-        #expect(overview.reason == "2 files couldn't be read")
+        #expect(overview.reason == "2 files couldn’t be read")
         #expect(overview.severity == .warning)
         #expect(overview.lastBackup == .init(value: "Today at 14:16", detail: nil))
     }
@@ -185,7 +185,7 @@ struct PlanOverviewTests {
         let plan = Self.status(phase: .skipped(.volumeNotMounted("Photos")))
         let overview = Self.overview(plan)
         #expect(overview.headline == "Needs attention")
-        #expect(overview.reason == "Skipped: Photos isn't connected")
+        #expect(overview.reason == "Skipped: Photos isn’t connected")
     }
 
     @Test func noRecentSuccessKeepsTheMenusWords() {
@@ -220,7 +220,7 @@ struct PlanOverviewTests {
     @Test func aColouredHeadlineAlwaysSaysWhy() {
         let progress = BackupStatus(percentDone: 0.5, totalBytes: 100, bytesDone: 50)
         let phases: [PlanPhase] = [
-            .idle, .running(nil, retrying: nil), .running(progress, retrying: "Can't reach it"),
+            .idle, .running(nil, retrying: nil), .running(progress, retrying: "Can’t reach it"),
             .paused(until: Self.at(16, 0)), .stopped(reason: "The repository password is wrong"),
             .skipped(.onBattery), .skipped(.agentUpdating), .skipped(.volumeNotMounted("Photos")),
         ]
@@ -236,7 +236,7 @@ struct PlanOverviewTests {
         let healths: [AgentHealthState] = [.healthy, .notRunning(reachable: true), .switchedOff]
         let selfExplaining: Set<String> = [
             "Backup failed", "Stopped", "Waiting for a new recovery kit", "No successful backup in 3 days",
-            "The background agent isn't running", "The background agent is switched off",
+            "Backups aren’t running", "Backups are switched off",
         ]
         var checked = 0
         for phase in phases {
@@ -267,7 +267,7 @@ struct PlanOverviewTests {
 
     @Test func anAgentThatIsntRunningDisablesEverything() {
         let overview = Self.overview(Self.status(), health: .notRunning(reachable: true))
-        #expect(overview.headline == "The background agent isn't running")
+        #expect(overview.headline == "Backups aren’t running")
         #expect(overview.reason == "No backups will happen.")
         #expect(Self.enabled(overview) == [.backUpNow: false, .restoreFiles: false])
     }
@@ -305,9 +305,9 @@ struct PlanOverviewTests {
         var plan = Self.status()
         #expect(Self.overview(plan).earlierRemovalNote == nil)
         let quiet = Self.overview(plan)
-        plan.earlierRemovalProblem = "Restorey couldn't count the earlier snapshots: Fatal: the preview broke."
+        plan.earlierRemovalProblem = "Restorey couldn’t count the earlier snapshots: Fatal: the preview broke."
         let shown = Self.overview(plan)
-        #expect(shown.earlierRemovalNote == "Couldn't remove the earlier snapshots you chose: Restorey couldn't count the earlier snapshots: Fatal: the preview broke. Restorey will try again after the next backup.")
+        #expect(shown.earlierRemovalNote == "Couldn’t remove the earlier snapshots you chose: Restorey couldn’t count the earlier snapshots: Fatal: the preview broke. Restorey will try again after the next backup.")
         // Information only: the headline, its colour and the reason are as without it.
         #expect(shown.headline == quiet.headline)
         #expect(shown.severity == quiet.severity)
@@ -330,7 +330,7 @@ struct PlanOverviewTests {
         let overview = Self.overview(withItems)
         #expect(overview.unreadable == UnreadableSummary(count: 2, items: items))
         // The line itself is the menu's, unchanged.
-        #expect(overview.reason?.contains("2 files couldn't be read") == true)
+        #expect(overview.reason?.contains("2 files couldn’t be read") == true)
         #expect(overview.severity == .warning)
         // Nothing kept (an older record): the line stays text.
         #expect(Self.overview(Self.status(plan, backup: .warning(unreadable: 2))).unreadable == nil)

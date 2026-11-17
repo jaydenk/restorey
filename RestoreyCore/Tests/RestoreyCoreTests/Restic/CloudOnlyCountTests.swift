@@ -236,11 +236,11 @@ struct CloudOnlyCountTests {
         #expect(CloudOnlyText.accessibilityLabel(count(4832)) == "About skipped iCloud Drive files")
         #expect(CloudOnlyText.accessibilityLabel(count(2, true)) == "About skipped cloud files")
         #expect(CloudOnlyText.detail(count(4832), locale: Self.en)
-            == "4,832 files in iCloud Drive aren't on this Mac, so this backup skipped them. To include them, \(howTo)")
+            == "4,832 files in iCloud Drive aren’t on this Mac, so this backup skipped them. To include them, \(howTo)")
         #expect(CloudOnlyText.detail(count(4832, true), locale: Self.en)
-            == "4,832 files in iCloud Drive or other cloud storage aren't on this Mac, so this backup skipped them. To include them, \(howTo)")
+            == "4,832 files in iCloud Drive or other cloud storage aren’t on this Mac, so this backup skipped them. To include them, \(howTo)")
         #expect(CloudOnlyText.detail(count(1), locale: Self.en)
-            == "1 file in iCloud Drive isn't on this Mac, so this backup skipped it. To include it, download it in Finder (Download Now) or turn off Optimise Mac Storage.")
+            == "1 file in iCloud Drive isn’t on this Mac, so this backup skipped it. To include it, download it in Finder (Download Now) or turn off Optimise Mac Storage.")
         for none in [nil, count(0)] {
             #expect(CloudOnlyText.line(none) == nil)
             #expect(CloudOnlyText.accessibilityLabel(none) == nil)
@@ -274,7 +274,7 @@ struct CloudOnlyCountTests {
         }
         let shown = note(CloudOnlyCount(skipped: 4834, includesOtherProviders: false))
         #expect(shown?.line == "iCloud Drive files skipped")
-        #expect(shown?.detail.hasPrefix("4,834 files in iCloud Drive aren't on this Mac, so this backup skipped them.") == true)
+        #expect(shown?.detail.hasPrefix("4,834 files in iCloud Drive aren’t on this Mac, so this backup skipped them.") == true)
         #expect(shown?.accessibilityLabel == "About skipped iCloud Drive files")
         #expect(note(CloudOnlyCount(skipped: 0, includesOtherProviders: false)) == nil)
         #expect(note(nil) == nil)

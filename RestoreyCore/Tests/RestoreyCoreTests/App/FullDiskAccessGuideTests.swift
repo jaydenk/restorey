@@ -14,7 +14,7 @@ struct FullDiskAccessGuideTests {
         #expect(FullDiskAccessGuide.grantedTitle == "Full Disk Access is on")
         #expect(FullDiskAccessGuide.dragCaption == "Drag this into the list, then switch it on.")
         #expect(FullDiskAccessGuide.why
-            == "Without it, Restorey can't back up Mail, Messages, Safari and other protected folders.")
+            == "Without it, Restorey can’t back up Mail, Messages, Safari and other protected folders.")
     }
 
     @Test func theDragItemIsTheAppBundle() {

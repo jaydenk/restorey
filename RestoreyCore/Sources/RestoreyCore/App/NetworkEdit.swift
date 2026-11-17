@@ -42,10 +42,10 @@ public struct NetworkEdit: Sendable, Equatable {
     /// and ignoring case (`NetworkSettings.isSkipped`).
     public func newNameProblem(_ typed: String) -> String? {
         let name = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-        if name.isEmpty { return "Enter the Wi-Fi network's name." }
-        if name.contains(where: \.isNewline) { return "A Wi-Fi network's name is on one line." }
+        if name.isEmpty { return "Enter the Wi-Fi network’s name." }
+        if name.contains(where: \.isNewline) { return "A Wi-Fi network’s name is on one line." }
         if name.utf8.count > Self.maximumNameBytes {
-            return "A Wi-Fi network's name is at most \(Self.maximumNameBytes) bytes long."
+            return "A Wi-Fi network’s name is at most \(Self.maximumNameBytes) bytes long."
         }
         let listed = NetworkSettings(uploadLimitKiB: nil, skipOnConstrainedNetwork: false, skippedWiFiNames: fields.wiFiNames)
         if listed.isSkipped(wiFiName: name) { return "“\(name)” is already in the list." }
@@ -193,18 +193,18 @@ public enum WiFiNameAccess: Sendable, Equatable {
 
     /// The sentence under the list, given how many networks it holds; nil when there is nothing to say.
     public func note(listed: Int) -> String? {
-        let unused = listed > 0 ? " Until then, backups aren't skipped on these networks." : ""
+        let unused = listed > 0 ? " Until then, backups aren’t skipped on these networks." : ""
         switch self {
         case .allowed, .checking: return nil
         case .notAsked:
-            return "Adding a network asks for Location permission: macOS shows the Wi-Fi network's name only to apps "
+            return "Adding a network asks for Location permission: macOS shows the Wi-Fi network’s name only to apps "
                 + "allowed to use Location."
         case .refused: return "Restorey needs Location permission to see Wi-Fi names." + unused
         case .restricted:
-            return "Location is restricted on this Mac, by a configuration profile or Screen Time, so Restorey can't "
+            return "Location is restricted on this Mac, by a configuration profile or Screen Time, so Restorey can’t "
                 + "see Wi-Fi names. Whoever manages this Mac can lift it." + unused
         case .servicesOff:
-            return "Location Services is off for this Mac, so Restorey can't see Wi-Fi names. Turn it on in System "
+            return "Location Services is off for this Mac, so Restorey can’t see Wi-Fi names. Turn it on in System "
                 + "Settings → Privacy & Security → Location Services." + unused
         }
     }
@@ -214,5 +214,5 @@ public enum WiFiNameAccess: Sendable, Equatable {
 
     /// After asking, when macOS still has no answer (the question wasn't answered in time, or wasn't shown).
     public static let unanswered =
-        "There was no answer about Location permission, so the network wasn't added. Add it again to be asked again."
+        "There was no answer about Location permission, so the network wasn’t added. Add it again to be asked again."
 }

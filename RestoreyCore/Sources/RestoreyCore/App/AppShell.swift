@@ -65,7 +65,7 @@ public enum AppWindowKind: String, CaseIterable, Sendable, Hashable {
 }
 
 /// The note the General section shows while the status item is hidden (UI design §8).
-public let statusItemHiddenNote = "Restorey's menu bar icon is hidden. Show it in System Settings → Menu Bar."
+public let statusItemHiddenNote = "Restorey’s menu bar icon is hidden. Show it in System Settings → Menu Bar."
 
 /// What this copy of the app is doing, as far as the shell is concerned.
 public enum ShellMode: Sendable, Equatable {

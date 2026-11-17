@@ -129,7 +129,7 @@ struct MenuPresentationTests {
             plan, phase: .skipped(.volumeNotMounted("Photos")), backedUpAt: Self.at(13, 16), next: nil)
         let content = Self.make(Self.status([skipped]))
         #expect(content.plans[0].status == "Backed up at 13:16")
-        #expect(content.plans[0].detail == "Skipped: Photos isn't connected")
+        #expect(content.plans[0].detail == "Skipped: Photos isn’t connected")
         #expect(content.plans[0].severity == .warning)
         #expect(content.icon == .warning)
     }
@@ -148,7 +148,7 @@ struct MenuPresentationTests {
         let interrupted = Self.record(plan, outcome, at: Self.at(10, 5))
         let status = Self.line(plan, backedUpAt: nil, last: interrupted, next: Self.at(10, 25))
         let content = Self.make(Self.status([status]))
-        let sentence = "The first backup was interrupted. It carries on at 10:25, keeping what's already uploaded."
+        let sentence = "The first backup was interrupted. It carries on at 10:25, keeping what’s already uploaded."
         #expect(content.plans[0].status == "No backup yet")
         #expect(content.plans[0].detail == sentence)
         #expect(content.plans[0].severity == nil)
@@ -327,7 +327,7 @@ struct MenuPresentationTests {
         let content = Self.make(Self.status([Self.line(Self.plan())]), notifications: false)
         #expect(content.icon == .warning)
         #expect(content.banners.count == 1)
-        #expect(content.banners[0].title == "Notifications are off — Restorey can't alert you")
+        #expect(content.banners[0].title == "Notifications are off — Restorey can’t alert you")
         #expect(content.banners[0].severity == .warning)
         #expect(content.banners[0].action == .turnOnNotifications)
         #expect(content.banners[0].dismiss == nil)
@@ -337,9 +337,9 @@ struct MenuPresentationTests {
         let plan = Self.plan()
         let content = Self.make(
             Self.status([Self.line(plan, alerts: [.notificationsOff])]), notifications: false)
-        #expect(content.banners.map(\.title) == ["Notifications are off — Restorey can't alert you"])
+        #expect(content.banners.map(\.title) == ["Notifications are off — Restorey can’t alert you"])
         let fromAlert = Self.make(Self.status([Self.line(plan, alerts: [.notificationsOff])]), notifications: nil)
-        #expect(fromAlert.banners.map(\.title) == ["Notifications are off — Restorey can't alert you"])
+        #expect(fromAlert.banners.map(\.title) == ["Notifications are off — Restorey can’t alert you"])
     }
 
     @Test func noOffMacMonitoringCanBeAddedOrDismissed() {
@@ -365,11 +365,11 @@ struct MenuPresentationTests {
         let plan = Self.plan()
         let content = Self.make(Self.status([Self.line(plan, outcome: .warning(unreadable: 3))]))
         #expect(content.plans[0].status == "Backed up at 14:16")
-        #expect(content.plans[0].detail == "3 files couldn't be read")
+        #expect(content.plans[0].detail == "3 files couldn’t be read")
         #expect(content.plans[0].severity == .warning)
         #expect(content.icon == .warning)
         let one = Self.make(Self.status([Self.line(plan, outcome: .warning(unreadable: 1))]))
-        #expect(one.plans[0].detail == "1 file couldn't be read")
+        #expect(one.plans[0].detail == "1 file couldn’t be read")
     }
 
     @Test func checkInRejected() {
@@ -427,7 +427,7 @@ struct MenuPresentationTests {
     @Test func aFailedBackupIsTheNewestBackupRecordNotTheNewestRecord() {
         let plan = Self.plan()
         let backup = Self.record(plan, .wrongPassword, at: Self.at(13, 0))
-        let probe = Self.record(plan, .failed(exitCode: 1, reason: "a probe's reason"), at: Self.at(14, 16), operation: .catConfig)
+        let probe = Self.record(plan, .failed(exitCode: 1, reason: "a probe’s reason"), at: Self.at(14, 16), operation: .catConfig)
         let status = PlanStatus(
             plan: plan, phase: .idle, lastRecord: probe, nextRunAt: nil, alerts: [.backupFailed], latestBackupRecord: backup)
         let content = Self.make(Self.status([status]))
@@ -464,7 +464,7 @@ struct MenuPresentationTests {
             let content = Self.make(old, health: .notRunning(reachable: reachable))
             #expect(content.icon == .error, "\(reachable)")
             #expect(content.banners.count == 1, "\(reachable)")
-            #expect(content.banners[0].title == "The background agent isn't running")
+            #expect(content.banners[0].title == "Backups aren’t running")
             #expect(content.banners[0].detail == "No backups will happen.")
             #expect(content.banners[0].severity == .error)
             #expect(content.banners[0].action == .restartAgent)
@@ -477,7 +477,7 @@ struct MenuPresentationTests {
     @Test func theAgentIsSwitchedOff() {
         let content = Self.make(Self.status([Self.line(Self.plan())]), health: .switchedOff)
         #expect(content.icon == .error)
-        #expect(content.banners.map(\.title) == ["The background agent is switched off"])
+        #expect(content.banners.map(\.title) == ["Backups are switched off"])
         #expect(content.banners[0].action == .openLoginItems)
         #expect(content.plans.isEmpty)
         #expect(!content.actions.backUpNow)
@@ -529,7 +529,7 @@ struct MenuPresentationTests {
         #expect(content.icon == .backingUp)
         #expect(content.plans.count == 1)
         #expect(content.plans[0].name == "MacBook")
-        #expect(content.plans[0].status == "Finishing the current backup before updating the agent")
+        #expect(content.plans[0].status == "Finishing the current backup before updating")
         #expect(content.plans[0].detail == "~2 min left")
         #expect(content.actions == MenuActions(backUpNow: false, pause: false, resume: false, perPlanSubmenus: false))
     }
@@ -539,7 +539,7 @@ struct MenuPresentationTests {
         let counting = BackupStatus(percentDone: 1, totalFiles: 9, filesDone: 9, totalBytes: 9, bytesDone: 9, secondsRemaining: 60)
         let running = Self.status([Self.line(Self.plan(), phase: .running(counting, retrying: nil))])
         let content = Self.make(running, health: .updating)
-        #expect(content.plans[0].status == "Finishing the current backup before updating the agent")
+        #expect(content.plans[0].status == "Finishing the current backup before updating")
         #expect(content.plans[0].detail == nil)
         #expect(content.plans[0].progress == nil)
     }
@@ -547,10 +547,10 @@ struct MenuPresentationTests {
     @Test func updatingWithNothingRunningSaysSo() {
         let content = Self.make(Self.status([Self.line(Self.plan())]), health: .updating)
         #expect(content.plans.isEmpty)
-        #expect(content.message == "Updating the background agent…")
+        #expect(content.message == "Updating Restorey’s background process…")
         #expect(content.icon == .ok)
         let waiting = Self.make(Self.status([Self.line(Self.plan())]), health: .waitingForUpdate)
-        #expect(waiting.message == "Updating the background agent…")
+        #expect(waiting.message == "Updating Restorey’s background process…")
     }
 
     @Test func anAgentThatStopsAnsweringKeepsItsLastStateAsAWarningForThirtyMinutes() {
@@ -559,7 +559,7 @@ struct MenuPresentationTests {
             [Self.line(plan, phase: .running(nil, retrying: nil))], generatedAt: Self.at(14, 0))
         let content = Self.make(running, health: .notRunning(reachable: false))
         #expect(content.icon == .warning)
-        #expect(content.plans.map(\.status) == ["Backing up (agent not answering)"])
+        #expect(content.plans.map(\.status) == ["Backing up (not responding)"])
         #expect(content.banners.allSatisfy { $0.severity == .warning })
         #expect(content.banners.first?.action == .restartAgent)
         #expect(content.actions == MenuActions(backUpNow: false, pause: false, resume: false, perPlanSubmenus: false))
@@ -568,7 +568,7 @@ struct MenuPresentationTests {
         #expect(edge.icon == .warning)
         let late = Self.make(running, health: .notRunning(reachable: false), now: Self.at(14, 31))
         #expect(late.icon == .error)
-        #expect(late.banners.map(\.title) == ["The background agent isn't running"])
+        #expect(late.banners.map(\.title) == ["Backups aren’t running"])
         #expect(late.plans.isEmpty)
     }
 
@@ -579,7 +579,7 @@ struct MenuPresentationTests {
         for status in [idle, paused] {
             let content = Self.make(status, health: .notRunning(reachable: false))
             #expect(content.icon == .error)
-            #expect(content.banners.map(\.title) == ["The background agent isn't running"])
+            #expect(content.banners.map(\.title) == ["Backups aren’t running"])
             #expect(content.plans.isEmpty)
         }
     }
@@ -589,7 +589,7 @@ struct MenuPresentationTests {
             [Self.line(Self.plan(), phase: .running(nil, retrying: nil))], generatedAt: Self.at(14, 25))
         let content = Self.make(running, health: .notRunning(reachable: false))
         #expect(content.icon == .error)
-        #expect(content.banners.map(\.title) == ["The background agent isn't running"])
+        #expect(content.banners.map(\.title) == ["Backups aren’t running"])
     }
 
     @Test func noRecentSuccessKeepsTheSkipReasonAsDetail() {
@@ -599,7 +599,7 @@ struct MenuPresentationTests {
             alerts: [.noRecentSuccess])
         let content = Self.make(Self.status([skipped]))
         #expect(content.plans[0].status == "No successful backup in 3 days")
-        #expect(content.plans[0].detail == "Skipped: Photos isn't connected")
+        #expect(content.plans[0].detail == "Skipped: Photos isn’t connected")
         #expect(content.plans[0].severity == .error)
     }
 
@@ -615,13 +615,13 @@ struct MenuPresentationTests {
     @Test func checkingAndUnreadableStatus() {
         let checking = Self.make(nil, health: .checking)
         #expect(checking.icon == .ok)
-        #expect(checking.message == "Connecting to the background agent…")
+        #expect(checking.message == "Connecting to Restorey’s background process…")
         #expect(checking.plans.isEmpty)
         let healthyWithoutStatus = Self.make(nil)
         #expect(healthyWithoutStatus.plans.isEmpty)
         #expect(healthyWithoutStatus.icon == .ok)
         // Healthy again, with the fresh status still on its way.
-        #expect(healthyWithoutStatus.message == "Connecting to the background agent…")
+        #expect(healthyWithoutStatus.message == "Connecting to Restorey’s background process…")
     }
 
     /// Fix round 1, F3: with no plan, the menu is the way back into a setup window that was closed, with the
@@ -640,10 +640,10 @@ struct MenuPresentationTests {
     @Test func aDamagedInstallationAndARegistrationFailure() {
         let damaged = Self.make(nil, health: .damaged)
         #expect(damaged.icon == .error)
-        #expect(damaged.message == "Restorey's installation is damaged — reinstall it from the download")
-        let failed = Self.make(nil, health: .failed("Couldn't register the agent."))
+        #expect(damaged.message == "Restorey’s installation is damaged — reinstall it from the download")
+        let failed = Self.make(nil, health: .failed("Couldn’t register the agent."))
         #expect(failed.icon == .error)
-        #expect(failed.message == "Couldn't register the agent.")
+        #expect(failed.message == "Couldn’t register the agent.")
     }
 
     @Test func aConfigurationErrorStopsEverything() {
@@ -651,7 +651,7 @@ struct MenuPresentationTests {
         status.configError = "config.json is from a newer version"
         let content = Self.make(status)
         #expect(content.icon == .error)
-        #expect(content.message == "Restorey can't read its settings: config.json is from a newer version")
+        #expect(content.message == "Restorey can’t read its settings: config.json is from a newer version")
     }
 
     /// Carried from the old `statusIconState` tests: a plan the agent stopped (a configuration problem) is an

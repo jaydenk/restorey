@@ -391,7 +391,7 @@ final class RunnerFixture: Sendable {
             if predicate(await status().phase) { return }
             try await Task.sleep(for: .milliseconds(20))
         }
-        Issue.record("timed out waiting for the plan's phase; it is \(await status().phase)")
+        Issue.record("timed out waiting for the plan’s phase; it is \(await status().phase)")
     }
 
     /// Writes an executable shell script in the fixture's root.

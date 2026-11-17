@@ -14,7 +14,8 @@ public enum GeneralAction: Sendable, Equatable {
     public var buttonTitle: String {
         switch self {
         case .openFullDiskAccess: BannerAction.openFullDiskAccess.buttonTitle
-        case .askForNotifications, .openNotificationSettings: BannerAction.turnOnNotifications.buttonTitle
+        case .askForNotifications: "Allow…"
+        case .openNotificationSettings: BannerAction.turnOnNotifications.buttonTitle
         case .restartAgent: BannerAction.restartAgent.buttonTitle
         case .openLoginItems: BannerAction.openLoginItems.buttonTitle
         }
@@ -54,7 +55,7 @@ public enum SettingsGeneral {
         guard let hello else { return Line("Checking…") }
         switch hello.notificationsAuthorised {
         case true?: return Line("Allowed")
-        case false?: return Line("Off — Restorey can't alert you", severity: .warning, action: .openNotificationSettings)
+        case false?: return Line("Off — Restorey can’t alert you", severity: .warning, action: .openNotificationSettings)
         case nil: return Line("Not asked yet", severity: .warning, action: .askForNotifications)
         }
     }
@@ -71,7 +72,7 @@ public enum SettingsGeneral {
         case .notRunning:
             return Line("Not running — no backups will happen", severity: .error, action: .restartAgent)
         case .damaged:
-            return Line("Restorey's installation is damaged — reinstall it from the download", severity: .error)
+            return Line("Restorey’s installation is damaged — reinstall it from the download", severity: .error)
         case .failed(let sentence):
             return Line(sentence, severity: .error)
         }

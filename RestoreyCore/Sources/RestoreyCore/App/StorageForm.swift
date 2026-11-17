@@ -126,9 +126,9 @@ public struct StorageForm: Sendable, Equatable {
     /// not listed twice.
     public func environmentProblem(_ row: EnvironmentRow) -> String? {
         let name = row.name.trimmingCharacters(in: .whitespaces)
-        if name.isEmpty { return "Enter the variable's name, such as RESTIC_REST_PASSWORD." }
+        if name.isEmpty { return "Enter the variable’s name, such as RESTIC_REST_PASSWORD." }
         if name.wholeMatch(of: /[A-Za-z_][A-Za-z0-9_]*/) == nil {
-            return "A variable name is letters, numbers and underscores, and doesn't start with a number."
+            return "A variable name is letters, numbers and underscores, and doesn’t start with a number."
         }
         if Self.reservedEnvironmentNames.contains(name) {
             return "Restorey sets \(name) itself: leave it out."

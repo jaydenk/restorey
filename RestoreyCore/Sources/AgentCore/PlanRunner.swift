@@ -145,7 +145,7 @@ public struct RunnerDependencies: Sendable {
 /// Runs asked for while `recoverAfterStart()` is in progress wait for it to finish.
 public actor PlanRunner {
     static let fullDiskAccessMissing = "Full Disk Access is missing"
-    static let keychainUnreadable = "Couldn't read the backup keys from the Keychain"
+    static let keychainUnreadable = "Couldn’t read the backup keys from the Keychain"
     /// The exit code of a run that restic never ran for (refused, or restic couldn't start).
     static let startFailureExitCode: Int32 = RunOutcome.notStartedExitCode
     static let day: TimeInterval = 86_400
@@ -609,7 +609,7 @@ public actor PlanRunner {
         case .gaveUp:
             deps.agentInfo(
                 "Gave up looking for items apps mark as not for backup for plan \(id) (too many, too slow, or Spotlight "
-                    + "couldn't answer), so this backup includes them")
+                    + "couldn’t answer), so this backup includes them")
             return (nil, nil)
         }
         let collapsed = MarkedNotForBackup.collapse(
@@ -657,7 +657,7 @@ public actor PlanRunner {
                 await write(plan.id) { $0.repositorySize = size }
                 return step.record.outcome
             } catch {
-                problem = "restic's stats reply couldn't be read"
+                problem = "restic’s stats reply couldn’t be read"
             }
         case let outcome:
             problem = Self.explain(outcome, stoppedReason: step.stoppedReason)
@@ -767,7 +767,7 @@ public actor PlanRunner {
             if finished.terminatedBySignal != nil { needsUnlock.insert(session.key) }
         } catch {
             outcome = .failed(
-                exitCode: Self.startFailureExitCode, reason: "Restorey couldn't start restic: \(error.localizedDescription)")
+                exitCode: Self.startFailureExitCode, reason: "Restorey couldn’t start restic: \(error.localizedDescription)")
         }
         handle?.detach()
         // restic has exited (or never started): it no longer takes a share of the limit.

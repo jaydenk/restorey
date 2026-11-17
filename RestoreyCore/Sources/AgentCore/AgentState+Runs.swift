@@ -53,7 +53,7 @@ extension AgentState {
         guard candidates.allSatisfy({ $0.key.planID == id }) else { throw AgentError.foreignSecret }
         let allowed = Self.credentialKeys(of: plan)
         guard candidates.allSatisfy({ allowed.contains($0.key) }) else {
-            throw AgentError.invalidRequest("only the plan's password, storage keys and environment values can be checked")
+            throw AgentError.invalidRequest("only the plan’s password, storage keys and environment values can be checked")
         }
         let values = Dictionary(candidates.map { ($0.key, $0.value) }, uniquingKeysWith: { _, last in last })
         return try await requireRunner().checkCredentials(planID: id, candidates: values)

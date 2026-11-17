@@ -164,7 +164,7 @@ public actor AgentState {
             // createDirectory leaves the mode of an existing folder alone.
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         } catch {
-            startupError = "Restorey can't create its settings folder \(directory.path): \(error.localizedDescription)"
+            startupError = "Restorey can’t create its settings folder \(directory.path): \(error.localizedDescription)"
         }
         await self.init(
             configStore: Self.configStore(in: directory), stateStore: Self.stateStore(in: directory),
@@ -228,13 +228,13 @@ public actor AgentState {
         case .newerSchema(let found, let supported)?:
             return "\(file) was written by a newer version of Restorey (schema \(found); this version reads up to \(supported)). Update Restorey. \(leftAlone)"
         case .corrupt(let underlying)?:
-            return "\(file) can't be read: \(underlying). \(leftAlone)"
+            return "\(file) can’t be read: \(underlying). \(leftAlone)"
         case .missingMigration(let from)?:
-            return "\(file) uses schema \(from), which this version of Restorey can't upgrade. \(leftAlone)"
+            return "\(file) uses schema \(from), which this version of Restorey can’t upgrade. \(leftAlone)"
         case .migrationFailed(let from, let underlying)?:
-            return "\(file) couldn't be upgraded from schema \(from): \(underlying). \(leftAlone)"
+            return "\(file) couldn’t be upgraded from schema \(from): \(underlying). \(leftAlone)"
         case nil:
-            return "\(file) can't be read: \(error.localizedDescription). \(leftAlone)"
+            return "\(file) can’t be read: \(error.localizedDescription). \(leftAlone)"
         }
     }
 
@@ -428,7 +428,7 @@ public actor AgentState {
                 } catch {
                     let detail = (error as? AgentError)?.message ?? "\(error)"
                     let what = clearStop ? "its stop" : "its check-in alert"
-                    throw AgentError.storage("\(plan.name) was saved, but Restorey couldn't clear \(what): \(detail)")
+                    throw AgentError.storage("\(plan.name) was saved, but Restorey couldn’t clear \(what): \(detail)")
                 }
             }
             return pushStatus()
@@ -479,7 +479,7 @@ public actor AgentState {
             let status = pushStatus()
             if !failures.isEmpty {
                 throw AgentError.storage(
-                    "\(plan.name) was deleted, but Restorey couldn't remove \(failures.joined(separator: " or "))")
+                    "\(plan.name) was deleted, but Restorey couldn’t remove \(failures.joined(separator: " or "))")
             }
             return status
         }
@@ -558,10 +558,10 @@ public actor AgentState {
                 do {
                     value = try secrets.read(key)
                 } catch {
-                    throw AgentError.storage("Restorey couldn't read \(key.account) from the Keychain: \(error)")
+                    throw AgentError.storage("Restorey couldn’t read \(key.account) from the Keychain: \(error)")
                 }
                 guard let value else {
-                    throw AgentError.storage("\(key.account) isn't in the Keychain, so the recovery kit would be incomplete")
+                    throw AgentError.storage("\(key.account) isn’t in the Keychain, so the recovery kit would be incomplete")
                 }
                 return SecretEntry(key: key, value: value)
             }
@@ -931,7 +931,7 @@ public actor AgentState {
         do {
             try await configStore.save(updated)
         } catch {
-            throw AgentError.storage("Restorey couldn't save config.json: \(error)")
+            throw AgentError.storage("Restorey couldn’t save config.json: \(error)")
         }
         config = updated
     }
@@ -952,7 +952,7 @@ public actor AgentState {
         do {
             try await stateStore.save(updated)
         } catch {
-            throw AgentError.storage("Restorey couldn't save state.json: \(error)")
+            throw AgentError.storage("Restorey couldn’t save state.json: \(error)")
         }
         runState = updated
     }

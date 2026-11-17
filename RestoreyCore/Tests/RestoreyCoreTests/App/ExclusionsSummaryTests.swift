@@ -22,14 +22,14 @@ import Testing
     @Test func theDefaultsGetTheMockupsLine() {
         #expect(ExclusionsSummary.line(plan: Self.plan(), home: Self.home, identity: Self.identity)
             == "Skipped by default: caches, Trash, node_modules, VM and disk images, iCloud files not on this Mac, "
-            + "items apps mark as not for backup (Time Machine's list, plus Backblaze's file types).")
+            + "items apps mark as not for backup (Time Machine’s list, plus Backblaze’s file types).")
     }
 
     /// Task 15c: the What tab has its own line for marked items, with a count, so its summary leaves them out.
     @Test func theMarkedItemsCanBeLeftToTheirOwnLine() {
         #expect(ExclusionsSummary.line(plan: Self.plan(), home: Self.home, identity: Self.identity, mentionsMarkedItems: false)
             == "Skipped by default: caches, Trash, node_modules, VM and disk images, iCloud files not on this Mac "
-            + "(Time Machine's list, plus Backblaze's file types).")
+            + "(Time Machine’s list, plus Backblaze’s file types).")
         var plan = Self.plan()
         plan.skipsItemsMarkedNotForBackup = false
         #expect(ExclusionsSummary.line(plan: plan, home: Self.home, identity: Self.identity)

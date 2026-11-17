@@ -192,7 +192,7 @@ struct PlanRunnerTests {
         let snapshots = try await f.snapshots()
         let ownTag = "restorey:\(plan.id.uuidString)"
         let own = snapshots.filter { $0.hostname == "fixturehost" && $0.tags == [ownTag] }
-        #expect(own.map(\.id) == [newest], "the plan's own group keeps only its newest snapshot")
+        #expect(own.map(\.id) == [newest], "the plan’s own group keeps only its newest snapshot")
         #expect(snapshots.filter { $0.hostname == "otherhost" }.count == 2)
         #expect(snapshots.filter { $0.hostname == "fixturehost" && $0.tags == nil }.count == 2)
         #expect(snapshots.filter { $0.tags == ["restorey:\(otherTag.id.uuidString)"] }.count == 2)
@@ -500,7 +500,7 @@ struct PlanRunnerTests {
         let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
         #expect(record.outcome == .credentialsUnavailable)
         let reason = try #require(await f.history().stoppedReason)
-        #expect(reason == "Couldn't read the backup keys from the Keychain. The environment value RESTIC_COMPRESSION isn't in the Keychain")
+        #expect(reason == "Couldn’t read the backup keys from the Keychain. The environment value RESTIC_COMPRESSION isn’t in the Keychain")
         let pings = await f.pings()
         #expect(pings.count == 1 && Self.isFail(pings[0], heading: "restic exit code 1"))
         #expect(try await f.snapshots().isEmpty)
@@ -513,13 +513,13 @@ struct PlanRunnerTests {
         defer { f.remove() }
         try f.write("a.txt", "one")
         try "".write(to: f.passwordFile, atomically: true, encoding: .utf8) // restic refuses an empty password
-        await f.state.noteHelperFailure(planID: f.planID, reason: "The repository password isn't in the Keychain")
+        await f.state.noteHelperFailure(planID: f.planID, reason: "The repository password isn’t in the Keychain")
 
         let record = try await f.runner.runBackup(planID: f.planID, trigger: .manual)
         #expect(record.outcome == .credentialsUnavailable)
         let history = await f.history()
         #expect(history.stoppedReason
-            == "Couldn't read the backup keys from the Keychain. The repository password isn't in the Keychain")
+            == "Couldn’t read the backup keys from the Keychain. The repository password isn’t in the Keychain")
         #expect(nextRunDate(plan: await f.plan(), history: history, now: f.clock.now) == .distantFuture)
         #expect(history.activeAlerts[.configurationError] != nil)
     }
@@ -542,17 +542,17 @@ struct PlanRunnerTests {
         defer { try? FileManager.default.removeItem(at: stub) }
         let f = try await RunnerFixture.make(executable: stub)
         defer { f.remove() }
-        await f.state.noteHelperFailure(planID: f.planID, reason: "The S3 secret access key isn't in the Keychain")
+        await f.state.noteHelperFailure(planID: f.planID, reason: "The S3 secret access key isn’t in the Keychain")
 
         let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
         #expect(record.outcome == .credentialsUnavailable)
         #expect(await f.history().stoppedReason
-            == "Couldn't read the backup keys from the Keychain. The S3 secret access key isn't in the Keychain")
+            == "Couldn’t read the backup keys from the Keychain. The S3 secret access key isn’t in the Keychain")
         let pings = await f.pings()
         #expect(pings.count == 1)
         if case .fail(let body)? = pings.last {
             #expect(body.hasPrefix("restic exit code 1\n"))
-            #expect(body.contains("The S3 secret access key isn't in the Keychain"))
+            #expect(body.contains("The S3 secret access key isn’t in the Keychain"))
         } else {
             Issue.record("expected a /fail ping, got \(pings)")
         }
@@ -696,7 +696,7 @@ struct PlanRunnerTests {
         #expect(try limits()[folder] == .some(nil), "a folder gets no Mac-wide limit")
         let runOne = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
         try await waitForBackups(2)
-        #expect(try limits()[f.planID] == "1000", "the folder backup doesn't count")
+        #expect(try limits()[f.planID] == "1000", "the folder backup doesn’t count")
         let runTwo = Task { try await f.runner.runBackup(planID: two, trigger: .scheduled) }
         try await waitForBackups(3)
         #expect(try limits()[two] == "300", "its own limit is smaller than half")
@@ -744,9 +744,9 @@ struct PlanRunnerTests {
         defer { f.remove() }
         try FileManager.default.removeItem(at: f.source)
         let failed = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
-        #expect(failed.outcome == .failed(exitCode: -1, reason: "\(f.source.path) doesn't exist"))
+        #expect(failed.outcome == .failed(exitCode: -1, reason: "\(f.source.path) doesn’t exist"))
         #expect(await f.history().activeAlerts[.backupFailed] != nil)
-        #expect(await f.pings() == [.fail(body: "not started\n\(f.source.path) doesn't exist")])
+        #expect(await f.pings() == [.fail(body: "not started\n\(f.source.path) doesn’t exist")])
         #expect(try await f.snapshots().isEmpty)
     }
 
@@ -757,11 +757,11 @@ struct PlanRunnerTests {
 
         await #expect {
             try await f.state.backUpNow(f.planID)
-        } throws: { ($0 as? AgentError)?.message == "Confirm you've saved the recovery kit for Fixture before its first backup" }
+        } throws: { ($0 as? AgentError)?.message == "Confirm you’ve saved the recovery kit for Fixture before its first backup" }
 
         let record = try await f.runner.runBackup(planID: f.planID, trigger: .manual)
         #expect(record.outcome == .failed(
-            exitCode: -1, reason: "Confirm you've saved the recovery kit for Fixture before its first backup"))
+            exitCode: -1, reason: "Confirm you’ve saved the recovery kit for Fixture before its first backup"))
         #expect(await f.pings() == [])
         #expect(try await f.snapshots().isEmpty)
     }
@@ -1012,7 +1012,7 @@ struct PlanRunnerTests {
 
         #expect(record.outcome == .paused)
         #expect(await f.pings() == []) // a paused run sends nothing (Ruling R57)
-        #expect(f.lockFiles().isEmpty, "an honoured SIGINT removes restic's own lock")
+        #expect(f.lockFiles().isEmpty, "an honoured SIGINT removes restic’s own lock")
         let history = await f.history()
         let until = pausedAt.addingTimeInterval(3600)
         #expect(history.pausedUntil == until)
@@ -1211,14 +1211,14 @@ struct PlanRunnerTests {
         await recovery.value
 
         guard case .success = live.outcome else {
-            Issue.record("expected the backup to succeed after recovery's unlock, got \(live.outcome)")
+            Issue.record("expected the backup to succeed after recovery’s unlock, got \(live.outcome)")
             return
         }
         let history = try await state.runInputs(plan.id).history
         let oldestFirst = Array(history.recent.reversed())
         let unlock = try #require(oldestFirst.firstIndex { $0.operation == .unlock })
         let backup = try #require(oldestFirst.firstIndex { $0.id == live.id })
-        #expect(unlock < backup, "recovery's unlock must run before the backup: \(oldestFirst.map(\.operation))")
+        #expect(unlock < backup, "recovery’s unlock must run before the backup: \(oldestFirst.map(\.operation))")
         #expect(history.runningRecord == nil)
         #expect(history.runningRecordID == nil)
     }
@@ -1258,7 +1258,7 @@ struct PlanRunnerTests {
         let lines = f.agentLog.value
         #expect(lines.count == 1)
         #expect(lines.first?.contains(f.planID.uuidString) == true)
-        #expect(lines.first?.contains("The environment value RESTIC_COMPRESSION isn't in the Keychain") == true)
+        #expect(lines.first?.contains("The environment value RESTIC_COMPRESSION isn’t in the Keychain") == true)
     }
 
     // MARK: Draining (Ruling R35)
@@ -1433,16 +1433,16 @@ struct PlanRunnerTests {
 
         await #expect(throws: AgentError.self) { try await f.state.backUpNow(f.planID) }
         #expect(lines.value == [
-            "Refused Back Up Now of plan \(f.planID.uuidString): Confirm you've saved the recovery kit for Fixture before its first backup",
+            "Refused Back Up Now of plan \(f.planID.uuidString): Confirm you’ve saved the recovery kit for Fixture before its first backup",
         ])
         let unknown = UUID()
         await #expect(throws: AgentError.self) { try await f.state.backUpNow(unknown) }
-        #expect(lines.value.last == "Refused Back Up Now of plan \(unknown.uuidString): There's no plan with that ID")
+        #expect(lines.value.last == "Refused Back Up Now of plan \(unknown.uuidString): There’s no plan with that ID")
 
         await f.state.prepareForRestart()
         await #expect(throws: AgentError.self) { try await f.state.backUpNow(nil) }
         #expect(lines.value.last
-            == "Refused Back Up Now of every plan: Restorey is finishing the current backup before updating the agent")
+            == "Refused Back Up Now of every plan: Restorey is finishing the current backup before updating")
         #expect(lines.value.count == 3)
     }
 
@@ -1506,7 +1506,7 @@ struct PlanRunnerTests {
         await #expect {
             try await f.state.createRepository(f.planID)
         } throws: {
-            ($0 as? AgentError)?.message == "Restorey couldn't check the repository address: The repository password is wrong"
+            ($0 as? AgentError)?.message == "Restorey couldn’t check the repository address: The repository password is wrong"
         }
         #expect(await f.operations() == [.catConfig, .initRepository, .catConfig])
     }
@@ -1521,18 +1521,18 @@ struct PlanRunnerTests {
         let stderr = [#"{"message_type":"exit_error","code":1,"message":"Fatal: unable to open config file: Stat: The specified bucket does not exist."}"#]
         let outcome = RunOutcome.failed(exitCode: 1, reason: "Fatal: unable to open config file: Stat: The specified bucket does not exist.")
         #expect(PlanRunner.probeFailureMessage(repository: s3, outcome: outcome, stoppedReason: nil, stderr: stderr)
-            == "The bucket my-backups doesn't exist or this key can't see it. Create it in your provider's console first")
+            == "The bucket my-backups doesn’t exist or this key can’t see it. Create it in your provider’s console first")
         #expect(PlanRunner.probeFailureMessage(
             repository: s3, outcome: .failed(exitCode: 1, reason: "NoSuchBucket"), stoppedReason: nil, stderr: [])
-            .hasPrefix("The bucket my-backups doesn't exist"))
+            .hasPrefix("The bucket my-backups doesn’t exist"))
 
         // Any other failure, or a non-S3 repository, keeps restic's own reason.
         #expect(PlanRunner.probeFailureMessage(
             repository: s3, outcome: .failed(exitCode: 1, reason: "Fatal: connection refused"), stoppedReason: nil,
-            stderr: []) == "Restorey couldn't check the repository address: Fatal: connection refused")
+            stderr: []) == "Restorey couldn’t check the repository address: Fatal: connection refused")
         #expect(PlanRunner.probeFailureMessage(
             repository: .raw(repository: "/r", environmentNames: []), outcome: outcome, stoppedReason: nil,
-            stderr: stderr).hasPrefix("Restorey couldn't check the repository address: "))
+            stderr: stderr).hasPrefix("Restorey couldn’t check the repository address: "))
     }
 
     static let b2Endpoint = ProcessInfo.processInfo.environment["RESTOREY_B2_TEST_ENDPOINT"]
@@ -1583,7 +1583,7 @@ struct PlanRunnerTests {
         let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
         #expect(record.outcome == .repositoryMissing)
         #expect(!FileManager.default.fileExists(atPath: f.repository.appendingPathComponent("config").path))
-        #expect(await f.history().stoppedReason == "There's no restic repository at this plan's address")
+        #expect(await f.history().stoppedReason == "There’s no restic repository at this plan’s address")
         #expect(await f.operations() == [.backup])
     }
 
@@ -1728,7 +1728,7 @@ struct PlanRunnerTests {
             gate.open()
             await blocker.value()
             await f.runner.waitForMeasurement(planID: f.planID)
-            let reason = deleting ? "There's no plan with that ID" : "the plan was paused or deleted first"
+            let reason = deleting ? "There’s no plan with that ID" : "the plan was paused or deleted first"
             #expect(f.agentLog.value == [
                 "Didn't measure the repository size after adopting it, for plan \(f.planID.uuidString): \(reason)",
             ])
@@ -1819,7 +1819,7 @@ struct PlanRunnerTests {
             _ = try await f.state.probeRepository(f.planID)
         } throws: { error in
             guard case .operationFailed(let message)? = error as? AgentError else { return false }
-            return message.hasPrefix("Restorey couldn't check the repository address: ")
+            return message.hasPrefix("Restorey couldn’t check the repository address: ")
                 && message.contains("permission denied") && !message.contains("\n")
                 && !message.hasSuffix(f.repository.lastPathComponent)
         }
@@ -1972,7 +1972,7 @@ struct PlanRunnerTests {
         let f = try await RunnerFixture.make()
         defer { f.remove() }
         await f.state.prepareForRestart()
-        let refused = "Restorey is finishing the current backup before updating the agent"
+        let refused = "Restorey is finishing the current backup before updating"
         await #expect { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) } throws: {
             ($0 as? AgentError)?.message == refused
         }
@@ -2034,7 +2034,7 @@ struct PlanRunnerTests {
         #expect(lastCheck(after: .success(snapshotID: nil)) == now)
         #expect(lastCheck(after: .failed(exitCode: 1, reason: "repository contains errors")) == now)
         #expect(lastCheck(after: .interrupted) == nil)
-        #expect(lastCheck(after: .failed(exitCode: -1, reason: "Restorey couldn't start restic")) == nil)
+        #expect(lastCheck(after: .failed(exitCode: -1, reason: "Restorey couldn’t start restic")) == nil)
         #expect(lastCheck(after: .locked) == nil)
         #expect(lastCheck(after: .paused) == nil)
     }

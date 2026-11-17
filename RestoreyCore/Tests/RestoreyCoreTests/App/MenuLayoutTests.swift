@@ -125,7 +125,7 @@ struct MenuLayoutTests {
         let rows = MenuLayout.rows(content, developer: false)
         #expect(Array(rows[0...4]) == [
             .banner(note),
-            .button(title: "Don't Show This Again", command: .banner(.dismissOffMacNote(Self.a)), indented: true),
+            .button(title: "Don’t Show This Again", command: .banner(.dismissOffMacNote(Self.a)), indented: true),
             .message("Last known: backed up at 13:16"),
             .plan(failed),
             .button(title: "Show Details…", command: .banner(.showDetails(Self.a)), indented: true),
@@ -135,7 +135,7 @@ struct MenuLayoutTests {
     /// The agent isn't running: no plan actions (there is no one to ask), just the fix, Settings and Quit.
     @Test func noActionsWithoutPlans() {
         let banner = MenuBanner(
-            severity: .error, title: "The background agent isn't running", detail: "No backups will happen.",
+            severity: .error, title: "Backups aren’t running", detail: "No backups will happen.",
             action: .restartAgent)
         let content = MenuContent(icon: .error, banners: [banner], message: "Last known: backed up at 13:16")
         #expect(MenuLayout.rows(content, developer: false) == [
@@ -162,12 +162,12 @@ struct MenuLayoutTests {
 
     @Test func buttonTitles() {
         let id = Self.a
-        #expect(BannerAction.openFullDiskAccess.buttonTitle == "Fix…")
-        #expect(BannerAction.restartAgent.buttonTitle == "Restart Agent")
-        #expect(BannerAction.openLoginItems.buttonTitle == "Open Login Items…")
-        #expect(BannerAction.turnOnNotifications.buttonTitle == "Turn On…")
+        #expect(BannerAction.openFullDiskAccess.buttonTitle == "Open System Settings")
+        #expect(BannerAction.restartAgent.buttonTitle == "Restart Backups")
+        #expect(BannerAction.openLoginItems.buttonTitle == "Open System Settings")
+        #expect(BannerAction.turnOnNotifications.buttonTitle == "Open System Settings")
         #expect(BannerAction.addCheckInURL(id).buttonTitle == "Add…")
-        #expect(BannerAction.dismissOffMacNote(id).buttonTitle == "Don't Show This Again")
+        #expect(BannerAction.dismissOffMacNote(id).buttonTitle == "Don’t Show This Again")
         #expect(BannerAction.finishSetup(id).buttonTitle == "Finish Setup…")
         #expect(BannerAction.saveRecoveryKit(id).buttonTitle == "Save Recovery Kit…")
         #expect(BannerAction.showDetails(id).buttonTitle == "Show Details…")
@@ -199,7 +199,7 @@ struct MenuLayoutTests {
         running.plans[0].progress = 0
         var bannered = idle
         bannered.banners = [MenuBanner(
-            severity: .warning, title: "Notifications are off — Restorey can't alert you", detail: "",
+            severity: .warning, title: "Notifications are off — Restorey can’t alert you", detail: "",
             action: .turnOnNotifications)]
         var resumable = idle
         resumable.actions.plans[0].canResume = true

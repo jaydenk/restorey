@@ -75,7 +75,7 @@ import Testing
         let reserved = StorageForm.EnvironmentRow(name: "RESTIC_PASSWORD")
         form.environment = [good, empty, bad, reserved, StorageForm.EnvironmentRow(name: "RESTIC_REST_PASSWORD")]
         #expect(form.environmentProblem(good) == "RESTIC_REST_PASSWORD is listed twice.")
-        #expect(form.environmentProblem(empty) == "Enter the variable's name, such as RESTIC_REST_PASSWORD.")
+        #expect(form.environmentProblem(empty) == "Enter the variable’s name, such as RESTIC_REST_PASSWORD.")
         #expect(form.environmentProblem(bad)?.hasPrefix("A variable name is letters") == true)
         #expect(form.environmentProblem(reserved) == "Restorey sets RESTIC_PASSWORD itself: leave it out.")
         #expect(form.repositoryValue == nil)

@@ -144,7 +144,7 @@ struct PlanEditTests {
         edit.revert()
 
         edit.fields.hostLabel = ""
-        #expect(edit.hostLabelProblem == "The host label can't be empty.")
+        #expect(edit.hostLabelProblem == "The host label can’t be empty.")
         edit.revert()
 
         edit.fields.sources = []
@@ -233,9 +233,9 @@ struct PlanEditTests {
         let report = AdoptReport(hosts: ["mac"], latestPathsForHost: [], snapshotCount: 3)
         #expect(PlanEdit.passwordProblem(after: .existing(report)) == nil)
         #expect(PlanEdit.passwordProblem(after: .passwordRejected)
-            == "The repository doesn't open with this password. Nothing was saved.")
+            == "The repository doesn’t open with this password. Nothing was saved.")
         #expect(PlanEdit.passwordProblem(after: .empty)
-            == "There's no repository at this plan's address, so the password can't be checked. Nothing was saved.")
+            == "There’s no repository at this plan’s address, so the password can’t be checked. Nothing was saved.")
     }
 
     @Test func secretsNeverAppearInDescriptions() {
@@ -281,7 +281,7 @@ struct PlanEditTests {
         #expect(edit.hostLabelWarning == nil)
         edit.fields.hostLabel = "studio"
         #expect(edit.hostLabelWarning == "Backups under “studio” start a new snapshot group: the next backup reads every file again "
-            + "(it doesn't upload them again), and this plan's retention no longer thins the snapshots under “mac”, which are kept as they are. "
+            + "(it doesn’t upload them again), and this plan’s retention no longer thins the snapshots under “mac”, which are kept as they are. "
             + "Saving pauses backups until you save a new recovery kit, since its restore commands name the host label.")
     }
 
@@ -293,7 +293,7 @@ struct PlanEditTests {
         #expect(edit.sourcesWarning == nil)
         edit.fields.sources = ["/Users/me", "/Volumes/Photos"]
         #expect(edit.sourcesWarning == "A different list of folders starts a new snapshot group: the next backup reads every file "
-            + "again (it doesn't upload them again), and this plan's retention no longer thins the snapshots of the previous "
+            + "again (it doesn’t upload them again), and this plan’s retention no longer thins the snapshots of the previous "
             + "folders, which are kept as they are.")
     }
 

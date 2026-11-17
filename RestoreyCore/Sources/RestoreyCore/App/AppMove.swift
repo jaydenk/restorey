@@ -46,7 +46,7 @@ public enum AppMoveError: Error, Equatable, CustomStringConvertible {
         case .refused(let refusal): refusal.sentence
         case .destinationExists: "A copy of Restorey appeared in Applications while this screen was open. Try again."
         case .unreadableCopy: AppMove.unreadableCopy
-        case .failed(let detail): "Restorey couldn't move itself to Applications (\(detail))."
+        case .failed(let detail): "Restorey couldn’t move itself to Applications (\(detail))."
         }
     }
 }
@@ -73,16 +73,16 @@ public enum AppMove {
     public static let replaceQuestion = "Applications already has a copy of Restorey. Replace it with this one?"
     /// The UI design's rule: with an agent registered, nothing is replaced from here.
     public static let refusal =
-        "Restorey is already set up on this Mac, with its background agent running from the copy in Applications. "
+        "Restorey is already set up on this Mac, with backups running from the copy in Applications. "
         + "Quit Restorey, then replace that copy by hand: drag this one into Applications in Finder."
     public static let otherApp =
-        "Applications already has an app with this name that isn't this Restorey. Move or rename it in Finder, "
+        "Applications already has an app with this name that isn’t this Restorey. Move or rename it in Finder, "
         + "then try again."
     public static let noPermission =
-        "Restorey can't write to the Applications folder. Drag it into Applications in Finder instead."
+        "Restorey can’t write to the Applications folder. Drag it into Applications in Finder instead."
 
     public static let unreadableCopy =
-        "Part of this copy of Restorey can't be read, so it can't be moved. Download Restorey again, then move the "
+        "Part of this copy of Restorey can’t be read, so it can’t be moved. Download Restorey again, then move the "
         + "new copy to Applications."
 
     public static let quarantineAttribute = "com.apple.quarantine"

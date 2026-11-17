@@ -26,15 +26,15 @@ public enum EarlierSnapshotsText {
         switch group.scope {
         case .beforeAdoption:
             title = "Remove \(snapshots(n)) from before Restorey?"
-            message = "Retention \(keeps) of the \(snapshots(group.total)) of these folders from this Mac, other tools' included"
+            message = "Retention \(keeps) of the \(snapshots(group.total)) of these folders from this Mac, other tools’ included"
             message += afterFirstBackup ? "; the rest go after the first successful backup." : "."
-            message += " Other Macs and folders aren't touched."
+            message += " Other Macs and folders aren’t touched."
         case .previousFolderList:
             title = "Remove \(snapshots(n)) of the previous folder list?"
             message = "Retention \(keeps) of the \(snapshots(group.total)) of \(folders(group.paths, home: home))."
         }
         message += pruneEnabled ? " Prune frees the space later." : " Prune is off: the data stays."
-        message += " This can't be undone."
+        message += " This can’t be undone."
         return Confirmation(title: title, message: message, button: "Remove \(n) \(n == 1 ? "Snapshot" : "Snapshots")")
     }
 

@@ -320,7 +320,7 @@ import Testing
 }
 
 extension SetupFlowTests {
-    // MARK: "+ Add plan…" (Settings → Plans)
+    // MARK: "Add Plan…" (Settings → Plans)
 
     @Test func addingAPlanStartsAFreshSetupAtStorage() {
         let plans = [Self.status("Home", .complete), Self.status("Old", .needsNewKit)]

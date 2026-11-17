@@ -116,14 +116,14 @@ public struct EarlierSnapshotsConfirmation: Codable, Sendable, Equatable {
     public func problem(for plan: Plan) -> String? {
         if snapshotIDs.isEmpty { return "no snapshots were named" }
         if let bad = snapshotIDs.first(where: { !EarlierSnapshots.isSnapshotID($0) }) {
-            return "\"\(bad.prefix(70))\" isn't a snapshot ID"
+            return "“\(bad.prefix(70))” isn’t a snapshot ID"
         }
         switch scope {
         case .beforeAdoption:
             if plan.origin != .adopted { return "Restorey created this repository, so nothing in it is from before Restorey" }
         case .previousFolderList(let paths):
             if EarlierSnapshots.normalised(paths) == EarlierSnapshots.normalised(plan.sources) {
-                return "that folder list is the plan's current one"
+                return "that folder list is the plan’s current one"
             }
         }
         return nil

@@ -8,15 +8,15 @@ struct SaveQuestionTests {
     @Test func aPlansQuestionNamesItAndWarnsWhenSavingPauses() {
         #expect(SaveQuestion.plan(name: "MacBook", pausesBackups: false) == SaveQuestion(
             message: "Do you want to save the changes to “MacBook”?",
-            information: "If you don't save, your changes are lost."))
+            information: "If you don’t save, your changes are lost."))
         #expect(SaveQuestion.plan(name: "MacBook", pausesBackups: true).information
-            == "Saving pauses backups until you save a new recovery kit. If you don't save, your changes are lost.")
+            == "Saving pauses backups until you save a new recovery kit. If you don’t save, your changes are lost.")
     }
 
     @Test func theNetworkQuestion() {
         #expect(SaveQuestion.network == SaveQuestion(
             message: "Do you want to save the changes to the network settings?",
-            information: "If you don't save, your changes are lost."))
+            information: "If you don’t save, your changes are lost."))
     }
 
     /// Each unsaved section is asked about in turn, the plan first (its question names it), and nothing is asked

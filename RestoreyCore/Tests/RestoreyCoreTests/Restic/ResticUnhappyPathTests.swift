@@ -107,7 +107,7 @@ struct ResticUnhappyPathTests {
             locksAtInterrupt.value = repo.lockFiles()
             Task { await process.interrupt(.pause) }
         }
-        #expect(locksAtInterrupt.value.count == 1, "expected restic's own lock while it ran: \(locksAtInterrupt.value)")
+        #expect(locksAtInterrupt.value.count == 1, "expected restic’s own lock while it ran: \(locksAtInterrupt.value)")
         #expect(backup.termination.exitCode == 130, "\(backup.termination.stderrTail)")
         #expect(backup.termination.terminatedBySignal == nil, "restic should exit on SIGINT, not be killed")
         #expect(backup.outcome == .paused)

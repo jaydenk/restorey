@@ -73,7 +73,7 @@ import Testing
         #expect {
             try PrivateFile.write(Data("kit".utf8), to: folder.appendingPathComponent("kit.pdf"))
         } throws: { error in
-            String(describing: error).contains("Restorey couldn't save") && String(describing: error).contains("kit.pdf")
+            String(describing: error).contains("Restorey couldn’t save") && String(describing: error).contains("kit.pdf")
         }
         #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).isEmpty)
     }

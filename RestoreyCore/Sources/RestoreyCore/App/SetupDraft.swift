@@ -124,7 +124,7 @@ public struct SetupDraft: Sendable, Equatable, CustomStringConvertible, CustomDe
 
 extension SetupStep {
     /// The line above each screen, as the mockup numbers it: Move to Applications is part of step 1,
-    /// Permissions. "+ Add plan…" runs storage to schedule, numbered from 1.
+    /// Permissions. "Add Plan…" runs storage to schedule, numbered from 1.
     public func heading(addingPlan: Bool) -> String {
         let numbered: [SetupStep] = addingPlan
             ? [.storage, .password, .recoveryKit, .sources, .schedule]

@@ -72,7 +72,7 @@ struct ScheduleCaptionTests {
         let skipped = Self.status(phase: .skipped(.onBattery))
         #expect(Self.caption(skipped) == "Last backup at 14:16 · skipped while on battery · next at 15:16")
         let drive = Self.status(phase: .skipped(.volumeNotMounted("Backup Drive")), backedUpAt: nil)
-        #expect(Self.caption(drive) == "No backup yet · skipped: Backup Drive isn't connected · first at 15:16")
+        #expect(Self.caption(drive) == "No backup yet · skipped: Backup Drive isn’t connected · first at 15:16")
         let wifi = Self.status(phase: .skipped(.skippedWiFi("Cafe")))
         #expect(Self.caption(wifi) == "Last backup at 14:16 · skipped on Wi-Fi “Cafe” · next at 15:16")
     }
@@ -83,7 +83,7 @@ struct ScheduleCaptionTests {
     }
 
     @Test func aStoppedPlanHasNoNextRun() {
-        let stopped = Self.status(phase: .stopped(reason: "Can't read settings"), next: nil)
+        let stopped = Self.status(phase: .stopped(reason: "Can’t read settings"), next: nil)
         #expect(Self.caption(stopped) == "Last backup at 14:16 · stopped, so nothing is scheduled")
     }
 
@@ -91,7 +91,7 @@ struct ScheduleCaptionTests {
         let waiting = Self.status(next: nil, setup: .needsNewKit)
         #expect(Self.caption(waiting) == "Last backup at 14:16 · waiting for a new recovery kit")
         let unfinished = Self.status(backedUpAt: nil, next: nil, setup: .unfinished)
-        #expect(Self.caption(unfinished) == "No backup yet · setup isn't finished")
+        #expect(Self.caption(unfinished) == "No backup yet · setup isn’t finished")
     }
 
     @Test func aCompletePlanWithNothingDueSaysSo() {

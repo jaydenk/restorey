@@ -48,7 +48,7 @@ public enum UnreadableList {
     }
 
     static let deleted = "It was deleted while the backup ran"
-    static let notAllowed = "Restorey isn't allowed to read this"
+    static let notAllowed = "Restorey isn’t allowed to read this"
 
     /// The reason in plain words: the common errno texts mapped, anything else restic's own text with a capital.
     public static func reasonWords(_ reason: String) -> String {

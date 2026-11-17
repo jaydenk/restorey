@@ -91,9 +91,9 @@ import Testing
     }
 
     @Test func retryingShowsWhatResticSaid() {
-        let progress = Self.make(Self.status(.running(nil, retrying: "Can't reach the repository — retrying")))
+        let progress = Self.make(Self.status(.running(nil, retrying: "Can’t reach the repository — retrying")))
         #expect(progress.title == "Backing up")
-        #expect(progress.detail == "Retrying: Can't reach the repository — retrying")
+        #expect(progress.detail == "Retrying: Can’t reach the repository — retrying")
     }
 
     @Test func idleWithNothingNewHasNotStartedYet() {

@@ -279,7 +279,7 @@ struct MarkedNotForBackupTests {
         let reader = SpotlightMarkedItems()
         #expect(reader.isMarked(marked.path))
         #expect(!reader.isMarked(plain.path))
-        #expect(!reader.isMarked(link.path), "the symlink itself carries no attribute; its target isn't followed")
+        #expect(!reader.isMarked(link.path), "the symlink itself carries no attribute; its target isn’t followed")
         #expect(!reader.isMarked(root.appendingPathComponent("missing").path))
     }
 

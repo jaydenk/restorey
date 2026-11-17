@@ -42,6 +42,6 @@ public enum RetentionSummary {
     /// `--read-data-subset` is given (`buildPacksFilter` is nil), and restic's own docs say only `--read-data` has to
     /// download every pack. No sizes are stated: they depend on the repository.
     public static let weeklyCheckNote =
-        "Once a week Restorey checks the backup's structure. This downloads its index and folder lists, not your "
-        + "files, so it uses a little download allowance."
+        "Once a week Restorey checks the backup’s structure. It downloads indexes and folder lists, not your "
+        + "files, so it uses little data."
 }

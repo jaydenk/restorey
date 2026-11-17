@@ -99,8 +99,8 @@ public struct ScheduleForm: Sendable, Equatable {
 
     /// Why the check-in URL is worth adding (product spec §6.2): shown beside the field.
     public static let checkInExplanation =
-        "A check-in service such as Healthchecks.io emails you when backups stop arriving. It's the only way to "
-        + "find out that this Mac is off, broken or stolen, or that Restorey itself has stopped. Set the check's "
-        + "period and grace to a few days, not an hour, so a Mac that skips backups on battery doesn't raise false "
+        "A check-in service such as Healthchecks.io emails you when backups stop arriving. It’s the only way to "
+        + "learn that this Mac is off, broken or stolen, or that Restorey itself has stopped. Set its period and "
+        + "grace to a few days, so a Mac that skips backups on battery doesn’t raise false "
         + "alarms. Without one, the menu shows “No off-Mac monitoring”."
 }
