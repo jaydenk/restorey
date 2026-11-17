@@ -146,7 +146,8 @@ do {
                 sleepPrevention: SleepPrevention(api: SystemObservers.sleepAssertions) { log.error($0) },
                 agentLog: { log.error($0) },
                 agentInfo: { log.info($0) },
-                binaryReplaced: { executableReplaced() }))
+                binaryReplaced: { executableReplaced() },
+                cloudOnlySkipped: CloudOnlySkipped.counter(home: FileManager.default.homeDirectoryForCurrentUser)))
             keptAlive.append(runner)
             systemStop.attach(runner: runner)
             // Recovery runs to completion before the runner is attached, so a run action that arrives

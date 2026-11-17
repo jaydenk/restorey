@@ -37,6 +37,10 @@ public struct RunnerDependencies: Sendable {
     /// True once the agent's executable on disk is no longer the one it was started from (an update
     /// replaced the bundle). Checked before every restic step and on every scheduler tick (Ruling R55).
     public var binaryReplaced: @Sendable () -> Bool
+    /// Counts the cloud-only files a backup skipped, for the plan's sources and exclusions. Called off the actor, on a
+    /// background thread, after a backup that saved the data; nil: not counted, or it gave up. Never throws or
+    /// affects the run (the agent passes `CloudOnlySkipped.counter`).
+    public var cloudOnlySkipped: @Sendable (_ sources: [String], _ exclusions: [String]) -> CloudOnlyCount?
     /// restic's `--retry-lock` for the maintenance commands (`ResticContext.maintenanceRetryLock`): five minutes;
     /// tests that hold a lock shorten it.
     public var maintenanceRetryLock: String
@@ -53,6 +57,7 @@ public struct RunnerDependencies: Sendable {
         agentLog: @escaping @Sendable (String) -> Void = { _ in },
         agentInfo: @escaping @Sendable (String) -> Void = { _ in },
         binaryReplaced: @escaping @Sendable () -> Bool = { false },
+        cloudOnlySkipped: @escaping @Sendable ([String], [String]) -> CloudOnlyCount? = { _, _ in nil },
         maintenanceRetryLock: String = "5m"
     ) {
         self.state = state
@@ -75,6 +80,7 @@ public struct RunnerDependencies: Sendable {
         self.agentLog = agentLog
         self.agentInfo = agentInfo
         self.binaryReplaced = binaryReplaced
+        self.cloudOnlySkipped = cloudOnlySkipped
         self.maintenanceRetryLock = maintenanceRetryLock
     }
 }
@@ -459,8 +465,9 @@ public actor PlanRunner {
         }
 
         if await isWindingDown() { return await skippedForUpdate() }
-        let backup = await runStep(.backup, trigger: trigger, session: session, handle: handle, progress: true)
+        var backup = await runStep(.backup, trigger: trigger, session: session, handle: handle, progress: true)
         handle.backupStepEnded()
+        backup.record.cloudOnlySkipped = await countCloudOnly(after: backup.record, plan: plan)
         await commit(backup.record, plan: plan, fda: fda, stoppedReason: backup.stoppedReason)
         queueEndPing(backup, redactor: session.redactor)
 
@@ -495,6 +502,24 @@ public actor PlanRunner {
             }
         }
         return backup
+    }
+
+    /// The cloud-only files `--exclude-cloud-files` skipped, counted after a backup restic finished with a snapshot
+    /// (`success` with a snapshot, or `warning`; `unchanged` made none but the files are still skipped). Information
+    /// only: nil for any other run, and when the count gives up, which is logged at INFO. It runs on a background
+    /// thread and is bounded, so it never blocks or fails the run (Task 15b).
+    private func countCloudOnly(after record: RunRecord, plan: Plan) async -> CloudOnlyCount? {
+        switch record.outcome {
+        case .success(snapshotID: .some), .unchanged, .warning: break
+        default: return nil
+        }
+        let count = deps.cloudOnlySkipped
+        let (sources, exclusions) = (plan.sources, plan.exclusions)
+        let result = await Task.detached(priority: .utility) { count(sources, exclusions) }.value
+        if result == nil {
+            deps.agentInfo("Gave up counting cloud-only files for plan \(plan.id.uuidString): too many files or too slow")
+        }
+        return result
     }
 
     /// `restic stats --mode raw-data`, recorded, and its total kept as the plan's repository size with the

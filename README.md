@@ -58,7 +58,7 @@ agent whether or not the app is open.
 - **General**: Open at login, Full Disk Access, notifications and the background agent, each with its fix, and the
   logs folder.
 - **Plans**: the plans in a sidebar with "+ Add plan…", and the selected plan's tabs. **Overview** (its state, the
-  last and next backup, and Back Up Now, Pause, Resume and Restore Files…); **What** (folders, drives and
+  last and next backup, any iCloud files skipped, and Back Up Now, Pause, Resume and Restore Files…); **What** (folders, drives and
   exclusions); **Schedule** (how often, the battery rule, the plan's own upload limit); **Storage** (the address,
   read-only, the password and keys, the host label, and "Show recovery kit…"); **Keep** (retention, prune, and
   **Earlier snapshots**: applying retention to the snapshots of the plan's previous folder lists, or from before
@@ -69,7 +69,10 @@ agent whether or not the app is open.
   folder or drive): an upload limit shared by the backups uploading at once, skipping backups on a phone hotspot or
   in Low Data Mode (on by default), and a list of Wi-Fi networks to skip backups on. Adding the first network asks
   for Location permission, which macOS requires before it shows any app the Wi-Fi network's name.
-- **History**: every plan's runs, newest first, filtered by plan and by outcome, each with its log.
+- **History**: every plan's runs, newest first, filtered by plan and by outcome, each with its log. A backup's row
+  also says how many iCloud files that exist only in iCloud (not on this Mac) it skipped, and the plan's Overview
+  says so too, with how to include them. Restorey counts these itself in the iCloud Drive and CloudStorage folders
+  your plan covers, giving up quietly after 10 seconds, so the number is an approximation.
 
 The recovery kit and Restore Files ask for Touch ID or your login password before showing a plan's secrets.
 

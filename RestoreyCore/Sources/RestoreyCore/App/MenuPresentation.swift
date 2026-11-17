@@ -556,6 +556,16 @@ public struct PlanOverview: Sendable, Equatable {
         }
     }
 
+    public struct CloudOnlyNote: Sendable, Equatable {
+        public var line: String
+        public var howTo: String
+
+        public init(line: String, howTo: String) {
+            self.line = line
+            self.howTo = howTo
+        }
+    }
+
     /// The plan's state, never a time.
     public var headline: String
     /// The menu's reason for the state: a failure's or a stop's cause, what needs attention, a backup's progress.
@@ -566,6 +576,9 @@ public struct PlanOverview: Sendable, Equatable {
     public var severity: Severity?
     public var isPaused: Bool
     public var lastBackup: Row?
+    /// What the last backup skipped because the files exist only in the cloud, with what to do about it. Quiet
+    /// information, never a warning; nil when nothing was skipped or not counted.
+    public var cloudOnlyNote: CloudOnlyNote?
     /// When the next backup is due, or when a pause ends; nil while one runs, while the plan is stopped or waits for
     /// a new kit, or when nothing is due.
     public var nextBackup: Row?
@@ -589,7 +602,8 @@ extension MenuPresentation {
 
         var overview = PlanOverview(
             headline: "", reason: nil, progress: nil, severity: nil, isPaused: false,
-            lastBackup: lastBackupRow(plan, format), nextBackup: nextBackupRow(plan, format), buttons: [])
+            lastBackup: lastBackupRow(plan, format), cloudOnlyNote: cloudOnlyNote(plan, locale: locale),
+            nextBackup: nextBackupRow(plan, format), buttons: [])
         if let line = content.plans.first(where: { $0.id == planID }) {
             headline(plan, line, format, into: &overview)
         } else {
@@ -662,6 +676,14 @@ extension MenuPresentation {
         }
         if let backup = plan.lastBackup { return .init(value: format.day(backup.endedAt), detail: nil) }
         return .init(value: "None yet", detail: nil)
+    }
+
+    /// Under the last backup's row, while that backup is the one shown (not after a failure, whose row says "Failed").
+    private static func cloudOnlyNote(_ plan: PlanStatus, locale: Locale) -> PlanOverview.CloudOnlyNote? {
+        guard !plan.alerts.contains(.backupFailed),
+            let line = CloudOnlyText.sentence(plan.lastBackup?.cloudOnlySkipped, locale: locale)
+        else { return nil }
+        return .init(line: line, howTo: CloudOnlyText.howTo)
     }
 
     private static func nextBackupRow(_ plan: PlanStatus, _ format: TextContext) -> PlanOverview.Row? {

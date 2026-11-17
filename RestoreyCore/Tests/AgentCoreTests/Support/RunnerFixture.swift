@@ -160,7 +160,8 @@ final class RunnerFixture: Sendable {
         pingDelay: Duration = .zero,
         networkSettings: NetworkSettings = .defaults,
         retryLock: String = "5m",
-        change: (inout Plan) -> Void = { _ in }
+        change: (inout Plan) -> Void = { _ in },
+        cloudOnlySkipped: @escaping @Sendable ([String], [String]) -> CloudOnlyCount? = { _, _ in nil }
     ) async throws -> RunnerFixture {
         let fm = FileManager.default
         let base = stableAncestors ? URL(fileURLWithPath: "/Users/Shared", isDirectory: true) : fm.temporaryDirectory
@@ -169,7 +170,7 @@ final class RunnerFixture: Sendable {
             return try await make(
                 root: root, origin: origin, executable: executable, createRepository: createRepository,
                 confirmKit: confirmKit, gracePeriod: gracePeriod, pingDelay: pingDelay,
-                networkSettings: networkSettings, retryLock: retryLock, change: change)
+                networkSettings: networkSettings, retryLock: retryLock, cloudOnlySkipped: cloudOnlySkipped, change: change)
         } catch {
             // The caller's `defer { remove() }` isn't in place yet.
             try? fm.removeItem(at: root)
@@ -180,6 +181,7 @@ final class RunnerFixture: Sendable {
     private static func make(
         root: URL, origin: RepositoryOrigin, executable: URL?, createRepository: Bool, confirmKit: Bool,
         gracePeriod: Duration, pingDelay: Duration, networkSettings: NetworkSettings, retryLock: String,
+        cloudOnlySkipped: @escaping @Sendable ([String], [String]) -> CloudOnlyCount?,
         change: (inout Plan) -> Void
     ) async throws -> RunnerFixture {
         let fm = FileManager.default
@@ -242,6 +244,7 @@ final class RunnerFixture: Sendable {
             agentLog: { line in agentLog.mutate { $0.append(line) } },
             agentInfo: { line in agentInfo.mutate { $0.append(line) } },
             binaryReplaced: { binaryReplaced.value },
+            cloudOnlySkipped: cloudOnlySkipped,
             maintenanceRetryLock: retryLock)
         let runner = PlanRunner(dependencies: dependencies)
         await runner.recoverAfterStart()

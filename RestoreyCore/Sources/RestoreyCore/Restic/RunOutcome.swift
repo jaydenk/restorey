@@ -217,11 +217,15 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
     /// could not be created at all, every line the run tried to write counts. Omitted from JSON when 0,
     /// and 0 for records written before it existed.
     public var droppedLogLines: Int
+    /// Cloud-only files the backup skipped (`--exclude-cloud-files`), counted by Restorey after a backup that saved
+    /// the data; nil when not counted, or the count gave up. Information only. Omitted from JSON when nil, so
+    /// records written before it existed still decode.
+    public var cloudOnlySkipped: CloudOnlyCount?
 
     public init(
         id: UUID, planID: UUID, operation: ResticOperation, trigger: RunTrigger,
         startedAt: Date, endedAt: Date, outcome: RunOutcome, summary: BackupSummary?, logFile: String,
-        droppedLogLines: Int = 0
+        droppedLogLines: Int = 0, cloudOnlySkipped: CloudOnlyCount? = nil
     ) {
         self.id = id
         self.planID = planID
@@ -233,10 +237,11 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
         self.summary = summary
         self.logFile = logFile
         self.droppedLogLines = droppedLogLines
+        self.cloudOnlySkipped = cloudOnlySkipped
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, planID, operation, trigger, startedAt, endedAt, outcome, summary, logFile, droppedLogLines
+        case id, planID, operation, trigger, startedAt, endedAt, outcome, summary, logFile, droppedLogLines, cloudOnlySkipped
     }
 
     public init(from decoder: any Decoder) throws {
@@ -251,6 +256,7 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
         summary = try c.decodeIfPresent(BackupSummary.self, forKey: .summary)
         logFile = try c.decode(String.self, forKey: .logFile)
         droppedLogLines = try c.decodeIfPresent(Int.self, forKey: .droppedLogLines) ?? 0
+        cloudOnlySkipped = try c.decodeIfPresent(CloudOnlyCount.self, forKey: .cloudOnlySkipped)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -265,6 +271,7 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
         try c.encodeIfPresent(summary, forKey: .summary)
         try c.encode(logFile, forKey: .logFile)
         if droppedLogLines != 0 { try c.encode(droppedLogLines, forKey: .droppedLogLines) }
+        try c.encodeIfPresent(cloudOnlySkipped, forKey: .cloudOnlySkipped)
     }
 }
 

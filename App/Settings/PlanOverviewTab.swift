@@ -50,6 +50,17 @@ struct PlanOverviewTab: View {
                 if let next = overview.nextBackup { row("Next backup", next) }
             }
 
+            if let note = overview.cloudOnlyNote {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(note.line)
+                    Text(note.howTo)
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityElement(children: .combine)
+            }
+
             HStack {
                 ForEach(overview.buttons, id: \.kind) { button in
                     Button(button.title) { perform(button.kind) }
