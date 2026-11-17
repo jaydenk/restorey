@@ -195,6 +195,50 @@ struct HistoryPresentationTests {
         #expect(row.logFile == "runs/x/20261112T041600Z-backup.log")
     }
 
+    /// Task 17c: the table has Added and Duration columns, so the row carries each on its own (with what it sorts by),
+    /// and the Outcome column's note keeps only what belongs with the outcome. `detail` is unchanged.
+    @Test func theTableColumnsSplitTheDetail() {
+        let warning = Self.row(Self.record(
+            .warning(unreadable: 3), summary: BackupSummary(dataAdded: 640, totalDuration: 5)))
+        #expect(warning.note == "3 files couldn’t be read")
+        #expect(warning.added == "640 B")
+        #expect(warning.addedBytes == 640)
+        #expect(warning.duration == "5 s")
+        #expect(warning.durationSeconds == 5)
+        #expect(warning.detail == "3 files couldn’t be read · 640 B · 5 s")
+        #expect(warning.endedAt == Self.at(14, 16))
+
+        let success = Self.row(Self.record(
+            .success(snapshotID: "abc"), summary: BackupSummary(dataAdded: 2_100_000, totalDuration: 7.2, snapshotID: "abc")))
+        #expect(success.note == nil)
+        #expect(success.added == "2.1 MB")
+
+        let failed = Self.row(Self.record(.failed(exitCode: 1, reason: "the backend is unreachable")))
+        #expect(failed.note == "the backend is unreachable")
+        #expect(failed.added == nil)
+        #expect(failed.addedBytes == nil)
+        #expect(failed.duration == "7 s")
+
+        // Only a backup has a size; a skip has neither.
+        let check = Self.row(Self.record(.success(snapshotID: nil), .check))
+        #expect(check.added == nil)
+        let skip = Self.row(Self.record(.skipped(.volumeNotMounted("Photos")), seconds: 0, logFile: ""))
+        #expect(skip.note == nil)
+        #expect(skip.duration == nil)
+        #expect(skip.durationSeconds == nil)
+    }
+
+    /// Task 17c: the table's context menu names each sheet in full, even where the link alone says "Show…".
+    @Test func aLinksMenuItemAlwaysNamesItsSheet() {
+        var warning = Self.record(.warning(unreadable: 3))
+        warning.unreadableItems = [UnreadableItem(path: "/Users/me/a", reason: "operation not permitted")]
+        let links = HistoryPresentation.links(for: Self.row(warning), offersUnreadable: true)
+        #expect(links.map(\.title) == ["Show…"])
+        #expect(links.map(\.menuTitle) == ["Show Unreadable Files…"])
+        #expect(HistoryLink(kind: .biggestAdditions, title: "Show…", accessibilityLabel: "").menuTitle
+            == "Show Biggest Additions…")
+    }
+
     /// Ruling R65: a run restic skipped as unchanged reads as backed up.
     @Test func anUnchangedBackupIsBackedUp() {
         let row = Self.row(Self.record(.unchanged, summary: BackupSummary(dataAdded: 0, totalDuration: 5)))

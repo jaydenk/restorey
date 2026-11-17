@@ -1,8 +1,8 @@
 import RestoreyCore
 import SwiftUI
 
-/// Settings → Plans → Overview (Task 14c, owner 15 Nov 2026; layout ruling R1): the plan's state with the menu's reason,
-/// its last and next backup, and the menu's Back Up Now, Pause, Resume and Restore Files… for it. The words and which
+/// Settings → Plans → Overview (Task 14c, owner 15 Nov 2026; layout ruling R1; Task 17c): the plan's state with the
+/// menu's reason and the menu's Back Up Now, Pause, Resume and Restore Files… for it, then its last and next backup. The words and which
 /// buttons are enabled are `MenuPresentation.overview`'s, from the same inputs as the menu, so it follows the agent
 /// live, progress included.
 struct PlanOverviewTab: View {
@@ -32,62 +32,33 @@ struct PlanOverviewTab: View {
             now: now, calendar: .autoupdatingCurrent, locale: .autoupdatingCurrent)
     }
 
+    /// A grouped form like every other tab (Task 17c, F13). The state, its reason and the actions come first, with Back
+    /// Up Now the one prominent button (HIG Buttons: a prominent style for the most likely action) and Pause or Resume
+    /// beside it; Restore Files…, a different task, stands apart at the leading end (P15). Then the times.
     @ViewBuilder private func content(_ overview: PlanOverview) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            // The plan's state and the menu's reason; no plan name or repository here (the title has the name), and
-            // no times (the rows have them).
-            VStack(alignment: .leading, spacing: 4) {
-                // A plan that needs attention has its symbol; the words stay in the label colour.
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    if overview.isPaused {
-                        Image(systemName: "pause.circle").foregroundStyle(.secondary).accessibilityLabel("Paused")
-                    } else if let severity = overview.severity {
-                        SeverityIcon(severity: severity)
-                    }
-                    Text(overview.headline).foregroundStyle(overview.isPaused ? .secondary : .primary)
-                }
-                .font(.headline)
-                if let reason = overview.reason {
-                    Text(reason).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-                if overview.unreadable != nil {
-                    Button("Show…") { showingUnreadable = true }
-                        .buttonStyle(.link)
-                        .accessibilityLabel("Show the files that couldn’t be read")
-                }
-                if let progress = overview.progress {
-                    ProgressView(value: progress).accessibilityLabel("Backup progress")
-                } else if overview.isChecking {
-                    ProgressView().progressViewStyle(.linear).accessibilityLabel("Backup progress")
-                }
+        Form {
+            Section {
+                state(overview)
+                actions(overview)
             }
-            .accessibilityElement(children: .combine)
-
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
+            Section {
                 if let last = overview.lastBackup { row("Last backup", last) }
                 if let next = overview.nextBackup { row("Next backup", next) }
-            }
-
-            if let additions = overview.biggestAdditions {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(additions.line).explanatoryNote()
-                    Button("Show…") { showingAdditions = true }
-                        .buttonStyle(.link)
-                        .accessibilityLabel("Show the biggest additions")
+                if let additions = overview.biggestAdditions {
+                    LabeledContent {
+                        Button("Show…") { showingAdditions = true }
+                            .accessibilityLabel("Show the biggest additions")
+                    } label: {
+                        Text(additions.line).explanatoryNote()
+                    }
                 }
-            }
-            if let note = overview.cloudOnlyNote { CloudOnlyNoteView(note: note) }
-            if let note = overview.earlierRemovalNote {
-                Text(note).explanatoryNote()
-            }
-
-            HStack {
-                ForEach(overview.buttons, id: \.kind) { button in
-                    Button(button.title) { perform(button.kind) }
-                        .disabled(!button.enabled)
+                if let note = overview.cloudOnlyNote { CloudOnlyNoteView(note: note) }
+                if let note = overview.earlierRemovalNote {
+                    Text(note).explanatoryNote()
                 }
             }
         }
+        .formStyle(.grouped)
         .sheet(isPresented: $showingUnreadable) {
             if let unreadable = overview.unreadable { UnreadableFilesSheet(summary: unreadable, model: model) }
         }
@@ -96,10 +67,63 @@ struct PlanOverviewTab: View {
         }
     }
 
+    /// The plan's state and the menu's reason; no plan name or repository here (the title has the name), and no times
+    /// (the rows have them).
+    private func state(_ overview: PlanOverview) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // A plan that needs attention has its symbol; the words stay in the label colour.
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                if overview.isPaused {
+                    Image(systemName: "pause.circle").foregroundStyle(.secondary).accessibilityLabel("Paused")
+                } else if let severity = overview.severity {
+                    SeverityIcon(severity: severity)
+                }
+                Text(overview.headline).foregroundStyle(overview.isPaused ? .secondary : .primary)
+            }
+            .font(.headline)
+            if let reason = overview.reason {
+                Text(reason).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if overview.unreadable != nil {
+                Button("Show…") { showingUnreadable = true }
+                    .buttonStyle(.link)
+                    .accessibilityLabel("Show the files that couldn’t be read")
+            }
+            if let progress = overview.progress {
+                ProgressView(value: progress).accessibilityLabel("Backup progress")
+            } else if overview.isChecking {
+                ProgressView().progressViewStyle(.linear).accessibilityLabel("Backup progress")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func actions(_ overview: PlanOverview) -> some View {
+        let restore = overview.buttons.first { $0.kind == .restoreFiles }
+        let backup = overview.buttons.filter { $0.kind != .restoreFiles }
+        return HStack {
+            if let restore { button(restore) }
+            Spacer()
+            // Pause or Resume, then Back Up Now at the trailing end, where the most likely action goes.
+            ForEach(backup.reversed(), id: \.kind) { button($0) }
+        }
+    }
+
+    @ViewBuilder private func button(_ button: PlanOverview.Button) -> some View {
+        if button.kind == .backUpNow {
+            Button(button.title) { perform(button.kind) }
+                .buttonStyle(.borderedProminent)
+                .disabled(!button.enabled)
+        } else {
+            Button(button.title) { perform(button.kind) }
+                .disabled(!button.enabled)
+        }
+    }
+
     private func row(_ label: String, _ row: PlanOverview.Row) -> some View {
-        GridRow {
-            Text(label).foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 2) {
+        LabeledContent(label) {
+            VStack(alignment: .trailing, spacing: 2) {
                 Text(row.value)
                 if let detail = row.detail { Text(detail).explanatoryNote() }
             }

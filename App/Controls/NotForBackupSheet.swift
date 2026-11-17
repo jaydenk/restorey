@@ -1,11 +1,11 @@
 import RestoreyCore
 import SwiftUI
 
-/// Items apps mark as not for backup (Task 15c, product spec §5.7), as a sheet from the What tab's "Show…": whether the
+/// Items apps mark as not for backup (Task 15c, product spec §5.7), as a sheet from the Folders tab's "Show…": whether the
 /// plan skips them, and each one a backup would skip, with "Back up anyway". The list comes from a fresh look run here
 /// (`MarkedItemsScan.offPool`, the agent's own scan and collapse), so it matches what the next backup leaves out.
 /// Sizes aren't shown: measuring them would mean walking every folder. Edits go into the plan's fields, so saving,
-/// Revert and the close and quit guard are the What tab's.
+/// Revert and the close and quit guard are the Folders tab's.
 struct NotForBackupSheet: View {
     @Binding var skips: Bool
     @Binding var backUpAnyway: [String]

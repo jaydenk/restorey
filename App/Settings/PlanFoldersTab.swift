@@ -1,11 +1,11 @@
 import RestoreyCore
 import SwiftUI
 
-/// A plan's What tab (UI design §6.2): its name, the folders and drives it backs up, and what it leaves out
-/// (setup's one line and "Review Exclusions…" sheet, then the items apps mark as not for backup, counted from a fresh
-/// Spotlight look, with "Show…"). A different list of folders shows the product spec's
+/// A plan's Folders tab (UI design §6.2; "What" until Task 17c): its name, the folders and drives it backs up, and what
+/// it leaves out (setup's one line and "Review Exclusions…" sheet, then the items apps mark as not for backup, counted
+/// from a fresh Spotlight look, with "Show…"), as a grouped form. A different list of folders shows the product spec's
 /// new-group warning (§5.6).
-struct PlanWhatTab: View {
+struct PlanFoldersTab: View {
     @Bindable var model: PlanEditModel
     let identity: Identity
     /// The agent's last Full Disk Access probe: without it the app's own look can't read the attribute in protected
@@ -19,34 +19,44 @@ struct PlanWhatTab: View {
     @State private var markedLookups = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SetupField(label: "Name", problem: model.edit.nameProblem) {
-                PlainTextField(title: "Name", text: $model.fields.name)
+        Form {
+            Section {
+                LabeledContent("Name") {
+                    PlainTextField(title: "Name", text: $model.fields.name)
+                }
+                if let problem = model.edit.nameProblem { SeverityText(problem) }
             }
-            SetupField(label: "Folders and drives", problem: model.edit.sourcesProblem) {
+            Section("Folders and drives") {
                 SourcesEditor(sources: $model.fields.sources)
+                if let problem = model.edit.sourcesProblem { SeverityText(problem) }
+                if let warning = model.edit.sourcesWarning {
+                    SeverityText(warning, severity: .warning)
+                }
             }
-            if let warning = model.edit.sourcesWarning {
-                SeverityText(warning, severity: .warning)
-            }
-            HStack(alignment: .firstTextBaseline) {
-                Text(ExclusionsSummary.line(plan: shown, home: Self.home, identity: identity, mentionsMarkedItems: false))
-                    .explanatoryNote()
-                Button("Review Exclusions…") { reviewing = true }
-            }
-            HStack(alignment: .firstTextBaseline) {
-                Text(MarkedNotForBackupText.line(
-                    count: markedCount, skips: model.fields.skipsItemsMarkedNotForBackup, locale: .current))
-                    .explanatoryNote()
-                Button("Show…") { showingMarked = true }
-                    .accessibilityLabel("Show items apps mark as not for backup")
-            }
-            if model.fields.skipsItemsMarkedNotForBackup,
-                let note = MarkedNotForBackupText.incompleteNote(fullDiskAccessMissing: fullDiskAccessMissing)
-            {
-                Text(note).explanatoryNote()
+            Section {
+                LabeledContent {
+                    Button("Review Exclusions…") { reviewing = true }
+                } label: {
+                    Text(ExclusionsSummary.line(plan: shown, home: Self.home, identity: identity, mentionsMarkedItems: false))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                LabeledContent {
+                    Button("Show…") { showingMarked = true }
+                        .accessibilityLabel("Show items apps mark as not for backup")
+                } label: {
+                    Text(MarkedNotForBackupText.line(
+                        count: markedCount, skips: model.fields.skipsItemsMarkedNotForBackup, locale: .current))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } footer: {
+                if model.fields.skipsItemsMarkedNotForBackup,
+                    let note = MarkedNotForBackupText.incompleteNote(fullDiskAccessMissing: fullDiskAccessMissing)
+                {
+                    Text(note).explanatoryNote()
+                }
             }
         }
+        .formStyle(.grouped)
         .task(id: MarkedLookup(sources: model.fields.sources, generation: markedLookups)) {
             marked = nil
             marked = await MarkedItemsScan.offPool(finder: SpotlightMarkedItems(), sources: model.fields.sources)

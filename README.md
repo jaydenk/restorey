@@ -56,22 +56,25 @@ agent whether or not the app is open.
 **Settings** has four sections in its toolbar:
 
 - **General**: Open at login, Full Disk Access, notifications and Backups in the background, each with its fix, and the
-  logs folder. While Full Disk Access is missing, a tile shows Restorey's icon and name with why it is needed and
-  "Drag this into the list, then switch it on."; once it is on, the tile gives way to a green tick and "Full Disk
-  Access is on".
-- **Plans**: the plans in a sidebar with "Add Plan…", and the selected plan's tabs. **Overview** (its state, the
-  last and next backup, any iCloud files skipped, and Back Up Now, Pause, Resume and Restore Files…); **What** (folders, drives and
-  exclusions); **Schedule** (how often, the battery rule, the plan's own upload limit); **Storage** (the address,
-  read-only, the password and keys, the host label, and "Show Recovery Kit…"); **Keep** (retention, prune, and
-  **Earlier snapshots**: applying retention to the snapshots of the plan's previous folder lists, or from before
-  Restorey adopted the repository); **Alerts** (the check-in URL and "no successful backup in N days"); and
-  **History** (the plan's runs). Edits are saved with Save (⌘S) or undone with Revert; changing the password, a key
-  or the host label pauses backups until a new recovery kit is saved. Delete Plan… leaves the repository alone.
+  logs folder. While Full Disk Access is missing it is a section of its own at the top: why it is needed, a tile with
+  Restorey's icon and name and "Drag this into the list, then switch it on.", and Open System Settings; once it is on,
+  it is one row with a green tick and "Full Disk Access is on".
+- **Plans**: the plans in a list with + (Add Plan…) and − (Delete Plan…) under it, and the selected plan's six tabs.
+  **Overview** (its state, Back Up Now with Pause or Resume beside it, Restore Files…, the last and next backup, and
+  any iCloud files skipped); **Folders** (the name, folders, drives and exclusions); **Schedule** (how often, the
+  battery rule, the plan's own upload limit, and its alerts: the check-in URL and "no successful backup in N days");
+  **Storage** (the address, read-only, the password and keys, the host label, and "Show Recovery Kit…");
+  **Retention** (how many hourly, daily, weekly and monthly snapshots to keep, prune, and **Earlier snapshots**:
+  applying retention to the snapshots of the plan's previous folder lists, or from before Restorey adopted the
+  repository); and **History** (the plan's runs). Edits are saved with Save (⌘S) or undone with Revert; changing the
+  password, a key or the host label pauses backups until a new recovery kit is saved. Deleting a plan leaves the
+  repository alone.
 - **Network**: rules for the whole Mac, for plans that back up to another machine (S3, B2, a restic server; never a
   folder or drive): an upload limit shared by the backups uploading at once, skipping backups on a phone hotspot or
   in Low Data Mode (on by default), and a list of Wi-Fi networks to skip backups on. Adding the first network asks
   for Location permission, which macOS requires before it shows any app the Wi-Fi network's name.
-- **History**: every plan's runs, newest first, filtered by plan and by outcome, each with its log.
+- **History**: every plan's runs in a table, newest first, sortable by any column and filtered by plan and by outcome,
+  each with its log (double-click a run, or use its context menu).
 
 When files exist only in iCloud, not on this Mac, a backup skips them. The plan's Overview then says "iCloud Drive
 files skipped" under the last backup, and its info button explains how many and how to include them. Restorey counts
@@ -361,7 +364,18 @@ Save or Cancel question on close and quit asks about (the router's one `unsavedS
 only a Done button (exclusions, items marked not for backup, biggest additions, files that couldn't be read) as
 Done does; the two that edit apply into the page's unsaved fields, so the page's Revert is their way back. The menu's routes pick the section
 and plan: a plan's line opens it in Plans, "Show Details…" opens History for that plan, and "No off-Mac monitoring —
-Add…" opens the plan's Alerts tab.
+Add…" opens the plan's Schedule tab, whose Alerts section has the check-in URL.
+
+Every pane is laid out the same way (UI polish pass, Task 17c): a grouped form (`Form`, `.formStyle(.grouped)`), as
+System Settings has, with each setting a row (`LabeledContent`, the label leading and the control trailing),
+related rows in sections, and the explanations in the sections' footers. Number fields (the retention counts and the
+upload limits) are right-aligned in digits of one width, each with a stepper beside it (`NumberField`; a click writes
+the next value, `StepperText`, and the field's own check is unchanged). A plan's tabs are AppKit's tab view
+(`NSTabView`, HIG Tab views), at most six as the HIG asks; SwiftUI's `TabView` left its tab row at zero size here (the
+row is hosted SwiftUI that can't measure itself mid-update, and the tab view measures it only when its tabs change),
+so `PlanTabs` gives the labels again once the update has finished. The plan list is a bordered list with the
+standard square + and − buttons under it (`SquareButton`, AppKit's `.smallSquare` bezel; HIG Buttons, "Square
+buttons"), as Mail's Accounts and Users & Groups have; Delete (⌫) and the row's context menu delete too.
 
 **General** has Open at login (the switch re-reads `SMAppService` after every change, so a Restorey switched off in
 System Settings → General → Login Items shows as off with a note and "Open System Settings", never as what was asked),
@@ -371,25 +385,29 @@ System Settings, Allow…, Restart Backups), the logs folder (Show in Finder), a
 note saying where to show it. These are read again whenever Restorey comes back to the front. The words are
 `SettingsGeneral`'s (`RestoreyCore`).
 
-**Plans** lists the plans with "Add Plan…", which opens setup from "Where backups go" (`SetupProgress.addingPlan`).
+**Plans** lists the plans, each with a symbol for where it backs up (a drive or folder on this Mac, or another
+machine), with + ("Add Plan…") under the list, which opens setup from "Where backups go" (`SetupProgress.addingPlan`).
 Setup keeps one saved progress, so `SetupFlow.addingPlan` decides what it opens: a new add, the add or first run
 already under way, or, when another plan's setup isn't finished, a question offering to finish that one first. An
 unfinished plan shows "Setup not finished" with "Finish Setup…" (setup is still making it, so it has no tabs); a plan
 needing a new kit shows "New recovery kit needed" with "Save Recovery Kit…"; a plan the agent has stopped shows
-"Stopped" and its reason, as its line in the menu does. The sidebar notes the same under each plan's name, one at a
+"Stopped" and its reason, as its line in the menu does. The list notes the same under each plan's name, one at a
 time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`PlanNote`). Every other plan has tabs:
 
-- **Overview**, first and where a plan opens (picked in the sidebar, the menu's plan line, a new Settings window; a
-  route that names a tab, such as "Add…" for Alerts, keeps it; `planRequestLandsOnFirstTab`): a headline with the
+- **Overview**, first and where a plan opens (picked in the list, the menu's plan line, a new Settings window; a
+  route that names a tab, such as "Add…" for Schedule, keeps it; `planRequestLandsOnFirstTab`): a headline with the
   plan's state only ("Up to date", "Backing up — 42%", "Paused", "Backup failed", "Stopped", "Needs attention",
   "Waiting for a new recovery kit", "No backup yet") and the menu's reason under it, coloured only when the plan
   itself needs attention; then the times, only in the Last backup and Next backup rows ("Today at 17:10", "Tomorrow
   at 09:00"); and Back Up Now, Pause while a backup runs, Resume while paused and Restore Files…, enabled as the menu's
-  items are and asking the agent the same way (`MenuPresentation.overview`, `AgentActions`). After a backup that
+  items are and asking the agent the same way (`MenuPresentation.overview`, `AgentActions`). They sit under the
+  headline: Back Up Now, the most likely action, in the prominent style at the trailing end with Pause or Resume
+  beside it, and Restore Files…, a different task, at the leading end (HIG Buttons). The page has no save bar, since
+  nothing on it is edited, unless a sheet left edits waiting (History likewise). After a backup that
   couldn't read some files, "Show…" under the reason opens "Files that couldn't be read" (see below). It follows the agent
-  live, progress included. The window is at least as wide as the row of seven tabs, measured with the system's fonts each time a Settings
-  window opens, so a text-size change applies from the next one.
-- **What**: its name, the folders and drives, the exclusions (setup's line and "Review Exclusions…" sheet), and a
+  live, progress included. The window is at least as wide as the list and the row of six tabs, measured with the
+  system's fonts each time a Settings window opens (`PlanTabs.naturalWidth`), so a text-size change applies from the next one.
+- **Folders** ("What" until Task 17c): its name, the folders and drives, the exclusions (setup's line and "Review Exclusions…" sheet), and a
   line counting the items apps mark as not for backup ("Also skipped: 1,145 items apps mark as not for backup") with
   "Show…", a sheet with the plan's switch for them and the list, each with "Back up anyway".
 - **Schedule**: the interval, the battery rule and the plan's own upload limit in MB/s (empty, the default, is none;
@@ -397,12 +415,15 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   interval, one quiet line gives the plan's last backup and next run in the menu's words ("Last backup at 14:16 ·
   next at 15:16"; "No backup yet · first at …"; paused, a skipping battery, network, Wi-Fi or drive rule, and a plan
   waiting for a recovery kit are each said). It describes the saved schedule: while the interval is edited and unsaved it adds "Next
-  run time updates when you save." (`MenuPresentation.scheduleCaption`).
+  run time updates when you save." (`MenuPresentation.scheduleCaption`). Then its **Alerts** section (its own tab
+  until Task 17c, folded in so a plan has the HIG's six tabs at most): the check-in URL (saved, Remove, or a new one)
+  and "no successful backup in N days".
 - **Storage**: the repository address, read-only (a different repository is a new plan), the repository password
   and storage keys or environment values (empty keeps what's saved; a new S3 or B2 key needs both halves), the host
   label, the pack size (read-only) and "Show Recovery Kit…". Entering the repository password doesn't change the
   repository's: it is for one changed outside Restorey.
-- **Keep**: retention, with a plain-English summary under the counts that updates as you type ("Keeps the newest
+- **Retention** ("Keep" until Task 17c): the four counts, one row each under "Keep" (Hourly, Daily, Weekly, Monthly),
+  with a plain-English summary under them that updates as you type ("Keeps the newest
   backup of each hour for the last 24 hours that have one, each day for the last 30 days that have one, …"; restic
   counts the hours, days, weeks and months that *have* a backup, not the last 24 hours of wall time, a count of 0
   leaves a rule out, and `RetentionSummary` words it); one quiet sentence that the weekly `restic check` (no
@@ -414,8 +435,7 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   snapshots from before Restorey) with how many snapshots it holds and how many retention would remove, and an "Apply
   Retention…" button that asks first ("Remove N snapshots of the previous folder list?", Cancel the default). With
   nothing to apply it says so in one line. It counts with the saved plan, so unsaved edits disable the buttons.
-- **Alerts**: the check-in URL (saved, Remove, or a new one) and "no successful backup in N days".
-- **History**: the History list for that plan; a warning row has "Show…" for the files that couldn't be read, and a
+- **History**: the History table for that plan; a warning row has "Show…" for the files that couldn't be read, and a
   backup row "Show…" for its biggest additions.
 
 The tabs edit a copy (`PlanEdit` in `RestoreyCore`, held by `PlanEditModel`): the fields keep exactly what is typed,
@@ -432,12 +452,12 @@ them. The check isn't a run: it leaves nothing in the plan's history or run logs
 and a Back Up Now meanwhile waits its turn in the repository's queue, as during the size measurement after an
 adopt. Like that measurement it is registered with the agent only once its turn comes (registrations are counted,
 since the two can overlap), so deleting the plan never waits for whatever is queued ahead of it. The typed secrets go when the save succeeds, on Revert, when another plan is shown and when
-the window closes. Every change of the plan shown (the sidebar, a plan's line in the menu, "Add…", opening the app
+the window closes. Every change of the plan shown (the list, a plan's line in the menu, "Add…", opening the app
 again) goes through one guard (`PlanSelection`): with unsaved edits, a request for another plan waits for "Discard
 your changes…?" (a tab the route named, such as Alerts for "Add…", is shown once the switch happens), and closing
 the window or quitting Restorey asks Save, Don't Save or Cancel (a refused save cancels the quit; a quit while
 Settings already has a question up is cancelled, and the window brought forward so that question is answered first). The editor belongs to the window, so going
-to General and back keeps them. Delete Plan… asks with the developer window's words ("Its
+to General and back keeps them. − under the list (or Delete, or "Delete Plan…" in a plan's context menu) asks with the developer window's words ("Its
 settings, saved passwords and keys, and history are removed. The repository and its snapshots aren't touched."); the
 agent also removes the plan's run logs, and setup's saved progress is forgotten if it names the deleted plan
 (`SetupProgressStore.forget`), as it is when the Developer window deletes one.
@@ -471,6 +491,14 @@ Photos.sqlite 1.1 GB, Lightroom Catalog.lrcat 312 MB, big.log 46 MB"), followed 
 restic's folder listings added at least 1 MB ("Biggest additions: folder listings 1.3 GB" alone when no file added
 data), with "Show…" (see "What each backup added" below). A row with both this and the couldn't-read "Show…" labels them "Show Unreadable Files…" and "Show Biggest
 Additions…" (`HistoryPresentation.links`).
+
+It is a table (SwiftUI `Table`, Task 17c; HIG Lists and tables): Time, Plan (in the all-plans list), Step, Outcome,
+Added and Duration columns, newest first until a heading is clicked, every column sortable (by the run's end time, the
+bytes added and the seconds taken, not their text) and resizable. The Outcome cell has the outcome's symbol and words,
+the failure's reason or the unreadable files' count (`HistoryRow.note`), the biggest-additions line, and the row's
+links: one "Show…" per sheet and "Show Log". Double-clicking a row (or Return) opens its log, and its context menu has
+Show Log, Show Log in Finder and each sheet by its full name ("Show Unreadable Files…", "Show Biggest Additions…",
+`HistoryLink.menuTitle`). A cell too narrow for its words shows the rest as a help tag.
 
 ### The menu bar
 
@@ -608,7 +636,7 @@ row in a plan's History tab; the all-plans History list has no plan editor to ch
 this" for operation not permitted or permission denied, "It was deleted while the backup ran" for no such file,
 otherwise restic's text), "Open in Finder" where the path still exists, and "Don't back this up". That adds the path's
 exclusion pattern (`DefaultExclusions.pattern(forFolder:)`, glob characters escaped) to the plan's exclusions as an
-unsaved edit, with Save, Revert and the close and quit guard as in the What tab; the row then reads "Won't be backed up
+unsaved edit, with Save, Revert and the close and quit guard as in the Folders tab; the row then reads "Won't be backed up
 from the next backup" with Undo, which removes it again; nothing changes until you save the plan. A file deleted while the backup ran has no button, and a path
 the plan already excludes reads "Already not backed up". This is information only: no outcome, icon, alert or ping changes.
 
@@ -674,18 +702,18 @@ reasons are in the design spec, §5.7):
   (`MarkedNotForBackup.swift`). Before each backup the agent asks Spotlight for them within the plan's sources, checks
   each still carries the attribute, folds items inside another (or inside an excluded folder) away, and passes the
   list to restic in a per-run file (`--exclude-file`, removed when restic finishes). Each plan has a switch for this
-  (on by default) and a "Back up anyway" list (Settings → What → Show…). Spotlight is the source, so items in folders
+  (on by default) and a "Back up anyway" list (Settings → Folders → Show…). Spotlight is the source, so items in folders
   Spotlight doesn't index (indexing off, an unindexed drive, a folder on Spotlight's privacy list) are backed up.
   If the look takes over 10 seconds or finds over 100,000 items, that backup includes them all, and while a look
   Spotlight never answered is still outstanding no new one starts (one blocked thread at most). Without Full Disk
-  Access the What tab's list may be incomplete, and says so; backups are unaffected. The count
+  Access the Folders tab's list may be incomplete, and says so; backups are unaffected. The count
   is recorded on the backup's run record and is never a warning.
 
 restic also skips folders tagged with `CACHEDIR.TAG` (`--exclude-caches`) and iCloud files that aren't
 downloaded to this Mac (`--exclude-cloud-files`). Time Machine's own exclusion list can't be read on macOS 27,
 so Restorey doesn't try. Plans saved by an earlier build get the file types and the one-file-system setting when
 `config.json` is upgraded to schema 2; their folder exclusions are kept as they were (defaults added later, such as the CoreSpeech folder, reach new plans
-only: add them to an existing plan under Settings → What, Review Exclusions…). Before a file is
+only: add them to an existing plan under Settings → Folders, Review Exclusions…). Before a file is
 rewritten by an upgrade, the old one is kept beside it as `config.json.v1.bak` (`<file>.v<schema>.bak`, readable
 only by you). If an upgrade fails, the agent says so and leaves the file alone.
 

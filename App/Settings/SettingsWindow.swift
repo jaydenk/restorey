@@ -26,10 +26,10 @@ struct SettingsContext {
 /// The Settings window's content (UI design §6, mockup `v0.1-settings.html`): the section the toolbar picks.
 /// General, Plans, Network and History.
 struct SettingsWindow: View {
-    /// The narrowest every section fits in: General and History need about 760, Plans its tabs (`PlansPane`), measured
-    /// now. `WindowRouter` takes it once per window made (Task 14c R2), so a text-size change applies from the next one.
+    /// The narrowest every section fits in: General and History need about 760, Plans its tab row (`PlansPane`),
+    /// measured now. `WindowRouter` takes it once per window made (Task 14c R2), so a text-size change applies from the next one.
     @MainActor static func measuredMinimumWidth() -> CGFloat {
-        max(760, PlansPane.minimumWidth(tabRowWidth: PlanTabPicker.naturalWidth()).rounded(.up))
+        max(760, PlansPane.minimumWidth(tabRowWidth: PlanTabs<EmptyView>.naturalWidth()).rounded(.up))
     }
 
     let context: SettingsContext
@@ -53,8 +53,8 @@ struct SettingsWindow: View {
                 HistoryPane(filterRequest: state.historyFilter)
             }
         }
-        // Wide enough for every section, Plans' row of seven tabs the widest (measured, not guessed: a fixed 760
-        // let the tabs overflow, and the hosting view centred the overflow, clipping both edges; Task 14c R1).
+        // Wide enough for every section, Plans' row of tabs the widest (measured, not guessed: a fixed 760 let the old
+        // segmented row overflow, and the hosting view centred the overflow, clipping both edges; Task 14c R1).
         .frame(
             minWidth: minimumWidth, idealWidth: minimumWidth + 20, minHeight: 520, idealHeight: 560)
         .environment(context.supervisor)

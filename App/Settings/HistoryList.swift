@@ -2,9 +2,11 @@ import AppKit
 import RestoreyCore
 import SwiftUI
 
-/// The runs, newest first (UI design §6.4, mockup `v0.1-settings.html`): time, plan, step, how it ended in the
-/// menu's wording, what it added and how long it took, and its log. `planID` fixes the list to one plan (a plan's
-/// History tab); nil lists every plan with a plan filter. The rows are `HistoryPresentation`'s.
+/// The runs, newest first (UI design §6.4, mockup `v0.1-settings.html`), as a table (Task 17c, P11; HIG Lists and
+/// tables: sortable, resizable columns): time, plan, step, how it ended in the menu's wording, what it added and how
+/// long it took. A row's log opens with a double-click, its "Show Log" link or its context menu, which also has the
+/// row's "Show…" sheets. `planID` fixes the list to one plan (a plan's History tab); nil lists every plan with a plan
+/// filter. The rows are `HistoryPresentation`'s.
 ///
 /// The records come from the agent's `history` call, fetched again whenever a plan's newest record changes, so a
 /// run that ends while the list is open appears in it. Reads the supervisor from the environment.
@@ -23,6 +25,9 @@ struct HistoryList: View {
     let editor: PlanEditModel?
     @State private var unreadable: UnreadableShown?
     @State private var additions: AdditionsShown?
+    @State private var selection: Set<HistoryRow.ID> = []
+    /// Newest first until a column heading is clicked.
+    @State private var sortOrder = [KeyPathComparator(\HistoryRow.endedAt, order: .reverse)]
 
     private struct AdditionsShown: Identifiable {
         let id: UUID
@@ -73,12 +78,7 @@ struct HistoryList: View {
                 .accessibilityLabel("Show")
                 Spacer()
             }
-            List(rows) { row in
-                HistoryRowView(
-                    row: row, showsPlan: planID == nil, links: HistoryPresentation.links(for: row, offersUnreadable: editor != nil),
-                    showLog: { open(row) }, show: { show($0, row) })
-            }
-            .listStyle(.bordered)
+            table(rows.sorted(using: sortOrder))
             .overlay {
                 if let loadError {
                     SeverityText(loadError, font: .body).padding()
@@ -99,6 +99,59 @@ struct HistoryList: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Run logs are kept for 400 days, and go with their plan when it is deleted.")
+        }
+    }
+
+    private func links(_ row: HistoryRow) -> [HistoryLink] {
+        HistoryPresentation.links(for: row, offersUnreadable: editor != nil)
+    }
+
+    private func table(_ rows: [HistoryRow]) -> some View {
+        Table(rows, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("Time", value: \.endedAt) { row in
+                Text(row.time).monospacedDigit()
+            }
+            .width(min: 100, ideal: 108, max: 120)
+            if planID == nil {
+                TableColumn("Plan", value: \.plan) { row in
+                    Text(row.plan).lineLimit(1).help(row.plan)
+                }
+                .width(min: 70, ideal: 110, max: 130)
+            }
+            TableColumn("Step", value: \.operation) { row in
+                Text(row.operation)
+            }
+            .width(min: 52, ideal: 52, max: 64)
+            TableColumn("Outcome", value: \.outcome) { row in
+                OutcomeCell(row: row, links: links(row), showLog: { open(row) }, show: { show($0, row) })
+            }
+            .width(min: 96, ideal: 106)
+            TableColumn("Added", value: \.addedSortKey) { row in
+                Text(row.added ?? "").monospacedDigit()
+            }
+            .width(min: 50, ideal: 56, max: 66)
+            TableColumn("Duration", value: \.durationSortKey) { row in
+                Text(row.duration ?? "").monospacedDigit()
+            }
+            .width(min: 50, ideal: 56, max: 66)
+        }
+        .contextMenu(forSelectionType: HistoryRow.ID.self) { ids in
+            if let row = rows.first(where: { ids.count == 1 && ids.contains($0.id) }) {
+                Button("Show Log") { open(row) }
+                    .disabled(row.logFile == nil)
+                Button("Show Log in Finder") { reveal(row) }
+                    .disabled(row.logFile == nil)
+                let links = links(row)
+                if !links.isEmpty {
+                    Divider()
+                    ForEach(links) { link in
+                        Button(link.menuTitle) { show(link.kind, row) }
+                    }
+                }
+            }
+        } primaryAction: { ids in
+            // A double-click (or Return) on one row opens its log, as Finder opens a document.
+            if ids.count == 1, let row = rows.first(where: { ids.contains($0.id) }) { open(row) }
         }
     }
 
@@ -124,61 +177,71 @@ struct HistoryList: View {
     }
 
     private func open(_ row: HistoryRow) {
+        guard let url = existingLog(row) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func reveal(_ row: HistoryRow) {
+        guard let url = existingLog(row) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    /// The row's log while it is still there; a log that has gone says so (`missingLog`).
+    private func existingLog(_ row: HistoryRow) -> URL? {
         guard let file = row.logFile,
             let url = HistoryPresentation.logURL(file, logsDirectory: supervisor.identity.logsDirectory())
-        else { return }
+        else { return nil }
         guard FileManager.default.fileExists(atPath: url.path) else {
             missingLog = true
-            return
+            return nil
         }
-        NSWorkspace.shared.open(url)
+        return url
     }
 }
 
-private struct HistoryRowView: View {
+/// A row's Outcome cell: the outcome's symbol (its own shape, so it isn't carried by colour alone) and words, what
+/// belongs with it, the biggest additions' line, and the row's links.
+private struct OutcomeCell: View {
     let row: HistoryRow
-    let showsPlan: Bool
     /// The row's "Show…" links, from `HistoryPresentation.links`.
     let links: [HistoryLink]
     let showLog: () -> Void
     let show: (HistoryLink.Kind) -> Void
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            // A shape per outcome, so the outcome isn't carried by colour alone; VoiceOver reads it.
-            Image(systemName: row.kind.symbolName)
-                .foregroundStyle(row.kind.tint)
-                .frame(width: 16)
-                .accessibilityLabel(row.kind.accessibilityLabel)
-            Text(row.time)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(minWidth: 110, alignment: .leading)
-            if showsPlan {
-                Text(row.plan).lineLimit(1).frame(minWidth: 120, alignment: .leading)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Image(systemName: row.kind.symbolName)
+                    .foregroundStyle(row.kind.tint)
+                    .accessibilityLabel(row.kind.accessibilityLabel)
+                Text(row.outcome).fixedSize(horizontal: false, vertical: true).help(row.outcome)
             }
-            Text(row.operation)
-                .foregroundStyle(.secondary)
-                .frame(minWidth: 60, alignment: .leading)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(row.outcome)
-                if let detail = row.detail {
-                    Text(detail).explanatoryNote()
+            if let note = row.note {
+                Text(note).explanatoryNote().help(note)
+            }
+            if let additions = row.biggestAdditions {
+                Text(additions.line).explanatoryNote().lineLimit(1).truncationMode(.tail).help(additions.line)
+            }
+            if !links.isEmpty || row.logFile != nil {
+                HStack(spacing: 10) {
+                    ForEach(links) { link in
+                        Button(link.title) { show(link.kind) }
+                            .accessibilityLabel(link.accessibilityLabel)
+                    }
+                    if row.logFile != nil {
+                        Button("Show Log", action: showLog)
+                    }
                 }
-                if let additions = row.biggestAdditions {
-                    Text(additions.line).explanatoryNote().lineLimit(1).truncationMode(.tail)
-                }
-            }
-            Spacer()
-            ForEach(links) { link in
-                Button(link.title) { show(link.kind) }
-                    .buttonStyle(.link)
-                    .accessibilityLabel(link.accessibilityLabel)
-            }
-            if row.logFile != nil {
-                Button("Show Log", action: showLog)
-                    .buttonStyle(.link)
+                .buttonStyle(.link)
+                .font(.subheadline)
             }
         }
+        .padding(.vertical, 2)
     }
+}
+
+extension HistoryRow {
+    /// What the Added and Duration columns sort by: a row without one sorts before the smallest.
+    var addedSortKey: Int64 { addedBytes ?? -1 }
+    var durationSortKey: TimeInterval { durationSeconds ?? -1 }
 }

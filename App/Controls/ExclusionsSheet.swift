@@ -2,7 +2,7 @@ import AppKit
 import RestoreyCore
 import SwiftUI
 
-/// What a plan leaves out, as a sheet (setup's sources step and Settings' What tab): folders (restic patterns;
+/// What a plan leaves out, as a sheet (setup's sources step and Settings' Folders tab): folders (restic patterns;
 /// Restorey's own folders stay), file types, and whether other file systems mounted inside a source are skipped.
 struct ExclusionsSheet: View {
     @Binding var exclusions: [String]

@@ -31,7 +31,7 @@ struct UnreadableFilesSheet: View {
             .listStyle(.bordered)
             .frame(minHeight: 200, idealHeight: 280)
             .accessibilityLabel("Files that couldn’t be read")
-            Text("You can change this later in What → Review Exclusions…")
+            Text("You can change this later in Folders → Review Exclusions…")
                 .explanatoryNote()
             if rows.contains(where: { $0.action == .excluded(unsaved: true) }) {
                 Text("Save the plan’s changes to apply this.")

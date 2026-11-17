@@ -66,9 +66,14 @@ private struct NetworkForm: View {
                         // In a grouped form the switch's own label is drawn apart from it (live finding 4).
                         .accessibilityLabel("Skip on a hotspot or in Low Data Mode")
                 } footer: {
-                    Text("These rules apply only to plans that back up to another machine, such as S3, B2 or a restic "
-                        + "server. Backups to a folder or drive on this Mac are never skipped or limited.")
-                        .explanatoryNote()
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Empty means no limit. Backups uploading together share it, and a plan’s own limit "
+                            + "applies too: the smaller one wins.")
+                            .explanatoryNote()
+                        Text("These rules apply only to plans that back up to another machine, such as S3, B2 or a restic "
+                            + "server. Backups to a folder or drive on this Mac are never skipped or limited.")
+                            .explanatoryNote()
+                    }
                 }
                 Section("Skip on these Wi-Fi networks") {
                     wiFiList
@@ -82,23 +87,14 @@ private struct NetworkForm: View {
         }
     }
 
-    private var limit: some View {
+    /// The limit's explanation is in the section's footer, so the row holds only the field (Task 17c, as P6 has it for
+    /// General).
+    @ViewBuilder private var limit: some View {
         LabeledContent("Upload limit for this Mac") {
-            VStack(alignment: .trailing, spacing: 4) {
-                HStack(spacing: 4) {
-                    PlainTextField(title: "None", text: $model.fields.uploadLimit)
-                        .frame(width: 70)
-                        .accessibilityLabel("Upload limit for this Mac, in MB/s")
-                    Text("MB/s").foregroundStyle(.secondary)
-                }
-                if let problem = model.edit.uploadLimitProblem {
-                    SeverityText(problem)
-                }
-                Text("Empty means no limit. Backups uploading together share it, and a plan’s own limit "
-                    + "applies too: the smaller one wins.")
-                    .explanatoryNote()
-                    .multilineTextAlignment(.trailing).fixedSize(horizontal: false, vertical: true)
-            }
+            UploadLimitField(name: "Upload limit for this Mac, in MB/s", text: $model.fields.uploadLimit)
+        }
+        if let problem = model.edit.uploadLimitProblem {
+            SeverityText(problem)
         }
     }
 

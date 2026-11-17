@@ -269,6 +269,8 @@ struct PlainTextField: NSViewRepresentable {
     @Binding var text: String
     /// Called when Return is pressed in the field.
     var onSubmit: (@MainActor () -> Void)?
+    /// A number's field: right-aligned, in digits of one width, so the numbers line up (`NumberField`, Task 17c).
+    var isNumeric = false
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text, onSubmit: onSubmit) }
 
@@ -286,6 +288,10 @@ struct PlainTextField: NSViewRepresentable {
         context.coordinator.onSubmit = onSubmit
         field.placeholderString = title
         field.setAccessibilityLabel(title)
+        if isNumeric {
+            field.alignment = .right
+            field.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        }
         context.coordinator.show(text, in: field)
     }
 

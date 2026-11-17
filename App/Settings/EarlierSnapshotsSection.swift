@@ -1,7 +1,7 @@
 import RestoreyCore
 import SwiftUI
 
-/// The Keep tab's "Earlier snapshots" (UI design §6.2, Task 14b; product spec §5.6): from a preview (a `forget
+/// The Retention tab's "Earlier snapshots", a section of its form (UI design §6.2, Task 14b; product spec §5.6): from a preview (a `forget
 /// --dry-run` the agent runs without a lock, recording nothing), how many snapshots each earlier group of the plan
 /// holds — its previous folder lists and, for an adopted plan, the snapshots from before Restorey — with "Apply
 /// Retention…" for each one retention would thin. The button asks first (`DestructiveConfirmation`); only what that
@@ -35,12 +35,7 @@ struct EarlierSnapshotsSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Earlier snapshots").font(.headline)
-            Text(plan.origin == .adopted
-                 ? "Retention never thins this Mac’s snapshots from before Restorey, or those of a previous folder list, unless you apply it here."
-                 : "Retention never thins the snapshots of a previous folder list unless you apply it here.")
-                .explanatoryNote()
+        Section {
             content
             if let outcome {
                 Text(outcome).font(.callout).fixedSize(horizontal: false, vertical: true)
@@ -52,6 +47,19 @@ struct EarlierSnapshotsSection: View {
                 Button("Try Again") { Task { await load() } }
                     .disabled(working)
             }
+        } header: {
+            Text("Earlier snapshots")
+        } footer: {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(plan.origin == .adopted
+                     ? "Retention never thins this Mac’s snapshots from before Restorey, or those of a previous folder list, unless you apply it here."
+                     : "Retention never thins the snapshots of a previous folder list unless you apply it here.")
+                    .explanatoryNote()
+                if unsavedEdits, let preview, EarlierSnapshotsText.nothingToApply(preview) == nil {
+                    Text("These are counted with the saved settings. Save your changes to count them again.")
+                        .explanatoryNote()
+                }
+            }
         }
         .task(id: inputs) { await load() }
     }
@@ -62,16 +70,12 @@ struct EarlierSnapshotsSection: View {
                 Text(line).fixedSize(horizontal: false, vertical: true)
             } else {
                 ForEach(preview.groups.filter { !$0.removeIDs.isEmpty }, id: \.scope) { group in
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(EarlierSnapshotsText.row(group)).fixedSize(horizontal: false, vertical: true)
-                        Spacer()
+                    LabeledContent {
                         Button("Apply Retention…") { Task { await apply(group) } }
                             .disabled(working || unsavedEdits)
+                    } label: {
+                        Text(EarlierSnapshotsText.row(group)).fixedSize(horizontal: false, vertical: true)
                     }
-                }
-                if unsavedEdits {
-                    Text("These are counted with the saved settings. Save your changes to count them again.")
-                        .explanatoryNote()
                 }
             }
         } else if problem == nil {

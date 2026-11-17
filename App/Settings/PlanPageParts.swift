@@ -1,8 +1,8 @@
 import RestoreyCore
 import SwiftUI
 
-// The pieces of a plan's page in Settings → Plans around its tabs: the stop and new-kit banners, the save bar, Delete Plan…,
-// and an unfinished plan's page.
+// The pieces of a plan's page in Settings → Plans around its tabs: the stop and new-kit banners, the save bar, and an
+// unfinished plan's page. Deleting a plan is the list's − (`PlansPane`), as a settings list of things has it.
 
 /// "New recovery kit needed" (the menu's banner, UI design §6.2): backups wait until the new kit is confirmed.
 struct NewKitBanner: View {
@@ -50,19 +50,13 @@ struct StopBanner: View {
     }
 }
 
-/// The edits' state and the buttons: Delete Plan… on the left; the pause warning, the first problem or the save's
-/// sentence, Revert and Save (⌘S) on the right. Save isn't the default button: Return belongs to the fields.
+/// The edits' state and the buttons: the pause warning, the first problem or the save's sentence, Revert and Save (⌘S)
+/// on the right. Save isn't the default button: Return belongs to the fields.
 struct SaveBar: View {
     @Bindable var model: PlanEditModel
-    let planName: String
-    let planID: UUID
-    let context: SettingsContext
-    let deleted: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
-            DeletePlanButton(planID: planID, planName: planName, context: context, deleted: deleted)
-                .disabled(model.saving)
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 if model.edit.pausesBackups {
@@ -87,52 +81,10 @@ struct SaveBar: View {
     }
 }
 
-/// Delete Plan… with the developer window's confirmation (the repository and its snapshots aren't touched). The
-/// agent removes the plan's settings, keychain items, history and run logs.
-struct DeletePlanButton: View {
-    let planID: UUID
-    let planName: String
-    let context: SettingsContext
-    let deleted: () -> Void
-    @State private var confirming = false
-    @State private var deleting = false
-    @State private var problem: String?
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Button("Delete Plan…", role: .destructive) { confirming = true }
-                .disabled(deleting)
-            if deleting { ProgressView().controlSize(.small) }
-            if let problem {
-                SeverityText(problem)
-            }
-        }
-        .confirmationDialog("Delete the plan “\(planName)”?", isPresented: $confirming) {
-            Button("Delete Plan", role: .destructive) { Task { await delete() } }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Its settings, saved passwords and keys, and history are removed. The repository and its snapshots aren’t touched.")
-        }
-    }
-
-    private func delete() async {
-        deleting = true
-        problem = nil
-        defer { deleting = false }
-        switch await context.supervisor.connection.deletePlan(planID) {
-        case .success:
-            context.planDeleted(planID)
-            deleted()
-        case .failure(let error): problem = FormValidation.sentence(error.description)
-        }
-    }
-}
-
-/// An unfinished plan: setup is still making it, so it is finished there (or deleted here).
+/// An unfinished plan: setup is still making it, so it is finished there (or deleted with the list's −).
 struct UnfinishedPlanView: View {
     let plan: Plan
     let context: SettingsContext
-    let deleted: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -145,12 +97,10 @@ struct UnfinishedPlanView: View {
             .font(.headline)
             Text("Finish setting it up to start backing up.")
             HStack {
-                DeletePlanButton(planID: plan.id, planName: plan.name, context: context, deleted: deleted)
                 Spacer()
                 Button(BannerAction.finishSetup(plan.id).buttonTitle) { context.finishSetup() }
             }
             Spacer()
         }
-        .padding(16)
     }
 }

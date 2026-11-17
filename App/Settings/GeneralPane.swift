@@ -23,12 +23,18 @@ struct GeneralPane: View {
                 Label(statusItemHiddenNote, systemImage: "menubar.rectangle")
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // While it is missing, Full Disk Access is a section of its own with the tile, the why and the button
+            // across the form's width (Task 17c, P6), and first, since backups miss folders until it is fixed; once on
+            // (or while checking), it is one row with the others.
+            if fullDiskAccess == .missing {
+                Section("Full Disk Access") {
+                    fullDiskAccessBlock
+                }
+            }
             Section {
                 openAtLogin
-                LabeledContent("Full Disk Access") {
-                    FullDiskAccessBlock(
-                        state: FullDiskAccessGuide.State(missing: supervisor.lastKnownStatus?.fdaMissing),
-                        openSettings: { perform(.openFullDiskAccess) })
+                if fullDiskAccess != .missing {
+                    LabeledContent("Full Disk Access") { fullDiskAccessBlock }
                 }
                 LabeledContent("Notifications") {
                     LineView(line: SettingsGeneral.notifications(hello: supervisor.lastHello),
@@ -50,6 +56,14 @@ struct GeneralPane: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await refresh() }
         }
+    }
+
+    private var fullDiskAccess: FullDiskAccessGuide.State {
+        FullDiskAccessGuide.State(missing: supervisor.lastKnownStatus?.fdaMissing)
+    }
+
+    private var fullDiskAccessBlock: some View {
+        FullDiskAccessBlock(state: fullDiskAccess, openSettings: { perform(.openFullDiskAccess) })
     }
 
     @ViewBuilder private var openAtLogin: some View {

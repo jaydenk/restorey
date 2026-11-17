@@ -14,6 +14,8 @@ public struct HistoryRow: Sendable, Equatable, Identifiable {
 
     public var id: UUID
     public var planID: UUID
+    /// When the run ended: what the Time column sorts by.
+    public var endedAt: Date
     /// "14:16" today, "Yesterday, 09:05", otherwise "9 Nov, 09:05", in local time.
     public var time: String
     public var plan: String
@@ -23,6 +25,15 @@ public struct HistoryRow: Sendable, Equatable, Identifiable {
     public var outcome: String
     /// What else is known, joined with " · ": the failure's reason or unreadable files, the size added, the duration.
     public var detail: String?
+    /// The part of `detail` that belongs with the outcome (the failure's reason or the unreadable files), for the
+    /// History table's Outcome column; the size and duration have columns of their own (Task 17c).
+    public var note: String?
+    /// The size a backup added ("1.2 GB"), and the bytes it sorts by; nil for any other run.
+    public var added: String?
+    public var addedBytes: Int64?
+    /// How long the run took ("3 min"), and the seconds it sorts by; nil for a run that never started.
+    public var duration: String?
+    public var durationSeconds: TimeInterval?
     public var kind: Kind
     /// The run's log, relative to the logs folder (`HistoryPresentation.logURL`); nil when the run never reached
     /// restic.
@@ -48,6 +59,15 @@ public struct HistoryLink: Sendable, Equatable, Identifiable {
     public var title: String
     public var accessibilityLabel: String
     public var id: String { "\(kind)" }
+
+    /// The row's context-menu item for the same sheet: always the specific name, since a menu lists it with the others
+    /// (Task 17c).
+    public var menuTitle: String {
+        switch kind {
+        case .unreadable: "Show Unreadable Files…"
+        case .biggestAdditions: "Show Biggest Additions…"
+        }
+    }
 }
 
 /// Which runs the History list shows.
@@ -140,14 +160,22 @@ public enum HistoryPresentation {
             if let reason = record.outcome.failureReason { details.append(reason) }
             kind = .failure
         }
+        let note = details.isEmpty ? nil : details.joined(separator: " · ")
+        var addedBytes: Int64?
+        var added: String?
         if let summary = record.summary, record.operation == .backup {
-            details.append(DisplayFormat.size(Int64(summary.dataAdded), locale: locale))
+            addedBytes = Int64(summary.dataAdded)
+            added = DisplayFormat.size(Int64(summary.dataAdded), locale: locale)
         }
-        if let seconds = duration(record) { details.append(DisplayFormat.duration(seconds: seconds)) }
+        let seconds = duration(record)
+        let durationText = seconds.map { DisplayFormat.duration(seconds: $0) }
+        details += [added, durationText].compactMap { $0 }
         return HistoryRow(
-            id: record.id, planID: record.planID, time: time(record.endedAt, now: now, calendar: calendar, locale: locale),
+            id: record.id, planID: record.planID, endedAt: record.endedAt,
+            time: time(record.endedAt, now: now, calendar: calendar, locale: locale),
             plan: planNames[record.planID] ?? "Deleted plan", operation: operationTitle(record.operation),
-            outcome: outcome, detail: details.isEmpty ? nil : details.joined(separator: " · "), kind: kind,
+            outcome: outcome, detail: details.isEmpty ? nil : details.joined(separator: " · "), note: note,
+            added: added, addedBytes: addedBytes, duration: durationText, durationSeconds: seconds, kind: kind,
             logFile: record.logFile.isEmpty ? nil : record.logFile, unreadable: UnreadableSummary(record: record),
             biggestAdditions: BiggestAdditionsText.summary(record: record, locale: locale))
     }
