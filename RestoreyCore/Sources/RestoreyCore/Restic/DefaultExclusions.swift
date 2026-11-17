@@ -47,6 +47,8 @@ public enum DefaultExclusions {
             // The survey: these error on every run even with Full Disk Access.
             "\(h)/Library/Application Support/FileProvider/*/wharf",
             "\(h)/Library/Group Containers/group.com.apple.secure-control-center-preferences",
+            // Not under a `Library/` level, so the Group Containers pattern above misses it; EPERM on every run.
+            "\(h)/Library/Group Containers/group.com.apple.CoreSpeech/Caches",
         ]
     }
 

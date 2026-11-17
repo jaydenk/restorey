@@ -168,7 +168,9 @@ leaves `App/Developer/` out of the Release build (`EXCLUDED_SOURCE_FILE_NAMES`),
 and `scripts/verify-bundle.sh` (run by `scripts/ci.sh` on every build) reads every Mach-O file under the bundle's `Contents`
 and fails a Release bundle that names any of its types (`DeveloperModel`, `DeveloperWindowController`, `DeveloperView`, which Swift's metadata keeps
 even in a stripped binary), and a Debug bundle missing any of them, so the check can't pass by looking in the wrong
-place. The window saves plans (S3, B2 or a raw local repository path such
+place. It also checks, for Debug and Release, that the built app holds the password word list
+(`Contents/Resources/RestoreyCore_RestoreyCore.bundle/Contents/Resources/eff_large_wordlist.txt`, 7,776 lines), since
+a missing one stops setup suggesting a password. The window saves plans (S3, B2 or a raw local repository path such
 as `/tmp/restorey-dev-repo`), creates or adopts repositories, confirms the recovery details, backs up, pauses,
 resumes, asks for notification permission, and shows the agent's live status as JSON. Its fields are the real
 controls the setup flow and Settings use (`App/Controls/`): `PlainTextField` and `SecretField` (a secure field that
@@ -273,7 +275,13 @@ when "Create New Repository" succeeds, and `adoption`, the adopt report (host na
 the count), set only when `adopt` succeeds. So a setup quit after "Open Repository" but before "Use This Repository"
 resumes on the adopt path rather than calling someone else's repository its own, and the sources step's new-group
 warning survives a quit (kept rather than listed again, which can take minutes on a remote repository). A new
-address at "Check" clears both facts. **Recovery kit** shows the kit (see "The recovery kit") once the
+address at "Check" clears both facts. A password of the user's own that starts or ends with a space (or a tab or newline)
+is refused ("A password can't start or end with a space."), because restic trims whitespace from the output of
+`RESTIC_PASSWORD_COMMAND`, which is how Restorey passes it the password: it would never open the repository again. For
+the same reason, adopting a repository whose password has whitespace at an end isn't supported. A copied password
+(generated or the user's own, in setup or the recovery kit) is marked concealed, stays on this Mac (`.currentHostOnly`,
+so Universal Clipboard doesn't send it to other devices) and is cleared from the pasteboard after 90 seconds unless
+something else has been copied since. **Recovery kit** shows the kit (see "The recovery kit") once the
 repository's own password is saved, that is once this setup created or adopted the repository; before that the plan
 holds only "Check"'s stand-in, so the step says so and offers Back instead of a kit. The tick "I've
 saved it somewhere other than this Mac" can be set once the kit has shown; it is recorded in the progress and lets
@@ -434,8 +442,9 @@ The menu, top to bottom:
 - **One entry per plan**: its name, status ("Backed up at 14:16", "Backing up", grey "Paused" with "Resumes by
   itself at 15:20", "Backup failed at 14:16" in red, with the time and reason of the newest backup that had a verdict, the same record
 the "backup failed" alert is decided from, so a skip, pause or lock since doesn't hide them; a skip reason in
-orange), a detail line (progress, time left
-  and upload speed while backing up, or the next run) and its destination with the repository size. A running
+orange), a detail line (bytes done of the total and time left
+  while backing up, or the next run; no upload speed, because restic 0.19.1 reports no count of bytes uploaded, only bytes
+  processed, which counts unchanged files at once) and its destination with the repository size. A running
   backup has a progress bar under it. Choosing a plan opens it in Settings; a failed one has "Show Details…" (its
   history).
 - **Resume**, **Back Up Now** and **Pause**. With one plan they act on it; with several, each opens a submenu whose
@@ -448,7 +457,7 @@ orange), a detail line (progress, time left
 
 Coloured text (the fix in the accent colour, a red or orange status) switches to the highlight's text colour on
 the row under the pointer, since the highlight is the accent colour and AppKit leaves an attributed title's colours
-as they are. The menu updates while it is open: progress, speed and status change in place under the pointer. When rows come or
+as they are. The menu updates while it is open: progress and status change in place under the pointer. When rows come or
 go (a backup starts and its progress bar appears, a banner is raised) the items are replaced instead.
 
 ## What a backup run does
@@ -518,7 +527,17 @@ removing", or "Couldn't remove earlier snapshots", a fresh preview that failed i
 records nothing. Setup's choice runs only after a backup that succeeded with every file (not one that left unreadable
 files out); a lock held elsewhere, an interruption or a preview that fails keeps it for the next backup (a line in
 `agent.log` at ERROR, no row), and its row is added when it finally runs (its success is an INFO line in
-`agent.log`).
+`agent.log`). A lock or an interruption also holds that backup's `forget`, `prune` and `check` back; a preview that
+fails does not, because the plan's own `forget` is scoped to its tag and `check` is independent, so a lasting failure
+can't stop retention or integrity checking. After three backups in a row with a failed preview the plan's Overview
+adds a quiet line ("Couldn't remove the earlier snapshots you chose: <reason>. Restorey will try again after the next
+backup."): information only, with no alert and no change to the menu icon. A removal that reaches a verdict, or a new
+choice, resets the count.
+
+"N files couldn't be read" after a backup counts the distinct files restic left out of the snapshot: those it failed on
+while archiving (`"during":"archival"` in its `--json` output). Errors from its scanner, which only estimates totals for
+the progress figure (for example files deleted before the backup reached them), never change the snapshot or its exit
+status, so they are in the run log but not counted. An exit status 3 with no archival error still reads "1 file".
 
 Every restic run has its own log in `~/Library/Logs/Restorey/runs/<plan ID>/` (`Restorey-Dev` for Debug builds),
 with secrets redacted. A log starts with the restic command (values hidden) and ends with the outcome; a
@@ -544,7 +563,8 @@ reasons are in the design spec, §5.7):
   Trash, `node_modules`, Docker Desktop's and OrbStack's VM images, the folders Time Machine leaves out by
   default or that carry its exclusion attribute (`~/Library/Logs`, the Spotlight index, Xcode's DerivedData,
   the simulators, `~/.cache`, `~/.npm`, Mail's index and similar rebuilt state), a few system folders that fail
-  on every run even with Full Disk Access, and Restorey's own logs and settings. Logs elsewhere are backed up.
+  on every run even with Full Disk Access (including `~/Library/Group Containers/group.com.apple.CoreSpeech/Caches`),
+  and Restorey's own logs and settings. Logs elsewhere are backed up.
 - **File types**, passed case-insensitively as `--iexclude=*.<ext>`, at any depth: disk images (`dmg`, `iso`,
   `sparseimage`) and virtual machine disks and bundles (`vmdk`, `vhdx`, `qcow2`, `pvm` and the like). The list
   is editable per plan (`fileTypeExclusions`): remove `dmg` to back up disk images. An entry must be a bare
@@ -556,7 +576,8 @@ reasons are in the design spec, §5.7):
 restic also skips folders tagged with `CACHEDIR.TAG` (`--exclude-caches`) and iCloud files that aren't
 downloaded to this Mac (`--exclude-cloud-files`). Time Machine's own exclusion list can't be read on macOS 27,
 so Restorey doesn't try. Plans saved by an earlier build get the file types and the one-file-system setting when
-`config.json` is upgraded to schema 2; their folder exclusions are kept as they were. Before a file is
+`config.json` is upgraded to schema 2; their folder exclusions are kept as they were (defaults added later, such as the CoreSpeech folder, reach new plans
+only: add them to an existing plan under Settings → What, Review Exclusions…). Before a file is
 rewritten by an upgrade, the old one is kept beside it as `config.json.v1.bak` (`<file>.v<schema>.bak`, readable
 only by you). If an upgrade fails, the agent says so and leaves the file alone.
 

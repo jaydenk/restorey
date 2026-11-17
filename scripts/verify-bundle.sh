@@ -72,6 +72,15 @@ for key in NSLocationUsageDescription NSLocationWhenInUseUsageDescription; do
   [[ "$(plist_get "$AGENT/Contents/Info.plist" "$key")" == "$location_text" ]] || fail "agent $key is not the Location usage text"
 done
 
+# RestoreyCore's resource bundle carries the EFF word list that setup's "suggest a password" reads. A missing resource
+# is a precondition failure the moment setup suggests a password, so the built app (Debug and Release alike) must hold
+# it, whole: the EFF large list is 7,776 words, one per line. The path is where SwiftPM's resource bundle lands in a
+# built app: Contents/Resources/RestoreyCore_RestoreyCore.bundle/Contents/Resources/.
+wordlist="$APP/Contents/Resources/RestoreyCore_RestoreyCore.bundle/Contents/Resources/eff_large_wordlist.txt"
+[[ -f "$wordlist" ]] || fail "the password word list is missing from the app ($wordlist)"
+wordlist_lines=$(wc -l <"$wordlist" | tr -d ' ')
+[[ "$wordlist_lines" == "7776" ]] || fail "the password word list has $wordlist_lines lines, expected 7776"
+
 # The Developer window is Debug-only (project.yml excludes App/Developer from Release, and its uses are behind
 # #if DEBUG). Its Swift types' names are in a binary's metadata whenever it is compiled in, stripped or not, so a
 # Release bundle must have none of them, and a Debug one all three: the positive control that shows the check looks

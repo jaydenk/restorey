@@ -100,7 +100,11 @@ private struct NewRepositoryForm: View {
         .pickerStyle(.radioGroup)
         .labelsHidden()
         .disabled(model.working)
-        SetupField(label: model.ownPassword ? "Your password" : "New password") {
+        // An empty field only disables the button; a password with a space at an end gets its sentence.
+        SetupField(
+            label: model.ownPassword ? "Your password" : "New password",
+            problem: model.secret(key).isEmpty ? nil : model.passwordProblem
+        ) {
             HStack {
                 SecretField(title: "Repository password", text: secret(key))
                 if !model.ownPassword {

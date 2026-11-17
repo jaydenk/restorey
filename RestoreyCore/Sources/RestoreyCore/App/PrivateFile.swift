@@ -37,6 +37,9 @@ public enum PrivateFile {
                         if errno == EINTR { continue }
                         throw failure(url, errno)
                     }
+                    // write(2) returning 0 for a non-empty request makes no progress: looping would never end. It is
+                    // an I/O failure, not a retry.
+                    if written == 0 { throw failure(url, EIO) }
                     offset += written
                 }
             }

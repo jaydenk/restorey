@@ -55,7 +55,8 @@ extension SetupModel {
     }
 
     var passwordProblem: String? {
-        secret(.repositoryPassword(planID)).isEmpty ? "Enter a password for the repository." : nil
+        let password = secret(.repositoryPassword(planID))
+        return password.isEmpty ? "Enter a password for the repository." : FormValidation.newRepositoryPassword(password)
     }
 
     /// "Create new repository" (product spec §5.4: never automatic): saves the password, then `restic init`.

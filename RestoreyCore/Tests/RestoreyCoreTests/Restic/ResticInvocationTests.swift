@@ -407,6 +407,7 @@ struct ResticInvocationTests {
             "\(h)/Library/Containers/*/Data/Library/Caches", "\(h)/Library/Group Containers/*/Library/Caches",
             "\(h)/Library/Application Support/FileProvider/*/wharf",
             "\(h)/Library/Group Containers/group.com.apple.secure-control-center-preferences",
+            "\(h)/Library/Group Containers/group.com.apple.CoreSpeech/Caches",
         ])
         // The owner keeps logs and project build folders: none of these become defaults.
         for unwanted in ["*.log", "**/.venv", "**/Pods", "**/target", "**/.build"] {

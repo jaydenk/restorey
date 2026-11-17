@@ -3,6 +3,23 @@ import Testing
 @testable import RestoreyCore
 
 struct FormValidationTests {
+    // MARK: New repository password
+
+    /// restic trims `RESTIC_PASSWORD_COMMAND` output, so a password with whitespace at an end can't round-trip.
+    @Test(arguments: [" secret", "secret ", " secret ", "\tsecret", "secret\n", "  ", "secret\u{00A0}", "\u{2003}secret"])
+    func aPasswordWithWhitespaceAtAnEndIsRefused(_ password: String) {
+        #expect(FormValidation.newRepositoryPassword(password) == "A password can't start or end with a space.")
+    }
+
+    @Test(arguments: ["secret", "two words", "correct-horse-battery-staple", "a b", "p@ss word!", "x"])
+    func otherPasswordsPass(_ password: String) {
+        #expect(FormValidation.newRepositoryPassword(password) == nil)
+    }
+
+    @Test func anEmptyPasswordHasNoSentenceHere() {
+        #expect(FormValidation.newRepositoryPassword("") == nil)
+    }
+
     // MARK: Bucket
 
     @Test(arguments: ["my-bucket", "backups.2026", "abc", "a1b2c3", String(repeating: "a", count: 63)])

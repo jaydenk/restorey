@@ -117,6 +117,16 @@ public enum FormValidation {
         return nil
     }
 
+    /// A new repository's password as typed: nil, or the sentence to show. restic trims whitespace from the output of
+    /// `RESTIC_PASSWORD_COMMAND`, which is how Restorey hands it the password, so one that starts or ends with a space
+    /// (or a tab or newline) would reach restic without it and never open the repository again. Inner spaces are fine.
+    /// An empty field has no sentence of its own here: setup keeps its button disabled instead.
+    public static func newRepositoryPassword(_ password: String) -> String? {
+        guard let first = password.first, let last = password.last else { return nil }
+        if first.isWhitespace || last.isWhitespace { return "A password can't start or end with a space." }
+        return nil
+    }
+
     /// The upload limit as typed, in MB/s, to what is stored, in KiB/s: "" is no limit (nil), "5" is 5120,
     /// "1.5" is 1536 (one MB/s here is 1024 KiB/s, the unit restic's `--limit-upload` takes). Only a plain
     /// decimal number with a full stop is read, so the result never depends on the Mac's region.
