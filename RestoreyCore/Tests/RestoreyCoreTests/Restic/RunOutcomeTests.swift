@@ -99,6 +99,33 @@ struct RunOutcomeTests {
             == .warning(unreadable: 2))
     }
 
+    private func scan(_ name: String) -> ResticItemError {
+        ResticItemError(message: "lstat \(name): no such file or directory", during: "scan", item: name)
+    }
+
+    /// Final review I1: only the archiver's errors mean a file is missing from the snapshot.
+    @Test func scannerErrorsAreNotCounted() {
+        #expect(outcome(3, summary: summary(snapshotID: "abc"), errors: [scan("/gone1"), scan("/gone2"), item("/real")])
+            == .warning(unreadable: 1))
+    }
+
+    @Test func theSameItemInScanAndArchivalCountsOnce() {
+        #expect(outcome(3, errors: [scan("/a"), item("/a")]) == .warning(unreadable: 1))
+    }
+
+    @Test func twoArchivalErrorsOnOneItemCountOnce() {
+        #expect(outcome(3, errors: [item("/a"), item("/a"), item("/b")]) == .warning(unreadable: 2))
+    }
+
+    @Test func exitThreeWithOnlyScanErrorsStillReportsOne() {
+        #expect(outcome(3, errors: [scan("/a"), scan("/b")]) == .warning(unreadable: 1))
+        #expect(outcome(3, errors: []) == .warning(unreadable: 1))
+    }
+
+    @Test func exitZeroWithScanErrorsIsStillSuccess() {
+        #expect(outcome(0, summary: summary(snapshotID: "abc"), errors: [scan("/a")]) == .success(snapshotID: "abc"))
+    }
+
     /// Final review M9: exit 3 is "files couldn't be read" only for a backup.
     @Test func forgetExitThreeIsAFailureToRemoveSnapshots() {
         #expect(outcome(3, op: .forget(dryRun: false))

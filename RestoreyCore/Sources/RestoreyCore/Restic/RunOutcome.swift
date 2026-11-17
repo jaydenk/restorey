@@ -315,7 +315,7 @@ public func classify(
         // snapshot couldn't be removed (restic 0.19.1's documented exit codes), which is a failure of that
         // step, not unreadable files (final review M9). Any other operation has no documented 3.
         switch operation {
-        case .backup: return .warning(unreadable: errors.count)
+        case .backup: return .warning(unreadable: unreadableFileCount(errors))
         case .forget, .forgetSnapshots:
             return .failed(exitCode: 3, reason: exitErrorMessage.map(errorSentence) ?? errors.first?.message
                 ?? "restic couldn't remove every snapshot it was asked to forget")
@@ -344,4 +344,19 @@ public func classify(
 func errorSentence(_ exitErrorMessage: String) -> String {
     let lines = exitErrorMessage.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
     return lines.first { !$0.isEmpty } ?? exitErrorMessage
+}
+
+/// How many files a backup left out of its snapshot: the distinct `item`s of the errors restic raised
+/// while archiving (`"during":"archival"`). Final review I1. restic 0.19.1's scanner (`"during":"scan"`) only
+/// estimates totals for progress, so its errors (files deleted before the archiver reached them, say) never
+/// change the snapshot or the exit code (`internal/ui/backup/json.go`: `ScannerError` vs `Error`; only the
+/// archiver's error callback makes the backup exit 3). A directory both phases failed on is counted once.
+/// An exit 3 with no archival error still reports 1, so a restic wording change can't produce
+/// "0 files couldn't be read".
+func unreadableFileCount(_ errors: [ResticItemError]) -> Int {
+    let archival = errors.filter { $0.during == "archival" }
+    // An archival error with no item (not seen in 0.19.1) can't be de-duplicated, so each counts once.
+    let items = Set(archival.compactMap(\.item))
+    let itemless = archival.filter { $0.item == nil }.count
+    return max(1, items.count + itemless)
 }
