@@ -17,6 +17,9 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
         public var exclusions: [String]
         public var fileTypeExclusions: [String]
         public var oneFileSystem: Bool
+        /// The What tab's sheet for items apps mark as not for backup (Task 15c).
+        public var skipsItemsMarkedNotForBackup: Bool
+        public var backUpAnyway: [String]
         /// The interval, the battery rule and retention (as text), shared with setup's schedule step.
         public var schedule: ScheduleForm
         /// MB/s as typed; empty is no limit (the default, UI design §6.2).
@@ -34,6 +37,8 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
             exclusions = plan.exclusions
             fileTypeExclusions = plan.fileTypeExclusions
             oneFileSystem = plan.oneFileSystem
+            skipsItemsMarkedNotForBackup = plan.skipsItemsMarkedNotForBackup
+            backUpAnyway = plan.backUpAnyway
             schedule = ScheduleForm(plan: plan)
             uploadLimit = FormValidation.uploadLimitText(kiB: plan.uploadLimitKiB)
             hostLabel = plan.hostLabel
@@ -191,6 +196,8 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
         if changed(\.exclusions) { plan.exclusions = fields.exclusions }
         if changed(\.fileTypeExclusions) { plan.fileTypeExclusions = fields.fileTypeExclusions }
         if changed(\.oneFileSystem) { plan.oneFileSystem = fields.oneFileSystem }
+        if changed(\.skipsItemsMarkedNotForBackup) { plan.skipsItemsMarkedNotForBackup = fields.skipsItemsMarkedNotForBackup }
+        if changed(\.backUpAnyway) { plan.backUpAnyway = fields.backUpAnyway }
         if changed(\.schedule.intervalHours) { plan.schedule = .interval(seconds: fields.schedule.intervalHours * 3600) }
         if changed(\.schedule.battery) { plan.conditions.battery = fields.schedule.battery }
         let retentionText = [\Fields.schedule.hourly, \.schedule.daily, \.schedule.weekly, \.schedule.monthly]

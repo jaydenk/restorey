@@ -71,6 +71,8 @@ struct PlanEditTests {
         edit.fields.exclusions = []
         edit.fields.fileTypeExclusions = ["dmg"]
         edit.fields.oneFileSystem = false
+        edit.fields.skipsItemsMarkedNotForBackup = false
+        edit.fields.backUpAnyway = ["/Users/me/Lightroom"]
         edit.fields.schedule.intervalHours = 6
         edit.fields.schedule.battery = .neverOnBattery
         edit.fields.schedule.daily = "7"
@@ -83,6 +85,8 @@ struct PlanEditTests {
         #expect(plan.exclusions.isEmpty)
         #expect(plan.fileTypeExclusions == ["dmg"])
         #expect(!plan.oneFileSystem)
+        #expect(!plan.skipsItemsMarkedNotForBackup)
+        #expect(plan.backUpAnyway == ["/Users/me/Lightroom"])
         #expect(plan.schedule == .interval(seconds: 6 * 3600))
         #expect(plan.conditions.battery == .neverOnBattery)
         #expect(plan.retention.daily == 7)
