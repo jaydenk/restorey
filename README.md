@@ -344,7 +344,7 @@ Minimise button, a dimmed Zoom button and no full screen or tabs (it stays resiz
 room); opens at the section last viewed and at the size and place it was left (`SettingsPanePreference` in
 `UserDefaults`; the frame autosaves as `RestoreySettings`, and a window with no saved frame is centred); and shows
 the dot in its close button while a plan or the Network section has unsaved edits, the same state the Save, Don't
-Save or Cancel question on close and quit asks about (`UnsavedSettings.isEdited`). Esc closes the sheets that have
+Save or Cancel question on close and quit asks about (the router's one `unsavedSettings`). Esc closes the sheets that have
 only a Done button (exclusions, items marked not for backup, biggest additions, files that couldn't be read) as
 Done does; the two that edit apply into the page's unsaved fields, so the page's Revert is their way back. The menu's routes pick the section
 and plan: a plan's line opens it in Plans, "Show Details…" opens History for that plan, and "No off-Mac monitoring —
@@ -953,8 +953,8 @@ Generated repository passwords use the Electronic Frontier Foundation's large wo
 (`RestoreyCore/Sources/RestoreyCore/Resources/eff_large_wordlist.txt`, 7,776 words, vendored unchanged from
 <https://www.eff.org/files/2016/07/18/eff_large_wordlist.txt>, SHA-256
 `addd35536511597a02fa0a9ff1e5284677b8883b83e986e43f15a3db996b903e`), © Electronic Frontier Foundation, used under the
-Creative Commons Attribution licence: EFF's copyright policy offers its original material under CC BY 4.0
-(<https://www.eff.org/copyright>), and its 2016 announcement of the list carries only a "Copyright (CC BY)" footer, so
-the version is the current policy's. The attribution is in the About panel and `THIRD_PARTY_NOTICES`, which also
-reproduces restic's licence verbatim. A password is six words drawn with
+Creative Commons Attribution licence: CC BY 4.0 under EFF's current policy (<https://www.eff.org/copyright>);
+the 2016 post announcing the list linked CC BY 3.0 US. The attribution is in the About panel (`App/Credits.rtf`,
+which ships in the app, with restic's licence verbatim); the repository's `THIRD_PARTY_NOTICES` repeats both and is
+not part of the app bundle. A password is six words drawn with
 the system's secure random number generator, joined by hyphens: about 77.5 bits.

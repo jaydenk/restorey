@@ -29,12 +29,4 @@ struct SaveQuestionTests {
         #expect(UnsavedSettings.plan.section == .plans)
         #expect(UnsavedSettings.network.section == .network)
     }
-
-    /// P7: the window's edited dot shows exactly when a close or quit would ask.
-    @Test func theEditedIndicatorFollowsTheUnsavedEdits() {
-        #expect(!UnsavedSettings.isEdited(plan: false, network: false))
-        #expect(UnsavedSettings.isEdited(plan: true, network: false))
-        #expect(UnsavedSettings.isEdited(plan: false, network: true))
-        #expect(UnsavedSettings.isEdited(plan: true, network: true))
-    }
 }

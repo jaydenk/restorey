@@ -33,10 +33,6 @@ public enum UnsavedSettings: Sendable, Equatable {
         (plan ? [.plan] : []) + (network ? [.network] : [])
     }
 
-    /// Whether the window's edited indicator (the dot in the close button) shows: some section has unsaved edits,
-    /// the same state the close and quit questions ask about.
-    public static func isEdited(plan: Bool, network: Bool) -> Bool { !toAsk(plan: plan, network: network).isEmpty }
-
     /// Where a refused save is shown, with why.
     public var section: SettingsSection {
         switch self {

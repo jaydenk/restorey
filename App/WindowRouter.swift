@@ -254,13 +254,11 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         return window.setFrameUsingName(name)
     }
 
-    /// The dot in Settings' close button while a plan or the Network section has unsaved edits (P7): the same state
-    /// the close and quit questions ask about. Re-reads whenever any of it changes; stops with the window.
+    /// The dot in Settings' close button while a plan or the Network section has unsaved edits (P7): the same
+    /// `unsavedSettings` the close and quit questions ask about. Re-reads whenever any of it changes; stops with the window.
     private func followEditedState(of window: NSWindow) {
         let edited = withObservationTracking {
-            UnsavedSettings.isEdited(
-                plan: planEditorSlot?.editor?.edit.isDirty == true,
-                network: networkEditorSlot?.model?.edit.isDirty == true)
+            !unsavedSettings.isEmpty
         } onChange: { [weak self, weak window] in
             Task { @MainActor in
                 guard let self, let window, window.isVisible || window.isMiniaturized else { return }

@@ -17,7 +17,11 @@ private struct EscapeDismisses: ViewModifier {
         content.background {
             Button("Close") { dismiss() }
                 .keyboardShortcut(.cancelAction)
+                // Only the shortcut is wanted: not seen, clicked, reached by Tab or Full Keyboard Access, or read by
+                // VoiceOver. A shortcut doesn't need the button to be hit-testable or focusable.
                 .opacity(0)
+                .allowsHitTesting(false)
+                .focusable(false)
                 .accessibilityHidden(true)
         }
     }
