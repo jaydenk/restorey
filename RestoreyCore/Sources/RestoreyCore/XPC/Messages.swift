@@ -139,12 +139,15 @@ public struct PlanStatus: Codable, Sendable, Equatable {
     /// `PlanRunHistory.repositorySize`.
     public var repositorySize: RepositorySize?
     public var setupState: PlanSetupState
+    /// Why setup's choice to remove earlier snapshots keeps failing (`PendingRemovalFailures`), once it has failed three
+    /// backups in a row; nil otherwise, and in a status from before it existed. Information only: no alert, no menu icon.
+    public var earlierRemovalProblem: String?
 
     /// `setupState` nil derives it from the plan (`PlanSetupState(plan:)`).
     public init(
         plan: Plan, phase: PlanPhase, lastRecord: RunRecord?, nextRunAt: Date?, alerts: [AlertCondition],
         lastBackup: RunRecord? = nil, repositorySize: RepositorySize? = nil, setupState: PlanSetupState? = nil,
-        latestBackupRecord: RunRecord? = nil, latestBackupVerdict: RunRecord? = nil
+        latestBackupRecord: RunRecord? = nil, latestBackupVerdict: RunRecord? = nil, earlierRemovalProblem: String? = nil
     ) {
         self.plan = plan
         self.phase = phase
@@ -157,11 +160,12 @@ public struct PlanStatus: Codable, Sendable, Equatable {
         self.lastBackup = lastBackup
         self.repositorySize = repositorySize
         self.setupState = setupState ?? PlanSetupState(plan: plan)
+        self.earlierRemovalProblem = earlierRemovalProblem
     }
 
     private enum CodingKeys: String, CodingKey {
         case plan, phase, lastRecord, nextRunAt, alerts, lastBackup, repositorySize, setupState, latestBackupRecord
-        case latestBackupVerdict
+        case latestBackupVerdict, earlierRemovalProblem
     }
 
     private static func backupRecord(_ record: RunRecord?) -> RunRecord? {
@@ -188,6 +192,7 @@ public struct PlanStatus: Codable, Sendable, Equatable {
         lastBackup = try c.decodeIfPresent(RunRecord.self, forKey: .lastBackup)
         repositorySize = try c.decodeIfPresent(RepositorySize.self, forKey: .repositorySize)
         setupState = try c.decodeIfPresent(PlanSetupState.self, forKey: .setupState) ?? PlanSetupState(plan: plan)
+        earlierRemovalProblem = try c.decodeIfPresent(String.self, forKey: .earlierRemovalProblem)
     }
 }
 

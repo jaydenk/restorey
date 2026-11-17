@@ -482,8 +482,9 @@ public actor PlanRunner {
         }
         // Setup's confirmed removal of the snapshots from before adoption waits for a backup that succeeded (Task 14b):
         // `.success` or `.unchanged`, not a `.warning` that left files out, which would take the newest retention
-        // buckets in their timeline. It comes first, so a prune due now frees their space. Without a verdict (a lock
-        // held elsewhere, an interruption, a preview that failed) it and the maintenance wait for the next backup.
+        // buckets in their timeline. It comes first, so a prune due now frees their space. Stopped (a lock held
+        // elsewhere, an interruption, an update) it and the maintenance wait for the next backup; a preview that failed
+        // leaves the choice for the next backup but the maintenance goes on (final review I2).
         if let pending = history.pendingEarlierRemoval, Self.succeededFully(backup.record.outcome), !(await isWindingDown()),
             !(await runPendingEarlierRemoval(pending, session: session, handle: handle, trigger: trigger))
         {

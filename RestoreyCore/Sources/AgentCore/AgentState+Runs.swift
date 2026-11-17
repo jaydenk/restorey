@@ -84,7 +84,10 @@ extension AgentState {
         let plan = try requirePlan(request.planID)
         if let problem = request.confirmation.problem(for: plan) { throw AgentError.invalidRequest(problem) }
         let confirmation = request.confirmation
-        return try await updateHistory(plan.id) { $0.pendingEarlierRemoval = confirmation }
+        return try await updateHistory(plan.id) {
+            $0.pendingEarlierRemoval = confirmation
+            $0.pendingEarlierRemovalFailures = nil
+        }
     }
 
     /// The secrets that open a plan's repository.

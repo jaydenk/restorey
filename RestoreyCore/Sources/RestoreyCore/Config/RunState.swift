@@ -86,6 +86,11 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
     /// verdict; a lock held elsewhere or an interruption leaves it for the backup after. Nil in state written before
     /// it existed.
     public var pendingEarlierRemoval: EarlierSnapshotsConfirmation?
+    /// Consecutive backups after which `pendingEarlierRemoval`'s preview failed (final review I2), with the newest reason.
+    /// The failure doesn't hold back the backup's maintenance, so this is how a lasting one becomes visible
+    /// (`PendingRemovalFailures.noticeThreshold`). Reset when a removal reaches a verdict or the choice is replaced. Nil in
+    /// state written before it existed.
+    public var pendingEarlierRemovalFailures: PendingRemovalFailures?
 
     public static let recentLimit = 50
 
@@ -115,7 +120,7 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case lastSuccessAt, lastAttemptAt, lastSnapshotAt, lastForgetAt, lastPruneAt, lastCheckAt
         case runningRecordID, runningRecord, recent, activeAlerts, stoppedReason, pausedUntil, repositorySize
-        case lastBackupRecord, pendingEarlierRemoval
+        case lastBackupRecord, pendingEarlierRemoval, pendingEarlierRemovalFailures
     }
 
     public init(from decoder: any Decoder) throws {
@@ -160,7 +165,25 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
         } catch where UnknownCase.isUnknownCase(error) {
             pendingEarlierRemoval = nil
         }
+        pendingEarlierRemovalFailures = try c.decodeIfPresent(PendingRemovalFailures.self, forKey: .pendingEarlierRemovalFailures)
     }
+}
+
+/// How many backups in a row couldn't finish setup's pending removal because its preview failed, and why the newest did.
+public struct PendingRemovalFailures: Codable, Sendable, Equatable {
+    /// From this many in a row the Overview says so.
+    public static let noticeThreshold = 3
+
+    public var count: Int
+    public var reason: String
+
+    public init(count: Int, reason: String) {
+        self.count = count
+        self.reason = reason
+    }
+
+    /// The reason to show, once the failure has lasted `noticeThreshold` backups.
+    public var noticeReason: String? { count >= Self.noticeThreshold ? reason : nil }
 }
 
 /// A `RunRecord`, or nil when it names a case this build doesn't know (`UnknownCase`).

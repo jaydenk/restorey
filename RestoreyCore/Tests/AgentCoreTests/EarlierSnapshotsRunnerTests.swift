@@ -377,12 +377,48 @@ struct EarlierSnapshotsRunnerTests {
         #expect(!(await f.operations()).contains { if case .forgetSnapshots = $0 { true } else { false } })
         #expect(f.agentLog.value.contains { $0.contains("for its next backup") && $0.contains("preview broke") })
         #expect(try await f.snapshotIDs().isSuperset(of: group.removeIDs))
+        // Final review I2: the failing preview doesn't hold back the backup's own maintenance.
+        let ops = await f.operations()
+        let backupIndex = try #require(ops.lastIndex(of: .backup))
+        let after = Array(ops[(backupIndex + 1)...])
+        #expect(after.contains(.forget(dryRun: false)), "\(after)")
+        #expect(after.contains(.check), "\(after)")
+        #expect(await f.history().pendingEarlierRemovalFailures?.count == 1)
 
         try FileManager.default.removeItem(at: flag)
         _ = try await f.runner.runBackup(planID: f.planID, trigger: .manual)
         #expect(await f.history().pendingEarlierRemoval == nil)
+        #expect(await f.history().pendingEarlierRemovalFailures == nil)
         #expect(await f.operations().contains(.forgetSnapshots(ids: group.removeIDs)))
         #expect(try await f.snapshotIDs().isDisjoint(with: group.removeIDs))
+    }
+
+    /// Final review I2: a failure that lasts is said once it has happened three backups in a row, and a later success
+    /// clears it.
+    @Test(.timeLimit(.minutes(3))) func aLastingFailureIsSaidFromTheThirdBackupAndClearedByASuccess() async throws {
+        let flag = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-flag-\(UUID().uuidString)")
+        let f = try await fixture(executable: try failingPreviews(flag: flag))
+        defer { f.remove(); try? FileManager.default.removeItem(at: flag) }
+        _ = try await seed(f)
+        let group = try #require(try await f.state.previewEarlierSnapshots(f.planID).group(.beforeAdoption))
+        _ = try await f.state.removeEarlierSnapshotsAfterNextBackup(
+            EarlierSnapshotsRequest(planID: f.planID, confirmation: EarlierSnapshotsConfirmation(group)))
+        FileManager.default.createFile(atPath: flag.path, contents: nil)
+        for backups in 1...3 {
+            _ = try await f.runner.runBackup(planID: f.planID, trigger: .manual)
+            #expect(await f.history().pendingEarlierRemovalFailures?.count == backups)
+            let problem = try #require(await f.state.status().plans.first { $0.plan.id == f.planID }).earlierRemovalProblem
+            if backups < 3 {
+                #expect(problem == nil, "backup \(backups)")
+            } else {
+                #expect(problem?.contains("preview broke") == true, "\(String(describing: problem))")
+            }
+        }
+        try FileManager.default.removeItem(at: flag)
+        _ = try await f.runner.runBackup(planID: f.planID, trigger: .manual)
+        #expect(await f.history().pendingEarlierRemoval == nil)
+        #expect(await f.history().pendingEarlierRemovalFailures == nil)
+        #expect(try #require(await f.state.status().plans.first { $0.plan.id == f.planID }).earlierRemovalProblem == nil)
     }
 
     /// A lock held elsewhere when the first backup's turn comes: the choice waits for the next backup.
@@ -397,6 +433,8 @@ struct EarlierSnapshotsRunnerTests {
         // The backup itself takes a shared lock, which the holder's doesn't block; the removal's exclusive one waits.
         _ = try await f.runner.runBackup(planID: f.planID, trigger: .manual)
         #expect(await f.history().pendingEarlierRemoval != nil)
+        // A lock held elsewhere is a stop, not a failure to count.
+        #expect(await f.history().pendingEarlierRemovalFailures == nil)
         #expect(Set(try await f.snapshots().map(\.id)).isSuperset(of: group.removeIDs))
         await holder.release()
         _ = try await f.runner.runBackup(planID: f.planID, trigger: .manual)

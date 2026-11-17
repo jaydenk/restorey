@@ -297,7 +297,9 @@ public actor AgentState {
             lastBackup: history.lastBackupRecord, repositorySize: history.repositorySize,
             setupState: PlanSetupState(plan: plan),
             latestBackupRecord: history.recent.first { $0.operation == .backup },
-            latestBackupVerdict: history.recent.first { $0.operation == .backup && $0.outcome.isVerdict })
+            latestBackupVerdict: history.recent.first { $0.operation == .backup && $0.outcome.isVerdict },
+            earlierRemovalProblem: history.pendingEarlierRemoval == nil
+                ? nil : history.pendingEarlierRemovalFailures?.noticeReason)
     }
 
     /// Pushes the status and, unless `deliveringAlerts` is false, has the alerts delivered for it: every

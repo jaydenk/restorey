@@ -217,6 +217,19 @@ struct RunStateTests {
         #expect(try JSONDecoder().decode(PlanRunHistory.self, from: Data(newer.utf8)).pendingEarlierRemoval == nil)
     }
 
+    /// Final review I2: the count of failed pending removals round-trips, is absent in older state, and is said only from
+    /// the third backup in a row.
+    @Test func pendingRemovalFailuresRoundTripAndShowFromTheThird() throws {
+        var history = PlanRunHistory()
+        history.pendingEarlierRemovalFailures = PendingRemovalFailures(count: 2, reason: "the preview broke")
+        let data = try JSONEncoder().encode(history)
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: data) == history)
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: Data("{}".utf8)).pendingEarlierRemovalFailures == nil)
+        #expect(PendingRemovalFailures(count: 2, reason: "x").noticeReason == nil)
+        #expect(PendingRemovalFailures(count: 3, reason: "x").noticeReason == "x")
+        #expect(PendingRemovalFailures(count: 9, reason: "x").noticeReason == "x")
+    }
+
     /// Review fix 1: more skips than `recentLimit` push the backup out of `recent`, not out of
     /// `lastBackupRecord`, and that survives the state file.
     @Test func lastBackupOutlivesMoreThanFiftySkips() throws {

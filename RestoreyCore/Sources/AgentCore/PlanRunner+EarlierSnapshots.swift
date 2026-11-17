@@ -160,18 +160,26 @@ extension PlanRunner {
     }
 
     /// Setup's pending removal (`PlanRunHistory.pendingEarlierRemoval`), after a backup that saved the data, in the same
-    /// turn of the queue. Returns false when it didn't reach a verdict (a lock held elsewhere, an interruption): the
-    /// confirmation then stays for the next backup and so does the maintenance. Any verdict clears it; a failure is in
-    /// History and `agent.log`, and the user can apply retention from Settings → Keep.
+    /// turn of the queue. Returns whether the backup's maintenance (forget, prune, check) goes on after it. It doesn't
+    /// when the removal was stopped (a lock held elsewhere, an interruption, an update): the confirmation then stays for the
+    /// next backup and so does the maintenance. A preview that failed for any other reason (restic broke, or its reply
+    /// couldn't be read) also leaves the confirmation for the next backup, but the maintenance goes on: the plan's own
+    /// `forget` is scoped to its tag and can't touch the earlier snapshots, and `check` is independent, so holding them
+    /// back would stop retention and integrity checking for as long as the failure lasted (final review I2). The failure
+    /// is counted (`PendingRemovalFailures`) and the Overview says so from the third backup in a row. Any verdict clears the
+    /// confirmation; a failure is in History and `agent.log`, and the user can apply retention from Settings → Keep.
     func runPendingEarlierRemoval(
         _ pending: EarlierSnapshotsConfirmation, session: RunSession, handle: RunHandle, trigger: RunTrigger
     ) async -> Bool {
         let planID = session.plan.id
         let result = await removeEarlier(pending, session: session, handle: handle, trigger: trigger, pending: true)
         switch result {
-        case .notFinished(_, let sentence):
+        case .notFinished(let outcome, let sentence):
             deps.agentLog("Left the confirmed removal of earlier snapshots for plan \(planID.uuidString) for its next backup: \(sentence)")
-            return false
+            // The preview failing is the only `.failed` here: a stop is its own outcome.
+            guard case .failed = outcome else { return false }
+            await countPendingRemovalFailure(planID: planID, ifStill: pending, reason: sentence)
+            return true
         case .failed(let sentence):
             deps.agentLog("The confirmed removal of earlier snapshots for plan \(planID.uuidString) failed: \(sentence)")
         case .removed(let removal):
@@ -186,10 +194,25 @@ extension PlanRunner {
         do {
             try await deps.state.updateHistory(planID) { history in
                 // A newer confirmation that arrived meanwhile is kept for the next backup.
-                if history.pendingEarlierRemoval == pending { history.pendingEarlierRemoval = nil }
+                if history.pendingEarlierRemoval == pending {
+                    history.pendingEarlierRemoval = nil
+                    history.pendingEarlierRemovalFailures = nil
+                }
             }
         } catch {
             deps.agentLog("Couldn't clear the confirmed removal of earlier snapshots for plan \(planID.uuidString): \(error)")
+        }
+    }
+
+    private func countPendingRemovalFailure(planID: UUID, ifStill pending: EarlierSnapshotsConfirmation, reason: String) async {
+        do {
+            try await deps.state.updateHistory(planID) { history in
+                guard history.pendingEarlierRemoval == pending else { return }
+                history.pendingEarlierRemovalFailures = PendingRemovalFailures(
+                    count: (history.pendingEarlierRemovalFailures?.count ?? 0) + 1, reason: reason)
+            }
+        } catch {
+            deps.agentLog("Couldn't count the failed removal of earlier snapshots for plan \(planID.uuidString): \(error)")
         }
     }
 
