@@ -93,7 +93,7 @@ extension SetupModel {
                 case .existing(let report):
                     hostLabel = defaultHostLabel(report)
                     return nil
-                case .passwordRejected: return "That password doesn't open the repository at this address"
+                case .passwordRejected: return "That password doesn’t open the repository at this address"
                 case .empty: return "The repository is no longer there: create a new one, or go back and check the address"
                 }
             }

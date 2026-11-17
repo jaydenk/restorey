@@ -8,18 +8,18 @@ struct MoveToApplicationsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Move to Applications").font(.title2.bold())
+            Text("Move to Applications").pageTitle()
             Text(AppMove.explanation)
             switch model.moveDecision {
             case .replace?:
-                Label(AppMove.replaceQuestion, systemImage: "exclamationmark.triangle")
+                SeverityText(AppMove.replaceQuestion, severity: .warning, font: .body)
             case .refuse(let refusal)?:
-                Label(refusal.sentence, systemImage: "exclamationmark.octagon")
+                SeverityText(refusal.sentence, font: .body)
             case .move?, nil:
                 EmptyView()
             }
             if let error = model.moveError {
-                Text(error).foregroundStyle(.red)
+                SeverityText(error)
             }
             Spacer()
             SetupButtonRow {

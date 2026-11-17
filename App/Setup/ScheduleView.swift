@@ -68,7 +68,7 @@ private struct CheckInField: View {
             problem: model.checkInProblem)
             .disabled(model.working)
         // The kit step came before this one, so the kit saved there has no check-in URL.
-        Text("The recovery kit you saved doesn't include this URL; it isn't needed to restore. Once it's saved, the plan's recovery kit in Settings (Show recovery kit…) includes it.")
-            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        Text("The recovery kit you saved doesn’t include this URL, which isn’t needed to restore. Once it’s saved, Show Recovery Kit… in Settings includes it.")
+            .explanatoryNote()
     }
 }

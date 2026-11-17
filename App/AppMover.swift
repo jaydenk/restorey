@@ -48,7 +48,7 @@ struct AppMover {
         do {
             _ = try await NSWorkspace.shared.openApplication(at: destination, configuration: configuration)
         } catch {
-            throw AppMoveError.failed("it's in Applications, but didn't open: \(error.localizedDescription)")
+            throw AppMoveError.failed("it’s in Applications, but didn’t open: \(error.localizedDescription)")
         }
         NSApplication.shared.terminate(nil)
     }

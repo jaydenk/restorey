@@ -14,10 +14,10 @@ struct PlanAlertsTab: View {
                 problem: model.edit.checkInProblem)
             Divider()
             Stepper(value: $model.fields.noSuccessAlertDays, in: 1...30) {
-                Text("Alert when there's no successful backup in \(days) \(days == 1 ? "day" : "days")")
+                Text("Alert when there’s no successful backup in \(days) \(days == 1 ? "day" : "days")")
             }
-            Text("Notifications are always on: they're how Restorey tells you about a problem on this Mac.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Notifications are always on: they’re how Restorey tells you about a problem on this Mac.")
+                .explanatoryNote()
         }
     }
 

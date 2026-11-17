@@ -65,7 +65,7 @@ private struct BucketFields: View {
             }
         }
         if model.keepsSavedSecrets {
-            Text("Leave a key empty to keep the one already saved.").font(.caption).foregroundStyle(.secondary)
+            Text("Leave a key empty to keep the one already saved.").explanatoryNote()
         }
     }
 
@@ -85,7 +85,7 @@ private struct OtherLocationFields: View {
             PlainTextField(title: "/Volumes/Backup/restic or sftp:nas:/restic", text: $model.storage.repository)
         }
         Text("A folder or drive, or any location restic understands. The folder must be empty or hold a restic repository.")
-            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            .explanatoryNote()
         if !form.environment.isEmpty {
             Text("Environment variables").font(.callout).foregroundStyle(.secondary)
         }
@@ -107,7 +107,7 @@ private struct OtherLocationFields: View {
                     .accessibilityLabel("Remove \(row.name.isEmpty ? "variable" : row.name)")
                 }
                 if !row.name.isEmpty, let problem = form.environmentProblem(row) {
-                    Text(problem).font(.caption).foregroundStyle(.red)
+                    SeverityText(problem)
                 }
             }
         }

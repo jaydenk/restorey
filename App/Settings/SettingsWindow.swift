@@ -11,9 +11,9 @@ struct SettingsContext {
     let loginItem: LoginItem
     /// Setup where it was left (a plan's "Finish Setup…", like the menu's).
     let finishSetup: () -> Void
-    /// Setup at this progress ("+ Add plan…" once decided, or an unfinished plan's setup to finish first).
+    /// Setup at this progress ("Add Plan…" once decided, or an unfinished plan's setup to finish first).
     let openSetup: (SetupProgress) -> Void
-    /// What "+ Add plan…" opens (`SetupFlow.addingPlan`); nil when the setup window was already open and has come
+    /// What "Add Plan…" opens (`SetupFlow.addingPlan`); nil when the setup window was already open and has come
     /// forward instead.
     let addPlan: () -> AddPlanStart?
     let showRecoveryKit: (UUID) -> Void
@@ -73,7 +73,7 @@ struct SettingsWindow: View {
                 state.cancelPlanSwitch()
             }
         } message: {
-            Text("They haven't been saved.")
+            Text("They haven’t been saved.")
         }
     }
 }

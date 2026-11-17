@@ -38,15 +38,15 @@ struct EarlierSnapshotsSection: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Earlier snapshots").font(.headline)
             Text(plan.origin == .adopted
-                 ? "Retention never thins this Mac's snapshots from before Restorey, or those of a previous folder list, unless you apply it here."
+                 ? "Retention never thins this Mac’s snapshots from before Restorey, or those of a previous folder list, unless you apply it here."
                  : "Retention never thins the snapshots of a previous folder list unless you apply it here.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .explanatoryNote()
             content
             if let outcome {
                 Text(outcome).font(.callout).fixedSize(horizontal: false, vertical: true)
             }
             if let problem = removalProblem ?? problem {
-                Text(problem).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                SeverityText(problem)
             }
             if problem != nil {
                 Button("Try Again") { Task { await load() } }
@@ -71,7 +71,7 @@ struct EarlierSnapshotsSection: View {
                 }
                 if unsavedEdits {
                     Text("These are counted with the saved settings. Save your changes to count them again.")
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .explanatoryNote()
                 }
             }
         } else if problem == nil {

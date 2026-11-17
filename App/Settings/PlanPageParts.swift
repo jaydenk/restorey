@@ -17,13 +17,13 @@ struct NewKitBanner: View {
                     Text("Save the new kit so backups can carry on.").foregroundStyle(.secondary)
                 }
             } icon: {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                SeverityIcon(severity: .warning)
             }
             Spacer()
             Button(BannerAction.saveRecoveryKit(planID).buttonTitle) { context.showRecoveryKit(planID) }
         }
         .padding(10)
-        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -41,11 +41,11 @@ struct StopBanner: View {
                 }
             }
         } icon: {
-            Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+            SeverityIcon(severity: .error)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
-        .background(.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
         .accessibilityElement(children: .combine)
     }
 }
@@ -66,16 +66,14 @@ struct SaveBar: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 if model.edit.pausesBackups {
-                    Label(PlanEdit.pauseWarning, systemImage: "pause.circle")
-                        .foregroundStyle(.orange)
+                    SeverityText(PlanEdit.pauseWarning, severity: .warning)
                 }
                 if let error = model.saveError {
-                    Text(error).foregroundStyle(.red)
+                    SeverityText(error)
                 } else if model.edit.isDirty, let problem = model.edit.problem {
-                    Text(problem).foregroundStyle(.red)
+                    SeverityText(problem)
                 }
             }
-            .font(.callout)
             .multilineTextAlignment(.trailing)
             .fixedSize(horizontal: false, vertical: true)
             if model.saving { ProgressView().controlSize(.small) }
@@ -106,14 +104,14 @@ struct DeletePlanButton: View {
                 .disabled(deleting)
             if deleting { ProgressView().controlSize(.small) }
             if let problem {
-                Text(problem).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                SeverityText(problem)
             }
         }
-        .confirmationDialog("Delete the plan \"\(planName)\"?", isPresented: $confirming) {
+        .confirmationDialog("Delete the plan “\(planName)”?", isPresented: $confirming) {
             Button("Delete Plan", role: .destructive) { Task { await delete() } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Its settings, saved passwords and keys, and history are removed. The repository and its snapshots aren't touched.")
+            Text("Its settings, saved passwords and keys, and history are removed. The repository and its snapshots aren’t touched.")
         }
     }
 
@@ -138,10 +136,13 @@ struct UnfinishedPlanView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(plan.name).font(.title3.weight(.semibold))
-            Label("Setup not finished", systemImage: "exclamationmark.triangle.fill")
-                .font(.headline)
-                .foregroundStyle(.orange)
+            Text(plan.name).pageTitle()
+            Label {
+                Text("Setup not finished")
+            } icon: {
+                SeverityIcon(severity: .warning)
+            }
+            .font(.headline)
             Text("Finish setting it up to start backing up.")
             HStack {
                 DeletePlanButton(planID: plan.id, planName: plan.name, context: context, deleted: deleted)

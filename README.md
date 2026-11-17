@@ -43,7 +43,7 @@ Applications, grant Full Disk Access (and, optionally, notifications and Open at
 S3, or any other restic location), set or enter the repository password (a new repository, or an existing one to
 adopt with its history), save the recovery kit somewhere other than this Mac, choose what to back up (the home
 folder by default, with the default exclusions) and the schedule (hourly by default, with retention and an
-optional check-in URL), then start the first backup. Quitting part-way resumes where you left off. "+ Add plan…" in
+optional check-in URL), then start the first backup. Quitting part-way resumes where you left off. "Add Plan…" in
 Settings → Plans runs the same steps for another plan.
 
 **The menu.** The menu bar icon shows the worst state across all plans. The menu lists any problem first, each with
@@ -59,10 +59,10 @@ agent whether or not the app is open.
   logs folder. While Full Disk Access is missing, a tile shows Restorey's icon and name with why it is needed and
   "Drag this into the list, then switch it on."; once it is on, the tile gives way to a green tick and "Full Disk
   Access is on".
-- **Plans**: the plans in a sidebar with "+ Add plan…", and the selected plan's tabs. **Overview** (its state, the
+- **Plans**: the plans in a sidebar with "Add Plan…", and the selected plan's tabs. **Overview** (its state, the
   last and next backup, any iCloud files skipped, and Back Up Now, Pause, Resume and Restore Files…); **What** (folders, drives and
   exclusions); **Schedule** (how often, the battery rule, the plan's own upload limit); **Storage** (the address,
-  read-only, the password and keys, the host label, and "Show recovery kit…"); **Keep** (retention, prune, and
+  read-only, the password and keys, the host label, and "Show Recovery Kit…"); **Keep** (retention, prune, and
   **Earlier snapshots**: applying retention to the snapshots of the plan's previous folder lists, or from before
   Restorey adopted the repository); **Alerts** (the check-in URL and "no successful backup in N days"); and
   **History** (the plan's runs). Edits are saved with Save (⌘S) or undone with Revert; changing the password, a key
@@ -112,7 +112,7 @@ xcodegen`; CI installs exactly 2.46.0 from its release, checked against the publ
 
    `BUILD_NUMBER=2 scripts/install-dev.sh` installs it with a different build number, so the running agent sees
    an update and is restarted. Reinstalling the same build within an hour of a repair leaves the old agent
-   running until you choose "Restart Agent".
+   running until you choose "Restart Backups".
 
 Debug builds use a separate identity (`com.jaydenkerr.restorey.dev`, `RestoreyDev`), so they can sit beside a
 Release install without sharing a launchd label, keychain group or on-disk state. GitHub Actions runs the
@@ -132,16 +132,16 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
   reports a fingerprint of its executable taken at launch, so a reinstall with the same build number is caught
   too): it asks the agent to finish any run in progress and exit
   (`prepareForRestart`), and launchd starts the new one. The menu says "Finishing the current backup before
-  updating the agent" meanwhile, or "Updating the background agent…" when it finds the agent already draining
+  updating" meanwhile, or "Updating Restorey’s background process…" when it finds the agent already draining
 - the app's own bundle is missing the agent's plist: "Restorey's installation is damaged — reinstall it from the
   download", with no repair offered
-- switched off in Login Items: "The background agent is switched off", with "Open Login Items…". Never switched
+- switched off in Login Items: "Backups are switched off", with "Open System Settings". Never switched
   back on by Restorey. The registration's status is read at every heartbeat, so a change shows within 10 seconds
   while Restorey runs; on macOS 27.2 switching the agent off also quits Restorey (loginwindow force-quits it, see
   `docs/spike-findings.md`), so in practice it shows on the next launch.
-- registered but not answering: "The background agent isn't running", with "Restart Agent". While a backup
+- registered but not answering: "Backups aren’t running", with "Restart Backups". While a backup
   was running at the agent's last status (under 30 minutes old), the menu instead keeps that status with
-  "(agent not answering)" and a warning. After 30 seconds without an answer it unregisters and registers the agent again on its own, unless
+  "(not responding)" and a warning. After 30 seconds without an answer it unregisters and registers the agent again on its own, unless
   a restic from Restorey's own bundle is still running under the agent: unregistering would kill that backup,
   so it waits and looks again at each heartbeat. The agent's answer never waits on the notification centre, so a
   stuck `usernoted` doesn't make a working agent look dead. A switched-off agent reads differently (see
@@ -335,6 +335,19 @@ these folders from this Mac are included, and that other Macs' and other folders
 plan's never is either). Nothing to remove, or Cancel, leaves the step on "The repository is
 ready" saying so, with the switch there to try again.
 
+### Type, colour and wording
+
+Settings, setup and the sheets use the system text styles at their default weights (`App/Controls/TextStyles.swift`):
+a window, sheet or page title is Title 3 Semibold, a section heading or status headline is Headline, an explanation
+under a control is Subheadline (Caption is only for short tags such as "Restorey’s own"), and an error or warning is
+Callout. Text is in the label colours. What a status means is carried by a tinted symbol with its own shape, never by
+colour alone, and each has an accessibility label: a triangle for a warning, an octagon for an error, a tick for a
+success, a minus for a run that didn't run (`SeveritySymbols.swift` in `RestoreyCore`; History rows have one per
+outcome). Buttons and menu items are in title-style capitalisation, with an ellipsis only where more input follows;
+every jump to System Settings is "Open System Settings"; headings and labels are in sentence case; quotes and
+apostrophes are curly; and the person never sees the word "agent" ("Backups aren’t running", "Restart Backups",
+"Backups in the background" in General, "Restorey’s background process").
+
 ### Settings
 
 Settings (⌘, in the app menu, and in the status item's menu) is a window with a toolbar of sections, as macOS draws
@@ -351,14 +364,14 @@ and plan: a plan's line opens it in Plans, "Show Details…" opens History for t
 Add…" opens the plan's Alerts tab.
 
 **General** has Open at login (the switch re-reads `SMAppService` after every change, so a Restorey switched off in
-System Settings → General → Login Items shows as off with a note and "Open Login Items…", never as what was asked),
+System Settings → General → Login Items shows as off with a note and "Open System Settings", never as what was asked),
 Full Disk Access as the agent's own probe finds it, notifications as the agent last heard from the notification
-centre, the background agent's state and version ("Running · 0.1.0 (11)"), each with the menu's fix (Fix…, Turn
-On…, Restart Agent, Open Login Items…), the logs folder (Show in Finder), and, while the menu bar icon is hidden, the
+centre, the state and version of backups in the background ("Running · 0.1.0 (11)"), each with the menu's fix (Open
+System Settings, Allow…, Restart Backups), the logs folder (Show in Finder), and, while the menu bar icon is hidden, the
 note saying where to show it. These are read again whenever Restorey comes back to the front. The words are
 `SettingsGeneral`'s (`RestoreyCore`).
 
-**Plans** lists the plans with "+ Add plan…", which opens setup from "Where backups go" (`SetupProgress.addingPlan`).
+**Plans** lists the plans with "Add Plan…", which opens setup from "Where backups go" (`SetupProgress.addingPlan`).
 Setup keeps one saved progress, so `SetupFlow.addingPlan` decides what it opens: a new add, the add or first run
 already under way, or, when another plan's setup isn't finished, a question offering to finish that one first. An
 unfinished plan shows "Setup not finished" with "Finish Setup…" (setup is still making it, so it has no tabs); a plan
@@ -387,7 +400,7 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   run time updates when you save." (`MenuPresentation.scheduleCaption`).
 - **Storage**: the repository address, read-only (a different repository is a new plan), the repository password
   and storage keys or environment values (empty keeps what's saved; a new S3 or B2 key needs both halves), the host
-  label, the pack size (read-only) and "Show recovery kit…". Entering the repository password doesn't change the
+  label, the pack size (read-only) and "Show Recovery Kit…". Entering the repository password doesn't change the
   repository's: it is for one changed outside Restorey.
 - **Keep**: retention, with a plain-English summary under the counts that updates as you type ("Keeps the newest
   backup of each hour for the last 24 hours that have one, each day for the last 30 days that have one, …"; restic
@@ -447,7 +460,7 @@ System Settings can't change it.
 
 **History** lists every plan's runs, newest first, with a plan filter (set again by each "Show Details…", and back to every plan once you pick a section yourself or
 close Settings) and
-Everything, Backups, Problems or Skipped and paused (`HistoryPresentation`): local time, plan, the step (Backup, Tidy,
+Everything, Backups, Problems or Skipped and Paused (`HistoryPresentation`): local time, plan, the step (Backup, Tidy,
 Check…), how the run ended in the menu's wording ("Backed up", "Old snapshots
 tidied", "Skipped: Photos isn't connected", "Backup failed" with the menu's reason; never "failed" for a pause, a
 skip or a stop by the system; a probe finding no repository at an address, which is the answer setup expects for a
@@ -474,10 +487,10 @@ was left, so a setup window closed before its first plan can always be found aga
 The menu, top to bottom:
 
 - **Banners** for each problem, errors first, each with its fix: choosing the banner runs it. "Full Disk Access is
-  missing — Fix…" opens Privacy & Security → Full Disk Access and Settings → General, which holds the tile to drag
+  missing — Open System Settings" opens Privacy & Security → Full Disk Access and Settings → General, which holds the tile to drag
   into the list (the banner goes when the agent finds access granted); "Notifications are off — Restorey can't alert you —
-  Turn On…" opens the agent's page in Notifications; "The background agent isn't running — Restart Agent";
-  "The background agent is switched off — Open Login Items…"; "Setup not finished — Finish Setup…"; "New recovery
+  Open System Settings" opens the agent's page in Notifications; "Backups aren’t running — Restart Backups";
+  "Backups are switched off — Open System Settings"; "Setup not finished — Finish Setup…"; "New recovery
   kit needed — Save Recovery Kit…"; "No off-Mac monitoring — Add…" (opens the plan in Settings), with "Don't Show
   This Again" under it.
 - **One entry per plan**: its name, status ("Backed up at 14:16", "Backing up", grey "Paused" with "Resumes by
@@ -501,9 +514,10 @@ orange), a detail line (bytes done of the total and time left
   kit"), **Settings…** (⌘,), the Debug-only
   **Developer…**, and **Quit Restorey** (⌘Q).
 
-Coloured text (the fix in the accent colour, a red or orange status) switches to the highlight's text colour on
+Coloured text (the fix in the accent colour) and the severity symbol switch to the highlight's text colour on
 the row under the pointer, since the highlight is the accent colour and AppKit leaves an attributed title's colours
-as they are. The menu updates while it is open: progress and status change in place under the pointer. When rows come or
+as they are. A plan's status words are never coloured: a warning or error has a tinted symbol before them (a triangle
+or an octagon), so the status doesn't rest on colour alone. The menu updates while it is open: progress and status change in place under the pointer. When rows come or
 go (a backup starts and its progress bar appears, a banner is raised) the items are replaced instead.
 
 ## What a backup run does
@@ -873,7 +887,7 @@ host label this Mac's snapshots are under, the commands below, and the check-in 
 missing any secret isn't shown: the agent refuses it, naming the Keychain item, and the app shows that sentence.
 
 It appears in setup's recovery kit step, from the menu's "New recovery kit needed — Save Recovery Kit…" and from
-"Show recovery kit…" in the plan's settings. Each field has a copy button (secrets are copied as concealed
+"Show Recovery Kit…" in the plan's settings. Each field has a copy button (secrets are copied as concealed
 pasteboard items, so clipboard managers that honour the marker don't keep them), then **Print…** and **Save as
 PDF…**. The save panel picks no folder for you, and if the PDF lands on this Mac's own disk the window says so and
 recommends deleting it once the kit is stored elsewhere. The PDF is laid out in memory, written to a temporary file

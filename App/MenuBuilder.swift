@@ -92,7 +92,9 @@ enum MenuBuilder {
             item.image = bannerImage(banner.severity, palette)
             item.isEnabled = true
         case .plan(let line):
-            item.title = [line.name, line.status, line.detail, line.destination].compactMap(\.self).joined(separator: ", ")
+            // The severity's word first for VoiceOver, since the symbol that shows it isn't read as part of the title.
+            let status = line.severity.map { "\($0.accessibilityLabel): \(line.status)" } ?? line.status
+            item.title = [line.name, status, line.detail, line.destination].compactMap(\.self).joined(separator: ", ")
             item.attributedTitle = planTitle(line, palette)
             item.isEnabled = true
         case .progress(_, let name, let fraction):
@@ -148,18 +150,24 @@ enum MenuBuilder {
         return text
     }
 
-    /// The plan's name, its status (red for an error, orange for a warning, grey while paused), then the detail and
-    /// the destination in secondary text.
+    /// The plan's name, its status in the label colour (grey while paused) after a tinted symbol when it is a warning
+    /// or an error, then the detail and the destination in secondary text. The words are never coloured: the symbol's
+    /// shape carries the severity, so the line reads the same in either appearance and with Increase Contrast.
     private static func planTitle(_ line: PlanLine, _ palette: Palette) -> NSAttributedString {
         let text = NSMutableAttributedString(
             string: line.name, attributes: [.font: boldFont, .foregroundColor: palette.colour(.labelColor)])
-        let statusColour: NSColor = switch line.severity {
-        case .error: .systemRed
-        case .warning: .systemOrange
-        case nil: line.isPaused ? .secondaryLabelColor : .labelColor
+        let statusColour: NSColor = line.isPaused && line.severity == nil ? .secondaryLabelColor : .labelColor
+        text.append(NSAttributedString(string: "\n", attributes: [.font: titleFont]))
+        if let severity = line.severity, let symbol = severitySymbol(severity, palette, pointSize: titleFont.pointSize) {
+            let attachment = NSTextAttachment()
+            attachment.image = symbol
+            // Sits on the text's baseline, as tall as a capital letter.
+            attachment.bounds = CGRect(x: 0, y: -2, width: symbol.size.width, height: symbol.size.height)
+            text.append(NSAttributedString(attachment: attachment))
+            text.append(NSAttributedString(string: " ", attributes: [.font: titleFont]))
         }
         text.append(NSAttributedString(
-            string: "\n" + line.status, attributes: [.font: titleFont, .foregroundColor: palette.colour(statusColour)]))
+            string: line.status, attributes: [.font: titleFont, .foregroundColor: palette.colour(statusColour)]))
         for secondary in [line.detail, line.destination].compactMap(\.self) where !secondary.isEmpty {
             text.append(NSAttributedString(
                 string: "\n" + secondary,
@@ -168,20 +176,22 @@ enum MenuBuilder {
         return text
     }
 
-    /// Red for an error, orange for a warning (coloured, so not template: inside the menu, unlike the menu bar).
-    /// While highlighted, a template image instead, which the menu tints like the text.
-    private static func bannerImage(_ severity: Severity, _ palette: Palette) -> NSImage? {
-        let (name, colour): (String, NSColor) = switch severity {
-        case .error: ("exclamationmark.octagon.fill", .systemRed)
-        case .warning: ("exclamationmark.triangle", .systemOrange)
-        }
-        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: severity == .error ? "Error" : "Warning")
+    /// The severity's symbol (`Severity.symbolName`: a triangle or an octagon), tinted orange or red (coloured, so not
+    /// template: inside the menu, unlike the menu bar). While highlighted it is drawn in the selected-menu-item text
+    /// colour, which the menu uses on the accent colour.
+    private static func severitySymbol(_ severity: Severity, _ palette: Palette, pointSize: CGFloat? = nil) -> NSImage? {
+        let tint: NSColor = severity == .error ? .systemRed : .systemOrange
+        guard let symbol = NSImage(systemSymbolName: severity.symbolName, accessibilityDescription: severity.accessibilityLabel)
         else { return nil }
-        if palette.highlighted {
-            symbol.isTemplate = true
-            return symbol
+        var configuration = NSImage.SymbolConfiguration(paletteColors: [palette.highlighted ? .selectedMenuItemTextColor : tint])
+        if let pointSize {
+            configuration = configuration.applying(NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular, scale: .small))
         }
-        return symbol.withSymbolConfiguration(NSImage.SymbolConfiguration(hierarchicalColor: colour))
+        return symbol.withSymbolConfiguration(configuration)
+    }
+
+    private static func bannerImage(_ severity: Severity, _ palette: Palette) -> NSImage? {
+        severitySymbol(severity, palette)
     }
 }
 

@@ -229,7 +229,7 @@ final class SetupModel {
             try loginItem.setEnabled(openAtLogin)
             loginItemError = nil
         } catch {
-            loginItemError = "Restorey couldn't change Open at login: \(error.localizedDescription)"
+            loginItemError = "Restorey couldn’t change Open at login: \(error.localizedDescription)"
             return
         }
         go(to: SetupFlow.next(after: step, facts: facts))
@@ -399,7 +399,7 @@ final class SetupModel {
     /// Saves `plan` and `secrets` through the agent and keeps the saved plan (normalised by the agent). Nil,
     /// or the agent's sentence.
     func save(_ plan: Plan, secrets: [SecretEntry] = []) async -> String? {
-        guard let supervisor else { return "Restorey isn't installed" }
+        guard let supervisor else { return "Restorey isn’t installed" }
         switch await supervisor.connection.savePlan(SavePlanRequest(plan: plan, secrets: secrets)) {
         case .success(let status):
             draft.plan = status.plans.first { $0.plan.id == plan.id }?.plan ?? plan

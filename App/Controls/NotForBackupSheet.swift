@@ -18,13 +18,13 @@ struct NotForBackupSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Items Marked Not for Backup").font(.title3.bold())
+            Text("Items marked not for backup").pageTitle()
             Toggle("Skip items apps mark as not for backup", isOn: $skips)
-            Text("Apps and macOS mark data they can rebuild or download again, such as caches, previews and virtual machine "
-                + "disks, so Time Machine leaves it out. Restorey does the same. Anything Spotlight can't see is backed up.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Apps and macOS mark data they can rebuild, such as caches, previews and virtual machine "
+                + "disks, so Time Machine leaves it out. Restorey does the same. Anything Spotlight can’t see is backed up.")
+                .explanatoryNote()
             if let note = MarkedNotForBackupText.incompleteNote(fullDiskAccessMissing: fullDiskAccessMissing) {
-                Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(note).explanatoryNote()
             }
             list
                 .frame(minHeight: 200, idealHeight: 260)
@@ -49,7 +49,7 @@ struct NotForBackupSheet: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .gaveUp, .busy:
-            Text("Spotlight didn't answer in time, so the list can't be shown now. A backup that can't check includes these items.")
+            Text("Spotlight didn’t answer in time, so the list can’t be shown now. A backup that can’t check includes these items.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         case .found(let verified):

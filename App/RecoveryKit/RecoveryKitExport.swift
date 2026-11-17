@@ -122,12 +122,12 @@ enum RecoveryKitExport {
 /// The kit's own sentences, shared by the screen and the printed kit.
 enum RecoveryKitText {
     static let why =
-        "Without this you can't restore if this Mac is lost. It's the address, password and keys, and how to restore without Restorey."
+        "Without this you can’t restore if this Mac is lost. It’s the address, password and keys, and how to restore without Restorey."
     static let keepItSafe =
         "Store it off this Mac (a password manager, or paper). Restorey never saves a copy on the Mac."
     static let restoreSection = "Restore without Restorey"
     static let restoreIntro =
         "Install restic (restic.net), then paste these into Terminal in order. The files go to a folder called Restored in your home folder."
     static let reconfirmHeading = "Save a new recovery kit — the saved one has the old keys"
-    static let savedTick = "I've saved it somewhere other than this Mac"
+    static let savedTick = "I’ve saved it somewhere other than this Mac"
 }

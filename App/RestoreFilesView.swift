@@ -11,7 +11,7 @@ struct RestoreFilesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if model.plans.isEmpty {
-                Text(model.statusKnown ? "No plan has finished setup yet, so there's nothing to restore." : "Waiting for Restorey's background agent…")
+                Text(model.statusKnown ? "No plan has finished setup yet, so there’s nothing to restore." : "Waiting for Restorey’s background process…")
                     .foregroundStyle(.secondary)
             } else {
                 if model.plans.count > 1 || model.plan == nil {
@@ -35,7 +35,7 @@ struct RestoreFilesView: View {
     }
 
     @ViewBuilder private var commands: some View {
-        Text("Restorey's restore window comes in a later version. Until then, restic restores this plan's files from Terminal: install restic (restic.net), then paste these in order. The files go to a folder called Restored in your home folder.")
+        Text("Restorey’s restore window comes in a later version. Until then, restic restores this plan’s files from Terminal: install restic (restic.net), then paste these in order. The files go to a folder called Restored in your home folder.")
             .fixedSize(horizontal: false, vertical: true)
         ForEach(model.commands) { command in
             VStack(alignment: .leading, spacing: 4) {
@@ -56,7 +56,7 @@ struct RestoreFilesView: View {
         HStack(spacing: 8) {
             if model.working { ProgressView().controlSize(.small) }
             Text("Hold Option for a quick look at the passwords and keys. Copy puts the real command on the clipboard.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .explanatoryNote()
             Spacer()
             Button(model.reveal.buttonTitle(authenticated: model.authenticated)) {
                 Task { await model.revealButtonPressed() }
@@ -64,9 +64,7 @@ struct RestoreFilesView: View {
             .disabled(model.working)
         }
         if let problem = model.problem {
-            Label(problem, systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.red)
-                .fixedSize(horizontal: false, vertical: true)
+            SeverityText(problem)
         }
     }
 }

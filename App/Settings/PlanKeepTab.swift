@@ -23,25 +23,25 @@ struct PlanKeepTab: View {
                 form: model.fields.schedule, cadence: adopted ? model.fields.forgetCadence : .afterEachBackup,
                 locale: .autoupdatingCurrent)
             {
-                Text(summary).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(summary).explanatoryNote()
             }
-            Text("Only this plan's own snapshots of its current folders from this Mac are thinned: those of other Macs and other tools are never touched, and earlier ones only when you apply retention to them below.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Retention thins only this plan’s snapshots of its current folders from this Mac. Snapshots from other Macs and tools are never touched, and earlier ones only when you apply it below.")
+                .explanatoryNote()
 
             Toggle("Remove unused data about once a week (prune)", isOn: $model.fields.pruneEnabled)
             if adopted {
-                Text("Pruning locks the whole repository while it runs: other Macs or tools backing up to it wait, or fail if they can't. Restorey never breaks another program's lock.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text("Pruning locks the whole repository while it runs, so other Macs or tools backing up to it wait or fail. Restorey never breaks another program’s lock.")
+                    .explanatoryNote()
                 Picker("Tidy old snapshots", selection: $model.fields.forgetCadence) {
                     Text("After each backup").tag(ForgetCadence.afterEachBackup)
                     Text("Once a day").tag(ForgetCadence.daily)
                 }
                 .fixedSize()
-                Text("Tidying (restic forget) locks the repository too, so a repository other clients use is tidied once a day.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text("Tidying locks the repository too, so a shared repository is tidied once a day.")
+                    .explanatoryNote()
             }
             Text(RetentionSummary.weeklyCheckNote)
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .explanatoryNote()
             Divider().padding(.vertical, 4)
             EarlierSnapshotsSection(plan: model.saved, unsavedEdits: model.edit.isDirty, connection: connection)
         }

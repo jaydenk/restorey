@@ -69,7 +69,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
     /// Makes the setup window's model when it opens (`AppDelegate` supplies it: refused or installed), at the
     /// progress given, or where the saved progress says when nil.
     var makeSetupModel: ((SetupProgress?) -> SetupModel)?
-    /// The installed copy's saved setup progress, for "+ Add plan…" (`AppDelegate` sets it).
+    /// The installed copy's saved setup progress, for "Add Plan…" (`AppDelegate` sets it).
     var setupStore: SetupProgressStore?
     /// The installed copy's open-at-login switch (`AppDelegate` sets it, P2-16): Settings → General. Like the
     /// supervisor, a copy outside /Applications has none, and no Settings.
@@ -156,7 +156,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         }
     }
 
-    /// "+ Add plan…" (`SetupFlow.addingPlan`): opens setup itself unless there is an unfinished plan's setup to
+    /// "Add Plan…" (`SetupFlow.addingPlan`): opens setup itself unless there is an unfinished plan's setup to
     /// finish first, which Settings asks about. An open setup window just comes forward (nil).
     private func addPlan() -> AddPlanStart? {
         if slots.openWindow(for: .setup) != nil {
@@ -177,7 +177,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         setupStore?.forget(planID: planID)
     }
 
-    /// "Save Recovery Kit…" (a plan needing a new kit) and Settings' "Show recovery kit…".
+    /// "Save Recovery Kit…" (a plan needing a new kit) and Settings' "Show Recovery Kit…".
     func showRecoveryKit(planID: UUID) {
         guard let supervisor else { return }
         show(.recoveryKit, planID: planID) { [weak self] in
@@ -332,7 +332,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         alert.messageText = question.message
         alert.informativeText = question.information
         alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Don't Save")
+        alert.addButton(withTitle: "Don’t Save")
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] response in
             switch response {

@@ -173,7 +173,7 @@ final class AgentSupervisor {
                 set(.checking)
             } catch {
                 let failure = AgentHealthState.failed(
-                    "Restorey couldn't register its background agent: \(error.localizedDescription)")
+                    "Restorey couldn’t register its background process: \(error.localizedDescription)")
                 // Retried every heartbeat; logged once per distinct failure.
                 if health != failure { log.error("Couldn't register the agent: \(error)") }
                 set(failure)
@@ -274,7 +274,7 @@ final class AgentSupervisor {
             log.info("Re-registered the agent; status is now \(registration.status)")
         } catch {
             log.error("Couldn't re-register the agent: \(error)")
-            set(.failed("Restorey couldn't register its background agent: \(error.localizedDescription)"))
+            set(.failed("Restorey couldn’t register its background process: \(error.localizedDescription)"))
         }
     }
 

@@ -37,16 +37,23 @@ struct PlanOverviewTab: View {
             // The plan's state and the menu's reason; no plan name or repository here (the title has the name), and
             // no times (the rows have them).
             VStack(alignment: .leading, spacing: 4) {
-                Text(overview.headline)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(headlineColour(overview))
+                // A plan that needs attention has its symbol; the words stay in the label colour.
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    if overview.isPaused {
+                        Image(systemName: "pause.circle").foregroundStyle(.secondary).accessibilityLabel("Paused")
+                    } else if let severity = overview.severity {
+                        SeverityIcon(severity: severity)
+                    }
+                    Text(overview.headline).foregroundStyle(overview.isPaused ? .secondary : .primary)
+                }
+                .font(.headline)
                 if let reason = overview.reason {
                     Text(reason).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 if overview.unreadable != nil {
                     Button("Show…") { showingUnreadable = true }
                         .buttonStyle(.link)
-                        .accessibilityLabel("Show the files that couldn't be read")
+                        .accessibilityLabel("Show the files that couldn’t be read")
                 }
                 if let progress = overview.progress {
                     ProgressView(value: progress).accessibilityLabel("Backup progress")
@@ -63,8 +70,7 @@ struct PlanOverviewTab: View {
 
             if let additions = overview.biggestAdditions {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(additions.line).font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(additions.line).explanatoryNote()
                     Button("Show…") { showingAdditions = true }
                         .buttonStyle(.link)
                         .accessibilityLabel("Show the biggest additions")
@@ -72,7 +78,7 @@ struct PlanOverviewTab: View {
             }
             if let note = overview.cloudOnlyNote { CloudOnlyNoteView(note: note) }
             if let note = overview.earlierRemovalNote {
-                Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(note).explanatoryNote()
             }
 
             HStack {
@@ -95,20 +101,10 @@ struct PlanOverviewTab: View {
             Text(label).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.value)
-                if let detail = row.detail { Text(detail).font(.callout).foregroundStyle(.secondary) }
+                if let detail = row.detail { Text(detail).explanatoryNote() }
             }
         }
         .accessibilityElement(children: .combine)
-    }
-
-    /// Coloured only when the plan needs attention, and then the reason (or the headline itself) says why.
-    private func headlineColour(_ overview: PlanOverview) -> Color {
-        if overview.isPaused { return .secondary }
-        switch overview.severity {
-        case .error?: return .red
-        case .warning?: return .orange
-        case nil: return .primary
-        }
     }
 
     /// What the menu's items do, through the same calls (`AgentActions`) and router.
@@ -131,7 +127,7 @@ private struct CloudOnlyNoteView: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(note.line).font(.callout).foregroundStyle(.secondary)
+            Text(note.line).explanatoryNote()
             Button { showsDetail.toggle() } label: {
                 Image(systemName: "info.circle")
             }

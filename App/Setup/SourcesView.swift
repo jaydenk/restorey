@@ -14,18 +14,15 @@ struct SourcesView: View {
             SourcesEditor(sources: $model.sources)
                 .disabled(model.working)
             if let problem = model.sourcesProblem {
-                Text(problem).font(.caption).foregroundStyle(.red)
+                SeverityText(problem)
             }
             if let warning = model.sourcesWarning {
-                Label(warning, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
+                SeverityText(warning, severity: .warning)
             }
             if let plan = model.plan, let identity = model.identity {
                 HStack(alignment: .firstTextBaseline) {
                     Text(ExclusionsSummary.line(plan: plan, home: Self.home, identity: identity))
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .explanatoryNote()
                     Button("Review Exclusions…") { reviewing = true }
                         .disabled(model.working)
                 }

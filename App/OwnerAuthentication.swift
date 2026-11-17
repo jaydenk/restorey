@@ -54,10 +54,10 @@ enum OwnerAuthentication {
         case .passcodeNotSet?:
             why = "this user account has no login password, so macOS has nothing to check. Set one in System Settings → Users & Groups"
         case .notInteractive?:
-            why = "macOS isn't letting Restorey show its prompt right now. Try again once you're logged in and the screen is unlocked"
+            why = "macOS isn’t letting Restorey show its prompt right now. Try again once you’re logged in and the screen is unlocked"
         default:
             why = error?.localizedDescription ?? "macOS gave no reason"
         }
-        return FormValidation.sentence("This Mac can't confirm it's you, so the passwords and keys stay hidden: \(why)")
+        return FormValidation.sentence("This Mac can’t confirm it’s you, so the passwords and keys stay hidden: \(why)")
     }
 }

@@ -17,7 +17,7 @@ struct BiggestAdditionsSheet: View {
         let files = BiggestAdditionsText.rows(additions.files, home: home, locale: .current, exists: exists)
         let folders = BiggestAdditionsText.rows(additions.folders, home: home, locale: .current, exists: exists)
         VStack(alignment: .leading, spacing: 12) {
-            Text("Biggest additions").font(.title3.bold())
+            Text("Biggest additions").pageTitle()
             Text(BiggestAdditionsText.caption(additions, locale: .current))
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             List {
@@ -31,7 +31,7 @@ struct BiggestAdditionsSheet: View {
                         ForEach(folders) { RowView(row: $0) }
                         if additions.foldersIncomplete {
                             Text(BiggestAdditionsText.foldersIncompleteNote)
-                                .font(.caption).foregroundStyle(.secondary)
+                                .explanatoryNote()
                         }
                     }
                 }

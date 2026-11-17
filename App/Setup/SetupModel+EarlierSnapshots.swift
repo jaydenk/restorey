@@ -32,7 +32,7 @@ extension SetupModel {
         case .success(let preview):
             guard let group = preview.group(.beforeAdoption), !group.removeIDs.isEmpty else {
                 recordEarlierRemoval(nil)
-                earlierNote = "None of this Mac's snapshots from before Restorey are beyond this plan's retention, so none will be removed."
+                earlierNote = "None of this Mac’s snapshots from before Restorey are beyond this plan’s retention, so none will be removed."
                 return nil
             }
             let text = EarlierSnapshotsText.confirmation(group, pruneEnabled: plan.pruneEnabled, afterFirstBackup: true)

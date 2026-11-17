@@ -59,7 +59,7 @@ struct HistoryList: View {
             HStack {
                 if planID == nil {
                     Picker("Plan", selection: $planFilter) {
-                        Text("All plans").tag(UUID?.none)
+                        Text("All Plans").tag(UUID?.none)
                         ForEach(plans) { Text($0.name).tag(UUID?.some($0.id)) }
                     }
                     .fixedSize()
@@ -81,8 +81,7 @@ struct HistoryList: View {
             .listStyle(.bordered)
             .overlay {
                 if let loadError {
-                    Label(loadError, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.red).padding()
+                    SeverityText(loadError, font: .body).padding()
                 } else if !loaded {
                     ProgressView().controlSize(.small)
                 } else if rows.isEmpty {
@@ -96,7 +95,7 @@ struct HistoryList: View {
             if let editor { UnreadableFilesSheet(summary: shown.summary, model: editor) }
         }
         .sheet(item: $additions) { BiggestAdditionsSheet(additions: $0.additions) }
-        .alert("This run's log is no longer there.", isPresented: $missingLog) {
+        .alert("This run’s log is no longer there.", isPresented: $missingLog) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Run logs are kept for 400 days, and go with their plan when it is deleted.")
@@ -146,10 +145,11 @@ private struct HistoryRowView: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Circle()
-                .fill(colour)
-                .frame(width: 8, height: 8)
-                .accessibilityHidden(true)
+            // A shape per outcome, so the outcome isn't carried by colour alone; VoiceOver reads it.
+            Image(systemName: row.kind.symbolName)
+                .foregroundStyle(row.kind.tint)
+                .frame(width: 16)
+                .accessibilityLabel(row.kind.accessibilityLabel)
             Text(row.time)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
@@ -163,10 +163,10 @@ private struct HistoryRowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.outcome)
                 if let detail = row.detail {
-                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                    Text(detail).explanatoryNote()
                 }
                 if let additions = row.biggestAdditions {
-                    Text(additions.line).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                    Text(additions.line).explanatoryNote().lineLimit(1).truncationMode(.tail)
                 }
             }
             Spacer()
@@ -179,15 +179,6 @@ private struct HistoryRowView: View {
                 Button("Show Log", action: showLog)
                     .buttonStyle(.link)
             }
-        }
-    }
-
-    private var colour: Color {
-        switch row.kind {
-        case .success: .green
-        case .warning: .orange
-        case .failure: .red
-        case .skipped: .secondary
         }
     }
 }

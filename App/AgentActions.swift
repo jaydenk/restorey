@@ -5,9 +5,9 @@ import RestoreyCore
 /// (Task 14c) so both ask the same way and show the same alert when one fails.
 @MainActor
 enum AgentActions {
-    static let backUpFailed = "Restorey couldn't start the backup"
-    static let pauseFailed = "Restorey couldn't pause the backup"
-    static let resumeFailed = "Restorey couldn't resume the backup"
+    static let backUpFailed = "Restorey couldn’t start the backup"
+    static let pauseFailed = "Restorey couldn’t pause the backup"
+    static let resumeFailed = "Restorey couldn’t resume the backup"
 
     /// `planID` nil: every plan (the menu's "All Plans").
     static func backUpNow(_ planID: UUID?, _ connection: AgentConnection) {

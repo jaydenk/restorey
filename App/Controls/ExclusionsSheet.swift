@@ -16,7 +16,7 @@ struct ExclusionsSheet: View {
     var body: some View {
         let own = Set(DefaultExclusions.ownFolders(home: home, identity: identity))
         VStack(alignment: .leading, spacing: 12) {
-            Text("Exclusions").font(.title3.bold())
+            Text("Exclusions").pageTitle()
             Text("Folders").font(.headline)
             List(selection: $selection) {
                 ForEach(exclusions, id: \.self) { pattern in
@@ -25,7 +25,7 @@ struct ExclusionsSheet: View {
                             .lineLimit(1).truncationMode(.middle)
                         if own.contains(pattern) {
                             Spacer()
-                            Text("Restorey's own").font(.caption).foregroundStyle(.secondary)
+                            Text("Restorey’s own").font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     .help(pattern)
@@ -47,9 +47,9 @@ struct ExclusionsSheet: View {
             FileTypesEditor(types: $fileTypes)
             Toggle("Skip other file systems mounted inside these folders", isOn: $oneFileSystem)
             Text("Such as a network share or a connected iPhone. A drive you add as a source is still backed up.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Text("iCloud files that aren't on this Mac are always skipped.")
-                .font(.caption).foregroundStyle(.secondary)
+                .explanatoryNote()
+            Text("iCloud files that aren’t on this Mac are always skipped.")
+                .explanatoryNote()
             HStack {
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)

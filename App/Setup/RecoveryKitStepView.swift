@@ -13,17 +13,16 @@ struct RecoveryKitStepView: View {
             Text(RecoveryKitText.why)
                 .fixedSize(horizontal: false, vertical: true)
             if model.kitBlockedByStandInPassword {
-                Label("The repository's password isn't saved yet, so there's no kit to show. Go back and create or open the repository first.",
-                      systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
+                SeverityText(
+                    "The repository’s password isn’t saved yet, so there’s no kit to show. Go back and create or open the repository first.",
+                    severity: .warning, font: .body)
             } else if let kit = model.recoveryKit {
                 RecoveryKitView(model: kit)
             } else {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 80)
             }
             Text(RecoveryKitText.keepItSafe)
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .explanatoryNote()
             Toggle(RecoveryKitText.savedTick, isOn: $model.kitSaved)
                 .toggleStyle(.checkbox)
                 .disabled(!model.canTickKitSaved)

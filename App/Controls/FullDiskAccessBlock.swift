@@ -18,7 +18,7 @@ struct FullDiskAccessBlock: View {
             Label {
                 Text(FullDiskAccessGuide.grantedTitle)
             } icon: {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(Color(nsColor: .systemGreen))
             }
         case .checking:
             Text("Checking…").foregroundStyle(.secondary)
@@ -32,7 +32,7 @@ struct FullDiskAccessBlock: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Button("Open Settings…", action: openSettings)
+                Button("Open System Settings", action: openSettings)
             }
         }
     }

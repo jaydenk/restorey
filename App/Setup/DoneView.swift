@@ -13,9 +13,9 @@ struct DoneView: View {
             if let progress = model.firstBackup {
                 FirstBackupLine(progress: progress)
                 Text(progress.finished
-                    ? "From now on Restorey backs up by itself. The menu bar icon shows how it's going."
-                    : "You can close this window. The backup keeps going in the background, and the menu bar icon shows how it's going.")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    ? "From now on Restorey backs up by itself. The menu bar icon shows how it’s going."
+                    : "You can close this window. The backup keeps going in the background, and the menu bar icon shows how it’s going.")
+                    .explanatoryNote()
             } else if let plan = model.plan {
                 Text("Ready for the first backup.").font(.headline)
                 PlanSummary(plan: plan)
@@ -50,9 +50,12 @@ private struct FirstBackupLine: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(progress.title)
-                .font(.headline)
-                .foregroundStyle(color)
+            // A problem has its symbol; the title stays in the label colour.
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                if let severity = progress.severity { SeverityIcon(severity: severity) }
+                Text(progress.title)
+            }
+            .font(.headline)
             if let fraction = progress.fraction {
                 ProgressView(value: fraction)
             } else if !progress.finished {
@@ -63,14 +66,6 @@ private struct FirstBackupLine: View {
             }
         }
         .accessibilityElement(children: .combine)
-    }
-
-    private var color: Color {
-        switch progress.severity {
-        case .error?: .red
-        case .warning?: .orange
-        case nil: .primary
-        }
     }
 }
 

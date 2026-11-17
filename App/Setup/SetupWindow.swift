@@ -12,11 +12,9 @@ struct SetupWindow: View {
                 .foregroundStyle(.secondary)
             if let configError = model.configError {
                 // The menu's wording (`MenuPresentation`); setup waits for a status that lists the plan again.
-                Label("Restorey can't read its settings: \(configError)", systemImage: "exclamationmark.octagon")
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
+                SeverityText("Restorey can’t read its settings: \(configError)")
                 Text("Setup carries on when the settings can be read again.")
-                    .foregroundStyle(.secondary)
+                    .explanatoryNote()
                 stepView
             } else if model.planMissing {
                 PlanMissingView(model: model)
@@ -58,8 +56,12 @@ private struct PlanMissingView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("The plan this setup was making is no longer there.", systemImage: "exclamationmark.triangle")
-                .font(.headline)
+            Label {
+                Text("The plan this setup was making is no longer there.")
+            } icon: {
+                SeverityIcon(severity: .warning)
+            }
+            .font(.headline)
             Text("It may have been deleted elsewhere, in Settings or another window. Start again from where backups go; nothing has been backed up for it.")
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)
@@ -94,7 +96,7 @@ struct SetupField<Field: View>: View {
             Text(label).font(.callout).foregroundStyle(.secondary)
             field
             if let problem {
-                Text(problem).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                SeverityText(problem)
             }
         }
     }
@@ -106,9 +108,7 @@ struct SetupStepStatus: View {
 
     var body: some View {
         if let error = model.stepError {
-            Label(error, systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.red)
-                .fixedSize(horizontal: false, vertical: true)
+            SeverityText(error)
         }
     }
 }

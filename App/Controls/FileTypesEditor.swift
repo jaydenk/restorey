@@ -45,7 +45,7 @@ struct FileTypesEditor: View {
                     .disabled(entry.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             if let problem {
-                Text(problem).font(.caption).foregroundStyle(.red)
+                SeverityText(problem)
             }
         }
     }

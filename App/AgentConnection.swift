@@ -13,9 +13,9 @@ enum AgentCallError: Error, Equatable, CustomStringConvertible {
 
     var description: String {
         switch self {
-        case .unreachable(let detail): "Restorey couldn't reach its background agent (\(detail))."
+        case .unreachable(let detail): "Restorey couldn’t reach its background process (\(detail))."
         case .refused(let message): message
-        case .badReply(let detail): "Restorey's background agent sent a reply it couldn't read (\(detail))."
+        case .badReply(let detail): "Restorey’s background process sent a reply it couldn’t read (\(detail))."
         }
     }
 }
@@ -233,7 +233,7 @@ final class AgentConnection {
                         once.resume(.failure(.badReply(String(describing: error))))
                     }
                 } else {
-                    once.resume(.failure(.refused(error ?? "Restorey's background agent gave no reason.")))
+                    once.resume(.failure(.refused(error ?? "Restorey’s background process gave no reason.")))
                 }
             }
         }

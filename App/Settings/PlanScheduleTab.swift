@@ -29,10 +29,10 @@ struct PlanScheduleTab: View {
                         Text("MB/s").foregroundStyle(.secondary)
                     }
                     if let problem = model.edit.uploadLimitProblem {
-                        Text(problem).font(.caption).foregroundStyle(.red)
+                        SeverityText(problem)
                     }
                     Text(limitNote)
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .explanatoryNote()
                 }
             }
         }
@@ -45,7 +45,7 @@ struct PlanScheduleTab: View {
             Text(MenuPresentation.scheduleCaption(
                 status, hasUnsavedScheduleEdits: model.edit.scheduleIsDirty, now: timeline.date, calendar: .autoupdatingCurrent,
                 locale: .autoupdatingCurrent))
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .explanatoryNote()
         }
     }
 

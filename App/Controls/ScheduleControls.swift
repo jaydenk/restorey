@@ -44,7 +44,7 @@ struct RetentionFields: View {
                 CountField(text: $form.monthly, unit: "monthly")
             }
             if case .failure(let problem) = form.retention {
-                Text(problem.message).font(.caption).foregroundStyle(.red)
+                SeverityText(problem.message)
             }
         }
     }
@@ -83,6 +83,6 @@ struct CheckInURLField: View {
             }
         }
         Text(ScheduleForm.checkInExplanation)
-            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            .explanatoryNote()
     }
 }

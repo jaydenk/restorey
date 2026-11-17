@@ -2,7 +2,7 @@ import AppKit
 import RestoreyCore
 import SwiftUI
 
-/// Settings → Plans (UI design §6.2, mockup `v0.1-settings.html`): the plans in a sidebar with "+ Add plan…", and
+/// Settings → Plans (UI design §6.2, mockup `v0.1-settings.html`): the plans in a sidebar with "Add Plan…", and
 /// the selected plan's tabs. An unfinished plan offers "Finish Setup…" instead of tabs, since setup is still
 /// editing it. The plan's edits live in one `PlanEditModel`, made afresh for each plan shown, so switching plans
 /// (after "Discard Changes" when something is unsaved) or closing the window drops what was typed. It is held by
@@ -65,7 +65,7 @@ struct PlansPane: View {
             Button("Finish Setup…") { context.openSetup(pending.progress) }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("Restorey sets up one plan at a time. Finish that plan's setup, or delete it here, then add another.")
+            Text("Restorey sets up one plan at a time. Finish that plan’s setup, or delete it here, then add another.")
         }
     }
 
@@ -78,7 +78,7 @@ struct PlansPane: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(plan.plan.name).lineLimit(1)
                         if let note = PlanNote.sidebar(plan) {
-                            Text(note.title).font(.caption).foregroundStyle(note.level == .error ? .red : .orange)
+                            SidebarNote(note: note)
                         }
                     }
                     .tag(UUID?.some(plan.plan.id))
@@ -87,7 +87,7 @@ struct PlansPane: View {
             .listStyle(.sidebar)
             Divider()
             HStack {
-                Button("+ Add plan…", action: addPlan)
+                Button("Add Plan…", action: addPlan)
                     .buttonStyle(.borderless)
                     .disabled(status == nil || status?.configError != nil)
                 Spacer()
@@ -132,14 +132,12 @@ struct PlansPane: View {
     @ViewBuilder private var detail: some View {
         if let configError = status?.configError {
             // The menu's wording (`MenuPresentation`).
-            Label("Restorey can't read its settings: \(configError)", systemImage: "exclamationmark.octagon")
-                .foregroundStyle(.red)
-                .fixedSize(horizontal: false, vertical: true)
+            SeverityText("Restorey can’t read its settings: \(configError)")
                 .padding(16)
         } else if status == nil {
             HStack {
                 ProgressView().controlSize(.small)
-                Text("Waiting for Restorey's background agent…").foregroundStyle(.secondary)
+                Text("Waiting for Restorey’s background process…").foregroundStyle(.secondary)
             }
             .padding(16)
         } else if let selected {
@@ -158,6 +156,25 @@ struct PlansPane: View {
             }
             .padding(16)
         }
+    }
+}
+
+/// The note under a plan's name in the sidebar: a tinted symbol, then the words in the secondary label colour. On the
+/// selected row, whose background is the accent colour, the symbol is drawn in the secondary label colour too, so
+/// it stays legible there.
+private struct SidebarNote: View {
+    let note: PlanNote
+    @Environment(\.backgroundProminence) private var prominence
+
+    var body: some View {
+        let severity: Severity = note.level == .error ? .error : .warning
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Image(systemName: severity.symbolName)
+                .foregroundStyle(prominence == .increased ? AnyShapeStyle(.secondary) : AnyShapeStyle(severity.tint))
+                .accessibilityLabel(severity.accessibilityLabel)
+            Text(note.title).foregroundStyle(.secondary)
+        }
+        .font(.subheadline)
     }
 }
 
@@ -214,7 +231,7 @@ private struct PlanDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(status.plan.name).font(.title3.weight(.semibold))
+            Text(status.plan.name).pageTitle()
             if let stop = PlanNote.stop(status) {
                 StopBanner(note: stop)
             }

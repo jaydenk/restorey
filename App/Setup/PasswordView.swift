@@ -17,7 +17,7 @@ struct PasswordView: View {
                     Text("Checking the repository address…").foregroundStyle(.secondary)
                 }
             case .probeFailed:
-                Text("Restorey couldn't check the repository address.").font(.headline)
+                Text("Restorey couldn’t check the repository address.").font(.headline)
                 Text("Try again, or go back and check the address.")
                     .fixedSize(horizontal: false, vertical: true)
             case .create:
@@ -118,7 +118,7 @@ private struct NewRepositoryForm: View {
         .onAppear { if !model.ownPassword { model.offerGeneratedPassword() } }
         if !model.ownPassword {
             Text("Six random words: about 77 bits, as strong as 13 random letters and digits, and easier to read out.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .explanatoryNote()
         }
     }
 
@@ -152,9 +152,9 @@ private struct ExistingRepositorySummary: View {
 
     var body: some View {
         Text("A repository is already here: \(SetupAdoption.summary(report)).").font(.headline)
-        Text("Restorey adds this Mac's backups to it and never removes snapshots it didn't make. It doesn't prune an existing repository, which locks out other Macs while it runs; you can turn pruning on in Settings.")
+        Text("Restorey adds this Mac’s backups to it and never removes snapshots it didn’t make. It doesn’t prune an existing repository, since that locks out other Macs; you can turn pruning on in Settings.")
             .fixedSize(horizontal: false, vertical: true)
-        SetupField(label: "This Mac's snapshots are under") {
+        SetupField(label: "This Mac’s snapshots are under") {
             Picker("Host label", selection: $model.hostLabel) {
                 ForEach(model.hostChoices, id: \.self) { Text($0).tag($0) }
             }
@@ -163,9 +163,7 @@ private struct ExistingRepositorySummary: View {
         }
         .disabled(model.working)
         if let warning = SetupAdoption.newGroupWarning(hostLabel: model.hostLabel, sources: nil, report: report) {
-            Label(warning, systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
-                .fixedSize(horizontal: false, vertical: true)
+            SeverityText(warning, severity: .warning)
         }
         EarlierSnapshotsOptIn(model: model, isOn: $model.applyRetentionToEarlier)
     }
@@ -178,12 +176,12 @@ private struct EarlierSnapshotsOptIn: View {
     let isOn: Binding<Bool>
 
     var body: some View {
-        Toggle("Apply this plan's retention to existing snapshots from this Mac", isOn: isOn)
+        Toggle("Apply this plan’s retention to existing snapshots from this Mac", isOn: isOn)
             .disabled(model.working)
         Text(model.earlierRemoval.map {
             "You confirmed removing \($0.snapshotIDs.count) of them. They go after the first backup succeeds."
-        } ?? "Off: this Mac's snapshots from before Restorey are kept as they are. On, you'll see how many would be removed before anything is.")
-            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        } ?? "Off: this Mac’s snapshots from before Restorey are kept as they are. On, you’ll see how many would be removed before anything is.")
+            .explanatoryNote()
         if let note = model.earlierNote {
             Text(note).font(.callout).fixedSize(horizontal: false, vertical: true)
         }

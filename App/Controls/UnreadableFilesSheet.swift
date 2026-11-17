@@ -19,7 +19,7 @@ struct UnreadableFilesSheet: View {
             items: summary.items, exclusions: model.fields.exclusions, saved: model.saved.exclusions, home: home,
             exists: { FileManager.default.fileExists(atPath: $0) })
         VStack(alignment: .leading, spacing: 12) {
-            Text("Files that couldn't be read").font(.title3.bold())
+            Text("Files that couldn’t be read").pageTitle()
             List {
                 ForEach(rows) { row in
                     RowView(row: row, add: { add(row) }, undo: { undo(row) })
@@ -30,12 +30,12 @@ struct UnreadableFilesSheet: View {
             }
             .listStyle(.bordered)
             .frame(minHeight: 200, idealHeight: 280)
-            .accessibilityLabel("Files that couldn't be read")
+            .accessibilityLabel("Files that couldn’t be read")
             Text("You can change this later in What → Review Exclusions…")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .explanatoryNote()
             if rows.contains(where: { $0.action == .excluded(unsaved: true) }) {
-                Text("Save the plan's changes to apply this.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text("Save the plan’s changes to apply this.")
+                    .explanatoryNote()
             }
             HStack {
                 Spacer()
@@ -64,7 +64,7 @@ struct UnreadableFilesSheet: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(row.display).lineLimit(1).truncationMode(.middle).help(row.path)
-                    Text(row.reason).font(.caption).foregroundStyle(.secondary)
+                    Text(row.reason).explanatoryNote()
                 }
                 Spacer()
                 if row.canOpenInFinder {
@@ -74,11 +74,11 @@ struct UnreadableFilesSheet: View {
                 }
                 switch row.action {
                 case .dontBackUp:
-                    Button("Don't back this up", action: add)
-                        .accessibilityLabel("Don't back up \(row.display)")
+                    Button("Don’t Back Up", action: add)
+                        .accessibilityLabel("Don’t back up \(row.display)")
                 case .excluded(let unsaved):
-                    Text(unsaved ? "Won't be backed up from the next backup" : "Already not backed up")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text(unsaved ? "Won’t be backed up from the next backup" : "Already not backed up")
+                        .explanatoryNote()
                     if unsaved { Button("Undo", action: undo).buttonStyle(.link) }
                 case .none:
                     EmptyView()

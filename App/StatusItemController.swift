@@ -234,7 +234,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
             router.showSettings(section: .plans, planID: planID, tab: .alerts)
         case .dismissOffMacNote(let planID):
             let connection = supervisor.connection
-            AgentActions.run("Restorey couldn't dismiss the note") { [await connection.dismissOffMacNote(planID)] }
+            AgentActions.run("Restorey couldn’t dismiss the note") { [await connection.dismissOffMacNote(planID)] }
         case .finishSetup, .setUp:
             router.showSetup()
         case .saveRecoveryKit(let planID):

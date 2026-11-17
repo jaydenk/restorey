@@ -27,28 +27,24 @@ struct PlanWhatTab: View {
                 SourcesEditor(sources: $model.fields.sources)
             }
             if let warning = model.edit.sourcesWarning {
-                Label(warning, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
+                SeverityText(warning, severity: .warning)
             }
             HStack(alignment: .firstTextBaseline) {
                 Text(ExclusionsSummary.line(plan: shown, home: Self.home, identity: identity, mentionsMarkedItems: false))
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .explanatoryNote()
                 Button("Review Exclusions…") { reviewing = true }
             }
             HStack(alignment: .firstTextBaseline) {
                 Text(MarkedNotForBackupText.line(
                     count: markedCount, skips: model.fields.skipsItemsMarkedNotForBackup, locale: .current))
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .explanatoryNote()
                 Button("Show…") { showingMarked = true }
                     .accessibilityLabel("Show items apps mark as not for backup")
             }
             if model.fields.skipsItemsMarkedNotForBackup,
                 let note = MarkedNotForBackupText.incompleteNote(fullDiskAccessMissing: fullDiskAccessMissing)
             {
-                Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(note).explanatoryNote()
             }
         }
         .task(id: MarkedLookup(sources: model.fields.sources, generation: markedLookups)) {

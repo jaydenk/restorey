@@ -86,7 +86,7 @@ final class NetworkEditModel {
                     return
                 }
             case .failure(let error):
-                addNote = FormValidation.sentence(error.description) + " The network wasn't added."
+                addNote = FormValidation.sentence(error.description) + " The network wasn’t added."
                 return
             }
         }

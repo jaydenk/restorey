@@ -34,7 +34,7 @@ struct GeneralPane: View {
                     LineView(line: SettingsGeneral.notifications(hello: supervisor.lastHello),
                              busy: asking, perform: perform)
                 }
-                LabeledContent("Background agent") {
+                LabeledContent("Backups in the background") {
                     LineView(line: SettingsGeneral.agent(health: supervisor.health, hello: supervisor.lastHello),
                              perform: perform)
                 }
@@ -61,13 +61,13 @@ struct GeneralPane: View {
                 .accessibilityLabel("Open at login")
             if let note = login.note {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text(note).explanatoryNote()
                     Button(GeneralAction.openLoginItems.buttonTitle) { context.loginItem.openLoginItems() }
                         .controlSize(.small)
                 }
             }
             if let loginError {
-                Text(loginError).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                SeverityText(loginError)
             }
         }
     }
@@ -79,7 +79,7 @@ struct GeneralPane: View {
             try context.loginItem.setEnabled(on)
             loginError = nil
         } catch {
-            loginError = "Restorey couldn't change Open at login: \(error.localizedDescription)"
+            loginError = "Restorey couldn’t change Open at login: \(error.localizedDescription)"
         }
         loginStatus = context.loginItem.status
     }
@@ -116,7 +116,7 @@ struct GeneralPane: View {
     }
 }
 
-/// A General line: its words, coloured by severity, and its fix's button.
+/// A General line: its severity’s symbol, its words and its fix’s button.
 private struct LineView: View {
     let line: SettingsGeneral.Line
     var busy = false
@@ -124,8 +124,8 @@ private struct LineView: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            if let severity = line.severity { SeverityIcon(severity: severity) }
             Text(line.value)
-                .foregroundStyle(line.severity == .error ? .red : line.severity == .warning ? .orange : .primary)
                 .multilineTextAlignment(.trailing)
                 .fixedSize(horizontal: false, vertical: true)
             if busy { ProgressView().controlSize(.small) }

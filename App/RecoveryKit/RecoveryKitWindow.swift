@@ -111,7 +111,7 @@ final class RecoveryKitWindowModel {
             replacedBeforeConfirming = true
             return
         case nil:
-            confirmProblem = "Restorey couldn't check the kit against the plan's keys. Try again."
+            confirmProblem = "Restorey couldn’t check the kit against the plan’s keys. Try again."
             return
         case true?:
             break
@@ -136,7 +136,7 @@ struct RecoveryKitWindow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(model.heading).font(.title3.weight(.semibold))
+            Text(model.heading).pageTitle()
             content
         }
         .padding(20)
@@ -152,7 +152,7 @@ struct RecoveryKitWindow: View {
     @ViewBuilder private var content: some View {
         if let plan = model.plan {
             if plan.setupState == .unfinished {
-                Text("Setup for “\(plan.plan.name)” isn't finished, so it has no recovery kit yet. Finishing setup shows it.")
+                Text("Setup for “\(plan.plan.name)” isn’t finished, so it has no recovery kit yet. Finishing setup shows it.")
                     .fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Spacer()
@@ -166,7 +166,7 @@ struct RecoveryKitWindow: View {
         } else {
             HStack {
                 ProgressView().controlSize(.small)
-                Text("Waiting for Restorey's background agent…").foregroundStyle(.secondary)
+                Text("Waiting for Restorey’s background process…").foregroundStyle(.secondary)
             }
         }
     }
@@ -175,12 +175,10 @@ struct RecoveryKitWindow: View {
         switch model.gate {
         case .locked, .asking:
             Text("Restorey asks for Touch ID or your login password before showing the kit, because it holds the keys to your backups.")
-                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .explanatoryNote()
         case .declined, .unavailable:
             if case .unavailable(let sentence) = model.gate {
-                Label(sentence, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
+                SeverityText(sentence)
             } else {
                 Text("The recovery kit stays hidden until you use Touch ID or enter your login password.")
                     .fixedSize(horizontal: false, vertical: true)
@@ -193,7 +191,7 @@ struct RecoveryKitWindow: View {
             Text(RecoveryKitText.why).fixedSize(horizontal: false, vertical: true)
             RecoveryKitView(model: model.kit, watchesKeys: false)
             Text(RecoveryKitText.keepItSafe)
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .explanatoryNote()
             if plan.setupState == .needsNewKit || model.confirmedHere {
                 confirmation
             }
@@ -202,8 +200,11 @@ struct RecoveryKitWindow: View {
 
     @ViewBuilder private var confirmation: some View {
         if model.confirmedHere {
-            Label("Saved. Backups carry on.", systemImage: "checkmark.circle")
-                .foregroundStyle(.green)
+            Label {
+                Text("Saved. Backups carry on.")
+            } icon: {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(Color(nsColor: .systemGreen))
+            }
         } else {
             Toggle(RecoveryKitText.savedTick, isOn: Binding(
                 get: { model.confirming },
@@ -211,15 +212,12 @@ struct RecoveryKitWindow: View {
                 .toggleStyle(.checkbox)
                 .disabled(model.kit.document == nil || model.confirming)
             if model.replacedBeforeConfirming {
-                Label("The plan's keys changed while this kit was open. This is the new kit: save it, then tick again.",
-                      systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
+                SeverityText(
+                    "The plan’s keys changed while this kit was open. This is the new kit: save it, then tick again.",
+                    severity: .warning)
             }
             if let problem = model.confirmProblem {
-                Label(problem, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
+                SeverityText(problem)
             }
         }
     }

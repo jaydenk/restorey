@@ -24,10 +24,10 @@ struct NetworkPane: View {
             if let model = slot.model {
                 NetworkForm(model: model)
             } else if let configError = status?.configError {
-                unavailable("Restorey can't read its settings: \(FormValidation.sentence(configError))")
+                unavailable("Restorey can’t read its settings: \(FormValidation.sentence(configError))")
             } else if status != nil {
                 // An agent from before the Mac-wide rules (schema 3) sends none.
-                unavailable("The background agent didn't send the network settings. Restart it from General.")
+                unavailable("Restorey didn’t get the network settings. Use Restart Backups in General.")
             } else {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -48,9 +48,7 @@ struct NetworkPane: View {
     }
 
     private func unavailable(_ sentence: String) -> some View {
-        Label(sentence, systemImage: "exclamationmark.triangle")
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+        SeverityText(sentence, severity: .warning, font: .body)
             .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -69,8 +67,8 @@ private struct NetworkForm: View {
                         .accessibilityLabel("Skip on a hotspot or in Low Data Mode")
                 } footer: {
                     Text("These rules apply only to plans that back up to another machine, such as S3, B2 or a restic "
-                        + "server. A backup to a folder or drive on this Mac is never skipped or limited by them.")
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        + "server. Backups to a folder or drive on this Mac are never skipped or limited.")
+                        .explanatoryNote()
                 }
                 Section("Skip on these Wi-Fi networks") {
                     wiFiList
@@ -94,11 +92,11 @@ private struct NetworkForm: View {
                     Text("MB/s").foregroundStyle(.secondary)
                 }
                 if let problem = model.edit.uploadLimitProblem {
-                    Text(problem).font(.caption).foregroundStyle(.red)
+                    SeverityText(problem)
                 }
-                Text("Empty is no limit. Backups that upload at the same time share it, and a plan's own limit "
-                    + "applies too: a backup gets the smaller of the two.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text("Empty means no limit. Backups uploading together share it, and a plan’s own limit "
+                    + "applies too: the smaller one wins.")
+                    .explanatoryNote()
                     .multilineTextAlignment(.trailing).fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -135,10 +133,10 @@ private struct NetworkForm: View {
                     ProgressView().controlSize(.small)
                     Text("Waiting for your answer to the Location question…").foregroundStyle(.secondary)
                 }
-                .font(.caption)
+                .font(.subheadline)
             }
             if let problem = model.newNameProblem ?? model.addNote {
-                Text(problem).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                SeverityText(problem)
             }
         }
     }
@@ -147,10 +145,11 @@ private struct NetworkForm: View {
         let access = model.access
         if let note = access.note(listed: model.fields.wiFiNames.count) {
             HStack(alignment: .firstTextBaseline) {
-                Text(note)
-                    .font(.caption)
-                    .foregroundStyle(access.addStep == .blocked ? .orange : .secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if access.addStep == .blocked {
+                    SeverityText(note, severity: .warning, font: .subheadline)
+                } else {
+                    Text(note).explanatoryNote()
+                }
                 if access.opensSystemSettings {
                     Spacer()
                     Button("Open System Settings") { NSWorkspace.shared.open(NetworkPane.locationServicesURL) }
@@ -166,9 +165,9 @@ private struct NetworkForm: View {
             Spacer()
             Group {
                 if let error = model.saveError {
-                    Text(error).foregroundStyle(.red)
+                    SeverityText(error)
                 } else if model.edit.isDirty, let problem = model.edit.problem {
-                    Text(problem).foregroundStyle(.red)
+                    SeverityText(problem)
                 }
             }
             .font(.callout)

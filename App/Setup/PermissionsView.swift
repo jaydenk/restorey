@@ -23,7 +23,7 @@ struct PermissionsView: View {
             PermissionRow(title: "Notifications") {
                 switch model.notificationsAuthorised {
                 case true?: Done()
-                case false?: Button("Turn On in Settings…") { model.openNotificationSettings() }
+                case false?: Button("Open System Settings") { model.openNotificationSettings() }
                 case nil:
                     Button("Allow…") { Task { await model.requestNotifications() } }
                         .disabled(model.requestingNotifications)
@@ -35,14 +35,14 @@ struct PermissionsView: View {
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text("Granting Full Disk Access quits Restorey. It reopens here and ticks it off.")
+                    .explanatoryNote()
                 if model.notificationsAuthorised == false {
-                    Text("Without notifications, Restorey can't alert you when a backup needs attention.")
+                    Text("Without notifications, Restorey can’t alert you when a backup needs attention.")
+                        .explanatoryNote()
                 }
-                if let error = model.fullDiskAccessError { Text(error).foregroundStyle(.red) }
-                if let error = model.loginItemError { Text(error).foregroundStyle(.red) }
+                if let error = model.fullDiskAccessError { SeverityText(error) }
+                if let error = model.loginItemError { SeverityText(error) }
             }
-            .font(.callout)
-            .foregroundStyle(.secondary)
             .padding(.top, 10)
             .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 16)
@@ -77,7 +77,7 @@ private struct PermissionRow<Accessory: View>: View {
 private struct Done: View {
     var body: some View {
         Image(systemName: "checkmark.circle.fill")
-            .foregroundStyle(.green)
+            .foregroundStyle(Color(nsColor: .systemGreen))
             .accessibilityLabel("Done")
     }
 }

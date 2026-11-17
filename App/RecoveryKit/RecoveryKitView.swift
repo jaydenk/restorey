@@ -23,11 +23,9 @@ struct RecoveryKitView: View {
             .frame(maxWidth: .infinity, minHeight: 80)
         case .failed(let sentence):
             VStack(alignment: .leading, spacing: 8) {
-                Label(sentence, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("Without every key the kit can't open the repository, so Restorey doesn't show part of one.")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                SeverityText(sentence)
+                Text("Without every key the kit can’t open the repository, so Restorey doesn’t show part of one.")
+                    .explanatoryNote()
                 Button("Try Again") { Task { await model.load() } }
             }
         case .loaded(let document):
@@ -62,15 +60,11 @@ struct RecoveryKitView: View {
                 Button("Save as PDF…") { model.savePDF() }
             }
             if let error = model.exportError {
-                Label(FormValidation.sentence(error), systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
+                SeverityText(FormValidation.sentence(error))
             }
             if model.savedOnThisMac != nil {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label(RecoveryKitLocation.internalDiskWarning, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
+                    SeverityText(RecoveryKitLocation.internalDiskWarning, severity: .warning)
                     Button("Show in Finder") { model.showSavedCopyInFinder() }
                 }
             }
@@ -89,12 +83,12 @@ private struct SectionView: View {
             Text(section.title).font(.headline)
             if section.title == RecoveryKitText.restoreSection {
                 Text(RecoveryKitText.restoreIntro)
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .explanatoryNote()
             }
             ForEach(section.fields) { field in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(field.label).font(.caption).foregroundStyle(.secondary)
+                        Text(field.label).explanatoryNote()
                         Text(field.isSecret && !showSecrets ? field.concealed : field.value)
                             .font(.system(.callout, design: .monospaced))
                             .fixedSize(horizontal: false, vertical: true)
