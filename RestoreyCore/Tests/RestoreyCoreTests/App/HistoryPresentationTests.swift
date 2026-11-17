@@ -109,10 +109,28 @@ struct HistoryPresentationTests {
         #expect(line(0) == files)
         // A record from before Task 16f.
         #expect(line(nil) == files)
-        // Listings alone name nothing: no line, no "Show…".
-        var listingsOnly = Self.record(.success(snapshotID: "a"))
-        listingsOnly.biggestAdditions = BiggestAdditions(files: [], folders: [], totalBytesAdded: 0, listingsBytesAdded: 5_000_000)
-        #expect(Self.row(listingsOnly).biggestAdditions == nil)
+    }
+
+    /// Review 16f, Important 1: a backup whose growth was all folder listings still says so, with "Show…".
+    @Test func aBackupThatAddedOnlyFolderListingsNamesThemWithShow() {
+        let listingsOnly = BiggestAdditions(
+            files: [], folders: [.init(path: "/Users/me/Library", bytesAdded: 1_290_000_000)], totalBytesAdded: 0,
+            listingsBytesAdded: 1_290_000_000)
+        var record = Self.record(.success(snapshotID: "a"))
+        record.biggestAdditions = listingsOnly
+        let row = Self.row(record)
+        #expect(row.biggestAdditions == BiggestAdditionsSummary(
+            line: "Biggest additions: folder listings 1.3 GB", additions: listingsOnly))
+        #expect(HistoryPresentation.links(for: row, offersUnreadable: true).map(\.kind) == [.biggestAdditions])
+        #expect(HistoryPresentation.links(for: row, offersUnreadable: true).map(\.title) == ["Show…"])
+        // The sheet's caption doesn't claim files added nothing as if that were the news.
+        #expect(BiggestAdditionsText.caption(listingsOnly, locale: Self.locale)
+            == "No file added data to the repository; the folder listings below did.")
+        // Under 1 MB of listings and no files: nothing to name, so no line and no "Show…".
+        var small = Self.record(.success(snapshotID: "a"))
+        small.biggestAdditions = BiggestAdditions(files: [], folders: [], totalBytesAdded: 0, listingsBytesAdded: 999_999)
+        #expect(Self.row(small).biggestAdditions == nil)
+        #expect(HistoryPresentation.links(for: Self.row(small), offersUnreadable: true).isEmpty)
     }
 
     @Test func theSheetExplainsTheFolderListings() {

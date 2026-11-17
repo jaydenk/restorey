@@ -37,13 +37,17 @@ public enum BiggestAdditionsText {
     }
 
     /// History's line and lists for `record`: any backup whose record kept them. The line ends with what the folder
-    /// listings added when that is at least `listingsInLineThreshold` (Task 16f).
+    /// listings added when that is at least `listingsInLineThreshold` (Task 16f); a backup that added only listings
+    /// that size names them alone ("Biggest additions: folder listings 1.3 GB"), so its "Show…" is still there.
     public static func summary(record: RunRecord, locale: Locale) -> BiggestAdditionsSummary? {
-        guard let summary = filesSummary(record: record, locale: locale) else { return nil }
-        guard let listings = summary.additions.listingsBytesAdded, listings >= listingsInLineThreshold else { return summary }
+        guard case .backup = record.operation, let additions = record.biggestAdditions else { return nil }
+        let files = line(additions, locale: locale)
+        guard let listings = additions.listingsBytesAdded, listings >= listingsInLineThreshold else {
+            return files.map { BiggestAdditionsSummary(line: $0, additions: additions) }
+        }
+        let named = "folder listings \(DisplayFormat.size(listings, locale: locale))"
         return BiggestAdditionsSummary(
-            line: summary.line + " · folder listings \(DisplayFormat.size(listings, locale: locale))",
-            additions: summary.additions)
+            line: files.map { $0 + " · " + named } ?? "Biggest additions: " + named, additions: additions)
     }
 
     /// The Overview's: the files only, and only when the backup added more than `overviewThreshold` to the repository.
@@ -62,7 +66,10 @@ public enum BiggestAdditionsText {
 
     /// The sheet's line under its title.
     public static func caption(_ additions: BiggestAdditions, locale: Locale) -> String {
-        "Files added \(DisplayFormat.size(additions.totalBytesAdded, locale: locale)) to the repository, after compression. "
+        guard !additions.files.isEmpty || (additions.listingsBytesAdded ?? 0) <= 0 else {
+            return "No file added data to the repository; the folder listings below did."
+        }
+        return "Files added \(DisplayFormat.size(additions.totalBytesAdded, locale: locale)) to the repository, after compression. "
             + "These added the most."
     }
 

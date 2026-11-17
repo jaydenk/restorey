@@ -440,7 +440,8 @@ new one, reads "No repository there yet" and isn't a problem), the size added an
 log only if its path stays inside the logs folder's `runs/`. The list is fetched again whenever a plan records a new
 run. A backup that made a snapshot also names its biggest additions under its detail ("Biggest additions:
 Photos.sqlite 1.1 GB, Lightroom Catalog.lrcat 312 MB, big.log 46 MB"), followed by " · folder listings 1.3 GB" when
-restic's folder listings added at least 1 MB, with "Show…" (see "What each backup added" below). A row with both this and the couldn't-read "Show…" labels them "Show Unreadable Files…" and "Show Biggest
+restic's folder listings added at least 1 MB ("Biggest additions: folder listings 1.3 GB" alone when no file added
+data), with "Show…" (see "What each backup added" below). A row with both this and the couldn't-read "Show…" labels them "Show Unreadable Files…" and "Show Biggest
 Additions…" (`HistoryPresentation.links`).
 
 ### The menu bar

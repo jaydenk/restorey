@@ -394,5 +394,9 @@ struct PlanOverviewTests {
         var status = Self.withAdditions(packed: 200_000_000)
         status.lastBackup?.biggestAdditions?.listingsBytesAdded = 90_000_000
         #expect(Self.overview(status).biggestAdditions?.line == "Biggest additions: Photos.sqlite 150 MB")
+        // Listings alone: the Overview names nothing.
+        status.lastBackup?.biggestAdditions = BiggestAdditions(
+            files: [], folders: [], totalBytesAdded: 0, listingsBytesAdded: 150_000_000)
+        #expect(Self.overview(status).biggestAdditions == nil)
     }
 }

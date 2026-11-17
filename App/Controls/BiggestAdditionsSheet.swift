@@ -21,8 +21,10 @@ struct BiggestAdditionsSheet: View {
             Text(BiggestAdditionsText.caption(additions, locale: .current))
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             List {
-                Section("Files") {
-                    ForEach(files) { RowView(row: $0) }
+                if !files.isEmpty {
+                    Section("Files") {
+                        ForEach(files) { RowView(row: $0) }
+                    }
                 }
                 if !folders.isEmpty {
                     Section("Folders") {
