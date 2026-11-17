@@ -228,12 +228,17 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
     /// short reason, the first 100 (the warning's own count stays exact). Nil for any other run and for records written
     /// before it existed. Omitted from JSON when nil.
     public var unreadableItems: [UnreadableItem]?
+    /// What a backup that made a snapshot added, biggest first (Task 16d), from restic's verbose lines. Nil for any
+    /// other run, when restic printed no verbose lines, and for records written before it existed. Omitted from JSON
+    /// when nil.
+    public var biggestAdditions: BiggestAdditions?
 
     public init(
         id: UUID, planID: UUID, operation: ResticOperation, trigger: RunTrigger,
         startedAt: Date, endedAt: Date, outcome: RunOutcome, summary: BackupSummary?, logFile: String,
         droppedLogLines: Int = 0, cloudOnlySkipped: CloudOnlyCount? = nil,
-        markedNotForBackupSkipped: Int? = nil, unreadableItems: [UnreadableItem]? = nil
+        markedNotForBackupSkipped: Int? = nil, unreadableItems: [UnreadableItem]? = nil,
+        biggestAdditions: BiggestAdditions? = nil
     ) {
         self.id = id
         self.planID = planID
@@ -248,11 +253,12 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
         self.cloudOnlySkipped = cloudOnlySkipped
         self.markedNotForBackupSkipped = markedNotForBackupSkipped
         self.unreadableItems = unreadableItems
+        self.biggestAdditions = biggestAdditions
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, planID, operation, trigger, startedAt, endedAt, outcome, summary, logFile, droppedLogLines, cloudOnlySkipped
-        case markedNotForBackupSkipped, unreadableItems
+        case markedNotForBackupSkipped, unreadableItems, biggestAdditions
     }
 
     public init(from decoder: any Decoder) throws {
@@ -270,6 +276,7 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
         cloudOnlySkipped = try c.decodeIfPresent(CloudOnlyCount.self, forKey: .cloudOnlySkipped)
         markedNotForBackupSkipped = try c.decodeIfPresent(Int.self, forKey: .markedNotForBackupSkipped)
         unreadableItems = try c.decodeIfPresent([UnreadableItem].self, forKey: .unreadableItems)
+        biggestAdditions = try c.decodeIfPresent(BiggestAdditions.self, forKey: .biggestAdditions)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -287,6 +294,7 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
         try c.encodeIfPresent(cloudOnlySkipped, forKey: .cloudOnlySkipped)
         try c.encodeIfPresent(markedNotForBackupSkipped, forKey: .markedNotForBackupSkipped)
         try c.encodeIfPresent(unreadableItems, forKey: .unreadableItems)
+        try c.encodeIfPresent(biggestAdditions, forKey: .biggestAdditions)
     }
 }
 

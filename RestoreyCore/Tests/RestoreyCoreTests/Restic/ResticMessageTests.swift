@@ -190,8 +190,11 @@ struct ResticMessageTests {
     }
 
     @Test func verboseStatusIsRecognised() {
+        #expect(ResticMessageParser.parse(#"{"message_type":"verbose_status","action":"new","item":"/fixture/a","duration":0.1,"data_size":5,"data_size_in_repo":90,"metadata_size":0,"metadata_size_in_repo":0,"total_files":1}"#)
+            == .verboseStatus(VerboseItem(action: "new", item: "/fixture/a", dataSizeInRepo: 90)))
+        // restic 0.19.1 always prints the size (no `omitempty`); a line without it has nothing to read.
         #expect(ResticMessageParser.parse(#"{"message_type":"verbose_status","action":"new","item":"/fixture/a","duration":0.1,"data_size":5,"metadata_size":0,"total_files":1}"#)
-            == .verboseStatus)
+            == .verboseStatus(nil))
     }
 
     @Test func unknownFieldsAreIgnored() {

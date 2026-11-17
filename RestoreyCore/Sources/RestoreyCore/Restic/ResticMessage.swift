@@ -13,8 +13,10 @@ public enum ResticMessage: Sendable, Equatable {
     case exitError(code: Int, message: String)
     /// A `check --json` summary. Its shape differs from the backup summary: see `ResticMessageParser`.
     case checkSummary(CheckSummary)
-    /// Per-file detail printed by `backup --verbose`. Carries nothing the app uses.
-    case verboseStatus
+    /// One file or folder a backup finished with, printed by `backup --json --verbose` (Task 16d). Nil when the line
+    /// couldn't be read: it is still a verbose line, so it is never written to a run log. An unchanged item is
+    /// normally dropped before parsing (`isUnchangedVerboseLine`).
+    case verboseStatus(VerboseItem?)
     /// A well-formed message of a type this version does not model, for example `initialized`.
     case unknown(type: String)
     /// Not JSON, truncated, not an object, or a known type whose fields do not fit. The line is kept
@@ -230,6 +232,31 @@ public enum ForgetReport {
     }
 }
 
+/// One `verbose_status` line of `backup --json --verbose` (Task 16d), reduced to what the biggest additions need.
+/// restic 0.19.1 (`internal/ui/backup/json.go`, `CompleteItem`) prints one per file and folder it finishes, every
+/// field always present (no `omitempty`), in this order: `{"message_type":"verbose_status","action":"new",
+/// "item":"/a/b","duration":0.1,"data_size":5,"data_size_in_repo":90,"metadata_size":0,"metadata_size_in_repo":0,
+/// "total_files":0}`. `action` is `new`, `modified` or `unchanged`, and `scan_finished` once (with an empty item); a
+/// folder's item ends in "/" and its `data_size_in_repo` is 0 (its own tree's size is in the metadata fields), so only
+/// a file's size says what its data added.
+public struct VerboseItem: Sendable, Equatable {
+    public var action: String
+    public var item: String
+    /// Bytes this item's new data took in the repository, after compression and encryption.
+    public var dataSizeInRepo: Int64
+
+    public init(action: String, item: String, dataSizeInRepo: Int64) {
+        self.action = action
+        self.item = item
+        self.dataSizeInRepo = dataSizeInRepo
+    }
+
+    /// A file (not a folder) restic stored new data for.
+    public var isAddedFile: Bool {
+        (action == "new" || action == "modified") && !item.isEmpty && !item.hasSuffix("/") && dataSizeInRepo > 0
+    }
+}
+
 /// A non-fatal problem reported on stderr. During a backup it names the file (`during` and `item`
 /// are set). `check` reports a flat message with neither.
 public struct ResticItemError: Sendable, Equatable {
@@ -254,6 +281,14 @@ public enum ResticMessageParser {
     /// A summary with neither, or with a `num_errors` that is not an integer and no backup marker,
     /// is `.unparseable`: it is never turned into an all-zero backup summary.
     public static func parse(_ line: String) -> ResticMessage {
+        // A backup at verbosity 2 prints one of these per file, millions on a home folder, so they skip the decoder.
+        if line.utf8.starts(with: verbosePrefix) {
+            switch VerboseLineReader.read(line) {
+            case .item(let item): return .verboseStatus(item)
+            case .malformed: return .verboseStatus(nil)
+            case .otherLayout: return .verboseStatus(verboseItemDecoded(Data(line.utf8)))
+            }
+        }
         let data = Data(line.utf8)
         guard let probe = try? decoder.decode(Probe.self, from: data) else { return .unparseable(line) }
         do {
@@ -274,13 +309,45 @@ public enum ResticMessageParser {
                 let wire = try decoder.decode(ExitErrorWire.self, from: data)
                 return .exitError(code: wire.code, message: wire.message)
             case "verbose_status":
-                return .verboseStatus
+                return .verboseStatus(verboseItemDecoded(data))
             case let other:
                 return .unknown(type: other)
             }
         } catch {
             return .unparseable(line)
         }
+    }
+
+    // MARK: Verbose lines
+
+    /// How restic 0.19.1 starts every verbose line (Go's encoder writes a struct's fields in order).
+    static let verbosePrefix = Array(#"{"message_type":"verbose_status","#.utf8)
+    /// How it starts an unchanged item's line: the comma ends the action, so `"unchangedish"` doesn't match.
+    static let unchangedPrefix = Array(#"{"message_type":"verbose_status","action":"unchanged","#.utf8)
+
+    /// True for an unchanged item's line, checked on the raw bytes before anything is decoded: most of a backup's
+    /// verbose lines are these, and they say nothing about what was added (Task 16d). A line in another layout
+    /// isn't matched; it is parsed instead, and the collector ignores it all the same.
+    public static func isUnchangedVerboseLine(_ bytes: ArraySlice<UInt8>) -> Bool {
+        guard bytes.count >= unchangedPrefix.count else { return false }
+        return bytes.withUnsafeBytes { line in
+            unchangedPrefix.withUnsafeBytes { prefix in
+                memcmp(line.baseAddress!, prefix.baseAddress!, prefix.count) == 0
+            }
+        }
+    }
+
+    /// The decoder's reading of a verbose line, for one the fast reader declined. Nil when its fields don't fit.
+    private static func verboseItemDecoded(_ data: Data) -> VerboseItem? {
+        guard let wire = try? decoder.decode(VerboseWire.self, from: data), wire.dataSizeInRepo >= 0 else { return nil }
+        return VerboseItem(action: wire.action, item: wire.item, dataSizeInRepo: wire.dataSizeInRepo)
+    }
+
+    private struct VerboseWire: Decodable {
+        let action: String
+        let item: String
+        let dataSizeInRepo: Int64
+        private enum CodingKeys: String, CodingKey { case action, item, dataSizeInRepo = "data_size_in_repo" }
     }
 
     // MARK: Wire types

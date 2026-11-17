@@ -41,12 +41,28 @@ struct ResticInvocationTests {
     @Test func backupArguments() {
         let p = plan()
         #expect(inv(.backup, p).arguments == [
-            "backup", "--json", "--cache-dir", Self.cache, "--host=pepper", "--tag=\(tag)",
+            "backup", "--json", "--cache-dir", Self.cache, "--verbose", "--host=pepper", "--tag=\(tag)",
             "--skip-if-unchanged", "--exclude-cloud-files", "--exclude-caches", "--pack-size", "64",
             "--one-file-system", "--exclude=/Users/x/Library/Caches", "--exclude=**/node_modules",
         ] + DefaultExclusions.fileTypes.map { "--iexclude=*.\($0)" } + [
             "--", "/Users/x/Documents", "/Users/x/-drafts", "/Users/x/Café Notes",
         ])
+    }
+
+    /// Task 16d: backups run at restic's verbosity 2 (`--verbose` once; `--verbose=2` is 3, restic 0.19.1
+    /// `internal/global/global.go`), the level at which `backup --json` prints a `verbose_status` line per item
+    /// (`internal/ui/backup/json.go`). Nothing else is made verbose.
+    @Test func onlyBackupsAreVerbose() {
+        let p = plan()
+        #expect(inv(.backup, p).arguments.filter { $0.hasPrefix("-v") || $0.hasPrefix("--verbose") } == ["--verbose"])
+        let others: [ResticOperation] = [
+            .initRepository, .forget(dryRun: false), .forget(dryRun: true), .prune, .check, .snapshots(allHosts: true),
+            .snapshots(allHosts: false), .unlock, .catConfig, .stats, .forgetPreview(.beforeAdoption),
+            .forgetPreview(.previousFolderLists), .forgetSnapshots(ids: ["a"]),
+        ]
+        for op in others {
+            #expect(!inv(op, p).arguments.contains { $0.hasPrefix("-v") || $0.hasPrefix("--verbose") }, "\(op)")
+        }
     }
 
     /// Task 15c: the list of items apps mark as not for backup goes in a file, only when there is one.
@@ -141,7 +157,7 @@ struct ResticInvocationTests {
         p.hostLabel = "-host"
         p.sources = ["-drafts"] // not a valid plan; builder-only check
         #expect(inv(.backup, p).arguments == [
-            "backup", "--json", "--cache-dir", Self.cache, "--host=-host", "--tag=\(tag)",
+            "backup", "--json", "--cache-dir", Self.cache, "--verbose", "--host=-host", "--tag=\(tag)",
             "--skip-if-unchanged", "--exclude-cloud-files", "--exclude-caches", "--pack-size", "64",
             "--one-file-system", "--exclude=-foo", "--", "-drafts",
         ])

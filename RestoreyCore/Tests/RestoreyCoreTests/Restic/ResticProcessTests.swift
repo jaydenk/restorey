@@ -252,6 +252,34 @@ struct ResticProcessTests {
         #expect(run.termination.stderrTail.last?.contains("last words") == true)
     }
 
+    /// Task 16d: an unchanged item's verbose line never reaches `onMessage`; every other verbose line does, read, and a
+    /// malformed or cut one (the last line here has no newline and stops mid-field) is a verbose line with nothing in it,
+    /// so it neither fails the run nor reaches the run log as text.
+    @Test(.timeLimit(.minutes(1))) func unchangedVerboseLinesAreDroppedAndBrokenOnesTolerated() async throws {
+        let repo = try TempRepository()
+        defer { repo.remove() }
+        let unchanged = #"{"message_type":"verbose_status","action":"unchanged","item":"/s/old","duration":0,"data_size":0,"data_size_in_repo":0,"metadata_size":0,"metadata_size_in_repo":0,"total_files":0}"#
+        let added = #"{"message_type":"verbose_status","action":"new","item":"/s/new","duration":0.1,"data_size":5,"data_size_in_repo":90,"metadata_size":0,"metadata_size_in_repo":0,"total_files":0}"#
+        let summary = #"{"message_type":"summary","files_new":1,"snapshot_id":"abc"}"#
+        let fake = try script("""
+            i=0; while [ $i -lt 2000 ]; do echo '\(unchanged)'; i=$((i+1)); done
+            echo '\(added)'
+            echo '{"message_type":"verbose_status","action":"new","item":"/s/x","data_size_in_repo":"lots"}'
+            echo '\(summary)'
+            printf '%s' '{"message_type":"verbose_status","action":"new","item":"/s/cut","duration":0.1,"data_si'
+            """, in: repo)
+        let run = try await repo.finish(
+            repo.process(try repo.invocation(.backup), executable: fake), op: .backup, log: MessageLog())
+        #expect(run.termination.exitCode == 0)
+        #expect(run.termination.summary?.snapshotID == "abc")
+        #expect(run.messages == [
+            .verboseStatus(VerboseItem(action: "new", item: "/s/new", dataSizeInRepo: 90)),
+            .verboseStatus(nil),
+            .summary(BackupSummary(filesNew: 1, snapshotID: "abc")),
+            .verboseStatus(nil),
+        ])
+    }
+
     @Test(.timeLimit(.minutes(1))) func cancellingTheAwaitingTaskInterruptsAndWaitsForExit() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }

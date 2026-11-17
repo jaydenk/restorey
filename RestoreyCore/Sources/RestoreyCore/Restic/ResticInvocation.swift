@@ -181,7 +181,10 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
     case .initRepository:
         args = ["init"] + common(context)
     case .backup:
-        args = ["backup"] + common(context)
+        // `--verbose` once is restic's verbosity 2 (0.19.1 `internal/global/global.go`; `--verbose=2` is 3), at which
+        // `backup --json` prints a `verbose_status` line per file and folder (`internal/ui/backup/json.go`), for the
+        // backup's biggest additions (Task 16d). In JSON mode it prints nothing else.
+        args = ["backup"] + common(context) + ["--verbose"]
             + ["--host=\(plan.hostLabel)", "--tag=\(tag)",
                "--skip-if-unchanged", "--exclude-cloud-files", "--exclude-caches"]
             + packSize(plan)
