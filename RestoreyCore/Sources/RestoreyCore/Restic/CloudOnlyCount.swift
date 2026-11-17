@@ -80,9 +80,9 @@ public enum CloudOnlyScope {
         for source in sources.map(normalised) {
             for provider in providers {
                 let path: String
-                if source == provider.path || provider.path.hasPrefix(source + "/") {
+                if source == provider.path || provider.path.hasPrefix(directoryPrefix(source)) {
                     path = provider.path
-                } else if source.hasPrefix(provider.path + "/") {
+                } else if source.hasPrefix(directoryPrefix(provider.path)) {
                     path = source
                 } else {
                     continue
@@ -95,8 +95,13 @@ public enum CloudOnlyScope {
         let distinct = found.filter { seen.insert($0.path).inserted }
         return distinct.filter { root in
             !isExcluded(root.path, by: excluded)
-                && !distinct.contains { root.path.hasPrefix($0.path + "/") }
+                && !distinct.contains { root.path.hasPrefix(directoryPrefix($0.path)) }
         }
+    }
+
+    /// What every path inside `directory` starts with: "/" for the root, otherwise the path and a slash.
+    static func directoryPrefix(_ directory: String) -> String {
+        directory == "/" ? "/" : directory + "/"
     }
 
     /// True when `path` is one of `excluded` or sits under one.
@@ -104,8 +109,9 @@ public enum CloudOnlyScope {
         var current = path
         while true {
             if excluded.contains(current) { return true }
-            guard let slash = current.lastIndex(of: "/"), slash != current.startIndex else { return false }
-            current = String(current[..<slash])
+            if current == "/" { return false }
+            guard let slash = current.lastIndex(of: "/") else { return false }
+            current = slash == current.startIndex ? "/" : String(current[..<slash])
         }
     }
 
@@ -185,12 +191,13 @@ public struct CloudOnlyCounter: Sendable {
                     return .stop
                 }
                 if entry.isSymlink { return .skipChildren }
+                // An excluded subtree is never counted, even a cloud-only folder (such as a default exclusion).
+                if excluded.contains(CloudOnlyScope.normalised(entry.path)) { return .skipChildren }
                 if entry.isDataless {
                     skipped += 1
                     if root.isOtherProvider { other = true }
                     return .skipChildren
                 }
-                if entry.isDirectory, excluded.contains(CloudOnlyScope.normalised(entry.path)) { return .skipChildren }
                 return .descend
             }
             if gaveUp { return .gaveUp }

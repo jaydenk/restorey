@@ -40,7 +40,11 @@ public struct RunnerDependencies: Sendable {
     /// Counts the cloud-only files a backup skipped, for the plan's sources and exclusions. Called off the actor, on a
     /// background thread, after a backup that saved the data; nil: not counted, or it gave up. Never throws or
     /// affects the run (the agent passes `CloudOnlySkipped.counter`).
-    public var cloudOnlySkipped: @Sendable (_ sources: [String], _ exclusions: [String]) -> CloudOnlyCount?
+    /// Nil: there is no counter, so nothing was counted. `.gaveUp`: the bound was reached.
+    public var cloudOnlySkipped: @Sendable (_ sources: [String], _ exclusions: [String]) -> CloudOnlyCounter.Result?
+    /// Seconds the runner waits for the count before carrying on without it, even if the walk is stuck in one system
+    /// call. The walk may finish later on its own thread; its result is discarded.
+    public var cloudOnlyDeadline: TimeInterval
     /// restic's `--retry-lock` for the maintenance commands (`ResticContext.maintenanceRetryLock`): five minutes;
     /// tests that hold a lock shorten it.
     public var maintenanceRetryLock: String
@@ -57,7 +61,8 @@ public struct RunnerDependencies: Sendable {
         agentLog: @escaping @Sendable (String) -> Void = { _ in },
         agentInfo: @escaping @Sendable (String) -> Void = { _ in },
         binaryReplaced: @escaping @Sendable () -> Bool = { false },
-        cloudOnlySkipped: @escaping @Sendable ([String], [String]) -> CloudOnlyCount? = { _, _ in nil },
+        cloudOnlySkipped: @escaping @Sendable ([String], [String]) -> CloudOnlyCounter.Result? = { _, _ in nil },
+        cloudOnlyDeadline: TimeInterval = CloudOnlyCounter.defaultTimeLimit,
         maintenanceRetryLock: String = "5m"
     ) {
         self.state = state
@@ -81,6 +86,7 @@ public struct RunnerDependencies: Sendable {
         self.agentInfo = agentInfo
         self.binaryReplaced = binaryReplaced
         self.cloudOnlySkipped = cloudOnlySkipped
+        self.cloudOnlyDeadline = cloudOnlyDeadline
         self.maintenanceRetryLock = maintenanceRetryLock
     }
 }
@@ -515,11 +521,22 @@ public actor PlanRunner {
         }
         let count = deps.cloudOnlySkipped
         let (sources, exclusions) = (plan.sources, plan.exclusions)
-        let result = await Task.detached(priority: .utility) { count(sources, exclusions) }.value
-        if result == nil {
-            deps.agentInfo("Gave up counting cloud-only files for plan \(plan.id.uuidString): too many files or too slow")
+        // On a dispatch thread, not a Swift concurrency one: the walk blocks in system calls. The first of the walk and
+        // the deadline decides; a walk that finishes later is ignored and touches nothing but its own locals.
+        let result: CloudOnlyCounter.Result? = await withCheckedContinuation { continuation in
+            let once = ResumeOnce(continuation)
+            DispatchQueue.global(qos: .utility).async { once.resume(count(sources, exclusions)) }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + deps.cloudOnlyDeadline) {
+                once.resume(.gaveUp)
+            }
         }
-        return result
+        switch result {
+        case .counted(let counted): return counted
+        case .gaveUp:
+            deps.agentInfo("Gave up counting cloud-only files for plan \(plan.id.uuidString): too many files or too slow")
+            return nil
+        case nil: return nil
+        }
     }
 
     /// `restic stats --mode raw-data`, recorded, and its total kept as the plan's repository size with the

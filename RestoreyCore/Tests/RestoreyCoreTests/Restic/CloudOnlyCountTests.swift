@@ -19,6 +19,17 @@ struct CloudOnlyCountTests {
         ])
     }
 
+    @Test func theWholeDiskReachesBothRoots() {
+        let both = [
+            CloudOnlyRoot(path: Self.drive, isOtherProvider: false),
+            CloudOnlyRoot(path: Self.storage, isOtherProvider: true),
+        ]
+        #expect(CloudOnlyScope.roots(home: Self.home, sources: ["/"], exclusions: []) == both)
+        // An exclusion of "/" itself, or of a folder above the roots, still applies.
+        #expect(CloudOnlyScope.roots(home: Self.home, sources: ["/"], exclusions: ["/"]).isEmpty)
+        #expect(CloudOnlyScope.roots(home: Self.home, sources: ["/"], exclusions: ["/Users"]).isEmpty)
+    }
+
     @Test func aSourceInsideARootIsWalkedAlone() {
         let source = Self.drive + "/com~apple~CloudDocs/Work"
         #expect(CloudOnlyScope.roots(home: Self.home, sources: [source], exclusions: [])
@@ -147,6 +158,13 @@ struct CloudOnlyCountTests {
             .count(roots: [Self.driveRoot], exclusions: [Self.drive + "/.Trash", "**/Keep", "/Users/me/*/x"])
         #expect(result == .counted(CloudOnlyCount(skipped: 1, includesOtherProviders: false)))
         #expect(!tree.yielded.contains(Self.drive + "/.Trash/gone"))
+    }
+
+    @Test func anExcludedDatalessFolderIsNotCounted() {
+        let tree = FakeTree([Self.drive: [.folder(".Trash", dataless: true, []), .folder("Other", dataless: true, [])]])
+        let result = CloudOnlyCounter(walker: tree, entryLimit: 100, isOutOfTime: { false })
+            .count(roots: [Self.driveRoot], exclusions: [Self.drive + "/.Trash"])
+        #expect(result == .counted(CloudOnlyCount(skipped: 1, includesOtherProviders: false)))
     }
 
     @Test func cloudStorageSwitchesTheWording() {

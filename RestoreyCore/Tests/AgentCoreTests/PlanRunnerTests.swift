@@ -84,6 +84,20 @@ struct PlanRunnerTests {
     /// keep changing the temporary folders (`$TMPDIR`, /private/tmp); these tests keep their files in
     /// /Users/Shared, which almost nothing touches, one test at a time.
     @Suite(.serialized) struct Unchanged {
+        /// Files are still skipped when no snapshot is made, so an unchanged backup is counted too (Task 15b).
+        @Test func anUnchangedBackupIsCounted() async throws {
+            let f = try await RunnerFixture.make(stableAncestors: true, cloudOnlySkipped: { _, _ in
+                .counted(CloudOnlyCount(skipped: 3, includesOtherProviders: false))
+            })
+            defer { f.remove() }
+            try f.write("a.txt", "hello")
+            _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+
+            let second = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+            #expect(second.outcome == .unchanged)
+            #expect(second.cloudOnlySkipped?.skipped == 3)
+        }
+
         @Test func unchangedSecondRunIsUnchangedAndPingsSuccess() async throws {
             let f = try await RunnerFixture.make(stableAncestors: true)
             defer { f.remove() }

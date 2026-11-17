@@ -70,7 +70,7 @@ agent whether or not the app is open.
   in Low Data Mode (on by default), and a list of Wi-Fi networks to skip backups on. Adding the first network asks
   for Location permission, which macOS requires before it shows any app the Wi-Fi network's name.
 - **History**: every plan's runs, newest first, filtered by plan and by outcome, each with its log. A backup's row
-  also says how many iCloud files that exist only in iCloud (not on this Mac) it skipped, and the plan's Overview
+  also says how many iCloud files it skipped because they exist only in iCloud, not on this Mac, and the plan's Overview
   says so too, with how to include them. Restorey counts these itself in the iCloud Drive and CloudStorage folders
   your plan covers, giving up quietly after 10 seconds, so the number is an approximation.
 

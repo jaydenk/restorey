@@ -44,16 +44,53 @@ struct CloudOnlyWalkerTests {
         try FileManager.default.createDirectory(
             at: home.appendingPathComponent("Library/Mobile Documents"), withIntermediateDirectories: true)
         let count = CloudOnlySkipped.counter(home: home)([home.path], [])
-        #expect(count == CloudOnlyCount(skipped: 0, includesOtherProviders: false))
+        #expect(count == .counted(CloudOnlyCount(skipped: 0, includesOtherProviders: false)))
+    }
+
+    @Test func skipChildrenOnARealDirectoryYieldsNothingBelowIt() throws {
+        let root = try Self.scratch()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fm = FileManager.default
+        try fm.createDirectory(at: root.appendingPathComponent("a/deep"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: root.appendingPathComponent("b"), withIntermediateDirectories: true)
+        try "x".write(to: root.appendingPathComponent("a/deep/f.txt"), atomically: true, encoding: .utf8)
+        try "x".write(to: root.appendingPathComponent("b/g.txt"), atomically: true, encoding: .utf8)
+
+        var seen: [String] = []
+        FTSCloudOnlyWalker().walk(root: root.path) { entry in
+            seen.append(entry.path)
+            return entry.path.hasSuffix("/a") ? .skipChildren : .descend
+        }
+        #expect(seen.contains { $0.hasSuffix("/a") })
+        #expect(!seen.contains { $0.contains("/a/") })
+        #expect(seen.contains { $0.hasSuffix("b/g.txt") })
     }
 
     // MARK: In the runner
+
+    private static func counted(_ n: Int) -> CloudOnlyCounter.Result {
+        .counted(CloudOnlyCount(skipped: n, includesOtherProviders: false))
+    }
+
+    /// restic, then a chosen exit code for the backup (restic's own for anything else).
+    private static func resticExiting(_ code: Int, in directory: URL) throws -> URL {
+        let restic = try ResticBinary.require()
+        let script = directory.appendingPathComponent("restic-\(code).sh")
+        try """
+            #!/bin/sh
+            if [ "$1" = backup ]; then '\(restic.path)' "$@"; exit \(code); fi
+            exec '\(restic.path)' "$@"
+
+            """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        return script
+    }
 
     @Test func theCountIsRecordedAfterABackupWithASnapshotWithoutChangingTheOutcome() async throws {
         let calls = Locked<[[String]]>([])
         let f = try await RunnerFixture.make(cloudOnlySkipped: { sources, _ in
             calls.mutate { $0.append(sources) }
-            return CloudOnlyCount(skipped: 7, includesOtherProviders: false)
+            return Self.counted(7)
         })
         defer { f.remove() }
         try f.write("a.txt", "hello")
@@ -70,8 +107,94 @@ struct CloudOnlyWalkerTests {
         #expect(await f.pings() == [.success])
     }
 
-    @Test func aGivenUpCountRecordsNilLogsItAndKeepsTheOutcome() async throws {
-        let f = try await RunnerFixture.make(cloudOnlySkipped: { _, _ in nil })
+    @Test func aWarningBackupIsCounted() async throws {
+        let dir = try Self.scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let f = try await RunnerFixture.make(
+            executable: try Self.resticExiting(3, in: dir), cloudOnlySkipped: { _, _ in Self.counted(4) })
+        defer { f.remove() }
+        try f.write("a.txt", "hello")
+
+        let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+
+        guard case .warning = record.outcome else {
+            Issue.record("expected a warning, got \(record.outcome)")
+            return
+        }
+        #expect(record.cloudOnlySkipped?.skipped == 4)
+    }
+
+    @Test func aResticFailureIsNeverCounted() async throws {
+        let calls = Locked<Int>(0)
+        let f = try await RunnerFixture.make(cloudOnlySkipped: { _, _ in
+            calls.mutate { $0 += 1 }
+            return Self.counted(1)
+        })
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        try "not-the-password".write(to: f.passwordFile, atomically: true, encoding: .utf8)
+
+        let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+
+        #expect(record.outcome == .wrongPassword)
+        #expect(record.cloudOnlySkipped == nil)
+        #expect(calls.value == 0)
+    }
+
+    @Test func aPausedBackupIsNeverCounted() async throws {
+        let dir = try Self.scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let restic = try ResticBinary.require()
+        let script = dir.appendingPathComponent("slow.sh")
+        try """
+            #!/bin/sh
+            if [ "$1" = backup ]; then
+              echo '{"message_type":"status","percent_done":0.1,"total_files":1,"files_done":0,"total_bytes":1,"bytes_done":0}'
+              exec /bin/sleep 30
+            fi
+            exec '\(restic.path)' "$@"
+
+            """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let calls = Locked<Int>(0)
+        let f = try await RunnerFixture.make(executable: script, gracePeriod: .seconds(2), cloudOnlySkipped: { _, _ in
+            calls.mutate { $0 += 1 }
+            return Self.counted(1)
+        })
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress != nil }
+        _ = try await f.state.pause(f.planID)
+        let record = try await run.value
+
+        #expect(record.outcome == .paused)
+        #expect(record.cloudOnlySkipped == nil)
+        #expect(calls.value == 0)
+    }
+
+    @Test func aRefusedBackupIsNeverCounted() async throws {
+        let calls = Locked<Int>(0)
+        let f = try await RunnerFixture.make(cloudOnlySkipped: { _, _ in
+            calls.mutate { $0 += 1 }
+            return Self.counted(1)
+        })
+        defer { f.remove() }
+        try FileManager.default.removeItem(at: f.source)
+
+        let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+
+        guard case .failed = record.outcome else {
+            Issue.record("expected a failure, got \(record.outcome)")
+            return
+        }
+        #expect(record.cloudOnlySkipped == nil)
+        #expect(calls.value == 0)
+    }
+
+    @Test func aGivenUpCountRecordsNilAndLogsIt() async throws {
+        let f = try await RunnerFixture.make(cloudOnlySkipped: { _, _ in .gaveUp })
         defer { f.remove() }
         try f.write("a.txt", "hello")
 
@@ -85,23 +208,40 @@ struct CloudOnlyWalkerTests {
         #expect(f.agentInfo.value.contains { $0.contains("Gave up counting cloud-only files") })
     }
 
-    @Test func aFailedBackupIsNeverCounted() async throws {
-        let calls = Locked<Int>(0)
-        let f = try await RunnerFixture.make(cloudOnlySkipped: { _, _ in
-            calls.mutate { $0 += 1 }
-            return CloudOnlyCount(skipped: 1, includesOtherProviders: false)
-        })
+    @Test func noCounterRecordsNilWithoutLoggingAGiveUp() async throws {
+        let f = try await RunnerFixture.make()
         defer { f.remove() }
-        // A source that doesn't exist: refused before restic runs.
-        try FileManager.default.removeItem(at: f.source)
+        try f.write("a.txt", "hello")
 
         let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
 
-        guard case .failed = record.outcome else {
-            Issue.record("expected a failure, got \(record.outcome)")
+        #expect(record.cloudOnlySkipped == nil)
+        #expect(!f.agentInfo.value.contains { $0.contains("Gave up counting") })
+    }
+
+    @Test func aStuckWalkIsAbandonedAtTheDeadlineAndItsLateResultDiscarded() async throws {
+        let finished = Locked<Bool>(false)
+        let f = try await RunnerFixture.make(
+            cloudOnlySkipped: { _, _ in
+                Thread.sleep(forTimeInterval: 15)
+                finished.set(true)
+                return Self.counted(9)
+            }, cloudOnlyDeadline: 0.3)
+        defer { f.remove() }
+        try f.write("a.txt", "hello")
+
+        let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+
+        guard case .success = record.outcome else {
+            Issue.record("expected success, got \(record.outcome)")
             return
         }
+        #expect(!finished.value)
         #expect(record.cloudOnlySkipped == nil)
-        #expect(calls.value == 0)
+        #expect(f.agentInfo.value.contains { $0.contains("Gave up counting cloud-only files") })
+        // The walk finishes later; nothing it returns reaches the history.
+        for _ in 0..<250 where !finished.value { try await Task.sleep(for: .milliseconds(100)) }
+        #expect(finished.value)
+        #expect(await f.history().lastBackupRecord?.cloudOnlySkipped == nil)
     }
 }
