@@ -99,6 +99,10 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
     /// Something differs from the saved plan, or a secret has been typed.
     public var isDirty: Bool { fields != started || !secrets.isEmpty }
 
+    /// The interval differs from the saved plan's: the only schedule field that moves the next run time, so the
+    /// Schedule tab's caption says it will change on saving only then.
+    public var scheduleIsDirty: Bool { fields.schedule.intervalHours != started.schedule.intervalHours }
+
     /// Shown before saving whenever a password or storage key has been typed: the saved kit holds the old one, so
     /// the agent stops the plan's backups until a new kit is saved and confirmed (UI design §6.2). The check-in
     /// URL isn't needed to open the repository and pauses nothing.

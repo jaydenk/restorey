@@ -41,7 +41,7 @@ struct ScheduleCaptionTests {
 
     private static func caption(_ status: PlanStatus, unsaved: Bool = false) -> String {
         MenuPresentation.scheduleCaption(
-            status, hasUnsavedEdits: unsaved, now: now, calendar: calendar, locale: locale)
+            status, hasUnsavedScheduleEdits: unsaved, now: now, calendar: calendar, locale: locale)
     }
 
     @Test func aBackedUpPlanSaysWhenItLastRanAndWhenNextIsDue() {
@@ -70,11 +70,11 @@ struct ScheduleCaptionTests {
 
     @Test func aSkipIsNamedBesideTheNextRun() {
         let skipped = Self.status(phase: .skipped(.onBattery))
-        #expect(Self.caption(skipped) == "Last backup at 14:16 · Skipped while on battery · next at 15:16")
+        #expect(Self.caption(skipped) == "Last backup at 14:16 · skipped while on battery · next at 15:16")
         let drive = Self.status(phase: .skipped(.volumeNotMounted("Backup Drive")), backedUpAt: nil)
-        #expect(Self.caption(drive) == "No backup yet · Skipped: Backup Drive isn't connected · first at 15:16")
+        #expect(Self.caption(drive) == "No backup yet · skipped: Backup Drive isn't connected · first at 15:16")
         let wifi = Self.status(phase: .skipped(.skippedWiFi("Cafe")))
-        #expect(Self.caption(wifi) == "Last backup at 14:16 · Skipped on Wi-Fi “Cafe” · next at 15:16")
+        #expect(Self.caption(wifi) == "Last backup at 14:16 · skipped on Wi-Fi “Cafe” · next at 15:16")
     }
 
     /// The agent's own update is not a rule of the plan, and the menu doesn't treat it as a warning either.

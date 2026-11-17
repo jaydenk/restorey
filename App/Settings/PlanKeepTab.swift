@@ -25,7 +25,7 @@ struct PlanKeepTab: View {
             {
                 Text(summary).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            Text("The newest snapshot of each hour, day, week and month, up to these counts. Only this plan's own snapshots of its current folders from this Mac are thinned: those of other Macs and other tools are never touched, and earlier ones only when you apply retention to them below.")
+            Text("Only this plan's own snapshots of its current folders from this Mac are thinned: those of other Macs and other tools are never touched, and earlier ones only when you apply retention to them below.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 
             Toggle("Remove unused data about once a week (prune)", isOn: $model.fields.pruneEnabled)

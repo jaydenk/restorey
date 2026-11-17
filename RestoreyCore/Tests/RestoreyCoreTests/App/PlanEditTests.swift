@@ -34,6 +34,20 @@ struct PlanEditTests {
         #expect(request.secrets.isEmpty)
     }
 
+    /// Task 16a: the Schedule caption says the next run time will change only for an edit that can change it.
+    @Test func onlyTheIntervalMakesTheScheduleDirty() {
+        var edit = PlanEdit(plan: Self.plan())
+        edit.fields.name = "MacBook Pro"
+        edit.fields.schedule.hourly = "12"
+        edit.fields.schedule.battery = .neverOnBattery
+        #expect(edit.isDirty)
+        #expect(!edit.scheduleIsDirty)
+        edit.fields.schedule.intervalHours = 6
+        #expect(edit.scheduleIsDirty)
+        edit.fields.schedule.intervalHours = ScheduleForm(plan: Self.plan()).intervalHours
+        #expect(!edit.scheduleIsDirty)
+    }
+
     @Test func editingAFieldMakesItDirtyAndEditingBackDoesNot() {
         var edit = PlanEdit(plan: Self.plan())
         edit.fields.name = "MacBook Pro"

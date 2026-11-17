@@ -43,7 +43,7 @@ struct PlanScheduleTab: View {
     private var scheduleCaption: some View {
         TimelineView(.periodic(from: .now, by: 30)) { timeline in
             Text(MenuPresentation.scheduleCaption(
-                status, hasUnsavedEdits: model.edit.isDirty, now: timeline.date, calendar: .autoupdatingCurrent,
+                status, hasUnsavedScheduleEdits: model.edit.scheduleIsDirty, now: timeline.date, calendar: .autoupdatingCurrent,
                 locale: .autoupdatingCurrent))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }

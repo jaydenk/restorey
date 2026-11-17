@@ -360,7 +360,7 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   a networked repository also gets its share of the Mac-wide limit, the smaller winning, Ruling P2-7). Under the
   interval, one quiet line gives the plan's last backup and next run in the menu's words ("Last backup at 14:16 ·
   next at 15:16"; "No backup yet · first at …"; paused, a skipping battery, network, Wi-Fi or drive rule, and a plan
-  waiting for a recovery kit are each said). It describes the saved schedule: while edits are unsaved it adds "Next
+  waiting for a recovery kit are each said). It describes the saved schedule: while the interval is edited and unsaved it adds "Next
   run time updates when you save." (`MenuPresentation.scheduleCaption`).
 - **Storage**: the repository address, read-only (a different repository is a new plan), the repository password
   and storage keys or environment values (empty keeps what's saved; a new S3 or B2 key needs both halves), the host

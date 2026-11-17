@@ -734,10 +734,10 @@ extension MenuPresentation {
 extension MenuPresentation {
     /// The line under the Schedule tab's interval control (Task 16a): the plan's last backup and next run, as the menu
     /// words and times them ("Last backup at 14:16 · next at 15:16"). It describes the saved schedule; while the form
-    /// has unsaved edits it adds that the next run time changes when they are saved. A rule skipping the last attempt
+    /// has unsaved schedule edits it adds that the next run time changes when they are saved. A rule skipping the last attempt
     /// (battery, network, Wi-Fi, drive) is named beside the next run; the agent's own update is not a rule, so isn't.
     public static func scheduleCaption(
-        _ status: PlanStatus, hasUnsavedEdits: Bool, now: Date, calendar: Calendar, locale: Locale
+        _ status: PlanStatus, hasUnsavedScheduleEdits: Bool, now: Date, calendar: Calendar, locale: Locale
     ) -> String {
         let format = TextContext(now: now, calendar: calendar, locale: locale)
         var parts = [status.lastBackup.map { "Last backup \(format.when($0.endedAt))" } ?? "No backup yet"]
@@ -749,7 +749,10 @@ extension MenuPresentation {
         case .stopped:
             parts.append("stopped, so nothing is scheduled")
         case .idle, .skipped:
-            if case .skipped(let reason) = status.phase, reason != .agentUpdating { parts.append(reason.summary) }
+            if case .skipped(let reason) = status.phase, reason != .agentUpdating {
+                // Mid-line, so not sentence-initial.
+                parts.append(reason.summary.prefix(1).lowercased() + reason.summary.dropFirst())
+            }
             switch status.setupState {
             case .unfinished: parts.append("setup isn't finished")
             case .needsNewKit: parts.append("waiting for a new recovery kit")
@@ -762,7 +765,7 @@ extension MenuPresentation {
             }
         }
         let caption = parts.joined(separator: " · ")
-        return hasUnsavedEdits ? caption + ". Next run time updates when you save." : caption
+        return hasUnsavedScheduleEdits ? caption + ". Next run time updates when you save." : caption
     }
 }
 
