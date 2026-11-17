@@ -229,34 +229,31 @@ struct CloudOnlyCountTests {
     // MARK: Words
 
     @Test func theWordsFollowTheCountAndTheOrigin() {
-        func summary(_ n: Int, _ other: Bool = false) -> String? {
-            CloudOnlyText.summary(CloudOnlyCount(skipped: n, includesOtherProviders: other), locale: Self.en)
+        func count(_ n: Int, _ other: Bool = false) -> CloudOnlyCount { CloudOnlyCount(skipped: n, includesOtherProviders: other) }
+        let howTo = "download them in Finder (Download Now) or turn off Optimise Mac Storage."
+        #expect(CloudOnlyText.line(count(4832)) == "iCloud Drive files skipped")
+        #expect(CloudOnlyText.line(count(2, true)) == "Cloud files skipped")
+        #expect(CloudOnlyText.accessibilityLabel(count(4832)) == "About skipped iCloud Drive files")
+        #expect(CloudOnlyText.accessibilityLabel(count(2, true)) == "About skipped cloud files")
+        #expect(CloudOnlyText.detail(count(4832), locale: Self.en)
+            == "4,832 files in iCloud Drive aren't on this Mac, so this backup skipped them. To include them, \(howTo)")
+        #expect(CloudOnlyText.detail(count(4832, true), locale: Self.en)
+            == "4,832 files in iCloud Drive or other cloud storage aren't on this Mac, so this backup skipped them. To include them, \(howTo)")
+        #expect(CloudOnlyText.detail(count(1), locale: Self.en)
+            == "1 file in iCloud Drive isn't on this Mac, so this backup skipped it. To include it, download it in Finder (Download Now) or turn off Optimise Mac Storage.")
+        for none in [nil, count(0)] {
+            #expect(CloudOnlyText.line(none) == nil)
+            #expect(CloudOnlyText.accessibilityLabel(none) == nil)
+            #expect(CloudOnlyText.detail(none, locale: Self.en) == nil)
         }
-        #expect(summary(4834) == "4,834 iCloud files not on this Mac skipped")
-        #expect(summary(1) == "1 iCloud file not on this Mac skipped")
-        #expect(summary(2, true) == "2 cloud files not on this Mac skipped")
-        #expect(summary(0) == nil)
-        #expect(CloudOnlyText.summary(nil, locale: Self.en) == nil)
-        #expect(CloudOnlyText.sentence(CloudOnlyCount(skipped: 4834, includesOtherProviders: false), locale: Self.en)
-            == "4,834 iCloud files not on this Mac were skipped.")
-        #expect(CloudOnlyText.sentence(CloudOnlyCount(skipped: 1, includesOtherProviders: true), locale: Self.en)
-            == "1 cloud file not on this Mac was skipped.")
-        #expect(CloudOnlyText.sentence(CloudOnlyCount(skipped: 0, includesOtherProviders: false), locale: Self.en) == nil)
-        #expect(CloudOnlyText.howTo
-            == "To include them, download them in Finder (Download Now) or turn off Optimise Mac Storage.")
     }
 
-    @Test func historyAppendsTheCountToABackupRowOnly() {
+    @Test func historyRowsDoNotMentionTheCount() {
         let backup = record(CloudOnlyCount(skipped: 4834, includesOtherProviders: false))
         let row = HistoryPresentation.row(
             backup, planNames: [:], now: backup.endedAt, calendar: .init(identifier: .gregorian), locale: Self.en)
-        #expect(row.detail?.contains("4,834 iCloud files not on this Mac skipped") == true)
+        #expect(row.detail?.contains("iCloud") != true)
         #expect(row.kind == .success)
-        var none = backup
-        none.cloudOnlySkipped = nil
-        let plain = HistoryPresentation.row(
-            none, planNames: [:], now: backup.endedAt, calendar: .init(identifier: .gregorian), locale: Self.en)
-        #expect(plain.detail?.contains("iCloud") != true)
     }
 
     @Test func theOverviewShowsAQuietNoteForTheLastBackup() {
@@ -275,8 +272,10 @@ struct CloudOnlyCountTests {
                 notificationsAuthorised: true, rates: [:], now: backup.endedAt, calendar: .init(identifier: .gregorian),
                 locale: Self.en)?.cloudOnlyNote
         }
-        #expect(note(CloudOnlyCount(skipped: 4834, includesOtherProviders: false))
-            == .init(line: "4,834 iCloud files not on this Mac were skipped.", howTo: CloudOnlyText.howTo))
+        let shown = note(CloudOnlyCount(skipped: 4834, includesOtherProviders: false))
+        #expect(shown?.line == "iCloud Drive files skipped")
+        #expect(shown?.detail.hasPrefix("4,834 files in iCloud Drive aren't on this Mac, so this backup skipped them.") == true)
+        #expect(shown?.accessibilityLabel == "About skipped iCloud Drive files")
         #expect(note(CloudOnlyCount(skipped: 0, includesOtherProviders: false)) == nil)
         #expect(note(nil) == nil)
         #expect(note(CloudOnlyCount(skipped: 3, includesOtherProviders: false), alerts: [.backupFailed]) == nil)

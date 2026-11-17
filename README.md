@@ -69,10 +69,12 @@ agent whether or not the app is open.
   folder or drive): an upload limit shared by the backups uploading at once, skipping backups on a phone hotspot or
   in Low Data Mode (on by default), and a list of Wi-Fi networks to skip backups on. Adding the first network asks
   for Location permission, which macOS requires before it shows any app the Wi-Fi network's name.
-- **History**: every plan's runs, newest first, filtered by plan and by outcome, each with its log. A backup's row
-  also says how many iCloud files it skipped because they exist only in iCloud, not on this Mac, and the plan's Overview
-  says so too, with how to include them. Restorey counts these itself in the iCloud Drive and CloudStorage folders
-  your plan covers, giving up quietly after 10 seconds, so the number is an approximation.
+- **History**: every plan's runs, newest first, filtered by plan and by outcome, each with its log.
+
+When files exist only in iCloud, not on this Mac, a backup skips them. The plan's Overview then says "iCloud Drive
+files skipped" under the last backup, and its info button explains how many and how to include them. Restorey counts
+these itself in the iCloud Drive and CloudStorage folders your plan covers, giving up quietly after 10 seconds, so the
+number is an approximation.
 
 The recovery kit and Restore Files ask for Touch ID or your login password before showing a plan's secrets.
 

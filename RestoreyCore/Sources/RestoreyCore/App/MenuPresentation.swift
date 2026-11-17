@@ -557,12 +557,17 @@ public struct PlanOverview: Sendable, Equatable {
     }
 
     public struct CloudOnlyNote: Sendable, Equatable {
+        /// The short line, "iCloud Drive files skipped".
         public var line: String
-        public var howTo: String
+        /// What the info button's popover says.
+        public var detail: String
+        /// The info button's label for VoiceOver.
+        public var accessibilityLabel: String
 
-        public init(line: String, howTo: String) {
+        public init(line: String, detail: String, accessibilityLabel: String) {
             self.line = line
-            self.howTo = howTo
+            self.detail = detail
+            self.accessibilityLabel = accessibilityLabel
         }
     }
 
@@ -576,7 +581,7 @@ public struct PlanOverview: Sendable, Equatable {
     public var severity: Severity?
     public var isPaused: Bool
     public var lastBackup: Row?
-    /// What the last backup skipped because the files exist only in the cloud, with what to do about it. Quiet
+    /// What the last backup skipped because the files exist only in the cloud: a short line and the detail behind its info button. Quiet
     /// information, never a warning; nil when nothing was skipped or not counted.
     public var cloudOnlyNote: CloudOnlyNote?
     /// When the next backup is due, or when a pause ends; nil while one runs, while the plan is stopped or waits for
@@ -680,10 +685,12 @@ extension MenuPresentation {
 
     /// Under the last backup's row, while that backup is the one shown (not after a failure, whose row says "Failed").
     private static func cloudOnlyNote(_ plan: PlanStatus, locale: Locale) -> PlanOverview.CloudOnlyNote? {
-        guard !plan.alerts.contains(.backupFailed),
-            let line = CloudOnlyText.sentence(plan.lastBackup?.cloudOnlySkipped, locale: locale)
+        let count = plan.lastBackup?.cloudOnlySkipped
+        guard !plan.alerts.contains(.backupFailed), let line = CloudOnlyText.line(count),
+            let detail = CloudOnlyText.detail(count, locale: locale),
+            let label = CloudOnlyText.accessibilityLabel(count)
         else { return nil }
-        return .init(line: line, howTo: CloudOnlyText.howTo)
+        return .init(line: line, detail: detail, accessibilityLabel: label)
     }
 
     private static func nextBackupRow(_ plan: PlanStatus, _ format: TextContext) -> PlanOverview.Row? {

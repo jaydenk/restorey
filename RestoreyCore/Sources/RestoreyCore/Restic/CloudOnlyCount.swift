@@ -206,29 +206,30 @@ public struct CloudOnlyCounter: Sendable {
     }
 }
 
-/// The words for the count, in the History row and the Overview.
+/// The words for the count, on the Overview: a short line, and the detail behind its info button.
 public enum CloudOnlyText {
-    /// "4,834 iCloud files not on this Mac skipped" (History), or "cloud files" when any came from another provider.
-    /// Nil for nil and 0.
-    public static func summary(_ count: CloudOnlyCount?, locale: Locale) -> String? {
-        phrase(count, locale: locale).map { "\($0.number) \($0.noun) not on this Mac skipped" }
-    }
-
-    /// "4,834 iCloud files not on this Mac were skipped." (Overview; "1 iCloud file … was skipped.")
-    public static func sentence(_ count: CloudOnlyCount?, locale: Locale) -> String? {
-        phrase(count, locale: locale).map {
-            "\($0.number) \($0.noun) not on this Mac \($0.plural ? "were" : "was") skipped."
-        }
-    }
-
-    /// What to do about it, shown under `sentence`.
-    public static let howTo =
-        "To include them, download them in Finder (Download Now) or turn off Optimise Mac Storage."
-
-    private static func phrase(_ count: CloudOnlyCount?, locale: Locale) -> (number: String, noun: String, plural: Bool)? {
+    /// "iCloud Drive files skipped", or "Cloud files skipped" when any came from another provider. Nil for nil and 0.
+    public static func line(_ count: CloudOnlyCount?) -> String? {
         guard let count, count.skipped > 0 else { return nil }
-        let plural = count.skipped != 1
-        let kind = count.includesOtherProviders ? "cloud" : "iCloud"
-        return (count.skipped.formatted(.number.locale(locale)), "\(kind) \(plural ? "files" : "file")", plural)
+        return count.includesOtherProviders ? "Cloud files skipped" : "iCloud Drive files skipped"
+    }
+
+    /// "About skipped iCloud Drive files" (or "cloud files"), for the info button. Nil for nil and 0.
+    public static func accessibilityLabel(_ count: CloudOnlyCount?) -> String? {
+        guard let count, count.skipped > 0 else { return nil }
+        return count.includesOtherProviders ? "About skipped cloud files" : "About skipped iCloud Drive files"
+    }
+
+    /// "4,832 files in iCloud Drive aren't on this Mac, so this backup skipped them. To include them, …" ("1 file …
+    /// isn't"). Nil for nil and 0.
+    public static func detail(_ count: CloudOnlyCount?, locale: Locale) -> String? {
+        guard let count, count.skipped > 0 else { return nil }
+        let number = count.skipped.formatted(.number.locale(locale))
+        let place = count.includesOtherProviders ? "iCloud Drive or other cloud storage" : "iCloud Drive"
+        let subject = count.skipped == 1 ? "1 file" : "\(number) files"
+        let verb = count.skipped == 1 ? "isn't" : "aren't"
+        let pronoun = count.skipped == 1 ? "it" : "them"
+        return "\(subject) in \(place) \(verb) on this Mac, so this backup skipped \(pronoun). "
+            + "To include \(pronoun), download \(pronoun) in Finder (Download Now) or turn off Optimise Mac Storage."
     }
 }

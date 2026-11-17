@@ -122,9 +122,6 @@ public enum HistoryPresentation {
         if let summary = record.summary, record.operation == .backup {
             details.append(DisplayFormat.size(Int64(summary.dataAdded), locale: locale))
         }
-        if record.operation == .backup, let skipped = CloudOnlyText.summary(record.cloudOnlySkipped, locale: locale) {
-            details.append(skipped)
-        }
         if let seconds = duration(record) { details.append(DisplayFormat.duration(seconds: seconds)) }
         return HistoryRow(
             id: record.id, planID: record.planID, time: time(record.endedAt, now: now, calendar: calendar, locale: locale),

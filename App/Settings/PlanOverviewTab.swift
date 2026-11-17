@@ -50,16 +50,7 @@ struct PlanOverviewTab: View {
                 if let next = overview.nextBackup { row("Next backup", next) }
             }
 
-            if let note = overview.cloudOnlyNote {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(note.line)
-                    Text(note.howTo)
-                }
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityElement(children: .combine)
-            }
+            if let note = overview.cloudOnlyNote { CloudOnlyNoteView(note: note) }
 
             HStack {
                 ForEach(overview.buttons, id: \.kind) { button in
@@ -99,6 +90,31 @@ struct PlanOverviewTab: View {
         case .pause: AgentActions.pause([planID], connection)
         case .resume: AgentActions.resume([planID], connection)
         case .restoreFiles: context.showRestoreFiles(planID)
+        }
+    }
+}
+
+/// "iCloud Drive files skipped" with an info button whose popover says why and how to include them. Quiet: secondary
+/// text, no colour.
+private struct CloudOnlyNoteView: View {
+    let note: PlanOverview.CloudOnlyNote
+    @State private var showsDetail = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(note.line).font(.callout).foregroundStyle(.secondary)
+            Button { showsDetail.toggle() } label: {
+                Image(systemName: "info.circle")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel(note.accessibilityLabel)
+            .popover(isPresented: $showsDetail, arrowEdge: .bottom) {
+                Text(note.detail)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 280, alignment: .leading)
+                    .padding()
+            }
         }
     }
 }
