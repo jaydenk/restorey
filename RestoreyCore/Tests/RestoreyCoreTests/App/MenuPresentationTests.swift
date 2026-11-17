@@ -268,17 +268,21 @@ struct MenuPresentationTests {
             .contains(.progress(planID: plan.id, name: line.name, fraction: 1)))
     }
 
-    /// A restic that never reports the count (older, or told to print less) leaves it unfinished for the run, which
-    /// ends the way every run does: the plan leaves the running phase and its line is the settled one.
-    @Test func aRunThatNeverReportsTheCountSettlesWhenItEnds() {
+    /// A restic that never reports the count (an older agent, or a future restic) keeps "Checking for changes…" up,
+    /// with no fraction and no time left even when restic sends a rate, until the run ends; then the settled line.
+    @Test func aRunThatNeverReportsTheCountShowsCheckingUntilItEnds() {
         let plan = Self.plan()
-        let never = BackupStatus(percentDone: 0.5, totalBytes: 10, bytesDone: 5)
+        let never = BackupStatus(
+            percentDone: 0.5, totalFiles: 10, filesDone: 5, totalBytes: 10, bytesDone: 5, secondsRemaining: 30)
         let running = Self.make(Self.status([Self.line(plan, phase: .running(never, retrying: nil))])).plans[0]
         #expect(running.isChecking)
+        #expect(running.progress == nil)
+        #expect(running.detail == "Checking for changes… 5 files so far")
         let ended = Self.make(Self.status([Self.line(plan)])).plans[0]
         #expect(!ended.isChecking)
         #expect(ended.progress == nil)
         #expect(ended.status == "Backed up at 14:16")
+        #expect(ended.detail != running.detail)
     }
 
     @Test func retryingReplacesTheProgressDetail() {
@@ -519,7 +523,7 @@ struct MenuPresentationTests {
 
     @Test func updatingWhileABackupFinishes() {
         let plan = Self.plan()
-        let progress = BackupStatus(percentDone: 0.9, totalBytes: 1_000_000_000, bytesDone: 900_000_000, secondsRemaining: 120)
+        let progress = BackupStatus(percentDone: 0.9, totalBytes: 1_000_000_000, bytesDone: 900_000_000, secondsRemaining: 120, scanFinished: true)
         let running = Self.status([Self.line(plan, phase: .running(progress, retrying: nil))])
         let content = Self.make(running, health: .updating)
         #expect(content.icon == .backingUp)
@@ -528,6 +532,16 @@ struct MenuPresentationTests {
         #expect(content.plans[0].status == "Finishing the current backup before updating the agent")
         #expect(content.plans[0].detail == "~2 min left")
         #expect(content.actions == MenuActions(backUpNow: false, pause: false, resume: false, perPlanSubmenus: false))
+    }
+
+    /// Task 16e: restic's time left means nothing until it has finished counting, in the updating state too.
+    @Test func updatingWhileResticIsStillCountingSaysNoTimeLeft() {
+        let counting = BackupStatus(percentDone: 1, totalFiles: 9, filesDone: 9, totalBytes: 9, bytesDone: 9, secondsRemaining: 60)
+        let running = Self.status([Self.line(Self.plan(), phase: .running(counting, retrying: nil))])
+        let content = Self.make(running, health: .updating)
+        #expect(content.plans[0].status == "Finishing the current backup before updating the agent")
+        #expect(content.plans[0].detail == nil)
+        #expect(content.plans[0].progress == nil)
     }
 
     @Test func updatingWithNothingRunningSaysSo() {

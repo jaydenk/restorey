@@ -474,7 +474,8 @@ public enum MenuPresentation {
             var line = PlanLine(
                 id: plan.plan.id, name: plan.plan.name,
                 status: "Finishing the current backup before updating the agent", destination: destination(plan, format))
-            if case .running(let progress?, _) = plan.phase, let seconds = progress.secondsRemaining {
+            // Time left means nothing until restic has finished counting (Task 16e).
+            if case .running(let progress?, _) = plan.phase, progress.scanFinished, let seconds = progress.secondsRemaining {
                 line.detail = "\(DisplayFormat.remaining(seconds: seconds)) left"
             }
             return line

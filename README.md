@@ -468,13 +468,14 @@ The menu, top to bottom:
   itself at 15:20", "Backup failed at 14:16" in red, with the time and reason of the newest backup that had a verdict, the same record
 the "backup failed" alert is decided from, so a skip, pause or lock since doesn't hide them; a skip reason in
 orange), a detail line (bytes done of the total and time left
-  while backing up, or the next run. restic counts the files while it is already backing them up, so its totals only
-  grow until the count is done, and a percentage would read 100% long before the backup is. Until restic says the count
-  is finished (`verbose_status` `scan_finished`) the plan shows a bar with no end and "Checking for changes… 412,000
-  files so far", with no percentage and no time left; then the bar, "1.2 of 365 GB · ~6 min" and "Backing up — 42%"
-  appear. A restic that never says it leaves "Checking for changes…" up until the backup ends; no upload speed, because restic 0.19.1 reports no count of bytes uploaded, only bytes
+  while backing up, or the next run; no upload speed, because restic 0.19.1 reports no count of bytes uploaded, only bytes
   processed, which counts unchanged files at once) and its destination with the repository size. A running
-  backup has a progress bar under it. Choosing a plan opens it in Settings; a failed one has "Show Details…" (its
+  backup has a progress bar under it. restic counts the files while it is already backing them up, so its totals only
+  grow until the count is done and a percentage would read 100% long before the backup is. Until restic reports the
+  count as finished (`verbose_status` `scan_finished`), the bar has no end and the detail reads "Checking for changes…
+  412,000 files so far", with no percentage and no time left (also in the "Finishing the current backup" line while
+  the agent updates). After that come the bar, "1.2 of 365 GB · ~6 min" and "Backing up — 42%". If restic never
+  reports it, the checking line stays until the backup ends. Choosing a plan opens it in Settings; a failed one has "Show Details…" (its
   history).
 - **Resume**, **Back Up Now** and **Pause**. With one plan they act on it; with several, each opens a submenu whose
   first item, "All Plans", acts on every plan, then one item per plan (an AppKit item with a submenu can't also
