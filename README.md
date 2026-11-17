@@ -55,7 +55,7 @@ agent whether or not the app is open.
 
 **Settings** has four sections in its toolbar:
 
-- **General**: Open at login, Full Disk Access, notifications and the background agent, each with its fix, and the
+- **General**: Open at login, Full Disk Access, notifications and Backups in the background, each with its fix, and the
   logs folder. While Full Disk Access is missing, a tile shows Restorey's icon and name with why it is needed and
   "Drag this into the list, then switch it on."; once it is on, the tile gives way to a green tick and "Full Disk
   Access is on".
