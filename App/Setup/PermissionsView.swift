@@ -11,13 +11,14 @@ struct PermissionsView: View {
         VStack(alignment: .leading, spacing: 0) {
             PermissionRow(title: "Restorey is in Applications") { Done() }
             Divider()
-            PermissionRow(title: "Full Disk Access") {
-                if model.fullDiskAccessGranted {
-                    Done()
-                } else {
-                    Button("Open Settings…") { model.openFullDiskAccessSettings() }
-                }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Full Disk Access")
+                FullDiskAccessBlock(
+                    state: model.fullDiskAccessGranted ? .granted : .missing,
+                    openSettings: { model.openFullDiskAccessSettings() })
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 7)
             Divider()
             PermissionRow(title: "Notifications") {
                 switch model.notificationsAuthorised {
@@ -33,7 +34,7 @@ struct PermissionsView: View {
                 Toggle("Open at login", isOn: $model.openAtLogin).labelsHidden().toggleStyle(.switch)
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text("Restorey needs Full Disk Access to back up all your files. Granting it quits Restorey. It reopens here and ticks it off.")
+                Text("Granting Full Disk Access quits Restorey. It reopens here and ticks it off.")
                 if model.notificationsAuthorised == false {
                     Text("Without notifications, Restorey can't alert you when a backup needs attention.")
                 }

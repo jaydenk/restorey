@@ -220,6 +220,8 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
     private func perform(_ action: BannerAction, _ supervisor: AgentSupervisor, _ router: WindowRouter) {
         switch action {
         case .openFullDiskAccess:
+            // Settings → General holds the tile to drag into the list System Settings opens here.
+            router.showSettings(section: .general)
             NSWorkspace.shared.open(Self.fullDiskAccessURL)
         case .restartAgent:
             supervisor.restartAgent()

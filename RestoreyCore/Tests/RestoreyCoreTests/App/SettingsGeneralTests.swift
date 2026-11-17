@@ -5,11 +5,7 @@ import Testing
 /// Settings → General (UI design §6.1, mockup `v0.1-settings.html`): each line's words and its fix, in the menu's
 /// wording where the menu says the same thing.
 struct SettingsGeneralTests {
-    @Test func fullDiskAccess() {
-        #expect(SettingsGeneral.fullDiskAccess(missing: false) == .init("Granted"))
-        #expect(SettingsGeneral.fullDiskAccess(missing: nil) == .init("Checking…"))
-        #expect(SettingsGeneral.fullDiskAccess(missing: true)
-            == .init("Missing — backups would be empty", severity: .error, action: .openFullDiskAccess))
+    @Test func fullDiskAccessFixKeepsTheMenusWords() {
         #expect(GeneralAction.openFullDiskAccess.buttonTitle == "Fix…")
     }
 

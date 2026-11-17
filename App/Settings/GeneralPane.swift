@@ -26,8 +26,9 @@ struct GeneralPane: View {
             Section {
                 openAtLogin
                 LabeledContent("Full Disk Access") {
-                    LineView(line: SettingsGeneral.fullDiskAccess(missing: supervisor.lastKnownStatus?.fdaMissing),
-                             perform: perform)
+                    FullDiskAccessBlock(
+                        state: FullDiskAccessGuide.State(missing: supervisor.lastKnownStatus?.fdaMissing),
+                        openSettings: { perform(.openFullDiskAccess) })
                 }
                 LabeledContent("Notifications") {
                     LineView(line: SettingsGeneral.notifications(hello: supervisor.lastHello),

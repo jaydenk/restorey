@@ -56,7 +56,9 @@ agent whether or not the app is open.
 **Settings** has four sections in its toolbar:
 
 - **General**: Open at login, Full Disk Access, notifications and the background agent, each with its fix, and the
-  logs folder.
+  logs folder. While Full Disk Access is missing, a tile shows Restorey's icon and name with why it is needed and
+  "Drag this into the list, then switch it on."; once it is on, the tile gives way to a green tick and "Full Disk
+  Access is on".
 - **Plans**: the plans in a sidebar with "+ Add plan…", and the selected plan's tabs. **Overview** (its state, the
   last and next backup, any iCloud files skipped, and Back Up Now, Pause, Resume and Restore Files…); **What** (folders, drives and
   exclusions); **Schedule** (how often, the battery rule, the plan's own upload limit); **Storage** (the address,
@@ -253,7 +255,12 @@ Finder. The permissions step ticks off Applications, checks Full Disk Access thr
 re-reads the agent's notification answer every 2 s while the window can be seen and whenever Restorey comes back to
 the front, asks the agent for notification permission, and has "Open at login" (on by default), applied on Continue,
 which needs Full Disk Access; the switch is kept in the saved progress until then, since granting Full Disk Access
-quits the app mid-step. The step's secrets live only in `SetupDraft`, which drops them whenever the step changes
+quits the app mid-step. While Full Disk Access is missing the step shows a tile with Restorey's icon and name, to drag
+into System Settings' Full Disk Access list ("Drag this into the list, then switch it on."), with the one-line why
+("Without it, Restorey can't back up Mail, Messages, Safari and other protected folders."); granted, it shows a green
+tick and "Full Disk Access is on". The tile drags the app bundle as a file URL (`NSItemProvider(object: NSURL)`,
+`public.file-url`): the agent is registered from inside the app, so macOS attributes its access, and restic's, to
+the app (spike H1), and the app is the only item the list needs. The step's secrets live only in `SetupDraft`, which drops them whenever the step changes
 and when the window closes; the progress is saved only when the step changes.
 
 From the storage step on, each Continue saves the plan through the agent (kit unconfirmed, so it never runs), so a
@@ -447,7 +454,8 @@ was left, so a setup window closed before its first plan can always be found aga
 The menu, top to bottom:
 
 - **Banners** for each problem, errors first, each with its fix: choosing the banner runs it. "Full Disk Access is
-  missing — Fix…" opens Privacy & Security → Full Disk Access; "Notifications are off — Restorey can't alert you —
+  missing — Fix…" opens Privacy & Security → Full Disk Access and Settings → General, which holds the tile to drag
+  into the list (the banner goes when the agent finds access granted); "Notifications are off — Restorey can't alert you —
   Turn On…" opens the agent's page in Notifications; "The background agent isn't running — Restart Agent";
   "The background agent is switched off — Open Login Items…"; "Setup not finished — Finish Setup…"; "New recovery
   kit needed — Save Recovery Kit…"; "No off-Mac monitoring — Add…" (opens the plan in Settings), with "Don't Show

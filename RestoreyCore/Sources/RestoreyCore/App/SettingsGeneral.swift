@@ -21,8 +21,8 @@ public enum GeneralAction: Sendable, Equatable {
     }
 }
 
-/// What Settings → General shows (UI design §6.1, mockup `v0.1-settings.html`): Full Disk Access, notifications and
-/// the background agent, each with its fix, and the open-at-login switch. Pure; the pane reads the agent and
+/// What Settings → General shows (UI design §6.1, mockup `v0.1-settings.html`): notifications and the background
+/// agent (Full Disk Access is `FullDiskAccessGuide`'s), each with its fix, and the open-at-login switch. Pure; the pane reads the agent and
 /// `SMAppService` and does the fixes.
 public enum SettingsGeneral {
     public struct Line: Sendable, Equatable {
@@ -45,15 +45,6 @@ public enum SettingsGeneral {
         public init(isOn: Bool, note: String?) {
             self.isOn = isOn
             self.note = note
-        }
-    }
-
-    /// The agent's own probe (`AgentStatus.fdaMissing`): nil until it has run.
-    public static func fullDiskAccess(missing: Bool?) -> Line {
-        switch missing {
-        case false?: Line("Granted")
-        case nil: Line("Checking…")
-        case true?: Line("Missing — backups would be empty", severity: .error, action: .openFullDiskAccess)
         }
     }
 
