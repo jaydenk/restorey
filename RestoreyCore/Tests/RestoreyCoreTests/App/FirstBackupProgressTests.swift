@@ -34,10 +34,10 @@ import Testing
     }
 
     private static func make(
-        _ status: PlanStatus?, baseline: FirstBackupProgress.Baseline = .init(nil), rate: Double? = nil
+        _ status: PlanStatus?, baseline: FirstBackupProgress.Baseline = .init(nil)
     ) -> FirstBackupProgress {
         FirstBackupProgress.make(
-            plan: status, baseline: baseline, bytesPerSecond: rate, now: now, calendar: calendar, locale: locale)
+            plan: status, baseline: baseline, now: now, calendar: calendar, locale: locale)
     }
 
     /// Fix round 2: a failed first backup followed by another step (a size measurement, say) still reads as ended:
@@ -73,9 +73,9 @@ import Testing
     @Test func runningShowsThePercentageAndTheMenusDetail() {
         let backup = BackupStatus(
             percentDone: 0.384, totalBytes: 505_000_000_000, bytesDone: 191_000_000_000, secondsRemaining: 21_600)
-        let progress = Self.make(Self.status(.running(backup, retrying: nil)), rate: 24_000_000)
+        let progress = Self.make(Self.status(.running(backup, retrying: nil)))
         #expect(progress.title == "Backing up — 38%")
-        #expect(progress.detail == "191 of 505 GB · ~6 h · 24 MB/s")
+        #expect(progress.detail == "191 of 505 GB · ~6 h")
         #expect(progress.fraction == 0.384)
     }
 

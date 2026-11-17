@@ -36,11 +36,6 @@ struct DisplayFormatTests {
         #expect(DisplayFormat.progress(done: 40_000_000, of: 90_000_000, locale: Self.locale) == "40 of 90 MB")
     }
 
-    @Test func rates() {
-        #expect(DisplayFormat.rate(18_000_000, locale: Self.locale) == "18 MB/s")
-        #expect(DisplayFormat.rate(1_500_000, locale: Self.locale) == "1.5 MB/s")
-    }
-
     @Test func remainingTimes() {
         #expect(DisplayFormat.remaining(seconds: 360) == "~6 min")
         #expect(DisplayFormat.remaining(seconds: 20) == "~1 min")

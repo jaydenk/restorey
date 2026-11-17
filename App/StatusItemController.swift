@@ -94,7 +94,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
             health: supervisor.health,
             status: menuStatus(health: supervisor.health, live: supervisor.status, lastKnown: supervisor.lastKnownStatus),
             notificationsAuthorised: supervisor.lastHello?.notificationsAuthorised,
-            rates: supervisor.rates.bytesPerSecond, now: Date(), calendar: .autoupdatingCurrent,
+            now: Date(), calendar: .autoupdatingCurrent,
             locale: .autoupdatingCurrent)
     }
 

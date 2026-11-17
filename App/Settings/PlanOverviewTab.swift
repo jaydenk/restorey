@@ -24,7 +24,7 @@ struct PlanOverviewTab: View {
         MenuPresentation.overview(
             planID: planID, health: supervisor.health,
             status: menuStatus(health: supervisor.health, live: supervisor.status, lastKnown: supervisor.lastKnownStatus),
-            notificationsAuthorised: supervisor.lastHello?.notificationsAuthorised, rates: supervisor.rates.bytesPerSecond,
+            notificationsAuthorised: supervisor.lastHello?.notificationsAuthorised,
             now: now, calendar: .autoupdatingCurrent, locale: .autoupdatingCurrent)
     }
 
@@ -51,6 +51,9 @@ struct PlanOverviewTab: View {
             }
 
             if let note = overview.cloudOnlyNote { CloudOnlyNoteView(note: note) }
+            if let note = overview.earlierRemovalNote {
+                Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
 
             HStack {
                 ForEach(overview.buttons, id: \.kind) { button in

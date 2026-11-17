@@ -39,12 +39,12 @@ public struct FirstBackupProgress: Sendable, Equatable {
     ///   - baseline: from the status when Start was pressed. The backup has ended once a newer backup that
     ///     saved the data arrives, or a newer record of a backup (a failure or a skip).
     public static func make(
-        plan: PlanStatus?, baseline: Baseline, bytesPerSecond: Double?, now: Date, calendar: Calendar,
+        plan: PlanStatus?, baseline: Baseline, now: Date, calendar: Calendar,
         locale: Locale
     ) -> FirstBackupProgress {
         guard let plan else { return FirstBackupProgress(title: "Starting the first backup…") }
         let line = MenuPresentation.planLine(
-            for: plan, bytesPerSecond: bytesPerSecond, now: now, calendar: calendar, locale: locale)
+            for: plan, now: now, calendar: calendar, locale: locale)
         let backedUp = plan.lastBackup.map { $0.id != baseline.lastBackup } ?? false
         switch plan.phase {
         case .running(let progress, let retrying):
@@ -53,7 +53,7 @@ public struct FirstBackupProgress: Sendable, Equatable {
                 var settled = plan
                 settled.phase = .idle
                 let done = MenuPresentation.planLine(
-                    for: settled, bytesPerSecond: nil, now: now, calendar: calendar, locale: locale)
+                    for: settled, now: now, calendar: calendar, locale: locale)
                 return FirstBackupProgress(
                     title: done.status, detail: "Restorey is tidying the repository after it.", finished: true,
                     severity: done.severity)

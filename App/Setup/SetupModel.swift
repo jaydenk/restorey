@@ -263,12 +263,11 @@ final class SetupModel {
     /// The plan's id: the saved plan's, or the one "Check" will save a new plan under.
     var planID: UUID { draft.plan?.id ?? draft.progress.planID ?? newPlanID }
 
-    /// The plan's latest status from the agent, for Done's progress and the upload speed.
+    /// The plan's latest status from the agent, for Done's progress.
     var planStatus: PlanStatus? {
         supervisor?.status?.plans.first { $0.plan.id == planID }
     }
 
-    var bytesPerSecond: Double? { supervisor?.rates.bytesPerSecond[planID] }
 
     /// A resumed setup gets the plan back from the agent's status (the plan was saved at each Continue).
     /// Waits for the first status when there is none yet. A first run with no plan saved has nothing to load.

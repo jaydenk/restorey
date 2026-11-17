@@ -1,6 +1,6 @@
 import Foundation
 
-/// Text for the menu: sizes, speeds, times and ages, in the person's locale. Sizes are decimal (1 GB is a
+/// Text for the menu: sizes, times and ages, in the person's locale. Sizes are decimal (1 GB is a
 /// billion bytes), as restic and Backblaze count them.
 public enum DisplayFormat {
     private static let units: [(name: String, size: Double)] = [
@@ -36,11 +36,6 @@ public enum DisplayFormat {
         }
         let doneText = number(Double(max(done, 0)) / unit.size, locale: locale)
         return "\(doneText) of \(number(total / unit.size, locale: locale)) \(unit.name)"
-    }
-
-    /// "18 MB/s".
-    public static func rate(_ bytesPerSecond: Double, locale: Locale) -> String {
-        "\(size(Int64(max(bytesPerSecond, 0).rounded()), locale: locale))/s"
     }
 
     /// "~6 min", "~2 h 5 min". Never under a minute: a shorter wait is "~1 min".

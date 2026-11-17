@@ -18,8 +18,6 @@ final class AgentSupervisor {
     /// (`menuStatus`). Also what a new status is ordered against.
     private(set) var lastKnownStatus: AgentStatus?
     private(set) var lastHello: HelloReply?
-    /// Upload speed of each running backup, from the statuses as they arrive.
-    private(set) var rates = ProgressRates()
     /// Ruling R76: agent processes seen replaced. A status from one of them is dropped.
     var retiredAgentRuns: Set<UUID> { runs.retired }
 
@@ -360,7 +358,6 @@ final class AgentSupervisor {
         runs.statusAccepted(status.agentRun)
         self.status = status
         lastKnownStatus = status
-        rates.add(status, at: Date())
         notify()
     }
 

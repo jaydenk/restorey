@@ -269,7 +269,7 @@ struct CloudOnlyCountTests {
             return MenuPresentation.overview(
                 planID: plan.id, health: .healthy,
                 status: AgentStatus(plans: [status], configError: nil, fdaMissing: false, generatedAt: backup.endedAt),
-                notificationsAuthorised: true, rates: [:], now: backup.endedAt, calendar: .init(identifier: .gregorian),
+                notificationsAuthorised: true, now: backup.endedAt, calendar: .init(identifier: .gregorian),
                 locale: Self.en)?.cloudOnlyNote
         }
         let shown = note(CloudOnlyCount(skipped: 4834, includesOtherProviders: false))

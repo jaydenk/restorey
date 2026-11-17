@@ -64,10 +64,10 @@ struct MenuPresentationTests {
 
     private static func make(
         _ status: AgentStatus?, health: AgentHealthState = .healthy, notifications: Bool? = true,
-        rates: [UUID: Double] = [:], now: Date = now
+        now: Date = now
     ) -> MenuContent {
         MenuPresentation.make(
-            health: health, status: status, notificationsAuthorised: notifications, rates: rates,
+            health: health, status: status, notificationsAuthorised: notifications,
             now: now, calendar: calendar, locale: locale)
     }
 
@@ -141,6 +141,42 @@ struct MenuPresentationTests {
         #expect(content.plans[0].detail == "Next 14:25")
     }
 
+    /// Final review m6: a first backup that was cut short says it carries on, and that restic keeps what it uploaded.
+    @Test(arguments: [RunOutcome.stoppedBySystem, .interrupted, .paused])
+    func aFirstBackupThatWasInterruptedSaysItCarriesOn(outcome: RunOutcome) {
+        let plan = Self.plan()
+        let interrupted = Self.record(plan, outcome, at: Self.at(10, 5))
+        let status = Self.line(plan, backedUpAt: nil, last: interrupted, next: Self.at(10, 25))
+        let content = Self.make(Self.status([status]))
+        let sentence = "The first backup was interrupted. It carries on at 10:25, keeping what's already uploaded."
+        #expect(content.plans[0].status == "No backup yet")
+        #expect(content.plans[0].detail == sentence)
+        #expect(content.plans[0].severity == nil)
+        #expect(content.icon == .ok)
+        // The Overview reads the same facts.
+        let overview = MenuPresentation.overview(
+            planID: plan.id, health: .healthy, status: Self.status([status]), notificationsAuthorised: true,
+            now: Self.now, calendar: Self.calendar, locale: Self.locale)
+        #expect(overview?.reason == sentence)
+        #expect(overview?.headline == "No backup yet")
+    }
+
+    /// Only a first backup, only an interruption, only when the next run is known.
+    @Test func theInterruptedFirstBackupSentenceIsLimitedToThoseCases() {
+        let plan = Self.plan()
+        func detail(_ status: PlanStatus) -> String? { Self.make(Self.status([status])).plans[0].detail }
+        let interrupted = Self.record(plan, .interrupted, at: Self.at(10, 5))
+        // No next run known: nothing to promise.
+        #expect(detail(Self.line(plan, backedUpAt: nil, last: interrupted, next: nil)) == nil)
+        // A failed first backup is a failure, not an interruption.
+        let failed = Self.record(plan, .failed(exitCode: 1, reason: "no"), at: Self.at(10, 5))
+        #expect(detail(Self.line(plan, backedUpAt: nil, last: failed, next: Self.at(10, 25))) == "Next 10:25")
+        // A plan that has backed up before.
+        #expect(detail(Self.line(plan, last: interrupted, next: Self.at(10, 25))) == "Next 10:25")
+        // Nothing has run at all.
+        #expect(detail(Self.line(plan, backedUpAt: nil, next: Self.at(10, 25))) == "Next 10:25")
+    }
+
     // MARK: Running
 
     @Test func twoPlansOneRunning() {
@@ -150,12 +186,11 @@ struct MenuPresentationTests {
             percentDone: 0.42, totalFiles: 100, filesDone: 42, totalBytes: 2_900_000_000, bytesDone: 1_200_000_000,
             secondsRemaining: 360)
         let content = Self.make(
-            Self.status([Self.line(idle), Self.line(photos, phase: .running(progress, retrying: nil))]),
-            rates: [photos.id: 18_000_000])
+            Self.status([Self.line(idle), Self.line(photos, phase: .running(progress, retrying: nil))]))
         #expect(content.icon == .backingUp)
         #expect(content.plans[1].status == "Backing up")
         #expect(content.plans[1].progress == 0.42)
-        #expect(content.plans[1].detail == "1.2 of 2.9 GB · ~6 min · 18 MB/s")
+        #expect(content.plans[1].detail == "1.2 of 2.9 GB · ~6 min")
         #expect(content.plans[0].status == "Backed up at 14:16")
         #expect(content.plans[0].progress == nil)
         #expect(content.actions.perPlanSubmenus)

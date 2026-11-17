@@ -159,7 +159,7 @@ public enum MenuPresentation {
     public static let notAnsweringGrace: TimeInterval = 30 * 60
 
     public static func make(
-        health: AgentHealthState, status: AgentStatus?, notificationsAuthorised: Bool?, rates: [UUID: Double],
+        health: AgentHealthState, status: AgentStatus?, notificationsAuthorised: Bool?,
         now: Date, calendar: Calendar, locale: Locale
     ) -> MenuContent {
         let format = TextContext(now: now, calendar: calendar, locale: locale)
@@ -181,7 +181,7 @@ public enum MenuPresentation {
             if !reachable, let status, status.plans.contains(where: { $0.phase.isRunning }),
                 (0...notAnsweringGrace).contains(now.timeIntervalSince(status.generatedAt))
             {
-                return notAnswering(status: status, rates: rates, format: format)
+                return notAnswering(status: status, format: format)
             }
             let banner = MenuBanner(
                 severity: .error, title: "The background agent isn't running",
@@ -195,20 +195,20 @@ public enum MenuPresentation {
         case .healthy:
             // Healthy again, with the fresh status still on its way (`shouldRefetchStatus`).
             guard let status else { return MenuContent(icon: .ok, message: "Connecting to the background agent…") }
-            return healthy(status: status, notificationsAuthorised: notificationsAuthorised, rates: rates, format: format)
+            return healthy(status: status, notificationsAuthorised: notificationsAuthorised, format: format)
         }
     }
 
     // MARK: Healthy
 
     private static func healthy(
-        status: AgentStatus, notificationsAuthorised: Bool?, rates: [UUID: Double], format: TextContext
+        status: AgentStatus, notificationsAuthorised: Bool?, format: TextContext
     ) -> MenuContent {
         if let configError = status.configError {
             return MenuContent(icon: .error, message: "Restorey can't read its settings: \(configError)")
         }
         let banners = banners(status: status, notificationsAuthorised: notificationsAuthorised)
-        let lines = status.plans.map { line(for: $0, rates: rates, format: format) }
+        let lines = status.plans.map { line(for: $0, format: format) }
         return MenuContent(
             icon: icon(banners: banners, plans: status.plans, lines: lines), banners: banners, plans: lines,
             actions: actions(status.plans), message: status.plans.isEmpty ? "No backup plans yet" : nil)
@@ -302,14 +302,13 @@ public enum MenuPresentation {
 
     /// One plan's line as the menu shows it, for a window that follows one plan (setup's Done step).
     public static func planLine(
-        for status: PlanStatus, bytesPerSecond: Double?, now: Date, calendar: Calendar, locale: Locale
+        for status: PlanStatus, now: Date, calendar: Calendar, locale: Locale
     ) -> PlanLine {
-        let rates = bytesPerSecond.map { [status.plan.id: $0] } ?? [:]
-        return line(for: status, rates: rates, format: TextContext(now: now, calendar: calendar, locale: locale))
+        return line(for: status, format: TextContext(now: now, calendar: calendar, locale: locale))
     }
 
     private static func line(
-        for status: PlanStatus, rates: [UUID: Double], format: TextContext, suffix: String? = nil
+        for status: PlanStatus, format: TextContext, suffix: String? = nil
     ) -> PlanLine {
         let plan = status.plan
         var line = PlanLine(
@@ -318,7 +317,7 @@ public enum MenuPresentation {
         case .running(let progress, let retrying):
             line.status = "Backing up"
             line.progress = progress.map { min(max($0.percentDone, 0), 1) }
-            line.detail = retrying.map { "Retrying: \($0)" } ?? runningDetail(progress, rate: rates[plan.id], format)
+            line.detail = retrying.map { "Retrying: \($0)" } ?? runningDetail(progress, format)
         case .paused(let until):
             line.status = "Paused"
             line.isPaused = true
@@ -330,7 +329,7 @@ public enum MenuPresentation {
         return line
     }
 
-    private static func runningDetail(_ progress: BackupStatus?, rate: Double?, _ format: TextContext) -> String? {
+    private static func runningDetail(_ progress: BackupStatus?, _ format: TextContext) -> String? {
         var parts: [String] = []
         if let progress {
             if progress.totalBytes > 0 {
@@ -338,7 +337,6 @@ public enum MenuPresentation {
             }
             if let seconds = progress.secondsRemaining { parts.append(DisplayFormat.remaining(seconds: seconds)) }
         }
-        if let rate, rate > 0 { parts.append(DisplayFormat.rate(rate, locale: format.locale)) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
@@ -401,6 +399,12 @@ public enum MenuPresentation {
         if let backup = status.lastBackup {
             facts.status = Words.backedUp(backup, format)
             if let unreadable = Words.unreadable(backup) { flag(unreadable, .warning) }
+        }
+        // A first backup that was cut short isn't lost: restic keeps what it uploaded and the next run carries on from it.
+        if status.lastBackup == nil, case .idle = status.phase, let next = status.nextRunAt,
+            let outcome = status.latestBackupRecord?.outcome, Words.interruptsFirstBackup(outcome)
+        {
+            facts.issues.append("The first backup was interrupted. It carries on at \(format.time(next)), keeping what's already uploaded.")
         }
         if case .skipped(let reason) = status.phase {
             if status.lastBackup == nil { facts.status = reason.summary }
@@ -465,8 +469,8 @@ public enum MenuPresentation {
     }
 
     /// R68: the agent didn't answer but its last status is recent, so it is shown as it was, marked.
-    private static func notAnswering(status: AgentStatus, rates: [UUID: Double], format: TextContext) -> MenuContent {
-        let lines = status.plans.map { line(for: $0, rates: rates, format: format, suffix: "(agent not answering)") }
+    private static func notAnswering(status: AgentStatus, format: TextContext) -> MenuContent {
+        let lines = status.plans.map { line(for: $0, format: format, suffix: "(agent not answering)") }
         let banner = MenuBanner(
             severity: .warning, title: "The background agent isn't answering",
             detail: "Showing the last state it reported.", action: .restartAgent)
@@ -501,6 +505,14 @@ private enum Words {
     static func unreadable(_ backup: RunRecord) -> String? {
         guard case .warning(let unreadable) = backup.outcome else { return nil }
         return "\(unreadable) \(unreadable == 1 ? "file" : "files") couldn't be read"
+    }
+
+    /// A backup that ended without a verdict because something stopped it (the system, the user's pause, a crash).
+    static func interruptsFirstBackup(_ outcome: RunOutcome) -> Bool {
+        switch outcome {
+        case .stoppedBySystem, .interrupted, .paused: true
+        default: false
+        }
     }
 
     static func noBackup(_ status: PlanStatus) -> String {
@@ -584,6 +596,10 @@ public struct PlanOverview: Sendable, Equatable {
     /// What the last backup skipped because the files exist only in the cloud: a short line and the detail behind its info button. Quiet
     /// information, never a warning; nil when nothing was skipped or not counted.
     public var cloudOnlyNote: CloudOnlyNote?
+    /// Said once setup's choice to remove earlier snapshots has failed three backups in a row ("Couldn't remove the earlier
+    /// snapshots you chose: <reason>. Restorey will try again after the next backup."). Information: no colour, and the menu
+    /// icon is unchanged. Nil otherwise.
+    public var earlierRemovalNote: String?
     /// When the next backup is due, or when a pause ends; nil while one runs, while the plan is stopped or waits for
     /// a new kit, or when nothing is due.
     public var nextBackup: Row?
@@ -596,11 +612,11 @@ extension MenuPresentation {
     /// menu's own content. Nil when the status doesn't list the plan.
     public static func overview(
         planID: UUID, health: AgentHealthState, status: AgentStatus?, notificationsAuthorised: Bool?,
-        rates: [UUID: Double], now: Date, calendar: Calendar, locale: Locale
+        now: Date, calendar: Calendar, locale: Locale
     ) -> PlanOverview? {
         guard let plan = status?.plans.first(where: { $0.plan.id == planID }) else { return nil }
         let content = make(
-            health: health, status: status, notificationsAuthorised: notificationsAuthorised, rates: rates, now: now,
+            health: health, status: status, notificationsAuthorised: notificationsAuthorised, now: now,
             calendar: calendar, locale: locale)
         let format = TextContext(now: now, calendar: calendar, locale: locale)
         let choice = content.actions.plans.first { $0.id == planID }
@@ -608,6 +624,7 @@ extension MenuPresentation {
         var overview = PlanOverview(
             headline: "", reason: nil, progress: nil, severity: nil, isPaused: false,
             lastBackup: lastBackupRow(plan, format), cloudOnlyNote: cloudOnlyNote(plan, locale: locale),
+            earlierRemovalNote: earlierRemovalNote(plan),
             nextBackup: nextBackupRow(plan, format), buttons: [])
         if let line = content.plans.first(where: { $0.id == planID }) {
             headline(plan, line, format, into: &overview)
@@ -691,6 +708,12 @@ extension MenuPresentation {
             let label = CloudOnlyText.accessibilityLabel(count)
         else { return nil }
         return .init(line: line, detail: detail, accessibilityLabel: label)
+    }
+
+    private static func earlierRemovalNote(_ plan: PlanStatus) -> String? {
+        guard var reason = plan.earlierRemovalProblem else { return nil }
+        while reason.hasSuffix(".") { reason.removeLast() }
+        return "Couldn't remove the earlier snapshots you chose: \(reason). Restorey will try again after the next backup."
     }
 
     private static func nextBackupRow(_ plan: PlanStatus, _ format: TextContext) -> PlanOverview.Row? {

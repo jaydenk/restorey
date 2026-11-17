@@ -6,7 +6,7 @@ extension SetupModel {
     var firstBackup: FirstBackupProgress? {
         guard let firstBackupBaseline else { return nil }
         return FirstBackupProgress.make(
-            plan: planStatus, baseline: firstBackupBaseline, bytesPerSecond: bytesPerSecond, now: Date(),
+            plan: planStatus, baseline: firstBackupBaseline, now: Date(),
             calendar: .current, locale: .current)
     }
 

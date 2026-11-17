@@ -55,11 +55,11 @@ struct PlanOverviewTests {
         MenuPresentation.overview(
             planID: plan.plan.id, health: health,
             status: AgentStatus(plans: [plan], configError: nil, fdaMissing: false, generatedAt: now),
-            notificationsAuthorised: true, rates: [:], now: now, calendar: calendar, locale: locale)!
+            notificationsAuthorised: true, now: now, calendar: calendar, locale: locale)!
     }
 
     private static func menuLine(_ plan: PlanStatus) -> PlanLine {
-        MenuPresentation.planLine(for: plan, bytesPerSecond: nil, now: now, calendar: calendar, locale: locale)
+        MenuPresentation.planLine(for: plan, now: now, calendar: calendar, locale: locale)
     }
 
     private static func enabled(_ overview: PlanOverview) -> [PlanOverview.Button.Kind: Bool] {
@@ -279,7 +279,7 @@ struct PlanOverviewTests {
         let overview = MenuPresentation.overview(
             planID: UUID(), health: .healthy,
             status: AgentStatus(plans: [Self.status()], configError: nil, fdaMissing: false, generatedAt: Self.now),
-            notificationsAuthorised: true, rates: [:], now: Self.now, calendar: Self.calendar, locale: Self.locale)
+            notificationsAuthorised: true, now: Self.now, calendar: Self.calendar, locale: Self.locale)
         #expect(overview == nil)
     }
 
@@ -288,5 +288,23 @@ struct PlanOverviewTests {
         let paused = Self.overview(Self.status(phase: .paused(until: Self.at(16, 0))))
         #expect(paused.buttons.map(\.kind) == [.backUpNow, .resume, .restoreFiles])
         #expect(paused.buttons.map(\.title) == ["Back Up Now", "Resume", "Restore Files…"])
+    }
+
+    /// Final review I2: the Overview says a lasting failure to remove the chosen earlier snapshots, as information only.
+    @Test func theOverviewSaysWhenTheChosenRemovalKeepsFailing() {
+        var plan = Self.status()
+        #expect(Self.overview(plan).earlierRemovalNote == nil)
+        let quiet = Self.overview(plan)
+        plan.earlierRemovalProblem = "Restorey couldn't count the earlier snapshots: Fatal: the preview broke."
+        let shown = Self.overview(plan)
+        #expect(shown.earlierRemovalNote == "Couldn't remove the earlier snapshots you chose: Restorey couldn't count the earlier snapshots: Fatal: the preview broke. Restorey will try again after the next backup.")
+        // Information only: the headline, its colour and the reason are as without it.
+        #expect(shown.headline == quiet.headline)
+        #expect(shown.severity == quiet.severity)
+        #expect(shown.reason == quiet.reason)
+        #expect(MenuPresentation.make(
+            health: .healthy,
+            status: AgentStatus(plans: [plan], configError: nil, fdaMissing: false, generatedAt: Self.now),
+            notificationsAuthorised: true, now: Self.now, calendar: Self.calendar, locale: Self.locale).icon == .ok)
     }
 }

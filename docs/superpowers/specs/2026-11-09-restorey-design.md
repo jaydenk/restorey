@@ -99,7 +99,7 @@ Mockup: `docs/mockups/menubar-and-restore.html` (copied from the AGENT brainstor
   - progress bar
   - bytes and files remaining
   - estimated time left
-  - upload speed
+  - (upload speed was dropped in v0.1: restic reports no uploaded-bytes counter, see the UI design §8)
   - Pause Backup
   - Restore Files…, Settings…, Quit
 - **Live updates.** The menu updates while open: it must not be a snapshot taken when the menu opened. Restic Station has this flaw; avoid it.
