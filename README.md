@@ -562,7 +562,7 @@ this" for operation not permitted or permission denied, "It was deleted while th
 otherwise restic's text), "Open in Finder" where the path still exists, and "Don't back this up". That adds the path's
 exclusion pattern (`DefaultExclusions.pattern(forFolder:)`, glob characters escaped) to the plan's exclusions as an
 unsaved edit, with Save, Revert and the close and quit guard as in the What tab; the row then reads "Won't be backed up
-from the next backup" with Undo (once the plan is saved). A file deleted while the backup ran has no button, and a path
+from the next backup" with Undo, which removes it again; nothing changes until you save the plan. A file deleted while the backup ran has no button, and a path
 the plan already excludes reads "Already not backed up". This is information only: no outcome, icon, alert or ping changes.
 
 Every restic run has its own log in `~/Library/Logs/Restorey/runs/<plan ID>/` (`Restorey-Dev` for Debug builds),

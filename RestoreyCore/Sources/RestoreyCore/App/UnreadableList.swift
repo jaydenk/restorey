@@ -28,9 +28,9 @@ public enum UnreadableList {
     public enum Action: Sendable, Equatable {
         /// Offer "Don't back this up", which adds `pattern` (`DefaultExclusions.pattern(forFolder:)`) to the plan.
         case dontBackUp(pattern: String)
-        /// The plan has the pattern: "Won't be backed up from the next backup" with Undo when `addedHere` (added
-        /// in this sheet), otherwise "Already not backed up" (the person had it already).
-        case excluded(addedHere: Bool)
+        /// The form has the pattern: "Won't be backed up from the next backup" with Undo when `unsaved` (the saved plan
+        /// doesn't have it yet, so Undo can take it back), otherwise "Already not backed up" (the saved plan has it).
+        case excluded(unsaved: Bool)
         /// Nothing to exclude: it was deleted while the backup ran.
         case none
     }
@@ -55,7 +55,7 @@ public enum UnreadableList {
         let lower = reason.lowercased()
         if lower.contains("operation not permitted") || lower.contains("permission denied") { return notAllowed }
         if lower.contains("no such file or directory") { return deleted }
-        guard let first = reason.first else { return "restic gave no reason" }
+        guard let first = reason.first else { return "Restic gave no reason" }
         return first.uppercased() + reason.dropFirst()
     }
 
@@ -66,11 +66,11 @@ public enum UnreadableList {
         count > listed ? "and \(count - listed) more" : nil
     }
 
-    /// `addedHere` is the paths whose exclusion this sheet added, so a row can say "Won't be backed up from the next
-    /// backup" for those and "Already not backed up" for one the plan had. A row is excluded when its exact pattern
-    /// is in `exclusions`: the same check an undo makes, so undo and the row agree.
+    /// `exclusions` is the form's, `saved` the saved plan's: a pattern in the form but not yet saved is an edit still
+    /// to undo (so reopening the sheet keeps Undo), one the saved plan has is "Already not backed up". A row is
+    /// excluded when its exact pattern is in `exclusions`: the same check an undo makes, so undo and the row agree.
     public static func rows(
-        items: [UnreadableItem], exclusions: [String], addedHere: Set<String>, home: URL, exists: (String) -> Bool
+        items: [UnreadableItem], exclusions: [String], saved: [String], home: URL, exists: (String) -> Bool
     ) -> [Row] {
         items.map { item in
             let deleted = isDeleted(item.reason)
@@ -79,7 +79,7 @@ public enum UnreadableList {
             if deleted {
                 action = .none
             } else if exclusions.contains(pattern) {
-                action = .excluded(addedHere: addedHere.contains(item.path))
+                action = .excluded(unsaved: !saved.contains(pattern))
             } else {
                 action = .dontBackUp(pattern: pattern)
             }

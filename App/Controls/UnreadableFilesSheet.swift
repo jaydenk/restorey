@@ -10,14 +10,13 @@ import SwiftUI
 struct UnreadableFilesSheet: View {
     let summary: UnreadableSummary
     @Bindable var model: PlanEditModel
-    @State private var addedHere: Set<String> = []
     @Environment(\.dismiss) private var dismiss
 
     private let home = FileManager.default.homeDirectoryForCurrentUser
 
     var body: some View {
         let rows = UnreadableList.rows(
-            items: summary.items, exclusions: model.fields.exclusions, addedHere: addedHere, home: home,
+            items: summary.items, exclusions: model.fields.exclusions, saved: model.saved.exclusions, home: home,
             exists: { FileManager.default.fileExists(atPath: $0) })
         VStack(alignment: .leading, spacing: 12) {
             Text("Files that couldn't be read").font(.title3.bold())
@@ -34,7 +33,7 @@ struct UnreadableFilesSheet: View {
             .accessibilityLabel("Files that couldn't be read")
             Text("You can change this later in What → Review Exclusions…")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if !addedHere.isEmpty, model.edit.isDirty {
+            if rows.contains(where: { $0.action == .excluded(unsaved: true) }) {
                 Text("Save the plan's changes to apply this.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
@@ -49,12 +48,10 @@ struct UnreadableFilesSheet: View {
 
     private func add(_ row: UnreadableList.Row) {
         model.fields.exclusions = UnreadableList.adding(row.path, to: model.fields.exclusions)
-        addedHere.insert(row.path)
     }
 
     private func undo(_ row: UnreadableList.Row) {
         model.fields.exclusions = UnreadableList.removing(row.path, from: model.fields.exclusions)
-        addedHere.remove(row.path)
     }
 
     private struct RowView: View {
@@ -78,10 +75,10 @@ struct UnreadableFilesSheet: View {
                 case .dontBackUp:
                     Button("Don't back this up", action: add)
                         .accessibilityLabel("Don't back up \(row.display)")
-                case .excluded(let addedHere):
-                    Text(addedHere ? "Won't be backed up from the next backup" : "Already not backed up")
+                case .excluded(let unsaved):
+                    Text(unsaved ? "Won't be backed up from the next backup" : "Already not backed up")
                         .font(.caption).foregroundStyle(.secondary)
-                    if addedHere { Button("Undo", action: undo).buttonStyle(.link) }
+                    if unsaved { Button("Undo", action: undo).buttonStyle(.link) }
                 case .none:
                     EmptyView()
                 }

@@ -98,7 +98,7 @@ struct UnreadableItemsTests {
         #expect(UnreadableList.reasonWords("no such file or directory") == "It was deleted while the backup ran")
         // Anything else is restic's text, starting with a capital.
         #expect(UnreadableList.reasonWords("input/output error") == "Input/output error")
-        #expect(UnreadableList.reasonWords("") == "restic gave no reason")
+        #expect(UnreadableList.reasonWords("") == "Restic gave no reason")
     }
 
     @Test func theMoreLineCountsWhatTheCapLeftOut() {
@@ -114,10 +114,10 @@ struct UnreadableItemsTests {
     private let io = UnreadableItem(path: "/Users/me/a*b", reason: "input/output error")
 
     private func rows(
-        _ items: [UnreadableItem], exclusions: [String] = [], addedHere: Set<String> = [], existing: Set<String> = []
+        _ items: [UnreadableItem], exclusions: [String] = [], saved: [String] = [], existing: Set<String> = []
     ) -> [UnreadableList.Row] {
         UnreadableList.rows(
-            items: items, exclusions: exclusions, addedHere: addedHere, home: Self.home, exists: { existing.contains($0) })
+            items: items, exclusions: exclusions, saved: saved, home: Self.home, exists: { existing.contains($0) })
     }
 
     @Test func aRowShowsTheTildePathReasonAndOffersTheExclusion() throws {
@@ -140,15 +140,17 @@ struct UnreadableItemsTests {
         #expect(!row.canOpenInFinder)
     }
 
-    @Test func aRowWhosePatternIsInThePlanShowsAsExcluded() throws {
+    @Test func anUnsavedExclusionKeepsItsUndoAndASavedOneDoesNot() throws {
         let pattern = DefaultExclusions.pattern(forFolder: permission.path)
-        let before = try #require(rows([permission], exclusions: [pattern]).first)
-        #expect(before.action == .excluded(addedHere: false))
-        let after = try #require(rows([permission], exclusions: [pattern], addedHere: [permission.path]).first)
-        #expect(after.action == .excluded(addedHere: true))
-        // Added here, then removed from the plan elsewhere: offered again.
-        let gone = try #require(rows([permission], exclusions: [], addedHere: [permission.path]).first)
-        #expect(gone.action == .dontBackUp(pattern: pattern))
+        // In the form only: an edit still to save, so Undo is offered (also after the sheet is reopened).
+        let unsaved = try #require(rows([permission], exclusions: [pattern], saved: []).first)
+        #expect(unsaved.action == .excluded(unsaved: true))
+        // In the saved plan too: already so.
+        let saved = try #require(rows([permission], exclusions: [pattern], saved: [pattern]).first)
+        #expect(saved.action == .excluded(unsaved: false))
+        // Removed from the form (Undo, or in the What tab): offered again.
+        let removed = try #require(rows([permission], exclusions: [], saved: [pattern]).first)
+        #expect(removed.action == .dontBackUp(pattern: pattern))
     }
 
     // MARK: Editing the plan's exclusions

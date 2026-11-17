@@ -600,8 +600,9 @@ public struct PlanOverview: Sendable, Equatable {
     /// snapshots you chose: <reason>. Restorey will try again after the next backup."). Information: no colour, and the menu
     /// icon is unchanged. Nil otherwise.
     public var earlierRemovalNote: String?
-    /// The files the last backup couldn't read, for the "Show…" beside the line that says so (Task 16b). Nil unless that
-    /// backup is shown and its record kept the items (an older record didn't). Information only.
+    /// The files the last backup couldn't read, for the "Show…" under the "N files couldn't be read" line (Task 16b). Set
+    /// only where the reason carries that line (the settled headline, never a failure, a stop, a pause, a running backup
+    /// or a plan waiting for a kit), and nil when the record kept no items (an older record). Information only.
     public var unreadable: UnreadableSummary?
     /// When the next backup is due, or when a pause ends; nil while one runs, while the plan is stopped or waits for
     /// a new kit, or when nothing is due.
@@ -627,7 +628,7 @@ extension MenuPresentation {
         var overview = PlanOverview(
             headline: "", reason: nil, progress: nil, severity: nil, isPaused: false,
             lastBackup: lastBackupRow(plan, format), cloudOnlyNote: cloudOnlyNote(plan, locale: locale),
-            earlierRemovalNote: earlierRemovalNote(plan), unreadable: unreadableSummary(plan),
+            earlierRemovalNote: earlierRemovalNote(plan),
             nextBackup: nextBackupRow(plan, format), buttons: [])
         if let line = content.plans.first(where: { $0.id == planID }) {
             headline(plan, line, format, into: &overview)
@@ -684,6 +685,8 @@ extension MenuPresentation {
             let facts = settledFacts(plan, format)
             overview.reason = facts.issues.isEmpty ? nil : facts.issues.joined(separator: " · ")
             overview.severity = facts.severity
+            // The items belong to the line `settledFacts` just put in the reason: the same record.
+            if let last = plan.lastBackup, Words.unreadable(last) != nil { overview.unreadable = UnreadableSummary(record: last) }
             if facts.severity != nil {
                 overview.headline = "Needs attention"
             } else {
@@ -711,12 +714,6 @@ extension MenuPresentation {
             let label = CloudOnlyText.accessibilityLabel(count)
         else { return nil }
         return .init(line: line, detail: detail, accessibilityLabel: label)
-    }
-
-    /// The menu's "N files couldn't be read" line is built from `lastBackup` (`settledFacts`), so the items come from the
-    /// same record.
-    private static func unreadableSummary(_ plan: PlanStatus) -> UnreadableSummary? {
-        plan.lastBackup.flatMap(UnreadableSummary.init(record:))
     }
 
     private static func earlierRemovalNote(_ plan: PlanStatus) -> String? {

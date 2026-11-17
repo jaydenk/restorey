@@ -326,4 +326,23 @@ struct PlanOverviewTests {
         #expect(Self.overview(Self.status(plan, backup: .warning(unreadable: 2))).unreadable == nil)
         #expect(Self.overview(Self.status(plan)).unreadable == nil)
     }
+
+    /// The button sits under the "couldn't be read" line, so it shows only where the line does.
+    @Test func theItemsAreOnlyOnTheOverviewWhenTheLineIsShown() {
+        let items = [UnreadableItem(path: "/Users/me/a", reason: "operation not permitted")]
+        func warning(phase: PlanPhase = .idle, alerts: [AlertCondition] = [], plan: Plan = Self.plan()) -> PlanStatus {
+            var status = Self.status(plan, phase: phase, backup: .warning(unreadable: 2), alerts: alerts)
+            var record = status.lastBackup!
+            record.unreadableItems = items
+            status.lastBackup = record
+            return status
+        }
+        #expect(Self.overview(warning()).unreadable?.items == items)
+        #expect(Self.overview(warning(alerts: [.backupFailed])).unreadable == nil)
+        #expect(Self.overview(warning(alerts: [.noRecentSuccess])).unreadable == nil)
+        #expect(Self.overview(warning(phase: .paused(until: Self.at(16, 0)))).unreadable == nil)
+        #expect(Self.overview(warning(phase: .stopped(reason: "x"))).unreadable == nil)
+        #expect(Self.overview(warning(phase: .running(nil, retrying: nil))).unreadable == nil)
+        #expect(Self.overview(warning(plan: Self.plan(kit: false))).unreadable == nil)
+    }
 }
