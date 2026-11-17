@@ -439,8 +439,8 @@ skip or a stop by the system; a probe finding no repository at an address, which
 new one, reads "No repository there yet" and isn't a problem), the size added and the time taken where known, and "Show Log", which opens the run's
 log only if its path stays inside the logs folder's `runs/`. The list is fetched again whenever a plan records a new
 run. A backup that made a snapshot also names its biggest additions under its detail ("Biggest additions:
-Photos.sqlite 1.1 GB, Lightroom Catalog.lrcat 312 MB, big.log 46 MB"), with "Show…" (see "What each backup added"
-below). A row with both this and the couldn't-read "Show…" labels them "Show Unreadable Files…" and "Show Biggest
+Photos.sqlite 1.1 GB, Lightroom Catalog.lrcat 312 MB, big.log 46 MB"), followed by " · folder listings 1.3 GB" when
+restic's folder listings added at least 1 MB, with "Show…" (see "What each backup added" below). A row with both this and the couldn't-read "Show…" labels them "Show Unreadable Files…" and "Show Biggest
 Additions…" (`HistoryPresentation.links`).
 
 ### The menu bar
@@ -589,11 +589,18 @@ encryption. The agent reads them as they stream and keeps only the 10 files that
 top 5 folders: each file counts towards its folder up to three levels below the deepest source holding it, stopping
 early at the package it is in
 (`~/Pictures/Photos Library.photoslibrary`, `~/Library/Application Support/BeeperTexts`), so a library of many small
-files shows up. Unchanged items, most of the lines (about 2 million on a home folder), are dropped by a byte comparison
+files shows up. It also counts restic's folder listings (Task 16f): each new or changed folder's line carries
+`metadata_size_in_repo`, the size in the repository of the folder's own list of what it holds, which restic rewrites
+for every folder with any change and every folder above it; on a home folder these are about half of what a backup
+adds. A folder's listing counts towards the same folder its files would, and the folders restic records on the way
+down to a source (`/Users/` for `~/`) count in the listings total only. Files and listings together are restic's own
+`data_added_packed` less only the root's tree (a few hundred bytes); when they come to more than 10% less, the run log
+says so in a second line, and nothing else changes. Unchanged items, most of the lines (about 2 million on a home folder), are dropped by a byte comparison
 before any decoding, and none of the lines reaches the run log, which gets one "Biggest additions …" line instead.
-The record of a backup that made a snapshot keeps them (`biggestAdditions`). History names the three biggest files on
-the backup's row, the Overview does under Last backup when that backup added more than 100 MB to the repository, and
-"Show…" lists the files and folders with their sizes and "Open in Finder". Information only: nothing changes an
+The record of a backup that made a snapshot keeps them (`biggestAdditions`, with `listingsBytesAdded` from Task 16f).
+History names the three biggest files on the backup's row, then the folder listings from 1 MB; the Overview names the
+files under Last backup when that backup added more than 100 MB to the repository; and "Show…" lists the files and
+folders (files and listings) with their sizes and "Open in Finder", then a line on what the folder listings added. Information only: nothing changes an
 outcome, the icon, an alert or a ping, and it is there to tell which exclusion would help. It has a cost: restic
 printing a line per item adds CPU time to every backup (measured on a 100k-file test, `BiggestAdditionsMeasurement`,
 run only with `RESTOREY_MEASURE_16D=1`).

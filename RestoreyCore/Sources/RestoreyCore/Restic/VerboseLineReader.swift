@@ -2,8 +2,9 @@ import Foundation
 
 /// Reads a `verbose_status` line laid out exactly as restic 0.19.1 writes it (`VerboseItem`), without the JSON
 /// decoder: a backup of a home folder prints millions of them, and the decoder costs microseconds each (Task 16d).
-/// Only the fields the biggest additions need are read; the rest of the line is checked only for its closing brace,
-/// so a line cut short is never read as a smaller size.
+/// Only the fields the biggest additions need are read (the data sizes, and from Task 16f the metadata sizes that
+/// carry a folder's listing); the rest of the line is checked only for its closing brace, so a line cut short is never
+/// read as a smaller size.
 enum VerboseLineReader {
     enum Result: Equatable {
         case item(VerboseItem)
@@ -18,6 +19,8 @@ enum VerboseLineReader {
     private static let duration = Array(#","duration":"#.utf8)
     private static let dataSize = Array(#","data_size":"#.utf8)
     private static let dataSizeInRepo = Array(#","data_size_in_repo":"#.utf8)
+    private static let metadataSize = Array(#","metadata_size":"#.utf8)
+    private static let metadataSizeInRepo = Array(#","metadata_size_in_repo":"#.utf8)
 
     static func read(_ line: String) -> Result {
         var line = line
@@ -43,8 +46,20 @@ enum VerboseLineReader {
         guard let size = reader.unsigned(), let next = reader.peek,
             next == UInt8(ascii: ",") || next == UInt8(ascii: "}")
         else { return .malformed }
+        // restic 0.19.1 always goes on with the metadata sizes; a line that ends here has none.
+        var listing: Int64 = 0
+        if next == UInt8(ascii: ",") {
+            guard reader.expect(metadataSize) else { return reader.layoutOrCut }
+            guard reader.unsigned() != nil else { return .malformed }
+            guard reader.expect(metadataSizeInRepo) else { return reader.layoutOrCut }
+            guard let value = reader.unsigned(), let after = reader.peek,
+                after == UInt8(ascii: ",") || after == UInt8(ascii: "}")
+            else { return .malformed }
+            listing = value
+        }
         return .item(VerboseItem(
-            action: String(decoding: actionBytes, as: UTF8.self), item: path, dataSizeInRepo: size))
+            action: String(decoding: actionBytes, as: UTF8.self), item: path, dataSizeInRepo: size,
+            metadataSizeInRepo: listing))
     }
 
     private struct Reader {

@@ -93,6 +93,39 @@ struct HistoryPresentationTests {
         #expect(Self.row(check).biggestAdditions == nil)
     }
 
+    /// Task 16f: what restic's folder listings added, after the files, when it is at least 1 MB.
+    @Test func aBackupRowAddsTheFolderListingsFromOneMegabyte() {
+        func line(_ listings: Int64?) -> String? {
+            var record = Self.record(.success(snapshotID: "a"))
+            var additions = Self.additions
+            additions.listingsBytesAdded = listings
+            record.biggestAdditions = additions
+            return Self.row(record).biggestAdditions?.line
+        }
+        let files = "Biggest additions: Photos.sqlite 1.1 GB, Lightroom Catalog.lrcat 312 MB, big.log 46 MB"
+        #expect(line(1_290_000_000) == files + " · folder listings 1.3 GB")
+        #expect(line(1_000_000) == files + " · folder listings 1 MB")
+        #expect(line(999_999) == files)
+        #expect(line(0) == files)
+        // A record from before Task 16f.
+        #expect(line(nil) == files)
+        // Listings alone name nothing: no line, no "Show…".
+        var listingsOnly = Self.record(.success(snapshotID: "a"))
+        listingsOnly.biggestAdditions = BiggestAdditions(files: [], folders: [], totalBytesAdded: 0, listingsBytesAdded: 5_000_000)
+        #expect(Self.row(listingsOnly).biggestAdditions == nil)
+    }
+
+    @Test func theSheetExplainsTheFolderListings() {
+        var additions = Self.additions
+        #expect(BiggestAdditionsText.listingsNote(additions, locale: Self.locale) == nil)
+        additions.listingsBytesAdded = 0
+        #expect(BiggestAdditionsText.listingsNote(additions, locale: Self.locale) == nil)
+        additions.listingsBytesAdded = 1_290_000_000
+        #expect(BiggestAdditionsText.listingsNote(additions, locale: Self.locale)
+            == "Folder listings: 1.3 GB — restic records each changed folder's list of files; a change anywhere in a folder "
+            + "rewrites its list and the lists of the folders above it.")
+    }
+
     /// Review m2: one link per sheet, worded apart only when a row has both.
     @Test func aRowHasOneLinkPerSheetToldApartWhenItHasBoth() {
         var both = Self.record(.warning(unreadable: 1))

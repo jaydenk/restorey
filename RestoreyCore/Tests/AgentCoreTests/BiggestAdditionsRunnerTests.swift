@@ -10,6 +10,11 @@ struct BiggestAdditionsRunnerTests {
         #"{"message_type":"verbose_status","action":"\#(action)","item":"\#(item)","duration":0.1,"data_size":\#(inRepo),"data_size_in_repo":\#(inRepo),"metadata_size":0,"metadata_size_in_repo":0,"total_files":0}"#
     }
 
+    /// A folder's line as restic 0.19.1 prints it: its own tree's size in the metadata fields (Task 16f).
+    private static func folder(_ action: String, _ item: String, _ listing: Int) -> String {
+        #"{"message_type":"verbose_status","action":"\#(action)","item":"\#(item)","duration":0.1,"data_size":0,"data_size_in_repo":0,"metadata_size":\#(listing),"metadata_size_in_repo":\#(listing),"total_files":0}"#
+    }
+
     private static let summary = #"{"message_type":"summary","files_new":2,"data_added":3000,"data_added_packed":3000,"snapshot_id":"abc123"}"#
 
     /// A fixture whose restic is a stand-in: its backup prints `lines(source)` on stdout (`source` is the plan's), then
@@ -77,7 +82,7 @@ struct BiggestAdditionsRunnerTests {
         #expect(record.biggestAdditions == BiggestAdditions(
             files: [.init(path: "\(source)/Pictures/big.jpg", bytesAdded: 2_000), .init(path: "\(source)/notes.txt", bytesAdded: 1_000)],
             folders: [.init(path: "\(source)/Pictures", bytesAdded: 2_000), .init(path: source, bytesAdded: 1_000)],
-            totalBytesAdded: 3_000))
+            totalBytesAdded: 3_000, listingsBytesAdded: 0))
         // The record as committed carries them too.
         #expect(await s.f.history().recent.first { $0.id == record.id }?.biggestAdditions == record.biggestAdditions)
 
@@ -85,12 +90,47 @@ struct BiggestAdditionsRunnerTests {
         let lines = text.split(separator: "\n")
         #expect(lines.filter { $0.contains("Biggest additions") }.count == 1)
         #expect(lines.contains {
-            $0.hasSuffix(" Biggest additions (files added 3 kB to the repository): \(source)/Pictures/big.jpg 2 kB, "
+            $0.hasSuffix(" Biggest additions (files added 3 kB, folder listings 0 B to the repository): \(source)/Pictures/big.jpg 2 kB, "
                 + "\(source)/notes.txt 1 kB; by folder: \(source)/Pictures 2 kB, \(source) 1 kB")
         })
         #expect(!text.contains("verbose_status"))
         #expect(!text.contains("\(source)/old"))
         #expect(!text.contains("\(source)/broken"))
+    }
+
+    /// Task 16f: folders' listings count towards the folder and a total of their own; a shortfall against restic's
+    /// `data_added_packed` of more than 10% gets a line of its own in the run log, and nothing else.
+    @Test func folderListingsAreRecordedAndAShortfallIsLogged() async throws {
+        let s = try await fixture { source in
+            [
+                Self.verbose("new", "\(source)/Pictures/big.jpg", 2_000),
+                Self.folder("new", "\(source)/Pictures/", 400),
+                Self.folder("modified", "\(source)/", 300),
+                Self.folder("unchanged", "\(source)/Old/", 0),
+                // restic's summary: 3,000 bytes, so 2,700 counted is within 10%.
+                Self.summary,
+            ]
+        }
+        defer { s.remove() }
+        let source = await s.f.plan().sources[0]
+        let record = try await s.f.runner.runBackup(planID: s.f.planID, trigger: .manual)
+        #expect(record.biggestAdditions == BiggestAdditions(
+            files: [.init(path: "\(source)/Pictures/big.jpg", bytesAdded: 2_000)],
+            folders: [.init(path: "\(source)/Pictures", bytesAdded: 2_400), .init(path: source, bytesAdded: 300)],
+            totalBytesAdded: 2_000, listingsBytesAdded: 700))
+        let text = try log(s.f, record)
+        #expect(text.contains(" Biggest additions (files added 2 kB, folder listings 700 B to the repository): "))
+        #expect(!text.contains("less than the"))
+
+        let short = try await fixture { source in
+            [Self.verbose("new", "\(source)/a", 1_000), Self.folder("modified", "\(source)/", 500), Self.summary]
+        }
+        defer { short.remove() }
+        let shortRecord = try await short.f.runner.runBackup(planID: short.f.planID, trigger: .manual)
+        #expect(shortRecord.outcome == .success(snapshotID: "abc123"))
+        let shortText = try log(short.f, shortRecord)
+        #expect(shortText.contains(" Biggest additions: files (1 kB) and folder listings (500 B) come to 1.5 kB, 1.5 kB less "
+            + "than the 3 kB restic says the backup added to the repository (data_added_packed)\n"))
     }
 
     @Test func aWarningBackupRecordsThemToo() async throws {
@@ -145,6 +185,18 @@ struct BiggestAdditionsRunnerTests {
 
     /// Against the vendored restic 0.19.1: the first backup's biggest file is the big one, and the next backup's is the
     /// one file added since, with the unchanged big one nowhere in its lists.
+    /// Task 16f's acceptance check: what the verbose lines add up to (files and folder listings) is restic's own
+    /// `data_added_packed` less only the root's tree, which restic reports with no node and so never prints: a few
+    /// hundred bytes, well inside 10%.
+    private static func expectCloseToResticsTotal(_ record: RunRecord, label: String) throws {
+        let additions = try #require(record.biggestAdditions)
+        let packed = Int64(try #require(record.summary?.dataAddedPacked))
+        let counted = additions.totalBytesAdded + (additions.listingsBytesAdded ?? 0)
+        #expect(counted <= packed, "\(label): \(counted) of \(packed)")
+        #expect(packed - counted < 2_048, "\(label): \(counted) of \(packed)")
+        #expect(BiggestAdditionsText.shortfallLogLine(additions, dataAddedPacked: Int(packed)) == nil)
+    }
+
     @Test(.timeLimit(.minutes(2))) func resticReportsTheFileThatWasAdded() async throws {
         let f = try await RunnerFixture.make()
         defer { f.remove() }
@@ -163,7 +215,12 @@ struct BiggestAdditionsRunnerTests {
         // Random data doesn't compress: about its 2 MiB, plus a little for encryption.
         #expect(big.bytesAdded > 2_000_000 && big.bytesAdded < 2_200_000)
         #expect(firstAdditions.files.map(\.path).last == source + "/small.txt")
-        #expect(firstAdditions.folders == [.init(path: source, bytesAdded: firstAdditions.totalBytesAdded)])
+        // The source's own listing counts with its files; the folders restic records above it count in the total only.
+        let firstListings = try #require(firstAdditions.listingsBytesAdded)
+        #expect(firstAdditions.folders.map(\.path) == [source])
+        #expect(firstAdditions.folders[0].bytesAdded > firstAdditions.totalBytesAdded)
+        #expect(firstAdditions.folders[0].bytesAdded < firstAdditions.totalBytesAdded + firstListings)
+        try Self.expectCloseToResticsTotal(first, label: "first")
 
         let later = source + "/later"
         try FileManager.default.createDirectory(atPath: later, withIntermediateDirectories: true)
@@ -175,10 +232,16 @@ struct BiggestAdditionsRunnerTests {
         }
         let secondAdditions = try #require(second.biggestAdditions)
         #expect(secondAdditions.files.map(\.path) == [later + "/added.bin"])
-        #expect(secondAdditions.folders.map(\.path) == [later])
+        // later/ holds the file and its own new listing; the source's listing changed because later/ is new in it.
+        #expect(secondAdditions.folders.map(\.path) == [later, source])
+        #expect(secondAdditions.folders[0].bytesAdded > secondAdditions.files[0].bytesAdded)
         #expect(secondAdditions.totalBytesAdded == secondAdditions.files[0].bytesAdded)
+        #expect((secondAdditions.listingsBytesAdded ?? 0) > 0)
+        try Self.expectCloseToResticsTotal(second, label: "second")
         let log = try String(contentsOf: f.logs.appendingPathComponent(second.logFile), encoding: .utf8)
         #expect(log.contains("Biggest additions (files added"))
+        #expect(log.contains(", folder listings "))
+        #expect(!log.contains("less than the"))
         #expect(log.contains("--verbose"))
         #expect(!log.contains("verbose_status"))
     }

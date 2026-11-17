@@ -4,8 +4,8 @@ import SwiftUI
 
 /// What a backup added the most (Task 16d, owner 17 Nov 2026), from History's and the Overview's "Show…": the biggest
 /// files and the folders whose files together added the most, each with its size in the repository after compression,
-/// and Open in Finder while the path still exists. Information only: nothing here changes a plan, an outcome, the icon,
-/// an alert or a ping.
+/// and Open in Finder while the path still exists, then what restic's folder listings added (Task 16f). Information
+/// only: nothing here changes a plan, an outcome, the icon, an alert or a ping.
 struct BiggestAdditionsSheet: View {
     let additions: BiggestAdditions
     @Environment(\.dismiss) private var dismiss
@@ -37,6 +37,9 @@ struct BiggestAdditionsSheet: View {
             .listStyle(.bordered)
             .frame(minHeight: 260, idealHeight: 340)
             .accessibilityLabel("Biggest additions")
+            if let note = BiggestAdditionsText.listingsNote(additions, locale: .current) {
+                Text(note).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             HStack {
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)

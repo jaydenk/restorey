@@ -785,7 +785,14 @@ public actor PlanRunner {
         }
         let stoppedReason = Self.stoppedReason(for: outcome, helperFailure: helperFailure)
         let biggestAdditions = Self.biggestAdditions(op, outcome, additions)
-        if additions != nil, Self.madeSnapshot(outcome) { log.line(BiggestAdditionsText.logLine(biggestAdditions)) }
+        if additions != nil, Self.madeSnapshot(outcome) {
+            log.line(BiggestAdditionsText.logLine(biggestAdditions))
+            if let shortfall = BiggestAdditionsText.shortfallLogLine(
+                biggestAdditions, dataAddedPacked: termination?.summary?.dataAddedPacked)
+            {
+                log.line(shortfall)
+            }
+        }
         log.line("Finished: \(Self.explain(outcome, stoppedReason: stoppedReason))")
         log.close()
 

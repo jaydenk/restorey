@@ -388,4 +388,11 @@ struct PlanOverviewTests {
         #expect(Self.overview(Self.withAdditions(packed: 200_000_000, alerts: [.backupFailed])).biggestAdditions == nil)
         #expect(Self.overview(Self.status()).biggestAdditions == nil)
     }
+
+    /// Task 16f: the Overview keeps to the files; the folder listings are in History's line and the sheet.
+    @Test func theOverviewsLineNamesOnlyTheFiles() {
+        var status = Self.withAdditions(packed: 200_000_000)
+        status.lastBackup?.biggestAdditions?.listingsBytesAdded = 90_000_000
+        #expect(Self.overview(status).biggestAdditions?.line == "Biggest additions: Photos.sqlite 150 MB")
+    }
 }

@@ -41,7 +41,8 @@ struct ScanFinishedTests {
         collector.collect(ResticMessageParser.parse(Self.line))
         collector.collect(.verboseStatus(VerboseItem(action: "new", item: "/s/a", dataSizeInRepo: 40)))
         #expect(collector.result() == BiggestAdditions(
-            files: [.init(path: "/s/a", bytesAdded: 40)], folders: [.init(path: "/s", bytesAdded: 40)], totalBytesAdded: 40))
+            files: [.init(path: "/s/a", bytesAdded: 40)], folders: [.init(path: "/s", bytesAdded: 40)], totalBytesAdded: 40,
+            listingsBytesAdded: 0))
     }
 
     @Test func aStatusKeepsItsOwnFlagThroughTheAgentsWireFormat() throws {
