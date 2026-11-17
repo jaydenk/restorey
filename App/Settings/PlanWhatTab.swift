@@ -8,6 +8,9 @@ import SwiftUI
 struct PlanWhatTab: View {
     @Bindable var model: PlanEditModel
     let identity: Identity
+    /// The agent's last Full Disk Access probe: without it the app's own look can't read the attribute in protected
+    /// folders, so the line and the sheet say the list may be incomplete.
+    let fullDiskAccessMissing: Bool
     @State private var reviewing = false
     @State private var showingMarked = false
     /// The latest look for marked items in the sources as edited; nil while it runs.
@@ -42,6 +45,11 @@ struct PlanWhatTab: View {
                 Button("Show…") { showingMarked = true }
                     .accessibilityLabel("Show items apps mark as not for backup")
             }
+            if model.fields.skipsItemsMarkedNotForBackup,
+                let note = MarkedNotForBackupText.incompleteNote(fullDiskAccessMissing: fullDiskAccessMissing)
+            {
+                Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
         }
         .task(id: MarkedLookup(sources: model.fields.sources, generation: markedLookups)) {
             marked = nil
@@ -50,7 +58,8 @@ struct PlanWhatTab: View {
         .sheet(isPresented: $showingMarked, onDismiss: { markedLookups += 1 }) {
             NotForBackupSheet(
                 skips: $model.fields.skipsItemsMarkedNotForBackup, backUpAnyway: $model.fields.backUpAnyway,
-                sources: model.fields.sources, exclusions: model.fields.exclusions, home: Self.home)
+                sources: model.fields.sources, exclusions: model.fields.exclusions, home: Self.home,
+                fullDiskAccessMissing: fullDiskAccessMissing)
         }
         .sheet(isPresented: $reviewing) {
             ExclusionsSheet(

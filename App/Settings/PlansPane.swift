@@ -241,7 +241,10 @@ private struct PlanDetail: View {
     @ViewBuilder private var tabContent: some View {
         switch tab {
         case .overview: PlanOverviewTab(planID: status.plan.id, context: context)
-        case .what: PlanWhatTab(model: model, identity: context.supervisor.identity)
+        case .what:
+            PlanWhatTab(
+                model: model, identity: context.supervisor.identity,
+                fullDiskAccessMissing: context.supervisor.lastKnownStatus?.fdaMissing == true)
         case .schedule: PlanScheduleTab(model: model)
         case .storage: PlanStorageTab(model: model) { context.showRecoveryKit(status.plan.id) }
         case .keep: PlanKeepTab(model: model, connection: context.supervisor.connection)

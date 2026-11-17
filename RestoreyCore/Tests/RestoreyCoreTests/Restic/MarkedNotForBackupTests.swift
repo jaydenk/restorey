@@ -87,6 +87,24 @@ struct MarkedNotForBackupTests {
         #expect(MarkedNotForBackup.excludeLine(for: #"/Users/me/a*b?c[d]e\f"#) == #"/Users/me/a\*b\?c\[d\]e\\f"#)
     }
 
+    /// Review I1: a glob character, `\` or `$` followed by a combining mark is one Swift `Character` with it, but restic
+    /// (Go) reads runes, so escaping must work on Unicode scalars.
+    @Test func escapingWorksOnScalarsNotGraphemeClusters() {
+        let mark = "\u{0301}"
+        for special in ["[", "]", "*", "?", "\\"] {
+            let escaped = DefaultExclusions.escapedGlob("/a/x\(special)\(mark)y")
+            #expect(Array(escaped.unicodeScalars) == Array("/a/x\\\(special)\(mark)y".unicodeScalars), "\(special)")
+        }
+        let line = MarkedNotForBackup.excludeLine(for: "/a/b[\(mark)c*\(mark)d$\(mark)e?\(mark)")
+        #expect(line.map { Array($0.unicodeScalars) }
+            == Array("/a/b\\[\(mark)c\\*\(mark)d$$\(mark)e\\?\(mark)".unicodeScalars))
+        // A folder the person picks is escaped the same way.
+        #expect(Array(DefaultExclusions.pattern(forFolder: "/a/x*\(mark)").unicodeScalars)
+            == Array("/a/x\\*\(mark)".unicodeScalars))
+        // A slash followed by a mark still separates components: an empty one is caught.
+        #expect(MarkedNotForBackup.excludeLine(for: "/a//\(mark)b") == nil)
+    }
+
     @Test func aDollarIsDoubledSoResticNeverExpandsIt() {
         // restic 0.19.1 readPatternsFromFiles runs os.Expand on each line: `$$` is a literal `$`.
         #expect(MarkedNotForBackup.excludeLine(for: "/Users/me/$HOME/a$") == "/Users/me/$$HOME/a$$")
@@ -128,6 +146,7 @@ struct MarkedNotForBackupTests {
         let answer: MarkedItemsQuery
         let stillMarked: Set<String>
         let asked = Mutex<[[String]]>([])
+        let gate = MarkedItemsLookGate()
 
         init(_ answer: MarkedItemsQuery, stillMarked: Set<String>) {
             self.answer = answer
@@ -173,6 +192,7 @@ struct MarkedNotForBackupTests {
     @Test func theDeadlineWinsOverAStuckQuery() async {
         /// A query that never returns within the test.
         struct Stuck: MarkedItemsFinding {
+            let gate = MarkedItemsLookGate()
             func query(scopes: [String], limit: Int) -> MarkedItemsQuery {
                 Thread.sleep(forTimeInterval: 2)
                 return .found([])
@@ -183,6 +203,53 @@ struct MarkedNotForBackupTests {
         let result = await MarkedItemsScan.offPool(finder: Stuck(), sources: ["/Users/me"], deadline: 0.1)
         #expect(result == .gaveUp)
         #expect(ContinuousClock.now - started < .seconds(1.5))
+    }
+
+    /// A query that blocks until the test lets it go, counting how often it was asked.
+    final class Held: MarkedItemsFinding, Sendable {
+        let gate = MarkedItemsLookGate()
+        let release = DispatchSemaphore(value: 0)
+        let asked = Mutex(0)
+        func query(scopes: [String], limit: Int) -> MarkedItemsQuery {
+            asked.withLock { $0 += 1 }
+            release.wait()
+            return .found(["/Users/me/a"])
+        }
+        func isMarked(_ path: String) -> Bool { true }
+    }
+
+    /// Review I2: a hung Spotlight leaves at most one blocked thread. While a look that has outlived its deadline is
+    /// still outstanding, the next gives up at once without asking; once it returns, looks run again.
+    @Test func aStuckLookIsNotJoinedByAnother() async {
+        let held = Held()
+        #expect(await MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: 0.1) == .gaveUp)
+        let started = ContinuousClock.now
+        #expect(await MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: 5) == .busy)
+        #expect(ContinuousClock.now - started < .seconds(0.5), "it gives up at once")
+        #expect(held.asked.withLock { $0 } == 1)
+
+        held.release.signal()
+        let deadline = ContinuousClock.now + .seconds(5)
+        while held.gate.isBusy, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(20)) }
+        held.release.signal() // for the next look
+        #expect(await MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: 5) == .found(["/Users/me/a"]))
+        #expect(held.asked.withLock { $0 } == 2)
+    }
+
+    /// Two plans backing up together: the second look waits for the first, still within its deadline, rather than
+    /// giving up or starting a second query at the same time.
+    @Test func aLiveLookIsWaitedForThenRunAgain() async {
+        let held = Held()
+        async let first = MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: 5)
+        while held.asked.withLock({ $0 }) == 0 { try? await Task.sleep(for: .milliseconds(10)) }
+        async let second = MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: 5)
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(held.asked.withLock { $0 } == 1, "never two queries at once")
+        held.release.signal()
+        held.release.signal()
+        #expect(await first == .found(["/Users/me/a"]))
+        #expect(await second == .found(["/Users/me/a"]))
+        #expect(held.asked.withLock { $0 } == 2)
     }
 
     @Test func offPoolReturnsTheVerifiedItems() async {
@@ -285,6 +352,13 @@ struct MarkedNotForBackupTests {
         #expect(line(nil, false) == "Items apps mark as not for backup are included")
     }
 
+    /// Review m4 (FDA): without Full Disk Access the app can't read the attribute in protected folders.
+    @Test func withoutFullDiskAccessTheListSaysItMayBeIncomplete() {
+        #expect(MarkedNotForBackupText.incompleteNote(fullDiskAccessMissing: true)
+            == "This list may be incomplete until Restorey has Full Disk Access.")
+        #expect(MarkedNotForBackupText.incompleteNote(fullDiskAccessMissing: false) == nil)
+    }
+
     @Test func aPathIsShownWithTheHomeFolderAsATilde() {
         let home = URL(fileURLWithPath: Self.home)
         #expect(MarkedNotForBackupText.displayPath("/Users/me/Library/x", home: home) == "~/Library/x")
@@ -301,8 +375,8 @@ struct MarkedNotForBackupTests {
         let rows = MarkedItemsList.rows(
             verified: verified, sources: [Self.home], exclusions: exclusions, backUpAnyway: ["/Users/me/B"], home: home)
         #expect(rows == [
-            MarkedItemsList.Row(path: "/Users/me/A", display: "~/A", backedUpAnyway: false),
-            MarkedItemsList.Row(path: "/Users/me/B", display: "~/B", backedUpAnyway: true),
+            MarkedItemsList.Row(path: "/Users/me/A", display: "~/A", backedUpAnyway: false, coveredByEntryAbove: false),
+            MarkedItemsList.Row(path: "/Users/me/B", display: "~/B", backedUpAnyway: true, coveredByEntryAbove: false),
         ])
         #expect(MarkedItemsList.skippedCount(
             verified: verified, sources: [Self.home], exclusions: exclusions, backUpAnyway: ["/Users/me/B"]) == 1)
@@ -311,9 +385,21 @@ struct MarkedNotForBackupTests {
     @Test func tickingAndUntickingBackUpAnywayEditsTheEntries() {
         #expect(MarkedItemsList.settingBackUpAnyway(true, for: "/Users/me/A", in: ["/Users/me/B"]) == ["/Users/me/B", "/Users/me/A"])
         #expect(MarkedItemsList.settingBackUpAnyway(true, for: "/Users/me/A", in: ["/Users/me/A"]) == ["/Users/me/A"])
-        // Unticking removes the entry and any entry inside or above it that kept it backed up; others stay.
+        // Unticking removes the entry and any entry inside it; an entry above it stays, because it covers other items
+        // too, and so do unrelated entries.
         #expect(MarkedItemsList.settingBackUpAnyway(
             false, for: "/Users/me/A", in: ["/Users/me/A", "/Users/me/A/x", "/Users/me", "/Users/me/B", "/Users/me/AB"])
-            == ["/Users/me/B", "/Users/me/AB"])
+            == ["/Users/me", "/Users/me/B", "/Users/me/AB"])
+    }
+
+    @Test func aRowCoveredByAnEntryAboveItSaysSo() {
+        // Only reachable with an entry the sheet didn't make: its checkbox can't untick it, so the sheet disables it.
+        let rows = MarkedItemsList.rows(
+            verified: ["/Users/me/Work/A", "/Users/me/B"], sources: [Self.home], exclusions: [],
+            backUpAnyway: ["/Users/me/Work"], home: URL(fileURLWithPath: Self.home))
+        #expect(rows == [
+            MarkedItemsList.Row(path: "/Users/me/B", display: "~/B", backedUpAnyway: false, coveredByEntryAbove: false),
+            MarkedItemsList.Row(path: "/Users/me/Work/A", display: "~/Work/A", backedUpAnyway: true, coveredByEntryAbove: true),
+        ])
     }
 }

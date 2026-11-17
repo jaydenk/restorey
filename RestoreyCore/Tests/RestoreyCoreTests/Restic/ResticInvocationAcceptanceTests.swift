@@ -237,8 +237,13 @@ struct ResticInvocationAcceptanceTests {
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
 
         let source = dir.appendingPathComponent("source")
-        let marked = ["$HOME", "a$b", "x[1]", "star*", "back\\slash", "#hash", "sp ace", "deep/inner$", "ends$"]
-        let kept = ["HOMEx", "ab", "x1", "starry", "backslash", "hash", "space", "deep/keep", "ends"]
+        // Review I1: a glob character followed by a combining mark (one Swift Character, two runes to restic). Unescaped,
+        // `br[\u{301}` would be an invalid pattern that fails the backup, and `st*\u{301}` would also take `stXY\u{301}`.
+        let marked = [
+            "$HOME", "a$b", "x[1]", "star*", "back\\slash", "#hash", "sp ace", "deep/inner$", "ends$",
+            "br[\u{301}", "st*\u{301}",
+        ]
+        let kept = ["HOMEx", "ab", "x1", "starry", "backslash", "hash", "space", "deep/keep", "ends", "br", "stXY\u{301}"]
         for relative in marked + kept {
             let url = source.appendingPathComponent(relative).appendingPathComponent("f.txt")
             try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

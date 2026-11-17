@@ -12,6 +12,7 @@ struct NotForBackupSheet: View {
     let sources: [String]
     let exclusions: [String]
     let home: URL
+    let fullDiskAccessMissing: Bool
     @State private var result: MarkedItemsScan.Result?
     @Environment(\.dismiss) private var dismiss
 
@@ -22,6 +23,9 @@ struct NotForBackupSheet: View {
             Text("Apps and macOS mark data they can rebuild or download again, such as caches, previews and virtual machine "
                 + "disks, so Time Machine leaves it out. Restorey does the same. Anything Spotlight can't see is backed up.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let note = MarkedNotForBackupText.incompleteNote(fullDiskAccessMissing: fullDiskAccessMissing) {
+                Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             list
                 .frame(minHeight: 200, idealHeight: 260)
                 .disabled(!skips)
@@ -43,7 +47,7 @@ struct NotForBackupSheet: View {
                 Text("Checking…").foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .gaveUp:
+        case .gaveUp, .busy:
             Text("Spotlight didn't answer in time, so the list can't be shown now. A backup that can't check includes these items.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -61,9 +65,11 @@ struct NotForBackupSheet: View {
                         Spacer()
                         Toggle("Back up anyway", isOn: backedUpAnyway(row))
                             .toggleStyle(.checkbox)
+                            // Backed up by an entry for a folder above it, which unticking this row can't change.
+                            .disabled(row.coveredByEntryAbove)
                             .accessibilityLabel("Back up \(row.display) anyway")
                     }
-                    .help(row.path)
+                    .help(row.coveredByEntryAbove ? "\(row.path)\nBacked up because a folder above it is." : row.path)
                 }
                 .listStyle(.bordered)
                 .accessibilityLabel("Items marked not for backup")

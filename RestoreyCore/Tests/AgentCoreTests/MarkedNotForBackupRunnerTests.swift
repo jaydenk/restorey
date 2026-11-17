@@ -12,6 +12,7 @@ struct MarkedNotForBackupRunnerTests {
         let answer: MarkedItemsQuery
         let stillMarked: Set<String>
         let asked = Mutex(0)
+        let gate = MarkedItemsLookGate()
 
         init(_ answer: MarkedItemsQuery, stillMarked: Set<String>) {
             self.answer = answer
@@ -204,6 +205,36 @@ struct MarkedNotForBackupRunnerTests {
         #expect((mode as? Int) == 0o700)
     }
 
+    /// Review I2: with Spotlight hung, the first backup's look times out (logged), later backups give up at once
+    /// without another query, logged once for the episode, and nothing is recorded or skipped.
+    @Test func aHungSpotlightIsLoggedOnceAndNeverQueriedAgain() async throws {
+        final class Hung: MarkedItemsFinding, Sendable {
+            let gate = MarkedItemsLookGate()
+            let release = DispatchSemaphore(value: 0)
+            let asked = Mutex(0)
+            func query(scopes: [String], limit: Int) -> MarkedItemsQuery {
+                asked.withLock { $0 += 1 }
+                release.wait()
+                return .found([])
+            }
+            func isMarked(_ path: String) -> Bool { true }
+        }
+        let hung = Hung()
+        defer { hung.release.signal() }
+        let f = try await RunnerFixture.make(markedItems: hung, markedItemsDeadline: 0.2)
+        defer { f.remove() }
+        try f.write("a.txt", "a")
+
+        for _ in 0..<3 {
+            let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+            #expect(record.markedNotForBackupSkipped == nil)
+        }
+        #expect(hung.asked.withLock { $0 } == 1, "no second query while the first is outstanding")
+        let lines = f.agentInfo.value
+        #expect(lines.filter { $0.contains("Gave up looking for items apps mark as not for backup") }.count == 1)
+        #expect(lines.filter { $0.contains("still waiting for Spotlight") }.count == 1)
+    }
+
     @Test func aListLeftByAnAgentThatDiedIsRemovedAtTheNextStart() async throws {
         let f = try await RunnerFixture.make()
         defer { f.remove() }
@@ -220,6 +251,7 @@ struct MarkedNotForBackupRunnerTests {
 /// Forwards to an index set after the fixture exists (its source folder is only known then).
 private struct Forward: MarkedItemsFinding {
     let box: Locked<MarkedNotForBackupRunnerTests.FakeIndex?>
+    let gate = MarkedItemsLookGate()
     init(_ box: Locked<MarkedNotForBackupRunnerTests.FakeIndex?>) { self.box = box }
     func query(scopes: [String], limit: Int) -> MarkedItemsQuery { box.value?.query(scopes: scopes, limit: limit) ?? .found([]) }
     func isMarked(_ path: String) -> Bool { box.value?.isMarked(path) ?? false }

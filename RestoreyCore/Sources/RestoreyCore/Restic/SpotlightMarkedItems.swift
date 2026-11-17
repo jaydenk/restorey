@@ -16,6 +16,9 @@ import Foundation
 public struct SpotlightMarkedItems: MarkedItemsFinding {
     public init() {}
 
+    /// Process-wide: every look at Spotlight in this process shares it, so a hung `mds` blocks one thread at most.
+    public var gate: MarkedItemsLookGate { .spotlight }
+
     public func query(scopes: [String], limit: Int) -> MarkedItemsQuery {
         // A scope that isn't a folder fails the whole query (`MDQueryExecute` returns false), and holds nothing anyway.
         let folders = scopes.filter { path in
@@ -29,8 +32,8 @@ public struct SpotlightMarkedItems: MarkedItemsFinding {
         MDQuerySetSearchScope(query, folders as CFArray, 0)
         MDQuerySetMaxCount(query, limit + 1)
         guard MDQueryExecute(query, CFOptionFlags(kMDQuerySynchronous.rawValue)) else { return .failed }
-        MDQueryDisableUpdates(query)
-        defer { MDQueryEnableUpdates(query) }
+        // No MDQueryDisableUpdates: the result list changes only with kMDQueryWantsUpdates, which isn't passed (and
+        // "is ignored if the synchronous parameter is true", MDQuery.h), so it is fixed once MDQueryExecute returns.
         var paths: [String] = []
         let count = MDQueryGetResultCount(query)
         paths.reserveCapacity(count)

@@ -157,6 +157,9 @@ public actor PlanRunner {
     private var handles: [UUID: RunHandle] = [:]
     /// Marked items already logged as backed up because restic can't be given their names exactly: each is logged once.
     private var loggedUnrepresentable: Set<String> = []
+    /// Set once a backup has logged that an earlier Spotlight look is still outstanding; cleared by the next look that
+    /// runs, so a stuck episode is logged once.
+    private var loggedStuckLook = false
     /// The latest background run `backUpNow` started, by plan.
     private var background: [UUID: Task<RunRecord, Never>] = [:]
     /// Plans to back up (trigger `.manual`) as soon as their run, being paused, has ended: a Resume that
@@ -589,8 +592,20 @@ public actor PlanRunner {
         guard plan.skipsItemsMarkedNotForBackup, let finder = deps.markedItems else { return (nil, nil) }
         let id = plan.id.uuidString
         let verified: [String]
-        switch await MarkedItemsScan.offPool(finder: finder, sources: plan.sources, deadline: deps.markedItemsDeadline) {
+        let result = await MarkedItemsScan.offPool(finder: finder, sources: plan.sources, deadline: deps.markedItemsDeadline)
+        if result != .busy { loggedStuckLook = false }
+        switch result {
         case .found(let found): verified = found
+        case .busy:
+            // An earlier look is still blocked in Spotlight past its deadline: no new query (review I2). Logged once
+            // per episode, not at every backup; the next look that runs again ends the episode.
+            if !loggedStuckLook {
+                loggedStuckLook = true
+                deps.agentInfo(
+                    "Not looking for items apps mark as not for backup for plan \(id): still waiting for Spotlight to "
+                        + "answer an earlier look, so backups include them until it does")
+            }
+            return (nil, nil)
         case .gaveUp:
             deps.agentInfo(
                 "Gave up looking for items apps mark as not for backup for plan \(id) (too many, too slow, or Spotlight "

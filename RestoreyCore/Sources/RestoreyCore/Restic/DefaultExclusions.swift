@@ -102,13 +102,14 @@ public enum DefaultExclusions {
     ]
 
     /// `path` with the characters restic's matcher (Go's `filepath.Match`) treats specially escaped with a
-    /// backslash, so a literal path matches only itself.
+    /// backslash, so a literal path matches only itself. Done per Unicode scalar, as Go reads runes: a `[` followed by
+    /// a combining mark is one Swift `Character` but still a `[` to restic (review I1, Task 15c).
     static func escapedGlob(_ path: String) -> String {
-        var result = ""
-        for character in path {
-            if "\\*?[]".contains(character) { result.append("\\") }
-            result.append(character)
+        var result = String.UnicodeScalarView()
+        for scalar in path.unicodeScalars {
+            if "\\*?[]".unicodeScalars.contains(scalar) { result.append("\\") }
+            result.append(scalar)
         }
-        return result
+        return String(result)
     }
 }

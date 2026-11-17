@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Items apps mark as not for backup (product spec §5.7, Task 15c): Time Machine's per-item exclusion attribute,
 /// `com.apple.metadata:com_apple_backup_excludeItem` with the value `com.apple.backupd`, which macOS and apps set on
@@ -109,13 +110,20 @@ public enum MarkedNotForBackup {
     ///   White_Space property, checked on the last scalar as Go does per rune), can't be written: nil;
     /// - a line too long for the scanner would fail the backup: nil.
     public static func excludeLine(for path: String) -> String? {
-        guard path.hasPrefix("/"), path != "/",
+        guard path.unicodeScalars.first == "/", path.unicodeScalars.count > 1,
             !path.unicodeScalars.contains(where: { $0 == "\n" || $0 == "\r" }),
             let last = path.unicodeScalars.last, !last.properties.isWhitespace,
-            path.split(separator: "/", omittingEmptySubsequences: false).dropFirst()
-                .allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." })
+            // Split by scalar, as Go does: a "/" followed by a combining mark is one Character but still a separator.
+            path.unicodeScalars.split(separator: "/", omittingEmptySubsequences: false).dropFirst()
+                .allSatisfy({ !$0.isEmpty && !$0.elementsEqual(".".unicodeScalars) && !$0.elementsEqual("..".unicodeScalars) })
         else { return nil }
-        let line = DefaultExclusions.escapedGlob(path).replacing("$", with: "$$")
+        // `$` doubled per scalar too (`String.replacing` matches whole Characters, so it would miss "$" + a mark).
+        var doubled = String.UnicodeScalarView()
+        for scalar in DefaultExclusions.escapedGlob(path).unicodeScalars {
+            if scalar == "$" { doubled.append(scalar) }
+            doubled.append(scalar)
+        }
+        let line = String(doubled)
         return line.utf8.count <= maxLineBytes ? line : nil
     }
 }
@@ -136,6 +144,47 @@ public protocol MarkedItemsFinding: Sendable {
     func query(scopes: [String], limit: Int) -> MarkedItemsQuery
     /// True when `path` itself (no symlink followed) still carries the attribute. Metadata only: nothing is opened.
     func isMarked(_ path: String) -> Bool
+    /// The gate `MarkedItemsScan.offPool` holds while a look at this finder is outstanding. The real finder's is
+    /// process-wide (`MarkedItemsLookGate.spotlight`); each fake has its own, so parallel tests don't meet.
+    var gate: MarkedItemsLookGate { get }
+}
+
+/// At most one look per finder at a time (review I2). A synchronous Spotlight query can't be stopped, so a hung `mds`
+/// would otherwise leave one more blocked thread behind every look, without limit. The gate holds the outstanding
+/// look's deadline: a look that arrives while one is outstanding waits for it within its own deadline (two plans
+/// backing up together), but gives up at once when the outstanding one has already outlived its deadline (stuck), so
+/// only that one thread is ever blocked.
+public final class MarkedItemsLookGate: Sendable {
+    /// The real Spotlight finder's, shared by every look in the process (the agent's backups, the app's What tab).
+    public static let spotlight = MarkedItemsLookGate()
+
+    /// The outstanding look's deadline; nil when none is outstanding.
+    private let outstanding = Mutex<ContinuousClock.Instant?>(nil)
+
+    public init() {}
+
+    /// True while a look is outstanding.
+    public var isBusy: Bool { outstanding.withLock { $0 != nil } }
+
+    enum Entry: Equatable {
+        case entered
+        /// A look is outstanding, and is still within its deadline.
+        case wait
+        /// A look is outstanding past its deadline.
+        case stuck
+    }
+
+    func enter(until deadline: ContinuousClock.Instant, now: ContinuousClock.Instant) -> Entry {
+        outstanding.withLock { current in
+            guard let current else {
+                current = deadline
+                return .entered
+            }
+            return now >= current ? .stuck : .wait
+        }
+    }
+
+    func leave() { outstanding.withLock { $0 = nil } }
 }
 
 /// One look for marked items within a plan's sources, within a bound: Spotlight's candidates, each checked to still
@@ -146,6 +195,9 @@ public struct MarkedItemsScan: Sendable {
         case found([String])
         /// Too many results, too slow, or the query failed: nothing extra is skipped and nothing is recorded.
         case gaveUp
+        /// An earlier look is still outstanding past its deadline (Spotlight seems hung), so none was started: treated
+        /// like `gaveUp`, but the agent logs it once per episode rather than at every backup.
+        case busy
     }
 
     public var finder: any MarkedItemsFinding
@@ -180,19 +232,43 @@ public struct MarkedItemsScan: Sendable {
     /// synchronous `MDQueryExecute` can't be cut short from outside (an `MDQueryStop` from a run-loop timer on its own
     /// thread didn't end it early, tested on macOS 27), so a query still running at the deadline finishes on its own
     /// thread later and its result is discarded; it touches nothing but its own locals.
+    ///
+    /// The finder's `gate` keeps it to one outstanding look: while another is outstanding and within its deadline this
+    /// waits for it (polling, within this look's own deadline); when the outstanding one is past its deadline, or this
+    /// look's deadline passes or its task is cancelled while waiting, it returns `.busy` without starting a thread.
     public static func offPool(
         finder: any MarkedItemsFinding, sources: [String], limit: Int = MarkedNotForBackup.resultLimit,
         deadline: TimeInterval = MarkedNotForBackup.timeLimit
     ) async -> Result {
         let end = ContinuousClock.now.advanced(by: .seconds(deadline))
+        let gate = finder.gate
+        while true {
+            let now = ContinuousClock.now
+            switch gate.enter(until: end, now: now) {
+            case .entered: break
+            case .stuck: return .busy
+            case .wait:
+                if now >= end { return .busy }
+                try? await Task.sleep(for: .milliseconds(50))
+                if Task.isCancelled { return .busy }
+                continue
+            }
+            break
+        }
         let scan = MarkedItemsScan(finder: finder, limit: limit, isOutOfTime: { ContinuousClock.now >= end })
+        let remaining = max(0, ContinuousClock.now.duration(to: end) / .seconds(1))
         return await withCheckedContinuation { continuation in
             let once = ResumeOnce(continuation)
-            let thread = Thread { once.resume(scan.run(sources: sources)) }
+            let thread = Thread {
+                let result = scan.run(sources: sources)
+                // Only when the query has really returned: a timed-out look keeps the gate until then.
+                gate.leave()
+                once.resume(result)
+            }
             thread.qualityOfService = .utility
             thread.name = "Restorey marked-items scan"
             thread.start()
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + deadline) { once.resume(.gaveUp) }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + remaining) { once.resume(.gaveUp) }
         }
     }
 }
@@ -206,12 +282,16 @@ public enum MarkedItemsList {
         public var display: String
         /// The person chose to back it up (it, or a folder above it, is in `backUpAnyway`).
         public var backedUpAnyway: Bool
+        /// An entry for a folder above it is what backs it up: unticking this row can't change that (the entry covers
+        /// other items too), so the sheet disables its checkbox. Only an entry the sheet didn't make can do this.
+        public var coveredByEntryAbove: Bool
         public var id: String { path }
 
-        public init(path: String, display: String, backedUpAnyway: Bool) {
+        public init(path: String, display: String, backedUpAnyway: Bool, coveredByEntryAbove: Bool) {
             self.path = path
             self.display = display
             self.backedUpAnyway = backedUpAnyway
+            self.coveredByEntryAbove = coveredByEntryAbove
         }
     }
 
@@ -222,8 +302,13 @@ public enum MarkedItemsList {
     ) -> [Row] {
         let skipped = Set(MarkedNotForBackup.collapse(
             verified, sources: sources, exclusions: exclusions, backUpAnyway: backUpAnyway))
-        return MarkedNotForBackup.collapse(verified, sources: sources, exclusions: exclusions, backUpAnyway: [])
-            .map { Row(path: $0, display: MarkedNotForBackupText.displayPath($0, home: home), backedUpAnyway: !skipped.contains($0)) }
+        let entries = backUpAnyway.map(MarkedNotForBackup.trimmed)
+        return MarkedNotForBackup.collapse(verified, sources: sources, exclusions: exclusions, backUpAnyway: []).map { path in
+            Row(
+                path: path, display: MarkedNotForBackupText.displayPath(path, home: home),
+                backedUpAnyway: !skipped.contains(path),
+                coveredByEntryAbove: entries.contains { $0 != path && path.hasPrefix(CloudOnlyScope.directoryPrefix($0)) })
+        }
     }
 
     /// How many items a backup would skip: the count the agent records.
@@ -231,14 +316,14 @@ public enum MarkedItemsList {
         MarkedNotForBackup.collapse(verified, sources: sources, exclusions: exclusions, backUpAnyway: backUpAnyway).count
     }
 
-    /// `entries` with `path` ticked (added once) or unticked: then every entry that kept it backed up goes, the path
-    /// itself, one inside it and one above it, so it is skipped again.
+    /// `entries` with `path` ticked (added once) or unticked: then the entry for the path and any inside it go. An
+    /// entry above it stays (it covers other items too); such a row is `coveredByEntryAbove` and can't be unticked.
     public static func settingBackUpAnyway(_ on: Bool, for path: String, in entries: [String]) -> [String] {
         if on { return entries.contains(path) ? entries : entries + [path] }
         let inside = CloudOnlyScope.directoryPrefix(path)
         return entries.filter { entry in
             let trimmed = MarkedNotForBackup.trimmed(entry)
-            return trimmed != path && !trimmed.hasPrefix(inside) && !path.hasPrefix(CloudOnlyScope.directoryPrefix(trimmed))
+            return trimmed != path && !trimmed.hasPrefix(inside)
         }
     }
 }
@@ -258,6 +343,13 @@ public enum MarkedNotForBackupText {
         case 1?: return "Also skipped: 1 item apps mark as not for backup"
         case let count?: return "Also skipped: \(count.formatted(.number.locale(locale))) \(items)"
         }
+    }
+
+    /// Under the What tab's line and above the sheet's list when the app lacks Full Disk Access (the agent's last
+    /// probe): the app reads the attribute itself, and can't in protected folders, so those items drop out of its
+    /// list. Backups are unaffected (the agent checks for itself). Nil with access.
+    public static func incompleteNote(fullDiskAccessMissing: Bool) -> String? {
+        fullDiskAccessMissing ? "This list may be incomplete until Restorey has Full Disk Access." : nil
     }
 
     /// `path` with the home folder shown as `~`.

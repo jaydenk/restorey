@@ -582,7 +582,9 @@ reasons are in the design spec, §5.7):
   list to restic in a per-run file (`--exclude-file`, removed when restic finishes). Each plan has a switch for this
   (on by default) and a "Back up anyway" list (Settings → What → Show…). Spotlight is the source, so items in folders
   Spotlight doesn't index (indexing off, an unindexed drive, a folder on Spotlight's privacy list) are backed up.
-  If the look takes over 10 seconds or finds over 100,000 items, that backup includes them all. The count
+  If the look takes over 10 seconds or finds over 100,000 items, that backup includes them all, and while a look
+  Spotlight never answered is still outstanding no new one starts (one blocked thread at most). Without Full Disk
+  Access the What tab's list may be incomplete, and says so; backups are unaffected. The count
   is recorded on the backup's run record and is never a warning.
 
 restic also skips folders tagged with `CACHEDIR.TAG` (`--exclude-caches`) and iCloud files that aren't
