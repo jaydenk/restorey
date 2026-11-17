@@ -742,6 +742,7 @@ public actor PlanRunner {
             await process.interrupt(intent, killAfter: deps.interruptGracePeriod)
         }
         let feed = progress ? ProgressFeed(state: deps.state, planID: plan.id, redactor: session.redactor) : nil
+        let additions = op == .backup ? BiggestAdditionsCollector(sources: plan.sources) : nil
 
         var outcome: RunOutcome
         var termination: ResticTermination?
@@ -752,6 +753,7 @@ public actor PlanRunner {
                 for text in StepLog.lines(for: message, operation: op) { log.line(text) }
                 feed?.send(message)
                 collector?.collect(message)
+                additions?.collect(message)
             }
             termination = finished
             // A restic that exits 130 with no request from us, while the system is stopping the agent,
@@ -782,6 +784,8 @@ public actor PlanRunner {
             outcome = .failed(exitCode: code, reason: session.redactor.redact(reason))
         }
         let stoppedReason = Self.stoppedReason(for: outcome, helperFailure: helperFailure)
+        let biggestAdditions = Self.biggestAdditions(op, outcome, additions)
+        if additions != nil, Self.madeSnapshot(outcome) { log.line(BiggestAdditionsText.logLine(biggestAdditions)) }
         log.line("Finished: \(Self.explain(outcome, stoppedReason: stoppedReason))")
         log.close()
 
@@ -789,7 +793,7 @@ public actor PlanRunner {
             id: id, planID: plan.id, operation: op, trigger: trigger, startedAt: startedAt, endedAt: deps.now(),
             outcome: outcome, summary: op == .backup ? termination?.summary : nil, logFile: logFile,
             droppedLogLines: log.droppedLineCount,
-            unreadableItems: Self.unreadableItems(op, outcome, termination))
+            unreadableItems: Self.unreadableItems(op, outcome, termination), biggestAdditions: biggestAdditions)
         var tail = termination?.stderrTail ?? []
         if let helperFailure { tail.append(helperFailure) }
         return StepResult(record: record, stoppedReason: stoppedReason, tail: tail)
@@ -799,6 +803,23 @@ public actor PlanRunner {
     static func unreadableItems(_ op: ResticOperation, _ outcome: RunOutcome, _ termination: ResticTermination?) -> [UnreadableItem]? {
         guard case .backup = op, case .warning = outcome, let termination else { return nil }
         return UnreadableItems.collect(termination.messages)
+    }
+
+    /// What a backup added, biggest first, for its record (Task 16d): only a backup that made a snapshot (`success` with
+    /// one, or `warning`) has any, and only when restic printed its verbose lines.
+    static func biggestAdditions(
+        _ op: ResticOperation, _ outcome: RunOutcome, _ collector: BiggestAdditionsCollector?
+    ) -> BiggestAdditions? {
+        guard case .backup = op, madeSnapshot(outcome), let collector else { return nil }
+        return collector.result()
+    }
+
+    /// restic finished the backup with a snapshot.
+    private static func madeSnapshot(_ outcome: RunOutcome) -> Bool {
+        switch outcome {
+        case .success(snapshotID: .some), .warning: true
+        default: false
+        }
     }
 
     // MARK: History and alerts
