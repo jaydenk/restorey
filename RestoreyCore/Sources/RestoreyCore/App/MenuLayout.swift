@@ -26,8 +26,9 @@ public enum MenuRow: Sendable, Equatable {
     case banner(MenuBanner)
     /// A plan's name, status, detail and destination. Choosing it opens Settings at the plan.
     case plan(PlanLine)
-    /// The progress bar under a running plan's line. `name` is for VoiceOver.
-    case progress(planID: UUID, name: String, fraction: Double)
+    /// The progress bar under a running plan's line. `name` is for VoiceOver. No fraction: restic is still counting
+    /// the files, so the bar has no end (Task 16e).
+    case progress(planID: UUID, name: String, fraction: Double?)
     /// A plain line that does nothing.
     case message(String)
     case button(title: String, command: MenuCommand, enabled: Bool = true, indented: Bool = false)
@@ -50,6 +51,8 @@ public enum MenuLayout {
             rows.append(.plan(line))
             if let progress = line.progress {
                 rows.append(.progress(planID: line.id, name: line.name, fraction: progress))
+            } else if line.isChecking {
+                rows.append(.progress(planID: line.id, name: line.name, fraction: nil))
             }
             if let action = line.action {
                 rows.append(.button(title: action.buttonTitle, command: .banner(action), indented: true))

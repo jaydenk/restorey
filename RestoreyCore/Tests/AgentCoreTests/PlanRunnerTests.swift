@@ -1347,6 +1347,45 @@ struct PlanRunnerTests {
         #expect(await f.status().phase == .idle)
     }
 
+    /// Task 16e: the progress carries whether restic has finished counting. A status before the `scan_finished` line
+    /// says no; the line itself says yes at once, and so does every status after it.
+    @Test func theScanFinishingReachesTheProgress() async throws {
+        let stub = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restorey-scan-\(UUID().uuidString).sh")
+        let status = { (percent: Double) in
+            #"{"message_type":"status","percent_done":\#(percent),"total_files":2,"files_done":1,"total_bytes":10,"bytes_done":5}"#
+        }
+        let scan = #"{"message_type":"verbose_status","action":"scan_finished","item":"","duration":0.1,"data_size":10,"data_size_in_repo":0,"metadata_size":0,"metadata_size_in_repo":0,"total_files":2}"#
+        let summary = #"{"message_type":"summary","files_new":1,"files_changed":0,"files_unmodified":0,"data_added":1,"data_added_packed":1,"total_files_processed":1,"total_bytes_processed":1,"total_duration":1,"snapshot_id":"abc123"}"#
+        try """
+            #!/bin/sh
+            [ "$1" = cat ] && exit 10
+            [ "$1" = backup ] || exit 0
+            echo '\(status(0.1))'
+            /bin/sleep 1.5
+            echo '\(scan)'
+            /bin/sleep 1.5
+            echo '\(status(0.5))'
+            /bin/sleep 1.5
+            echo '\(summary)'
+
+            """.write(to: stub, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+        defer { try? FileManager.default.removeItem(at: stub) }
+
+        let f = try await RunnerFixture.make(executable: stub)
+        defer { f.remove() }
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+
+        try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
+        #expect(await f.status().phase.progress?.scanFinished == false)
+        try await f.waitForPhase { $0.progress?.scanFinished == true }
+        #expect(await f.status().phase.progress?.percentDone == 0.1)
+        try await f.waitForPhase { $0.progress?.percentDone == 0.5 }
+        #expect(await f.status().phase.progress?.scanFinished == true)
+        _ = try await run.value
+    }
+
     // MARK: Actions from the app
 
     @Test func backUpNowRunsInTheBackgroundAndIgnoresTheSchedule() async throws {

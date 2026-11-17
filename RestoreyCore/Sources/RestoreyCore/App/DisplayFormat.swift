@@ -38,6 +38,17 @@ public enum DisplayFormat {
         return "\(doneText) of \(number(total / unit.size, locale: locale)) \(unit.name)"
     }
 
+    /// "Checking for changes… 412,000 files so far": what a backup says while restic is still counting what there is
+    /// to back up (Task 16e). `filesDone` is the files restic has looked at; none yet, no count.
+    public static func checkingForChanges(filesDone: Int, locale: Locale) -> String {
+        guard filesDone > 0 else { return "Checking for changes…" }
+        let formatter = NumberFormatter()
+        formatter.locale = locale
+        formatter.numberStyle = .decimal
+        let count = formatter.string(from: NSNumber(value: filesDone)) ?? "\(filesDone)"
+        return "Checking for changes… \(count) \(filesDone == 1 ? "file" : "files") so far"
+    }
+
     /// "~6 min", "~2 h 5 min". Never under a minute: a shorter wait is "~1 min".
     public static func remaining(seconds: Int) -> String {
         let minutes = max(1, Int((Double(seconds) / 60).rounded()))

@@ -184,7 +184,7 @@ struct MenuPresentationTests {
         let photos = Self.plan("Photos drive")
         let progress = BackupStatus(
             percentDone: 0.42, totalFiles: 100, filesDone: 42, totalBytes: 2_900_000_000, bytesDone: 1_200_000_000,
-            secondsRemaining: 360)
+            secondsRemaining: 360, scanFinished: true)
         let content = Self.make(
             Self.status([Self.line(idle), Self.line(photos, phase: .running(progress, retrying: nil))]))
         #expect(content.icon == .backingUp)
@@ -225,9 +225,65 @@ struct MenuPresentationTests {
         #expect(content.icon == .backingUp)
     }
 
+    /// Task 16e: restic counts while it backs up, so until it says the count is done there is no fraction, no
+    /// percentage and no time left: an indeterminate bar and how many files it has looked at.
+    @Test func whileResticIsStillCountingThereIsNoFractionOrTimeLeft() {
+        let plan = Self.plan()
+        // The archiver has raced past the partial totals: 100% of the files counted so far, in no time at all.
+        let counting = BackupStatus(
+            percentDone: 1, totalFiles: 412_000, filesDone: 412_000, totalBytes: 300_000_000, bytesDone: 300_000_000,
+            secondsRemaining: 0)
+        let content = Self.make(Self.status([Self.line(plan, phase: .running(counting, retrying: nil))]))
+        let line = content.plans[0]
+        #expect(line.status == "Backing up")
+        #expect(line.progress == nil)
+        #expect(line.isChecking)
+        #expect(line.detail == "Checking for changes… 412,000 files so far")
+        #expect(content.icon == .backingUp)
+        #expect(MenuLayout.rows(content, developer: false).contains(.progress(planID: plan.id, name: line.name, fraction: nil)))
+    }
+
+    @Test func theCountOfFilesIsPlainWhenSmallOrNotYetKnown() {
+        let plan = Self.plan()
+        func detail(_ filesDone: Int) -> String? {
+            let status = BackupStatus(percentDone: 0, filesDone: filesDone)
+            return Self.make(Self.status([Self.line(plan, phase: .running(status, retrying: nil))])).plans[0].detail
+        }
+        #expect(detail(0) == "Checking for changes…")
+        #expect(detail(1) == "Checking for changes… 1 file so far")
+        #expect(detail(999) == "Checking for changes… 999 files so far")
+    }
+
+    /// Once restic has said the count is done: the bar, the bytes and the time left, with the fraction clamped.
+    @Test func onceResticHasFinishedCountingTheBarAndTimeLeftAppear() {
+        let plan = Self.plan()
+        let done = BackupStatus(
+            percentDone: 1.4, totalFiles: 2_000_000, filesDone: 100, totalBytes: 365_000_000_000, bytesDone: 1_200_000_000,
+            secondsRemaining: 360, scanFinished: true)
+        let line = Self.make(Self.status([Self.line(plan, phase: .running(done, retrying: nil))])).plans[0]
+        #expect(!line.isChecking)
+        #expect(line.progress == 1)
+        #expect(line.detail == "1.2 of 365 GB · ~6 min")
+        #expect(MenuLayout.rows(Self.make(Self.status([Self.line(plan, phase: .running(done, retrying: nil))])), developer: false)
+            .contains(.progress(planID: plan.id, name: line.name, fraction: 1)))
+    }
+
+    /// A restic that never reports the count (older, or told to print less) leaves it unfinished for the run, which
+    /// ends the way every run does: the plan leaves the running phase and its line is the settled one.
+    @Test func aRunThatNeverReportsTheCountSettlesWhenItEnds() {
+        let plan = Self.plan()
+        let never = BackupStatus(percentDone: 0.5, totalBytes: 10, bytesDone: 5)
+        let running = Self.make(Self.status([Self.line(plan, phase: .running(never, retrying: nil))])).plans[0]
+        #expect(running.isChecking)
+        let ended = Self.make(Self.status([Self.line(plan)])).plans[0]
+        #expect(!ended.isChecking)
+        #expect(ended.progress == nil)
+        #expect(ended.status == "Backed up at 14:16")
+    }
+
     @Test func retryingReplacesTheProgressDetail() {
         let plan = Self.plan()
-        let progress = BackupStatus(percentDone: 0.1, totalBytes: 1_000_000_000, bytesDone: 100_000_000)
+        let progress = BackupStatus(percentDone: 0.1, totalBytes: 1_000_000_000, bytesDone: 100_000_000, scanFinished: true)
         let content = Self.make(Self.status([
             Self.line(plan, phase: .running(progress, retrying: "lock held by another client")),
         ]))

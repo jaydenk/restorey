@@ -218,7 +218,7 @@ struct MessagesTests {
         #expect(try json(PlanPhase.idle) == #"{"type":"idle"}"#)
         #expect(try json(PlanPhase.running(nil, retrying: nil)) == #"{"type":"running"}"#)
         #expect(try json(PlanPhase.running(BackupStatus(percentDone: 0.25), retrying: "retrying"))
-            == #"{"progress":{"bytesDone":0,"currentFiles":[],"errorCount":0,"filesDone":0,"percentDone":0.25,"totalBytes":0,"totalFiles":0},"retrying":"retrying","type":"running"}"#)
+            == #"{"progress":{"bytesDone":0,"currentFiles":[],"errorCount":0,"filesDone":0,"percentDone":0.25,"scanFinished":false,"totalBytes":0,"totalFiles":0},"retrying":"retrying","type":"running"}"#)
         #expect(try json(PlanPhase.paused(until: Date(timeIntervalSince1970: 1_800_000_000)))
             == #"{"type":"paused","until":"2027-01-15T08:00:00.000Z"}"#)
         #expect(try json(PlanPhase.stopped(reason: "r")) == #"{"reason":"r","type":"stopped"}"#)

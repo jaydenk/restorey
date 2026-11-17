@@ -66,6 +66,8 @@ public struct FirstBackupProgress: Sendable, Equatable {
                     title: "Waiting to start",
                     detail: "The first backup starts as soon as the repository is free.")
             }
+            // Still counting the files (Task 16e): no percentage, and no fraction, so the bar has no end.
+            guard progress.scanFinished else { return FirstBackupProgress(title: "Backing up", detail: line.detail) }
             let percent = Int((min(max(progress.percentDone, 0), 1) * 100).rounded(.down))
             return FirstBackupProgress(title: "Backing up — \(percent)%", detail: line.detail, fraction: line.progress)
         case .paused:

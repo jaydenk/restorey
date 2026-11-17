@@ -468,7 +468,11 @@ The menu, top to bottom:
   itself at 15:20", "Backup failed at 14:16" in red, with the time and reason of the newest backup that had a verdict, the same record
 the "backup failed" alert is decided from, so a skip, pause or lock since doesn't hide them; a skip reason in
 orange), a detail line (bytes done of the total and time left
-  while backing up, or the next run; no upload speed, because restic 0.19.1 reports no count of bytes uploaded, only bytes
+  while backing up, or the next run. restic counts the files while it is already backing them up, so its totals only
+  grow until the count is done, and a percentage would read 100% long before the backup is. Until restic says the count
+  is finished (`verbose_status` `scan_finished`) the plan shows a bar with no end and "Checking for changes… 412,000
+  files so far", with no percentage and no time left; then the bar, "1.2 of 365 GB · ~6 min" and "Backing up — 42%"
+  appear. A restic that never says it leaves "Checking for changes…" up until the backup ends; no upload speed, because restic 0.19.1 reports no count of bytes uploaded, only bytes
   processed, which counts unchanged files at once) and its destination with the repository size. A running
   backup has a progress bar under it. Choosing a plan opens it in Settings; a failed one has "Show Details…" (its
   history).

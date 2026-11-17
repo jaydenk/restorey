@@ -124,7 +124,9 @@ final class StepLog: Sendable {
 
 /// Feeds a running backup's progress to `AgentState.updateRun` in arrival order without blocking
 /// restic's drain thread. The "retrying" text (Ruling R14) is the latest stderr line containing
-/// "retrying", redacted, and is cleared by the next status line.
+/// "retrying", redacted, and is cleared by the next status line. restic's `scan_finished` line (Task 16e) marks the
+/// progress as one whose totals are final: it may arrive before the first status, so it is remembered for the ones
+/// after it.
 final class ProgressFeed: Sendable {
     private let continuation: AsyncStream<ResticMessage>.Continuation
     private let consumer: Task<Void, Never>
@@ -135,11 +137,18 @@ final class ProgressFeed: Sendable {
         consumer = Task {
             var progress: BackupStatus?
             var retrying: String?
+            var scanFinished = false
             for await message in stream {
                 switch message {
-                case .status(let status):
+                case .status(var status):
+                    status.scanFinished = scanFinished
                     progress = status
                     retrying = nil
+                case .verboseStatus(let item?) where item.isScanFinished:
+                    scanFinished = true
+                    // Nothing to show until a status has arrived to carry it.
+                    guard progress != nil else { continue }
+                    progress?.scanFinished = true
                 case .unparseable(let line):
                     retrying = redactor.redact(line)
                 default:
@@ -154,6 +163,8 @@ final class ProgressFeed: Sendable {
     func send(_ message: ResticMessage) {
         switch message {
         case .status:
+            continuation.yield(message)
+        case .verboseStatus(let item?) where item.isScanFinished:
             continuation.yield(message)
         case .unparseable(let line) where line.localizedCaseInsensitiveContains("retrying"):
             continuation.yield(message)

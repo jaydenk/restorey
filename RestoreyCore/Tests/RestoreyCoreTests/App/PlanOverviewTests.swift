@@ -94,7 +94,7 @@ struct PlanOverviewTests {
     }
 
     @Test func aRunningBackupShowsItsProgressAndCanBePaused() {
-        let progress = BackupStatus(percentDone: 0.42, totalBytes: 1_000_000_000, bytesDone: 420_000_000)
+        let progress = BackupStatus(percentDone: 0.42, totalBytes: 1_000_000_000, bytesDone: 420_000_000, scanFinished: true)
         let plan = Self.status(phase: .running(progress, retrying: nil))
         let overview = Self.overview(plan)
         #expect(overview.headline == "Backing up — 42%")
@@ -102,6 +102,16 @@ struct PlanOverviewTests {
         #expect(overview.progress == 0.42)
         #expect(overview.nextBackup == nil)
         #expect(Self.enabled(overview) == [.backUpNow: false, .pause: true, .restoreFiles: true])
+    }
+
+    @Test func aBackupStillBeingCountedHasNoPercentageOrFraction() {
+        let progress = BackupStatus(percentDone: 1, totalFiles: 52_000, filesDone: 52_000, totalBytes: 9, bytesDone: 9)
+        let overview = Self.overview(Self.status(phase: .running(progress, retrying: nil)))
+        #expect(overview.headline == "Backing up")
+        #expect(overview.reason == "Checking for changes… 52,000 files so far")
+        #expect(overview.progress == nil)
+        #expect(overview.isChecking)
+        #expect(overview.severity == nil)
     }
 
     @Test func aBackupWithNoProgressYetIsJustBackingUp() {

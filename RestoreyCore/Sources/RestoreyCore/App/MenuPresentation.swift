@@ -61,8 +61,11 @@ public struct PlanLine: Sendable, Equatable {
     public var name: String
     public var status: String
     public var detail: String?
-    /// 0 to 1 while a backup is running and restic has reported progress.
+    /// 0 to 1 while a backup is running and restic has reported progress, once it has finished counting the files.
     public var progress: Double?
+    /// A backup is running but restic is still counting what there is to back up, so there is no fraction to show:
+    /// the menu draws a bar with no end (Task 16e). Never set together with `progress`.
+    public var isChecking: Bool
     public var destination: String
     public var severity: Severity?
     /// A button under the line ("Show details…" after a failed backup).
@@ -72,13 +75,15 @@ public struct PlanLine: Sendable, Equatable {
 
     public init(
         id: UUID, name: String, status: String, detail: String? = nil, progress: Double? = nil,
-        destination: String, severity: Severity? = nil, action: BannerAction? = nil, isPaused: Bool = false
+        isChecking: Bool = false, destination: String, severity: Severity? = nil, action: BannerAction? = nil,
+        isPaused: Bool = false
     ) {
         self.id = id
         self.name = name
         self.status = status
         self.detail = detail
         self.progress = progress
+        self.isChecking = isChecking
         self.destination = destination
         self.severity = severity
         self.action = action
@@ -316,7 +321,14 @@ public enum MenuPresentation {
         switch status.phase {
         case .running(let progress, let retrying):
             line.status = "Backing up"
-            line.progress = progress.map { min(max($0.percentDone, 0), 1) }
+            // While restic is still counting, its totals only grow: no fraction, no time left (Task 16e).
+            if let progress {
+                if progress.scanFinished {
+                    line.progress = min(max(progress.percentDone, 0), 1)
+                } else {
+                    line.isChecking = true
+                }
+            }
             line.detail = retrying.map { "Retrying: \($0)" } ?? runningDetail(progress, format)
         case .paused(let until):
             line.status = "Paused"
@@ -330,13 +342,15 @@ public enum MenuPresentation {
     }
 
     private static func runningDetail(_ progress: BackupStatus?, _ format: TextContext) -> String? {
-        var parts: [String] = []
-        if let progress {
-            if progress.totalBytes > 0 {
-                parts.append(DisplayFormat.progress(done: progress.bytesDone, of: progress.totalBytes, locale: format.locale))
-            }
-            if let seconds = progress.secondsRemaining { parts.append(DisplayFormat.remaining(seconds: seconds)) }
+        guard let progress else { return nil }
+        guard progress.scanFinished else {
+            return DisplayFormat.checkingForChanges(filesDone: progress.filesDone, locale: format.locale)
         }
+        var parts: [String] = []
+        if progress.totalBytes > 0 {
+            parts.append(DisplayFormat.progress(done: progress.bytesDone, of: progress.totalBytes, locale: format.locale))
+        }
+        if let seconds = progress.secondsRemaining { parts.append(DisplayFormat.remaining(seconds: seconds)) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
@@ -588,6 +602,8 @@ public struct PlanOverview: Sendable, Equatable {
     /// The menu's reason for the state: a failure's or a stop's cause, what needs attention, a backup's progress.
     public var reason: String?
     public var progress: Double?
+    /// A backup is running but restic is still counting what there is to back up: a bar with no end, no percentage.
+    public var isChecking = false
     /// The headline's colour. Set only when the plan itself needs attention, and then the reason (or the headline)
     /// says why.
     public var severity: Severity?
@@ -663,6 +679,7 @@ extension MenuPresentation {
         case .running:
             overview.headline = line.progress.map { "Backing up — \(Int(($0 * 100).rounded()))%" } ?? "Backing up"
             overview.progress = line.progress
+            overview.isChecking = line.isChecking
             overview.reason = line.detail
             return
         case .paused:

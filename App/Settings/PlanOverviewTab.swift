@@ -50,6 +50,8 @@ struct PlanOverviewTab: View {
                 }
                 if let progress = overview.progress {
                     ProgressView(value: progress).accessibilityLabel("Backup progress")
+                } else if overview.isChecking {
+                    ProgressView().progressViewStyle(.linear).accessibilityLabel("Backup progress")
                 }
             }
             .accessibilityElement(children: .combine)

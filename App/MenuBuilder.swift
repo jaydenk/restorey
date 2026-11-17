@@ -200,9 +200,18 @@ private final class ProgressRowView: NSView {
     private let bar = NSProgressIndicator()
 
     /// The bar is the only thing VoiceOver finds in the row, so it says whose backup it is and how far along.
-    func show(_ fraction: Double, of planName: String) {
-        bar.doubleValue = fraction
+    /// With no fraction restic is still counting the files, so the bar has no end and says so (Task 16e).
+    func show(_ fraction: Double?, of planName: String) {
         bar.setAccessibilityLabel("\(planName) backup progress")
+        guard let fraction else {
+            bar.isIndeterminate = true
+            bar.startAnimation(nil)
+            bar.setAccessibilityValueDescription("Checking for changes")
+            return
+        }
+        bar.stopAnimation(nil)
+        bar.isIndeterminate = false
+        bar.doubleValue = fraction
         bar.setAccessibilityValueDescription(fraction.formatted(.percent.precision(.fractionLength(0))))
     }
 

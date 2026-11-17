@@ -37,10 +37,17 @@ public struct BackupStatus: Codable, Sendable, Equatable {
     public var secondsRemaining: Int?
     public var errorCount: Int
     public var currentFiles: [String]
+    /// restic has finished counting what there is to back up (its `verbose_status` `scan_finished` line, Task 16e).
+    /// restic counts while it backs up, so until then `totalFiles`, `totalBytes` and so `percentDone` only grow and
+    /// say nothing about how far through the backup is. Not part of a `status` message: the progress feed sets it
+    /// from the scan's own line. False when no such line has arrived (an agent from before it, or restic told to
+    /// print less).
+    public var scanFinished: Bool
 
     public init(
         percentDone: Double = 0, totalFiles: Int = 0, filesDone: Int = 0, totalBytes: Int = 0,
-        bytesDone: Int = 0, secondsRemaining: Int? = nil, errorCount: Int = 0, currentFiles: [String] = []
+        bytesDone: Int = 0, secondsRemaining: Int? = nil, errorCount: Int = 0, currentFiles: [String] = [],
+        scanFinished: Bool = false
     ) {
         self.percentDone = percentDone
         self.totalFiles = totalFiles
@@ -50,6 +57,25 @@ public struct BackupStatus: Codable, Sendable, Equatable {
         self.secondsRemaining = secondsRemaining
         self.errorCount = errorCount
         self.currentFiles = currentFiles
+        self.scanFinished = scanFinished
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case percentDone, totalFiles, filesDone, totalBytes, bytesDone, secondsRemaining, errorCount, currentFiles
+        case scanFinished
+    }
+
+    /// Spelled out only so `scanFinished` may be missing: an agent from before it sends none.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            percentDone: try c.decode(Double.self, forKey: .percentDone), totalFiles: try c.decode(Int.self, forKey: .totalFiles),
+            filesDone: try c.decode(Int.self, forKey: .filesDone), totalBytes: try c.decode(Int.self, forKey: .totalBytes),
+            bytesDone: try c.decode(Int.self, forKey: .bytesDone),
+            secondsRemaining: try c.decodeIfPresent(Int.self, forKey: .secondsRemaining),
+            errorCount: try c.decode(Int.self, forKey: .errorCount),
+            currentFiles: try c.decode([String].self, forKey: .currentFiles),
+            scanFinished: try c.decodeIfPresent(Bool.self, forKey: .scanFinished) ?? false)
     }
 }
 
@@ -250,6 +276,10 @@ public struct VerboseItem: Sendable, Equatable {
         self.item = item
         self.dataSizeInRepo = dataSizeInRepo
     }
+
+    /// restic has finished counting what there is to back up (`ReportTotal`: action `scan_finished`, an empty item).
+    /// The status messages' totals are final from here on (Task 16e).
+    public var isScanFinished: Bool { action == "scan_finished" }
 
     /// A file (not a folder) restic stored new data for.
     public var isAddedFile: Bool {

@@ -72,11 +72,22 @@ import Testing
 
     @Test func runningShowsThePercentageAndTheMenusDetail() {
         let backup = BackupStatus(
-            percentDone: 0.384, totalBytes: 505_000_000_000, bytesDone: 191_000_000_000, secondsRemaining: 21_600)
+            percentDone: 0.384, totalBytes: 505_000_000_000, bytesDone: 191_000_000_000, secondsRemaining: 21_600,
+            scanFinished: true)
         let progress = Self.make(Self.status(.running(backup, retrying: nil)))
         #expect(progress.title == "Backing up — 38%")
         #expect(progress.detail == "191 of 505 GB · ~6 h")
         #expect(progress.fraction == 0.384)
+    }
+
+    /// Task 16e: no percentage, and no fraction (the bar has no end), until restic has finished counting.
+    @Test func whileResticIsStillCountingThereIsNoPercentage() {
+        let backup = BackupStatus(percentDone: 1, totalFiles: 8_000, filesDone: 8_000, totalBytes: 5, bytesDone: 5)
+        let progress = Self.make(Self.status(.running(backup, retrying: nil)))
+        #expect(progress.title == "Backing up")
+        #expect(progress.detail == "Checking for changes… 8,000 files so far")
+        #expect(progress.fraction == nil)
+        #expect(!progress.finished)
     }
 
     @Test func retryingShowsWhatResticSaid() {
