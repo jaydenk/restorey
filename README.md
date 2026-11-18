@@ -56,13 +56,14 @@ Back Up Now and Pause, Restore Files…, Settings… (⌘,) and Quit Restorey. O
 app's and the background process's versions, Show Last Run Log, Show Logs in Finder and Copy Diagnostics. Backups run
 from the background agent whether or not the app is open.
 
-**Shortcuts and Siri.** Restorey adds four actions to Shortcuts, Spotlight and Siri, with no setting up: **Back Up
-Now**, **Pause Backups** (for an hour, as the menu's Pause), **Resume Backups** and **Get Last Backup**, which gives the
+**Shortcuts and Spotlight.** Restorey adds four actions to the Shortcuts app and to Spotlight's actions, with no
+setting up: **Back Up Now**, **Pause Backups** (for an hour, as the menu's Pause), **Resume Backups** and **Get Last Backup**, which gives the
 plan's last backup time and outcome as values a shortcut can use (Time, Outcome, Backed Up, Last Successful Backup,
 Summary). Each takes a plan, or none for every plan (Get Last Backup: the newest backup of any plan), and is refused
 with a sentence saying why wherever the menu's item would be dimmed: "“Home” is already backing up.", "Backups are
-switched off.". Say "Back up with Restorey" or "When did Restorey last back up", or use them in a Focus or
-shortcut automation, such as backing up before you close the lid.
+switched off.". Use them in a shortcut or a Focus or shortcut automation, such as backing up before you close the
+lid. Siri can't run them by voice on the Mac: Apple says voice invocation of App Shortcuts isn't available on macOS
+(Apple Developer Forums, thread 764609), and nothing documents a change since.
 
 **Settings** has four sections in its toolbar:
 
@@ -262,7 +263,9 @@ step in `UserDefaults` (`setupProgress`) so quitting resumes an unfinished setup
 recovery-kit window's job, not setup's. The kit is saved at its step but the agent confirms it only at "Start first backup", so a plan stays unfinished (and never runs) until then.
 
 The setup window opens at launch while a plan's setup is unfinished or no plan exists, decided on the agent's first
-status; a copy outside `/Applications` opens it at once, on "Move to Applications" (also in its menu). That screen
+status; a copy outside `/Applications` opens it at once, on "Move to Applications" (also in its menu). Either waits for
+the app's first activation, as every window the launch opens by itself does (see Shortcuts, "Windows wait for the
+person"). That screen
 copies the app into `/Applications` under the build's own name (`Restorey.app`, or `RestoreyDev.app` for the
 development identity, whatever the downloaded copy was called), through a staging folder (`AppInstaller`), removes
 `com.apple.quarantine` from the copy, moves the copy it ran from to the Trash (for a translocated launch, the original
@@ -560,9 +563,12 @@ isn't prefixed again. Its relative day ("yesterday at 09:05") is made again when
 
 Restorey's Shortcuts actions (Task 17e, audit T2) are App Intents in the app's own bundle (`App/Intents`): Back Up Now,
 Pause Backups, Resume Backups and Get Last Backup, each with an optional plan (a `PlanEntity`, listed from the agent's
-status by an `EnumerableEntityQuery`), and an `AppShortcutsProvider` whose phrases put them in Spotlight and Siri with
-no setting up (every phrase names the app, as App Intents requires; the plans' names are offered in the phrases and
-App Intents is told when they change, `updateAppShortcutParameters()`). The app links `AppIntents.framework`
+status by an `EnumerableEntityQuery`), and an `AppShortcutsProvider` that offers them with no setting up, in the
+Shortcuts app and Spotlight (macOS 26: "any app can provide actions to Spotlight using the App Intents API", Apple
+Newsroom, 9 June 2025). Its phrases name the app, as App Intents requires, and offer the plans' names (App Intents is
+told when they change, `updateAppShortcutParameters()`); they are what the system matches where it supports App
+Shortcuts phrases. Voice invocation isn't one of those on the Mac (Apple DTS, Developer Forums thread 764609), so
+Restorey promises no Siri there. The app links `AppIntents.framework`
 explicitly in `project.yml`: Xcode's "Extract App Intents Metadata" step skips a target without that dependency, and
 the actions then never reach Shortcuts; the build writes `Contents/Resources/Metadata.appintents`.
 
@@ -570,11 +576,19 @@ the actions then never reach Shortcuts; the build writes `Contents/Resources/Met
   `supportedModes = .background` (macOS 26; it replaces `openAppWhenRun`), so it runs without bringing a window
   forward, and Shortcuts launches Restorey in the background to run one when it isn't running (Apple, "Configuring
   the runtime behavior of your app intents": "Code in your app bundle can run in either the foreground or
-  background"). That launch starts the agent supervisor as any launch does, but opens no window by itself: not setup
-  at launch, not a copy outside Applications' move screen, not Settings for a hidden icon. AppKit says which launch it
-  was (`NSApplication.launchIsDefaultUserInfoKey`, false for a launch "in some other sense not a default launch"), and
-  `AppLaunch` opens those windows only for a default launch, so the action stays in the background. Apple doesn't
-  document that a Shortcuts launch sets the key to false; the owner's hand check confirms it on the Mac.
+  background"). That launch starts the agent supervisor as any launch does.
+- **Windows wait for the person.** The windows Restorey opens by itself at launch (setup while a plan is unfinished,
+  a copy outside Applications' move screen, Settings while the menu bar icon is hidden) open on the app's first
+  activation (`applicationDidBecomeActive`), not on the launch (`LaunchWindowGate`, RestoreyCore, tested). A launch
+  from Finder, Spotlight, the Dock or `open` activates the app, since LaunchServices activates by default
+  (`NSWorkspace.OpenConfiguration.activates`: "The default value of this property is true"), so they open as before,
+  each at most once per run; coming back to Restorey later opens none of them again. `open -g` ("Do not bring the
+  application to the foreground") shows nothing until the person activates Restorey, and then shows them. A Shortcuts
+  action asks to run in the background (`supportedModes = .background`), which should not activate the app either.
+  **Verified:** the gate's rules, by tests. **Not verified:** that a Shortcuts launch really leaves the app inactive,
+  and that a user launch of this accessory app always activates it; both need a run on the Mac (hand checks). If the
+  person opens a Restorey window later from the menu bar, that activates the app and a waiting launch window opens
+  with it.
 - **The same path and rules as the menu.** An action reaches the agent through the supervisor's `AgentConnection`,
   handed to App Intents by `AppDependencyManager` before the app runs (`ShortcutGateway`, made in `AppDelegate.main`).
   It is decided by `ShortcutRules` (RestoreyCore, tested): from the menu's own `MenuContent`, so an action is refused

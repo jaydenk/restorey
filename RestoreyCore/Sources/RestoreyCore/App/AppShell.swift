@@ -105,23 +105,39 @@ public func shellOpeningAtLaunch(mode: ShellMode, statusItemVisible: Bool) -> Sh
     statusItemVisible ? nil : shellOpeningOnReopen(mode: mode, statusItemVisible: false)
 }
 
-/// Why this launch happened, as AppKit says in `NSApplicationDidFinishLaunching`'s `launchIsDefaultUserInfoKey`
-/// (`NSApplicationLaunchIsDefaultLaunchKey`): "false if the app was launched to open or print a file, to perform a
-/// Service action, if the app had saved state that will be restored, or if the app launch was in some other sense not
-/// a default launch". Restorey launched only to run a Shortcuts action, in the background (`supportedModes =
-/// .background`), is such a launch: it opens no window by itself (setup at launch, P2-10; the move screen of a copy
-/// outside Applications; Settings for a hidden icon), so the action stays in the background (review 17e, Minor 1).
-/// The windows are still a click away, from the status item or by opening Restorey again.
-public struct AppLaunch: Sendable, Equatable {
-    /// The key's value; nil when the notification didn't carry it, treated as the user's launch as before.
-    public var isDefaultLaunch: Bool?
+/// The windows Restorey opens by itself at launch (setup while a plan is unfinished, P2-10; a copy outside Applications'
+/// move screen; Settings while the menu bar icon is hidden) wait for the app's first activation, not the launch
+/// (review 17e, fix round 2). A launch the person makes (Finder, Spotlight, the Dock, `open`) activates the app:
+/// LaunchServices activates by default (`NSWorkspace.OpenConfiguration.activates`, "The default value of this property
+/// is true, which causes the system to bring the app to the foreground"). A launch that doesn't (`open -g`, "Do not
+/// bring the application to the foreground", or a Shortcuts action run in the background, `supportedModes =
+/// .background`) shows nothing until the person activates Restorey. Each window opens at most once per run, so coming
+/// back to Restorey later doesn't open setup again.
+public struct LaunchWindowGate: Sendable, Equatable {
+    private var hasBeenActive = false
+    private var pending: [ShellOpening] = []
+    private var asked: [ShellOpening] = []
 
-    public init(isDefaultLaunch: Bool?) {
-        self.isDefaultLaunch = isDefaultLaunch
+    public init() {}
+
+    /// The launch wants `opening` shown; returns what to open now: it, once the app has been active, or nothing.
+    public mutating func request(_ opening: ShellOpening) -> [ShellOpening] {
+        guard !asked.contains(opening) else { return [] }
+        asked.append(opening)
+        guard hasBeenActive else {
+            pending.append(opening)
+            return []
+        }
+        return [opening]
     }
 
-    /// Whether this launch opens Restorey's at-launch windows.
-    public var opensWindows: Bool { isDefaultLaunch != false }
+    /// The app became active (`applicationDidBecomeActive`); returns what was waiting, the first time only.
+    public mutating func becameActive() -> [ShellOpening] {
+        guard !hasBeenActive else { return [] }
+        hasBeenActive = true
+        defer { pending = [] }
+        return pending
+    }
 }
 
 // MARK: Settings section and plan

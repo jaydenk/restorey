@@ -195,13 +195,28 @@ struct AppShellTests {
         #expect(!planRequestLandsOnFirstTab(.route(planID: nil)))
     }
 
-    // MARK: A launch to run a Shortcuts action (review 17e, Minor 1)
+    // MARK: At-launch windows wait for the first activation (review 17e, fix round 2)
 
-    @Test func onlyAUsersLaunchOpensWindowsByItself() {
-        // AppKit's NSApplicationLaunchIsDefaultLaunchKey: false for a launch that isn't the user opening the app.
-        #expect(AppLaunch(isDefaultLaunch: true).opensWindows)
-        #expect(!AppLaunch(isDefaultLaunch: false).opensWindows)
-        // An older or unusual launch without the key is treated as the user's, as before.
-        #expect(AppLaunch(isDefaultLaunch: nil).opensWindows)
+    @Test func aUsersLaunchActivatesAndShowsEachLaunchWindowOnce() {
+        var gate = LaunchWindowGate()
+        // The hidden-icon Settings window is decided before the activation arrives: it waits for it.
+        #expect(gate.request(.settings(.general)).isEmpty)
+        #expect(gate.becameActive() == [.settings(.general)])
+        // Setup, decided on the agent's first status after the activation, opens at once.
+        #expect(gate.request(.setup) == [.setup])
+        // A later activation (the person coming back to Restorey) opens nothing again, nor does a repeat request.
+        #expect(gate.becameActive().isEmpty)
+        #expect(gate.request(.setup).isEmpty)
+    }
+
+    @Test func aBackgroundLaunchShowsNothingUntilThePersonActivatesTheApp() {
+        // `open -g`, or a Shortcuts action run in the background: no activation, so nothing opens.
+        var gate = LaunchWindowGate()
+        #expect(gate.request(.setup).isEmpty)
+        #expect(gate.request(.settings(.general)).isEmpty)
+        #expect(gate.request(.setup).isEmpty)
+        // The person activates Restorey: each window asked for opens once, in the order asked.
+        #expect(gate.becameActive() == [.setup, .settings(.general)])
+        #expect(gate.becameActive().isEmpty)
     }
 }

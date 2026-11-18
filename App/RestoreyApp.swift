@@ -23,9 +23,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let setupStore = SetupProgressStore(defaults: .standard)
     /// Set once the launch has decided whether setup opens (P2-10), so it opens at most once by itself.
     private var setupDecidedAtLaunch = false
-    /// Whether this launch was the user opening Restorey, or one to run a Shortcuts action in the background, which
-    /// opens no window by itself (`AppLaunch`). Read from the launch notification before anything is set up.
-    private var launch = AppLaunch(isDefaultLaunch: nil)
+    /// The windows the launch opens by itself wait for the app's first activation, so a launch that doesn't activate
+    /// it (`open -g`, a Shortcuts action run in the background) shows nothing until the person comes to Restorey.
+    private var launchWindows = LaunchWindowGate()
     #if DEBUG
     private var developerWindow: DeveloperWindowController?
     #endif
@@ -48,19 +48,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        launch = AppLaunch(
-            isDefaultLaunch: (notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? NSNumber)?.boolValue)
         setUp()
         guard let statusItem else { return }
         router.state.statusItemHidden = !statusItem.isVisible
         statusItem.observeVisibility { [weak self] visible in self?.router.state.statusItemHidden = !visible }
         // Checked once launch is over, on the next turn of the run loop, so it reads the saved visibility.
         DispatchQueue.main.async { [weak self] in
-            guard let self, let statusItem = self.statusItem, self.launch.opensWindows else { return }
+            guard let self, let statusItem = self.statusItem else { return }
             if let opening = shellOpeningAtLaunch(mode: self.mode, statusItemVisible: statusItem.isVisible) {
-                self.open(opening)
+                self.openAtLaunch(opening)
             }
+            // An activation that came before this delegate was listening still counts.
+            if NSApp.isActive { self.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification)) }
         }
+    }
+
+    /// The first activation opens what the launch asked for (`LaunchWindowGate`); later ones open nothing by themselves.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        for opening in launchWindows.becameActive() { open(opening) }
+    }
+
+    /// A window the launch opens by itself, through the gate.
+    private func openAtLaunch(_ opening: ShellOpening) {
+        for now in launchWindows.request(opening) { open(now) }
     }
 
     /// Opening the app again from Finder, Spotlight or `open` while it runs: the only way in for someone who
@@ -113,9 +123,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     progress: SetupProgress(planID: nil, step: .moveToApplications, addingPlan: false),
                     store: setupStore)
             }
-            // A copy outside /Applications can do nothing else, so its one screen opens at once, unless the launch was
-            // only to run a Shortcuts action (`AppLaunch`); the action then says why it can't run.
-            if launch.opensWindows { router.showSetup() }
+            // A copy outside /Applications can do nothing else, so its one screen opens as soon as the app is active.
+            openAtLaunch(.setup)
         case .installed(let copy):
             let supervisor = AgentSupervisor(installed: copy, identity: identity, log: log)
             self.supervisor = supervisor
@@ -154,9 +163,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func openSetupAtLaunchIfNeeded(status: AgentStatus?) {
         guard !setupDecidedAtLaunch, let status else { return }
         setupDecidedAtLaunch = true
-        guard launch.opensWindows else { return }
         if SetupFlow.resume(saved: setupStore.load(), plans: status.plans, installed: true) != nil {
-            router.showSetup()
+            openAtLaunch(.setup)
         }
     }
 

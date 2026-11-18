@@ -2,9 +2,9 @@ import AppIntents
 import RestoreyCore
 
 // Restorey's Shortcuts actions (Task 17e, audit T2): Back Up Now, Pause Backups, Resume Backups and Get Last Backup, in
-// Shortcuts, Spotlight and Siri with no other UI. Each runs in the background (`supportedModes`), does what the menu's
-// item of the same name does through the same XPC calls, and is refused when the menu would refuse it
-// (`ShortcutRules`, tested in RestoreyCore). Only plan ids and names cross an intent, never a secret.
+// the Shortcuts app and Spotlight with no other UI (not Siri voice: App Shortcuts can't be invoked by voice on macOS).
+// Each runs in the background (`supportedModes`), does what the menu's item of the same name does through the same XPC
+// calls, and is refused when the menu would refuse it (`ShortcutRules`, tested in RestoreyCore). Only plan ids and names cross an intent, never a secret.
 
 /// A backup plan, as Shortcuts lists it.
 struct PlanEntity: AppEntity {
@@ -189,7 +189,8 @@ struct GetLastBackupIntent: AppIntent {
     }
 }
 
-/// The actions Siri and Spotlight offer with no setting up. Every phrase names the app (App Intents requires it).
+/// The actions the Shortcuts app and Spotlight offer with no setting up. Every phrase names the app (App Intents
+/// requires it); the phrases are what the system matches where it supports App Shortcuts phrases.
 struct RestoreyShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(

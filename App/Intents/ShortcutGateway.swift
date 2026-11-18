@@ -82,7 +82,7 @@ final class ShortcutGateway {
         for await settled in changes where settled { return }
     }
 
-    // MARK: Plan names for Siri
+    // MARK: Plan names for the App Shortcuts phrases
 
     @ObservationIgnored private var lastPlanNames: [String]?
 
