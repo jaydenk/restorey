@@ -131,8 +131,10 @@ xcodegen`; CI installs exactly 2.46.0 from its release, checked against the publ
    `BUILD_NUMBER=2 scripts/install-dev.sh` installs it with a different build number, so the running agent sees
    an update and is restarted. Reinstalling the same build within an hour of a repair leaves the old agent
    running until you choose "Restart Backups". The script also removes the build product from Launch Services
-   (Xcode registers every app it builds), so the installed copy is the only app with the dev bundle ID and the
-   Dock, About and System Settings show its icon rather than a stale build's.
+   (Xcode registers every app it builds), so the installed copy is the only app with the dev bundle ID.
+   Every build re-dates the app bundle as its last step. Xcode otherwise leaves the product folder with its
+   first build's date, and the Dock and Finder use that date to decide whether a cached icon is stale. If a Dock
+   tile still shows an old icon after an install, `killall Dock` refreshes it.
 
 Debug builds use a separate identity (`com.jaydenkerr.restorey.dev`, `RestoreyDev`), so they can sit beside a
 Release install without sharing a launchd label, keychain group or on-disk state. GitHub Actions runs the

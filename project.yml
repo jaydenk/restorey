@@ -112,6 +112,16 @@ targets:
               --sign "${EXPANDED_CODE_SIGN_IDENTITY}" "$DEST"
           fi
         basedOnDependencyAnalysis: false
+      # Last on purpose. Xcode builds into the same product folder every time and never re-dates it, so the bundle
+      # kept its first build's modification date (10 Nov) through every later build, and ditto/zip copies keep it
+      # too. The Dock (and Finder) check a cached icon against that date, so they kept showing the icon-less
+      # placeholder after the icon landed. Re-dating the bundle makes every build look changed to them.
+      # A folder's date isn't part of its code signature, so this doesn't disturb signing.
+      - name: Re-date bundle
+        script: |
+          set -euo pipefail
+          touch "${TARGET_BUILD_DIR}/${WRAPPER_NAME}"
+        basedOnDependencyAnalysis: false
   # Hosted by the agent so the tests run with its keychain-access-groups entitlement and signature.
   # Bare `swift test` cannot do that (-34018 errSecMissingEntitlement; README, spec §10).
   AgentHostedTests:

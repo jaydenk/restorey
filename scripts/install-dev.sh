@@ -37,8 +37,9 @@ rm -rf "${DEST:?}"
 ditto "$BUILT" "$DEST"
 
 # Xcode registers every app it builds with Launch Services, so the build product and the installed copy share one
-# bundle ID. Lookups by ID (the Dock, About, System Settings' lists) can then pick the build product, which showed an
-# old generic icon after the icon landed. Keep the installed copy as the only registration.
+# bundle ID, and lookups by ID can land on the build product inside build/. Keep the installed copy as the only
+# registration. (This isn't what kept the Dock's icon blank: that was the bundle's stale modification date, fixed
+# by the "Re-date bundle" build step in project.yml.)
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 "$LSREGISTER" -u "$BUILT" 2>/dev/null || true
 "$LSREGISTER" -f "$DEST"
