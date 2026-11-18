@@ -19,6 +19,8 @@ public enum BannerAction: Sendable, Equatable {
     case setUp
     case saveRecoveryKit(UUID)
     case showDetails(UUID)
+    /// `config.json` can't be read: Settings → Plans says why.
+    case showSettingsError
 
     /// The words on the banner's (or line's) button.
     public var buttonTitle: String {
@@ -32,62 +34,102 @@ public enum BannerAction: Sendable, Equatable {
         case .finishSetup, .setUp: "Finish Setup…"
         case .saveRecoveryKit: "Save Recovery Kit…"
         case .showDetails: "Show Details…"
+        case .showSettingsError: "Show in Settings…"
+        }
+    }
+
+    /// The menu item that runs the fix (Task 17d): a command naming what choosing it does, as HIG Menus has menu
+    /// items. The problem it fixes is the item's subtitle (`MenuBanner.title`).
+    public var menuTitle: String {
+        switch self {
+        case .openFullDiskAccess: "Allow Full Disk Access…"
+        case .restartAgent: "Restart Backups"
+        case .openLoginItems: "Turn On in Login Items…"
+        case .turnOnNotifications: "Turn On Notifications…"
+        case .addCheckInURL: "Add Check-In URL…"
+        case .dismissOffMacNote: "Don’t Show This Again"
+        case .finishSetup, .setUp: "Finish Setup…"
+        case .saveRecoveryKit: "Save Recovery Kit…"
+        case .showDetails: "Show Details…"
+        case .showSettingsError: "Show in Settings…"
         }
     }
 }
 
-/// A problem shown at the top of the menu, with its fix.
+/// A problem and its fix. The menu shows one about the whole Mac at the top, and one about a plan in that plan's
+/// section (Task 17d), as an item named for the fix with the problem under it.
 public struct MenuBanner: Sendable, Equatable {
     public var severity: Severity
+    /// The problem, short enough for a menu line ("Full Disk Access is missing").
     public var title: String
+    /// Why it matters: the item's tooltip in the menu, the reason under the headline in the Overview.
     public var detail: String
     public var action: BannerAction
-    /// A second button that sets the banner aside for good ("No off-Mac monitoring" only).
+    /// A second item that sets the banner aside for good ("No off-Mac monitoring" only).
     public var dismiss: BannerAction?
+    /// The plan it is about, whose section it sits in; nil for the whole Mac.
+    public var planID: UUID?
 
-    public init(severity: Severity, title: String, detail: String, action: BannerAction, dismiss: BannerAction? = nil) {
+    public init(
+        severity: Severity, title: String, detail: String, action: BannerAction, dismiss: BannerAction? = nil,
+        planID: UUID? = nil
+    ) {
         self.severity = severity
         self.title = title
         self.detail = detail
         self.action = action
         self.dismiss = dismiss
+        self.planID = planID
     }
 }
 
-/// One plan's lines in the menu: its name, status, an optional second line and progress bar, and where it
+/// One plan in the menu: its name (the section header), status, an optional detail and progress bar, and where it
 /// backs up to.
 public struct PlanLine: Sendable, Equatable {
     public var id: UUID
     public var name: String
     public var status: String
+    /// The full reason or detail, as the Overview and setup's Done step show it, and the menu item's tooltip.
     public var detail: String?
+    /// What the menu shows under the status (Task 17d, audit P5): short, never a raw error. Nil when the menu shows
+    /// none, with the full `detail` one click away (the item opens the plan's Overview) and in the tooltip.
+    public var menuDetail: String?
     /// 0 to 1 while a backup is running and restic has reported progress, once it has finished counting the files.
     public var progress: Double?
     /// A backup is running but restic is still counting what there is to back up, so there is no fraction to show:
     /// the menu draws a bar with no end (Task 16e). Never set together with `progress`.
     public var isChecking: Bool
-    public var destination: String
+    /// "B2 · my-backups · 486 GB, 3 days ago". Only its new part ("486 GB, 3 days ago") when the plan is named after
+    /// its repository, as setup names a new one; nil when that leaves nothing (audit P3).
+    public var destination: String?
     public var severity: Severity?
     /// A button under the line ("Show details…" after a failed backup).
     public var action: BannerAction?
-    /// Paused: the status is drawn grey (UI design §5), never as a failure.
+    /// Paused: the pause symbol (UI design §5), never a failure.
     public var isPaused: Bool
+    /// A backup is running (or finishing before an update): the menu's backing-up symbol.
+    public var isRunning: Bool
+    /// The plan has a successful backup: the menu's tick, rather than the empty circle of "No backup yet".
+    public var hasBackup: Bool
 
     public init(
-        id: UUID, name: String, status: String, detail: String? = nil, progress: Double? = nil,
-        isChecking: Bool = false, destination: String, severity: Severity? = nil, action: BannerAction? = nil,
-        isPaused: Bool = false
+        id: UUID, name: String, status: String, detail: String? = nil, menuDetail: String? = nil, progress: Double? = nil,
+        isChecking: Bool = false, destination: String?, severity: Severity? = nil, action: BannerAction? = nil,
+        isPaused: Bool = false, isRunning: Bool = false, hasBackup: Bool = false
     ) {
         self.id = id
         self.name = name
         self.status = status
         self.detail = detail
+        self.menuDetail = menuDetail
         self.progress = progress
         self.isChecking = isChecking
         self.destination = destination
         self.severity = severity
         self.action = action
         self.isPaused = isPaused
+        self.isRunning = isRunning
+        self.hasBackup = hasBackup
     }
 }
 
@@ -140,18 +182,24 @@ public struct MenuContent: Sendable, Equatable {
     public var plans: [PlanLine]
     public var actions: MenuActions
     /// A plain line for states with no plans to show: connecting, updating, the last known backup while the
-    /// agent is down, a damaged installation, a settings file that can't be read.
+    /// agent is down, a damaged installation, a background process that couldn't be registered.
     public var message: String?
+    /// The full sentence behind `message` when it is longer than a menu line should be: the line's tooltip.
+    public var messageDetail: String?
+    /// The status item's tooltip (Task 17d, audit T9): the state at a glance, "Restorey — Last backup at 14:16".
+    public var toolTip: String
 
     public init(
         icon: StatusIconState, banners: [MenuBanner] = [], plans: [PlanLine] = [], actions: MenuActions = .none,
-        message: String? = nil
+        message: String? = nil, messageDetail: String? = nil, toolTip: String = "Restorey"
     ) {
         self.icon = icon
         self.banners = banners
         self.plans = plans
         self.actions = actions
         self.message = message
+        self.messageDetail = messageDetail
+        self.toolTip = toolTip
     }
 }
 
@@ -168,6 +216,15 @@ public enum MenuPresentation {
         now: Date, calendar: Calendar, locale: Locale
     ) -> MenuContent {
         let format = TextContext(now: now, calendar: calendar, locale: locale)
+        var content = content(health: health, status: status, notificationsAuthorised: notificationsAuthorised, format: format)
+        content.toolTip = toolTip(content, status: status, format: format)
+        return content
+    }
+
+    private static func content(
+        health: AgentHealthState, status: AgentStatus?, notificationsAuthorised: Bool?, format: TextContext
+    ) -> MenuContent {
+        let now = format.now
         switch health {
         case .checking:
             return MenuContent(icon: .ok, message: "Connecting to Restorey’s background process…")
@@ -194,9 +251,12 @@ public enum MenuPresentation {
             return MenuContent(icon: .error, banners: [banner], message: lastKnown(status, format))
         case .damaged:
             return MenuContent(
-                icon: .error, message: "Restorey’s installation is damaged — reinstall it from the download")
+                icon: .error, message: "Restorey’s installation is damaged",
+                messageDetail: "Reinstall Restorey from the download.")
         case .failed(let sentence):
-            return MenuContent(icon: .error, message: sentence)
+            // The sentence ends in the system's error, of any length: the line says what happened, its tooltip and
+            // Settings → General say why (audit P5).
+            return MenuContent(icon: .error, message: "Backups couldn’t be set up", messageDetail: sentence)
         case .healthy:
             // Healthy again, with the fresh status still on its way (`shouldRefetchStatus`).
             guard let status else { return MenuContent(icon: .ok, message: "Connecting to Restorey’s background process…") }
@@ -210,13 +270,47 @@ public enum MenuPresentation {
         status: AgentStatus, notificationsAuthorised: Bool?, format: TextContext
     ) -> MenuContent {
         if let configError = status.configError {
-            return MenuContent(icon: .error, message: "Restorey can’t read its settings: \(configError)")
+            // Never the raw error in the menu (audit P5): Settings → Plans shows it.
+            let banner = MenuBanner(
+                severity: .error, title: "Restorey can’t read its settings", detail: configError,
+                action: .showSettingsError)
+            return MenuContent(icon: .error, banners: [banner])
         }
         let banners = banners(status: status, notificationsAuthorised: notificationsAuthorised)
         let lines = status.plans.map { line(for: $0, format: format) }
         return MenuContent(
             icon: icon(banners: banners, plans: status.plans, lines: lines), banners: banners, plans: lines,
-            actions: actions(status.plans), message: status.plans.isEmpty ? "No backup plans yet" : nil)
+            actions: actions(status.plans))
+    }
+
+    // MARK: Tooltip
+
+    /// The status item's tooltip (audit T9): the worst problem when there is one, otherwise what is happening or the
+    /// newest backup, after the app's name.
+    private static func toolTip(_ content: MenuContent, status: AgentStatus?, format: TextContext) -> String {
+        func tip(_ text: String) -> String { "Restorey — \(text)" }
+        switch content.icon {
+        case .error, .warning:
+            let several = content.plans.count > 1
+            let problems = content.banners.map { ($0.severity, $0.title) }
+                + content.plans.compactMap { line in
+                    line.severity.map { ($0, several ? "\(line.name): \(line.status)" : line.status) }
+                }
+            if let worst = problems.max(by: { $0.0 < $1.0 }).flatMap({ worst in problems.first { $0.0 == worst.0 } }) {
+                return tip(worst.1)
+            }
+            return content.message.map(tip) ?? "Restorey"
+        case .backingUp:
+            return tip("Backing up")
+        case .paused:
+            return tip("Paused")
+        case .ok:
+            if let message = content.message, content.plans.isEmpty { return tip(message) }
+            guard let newest = status?.plans.compactMap(\.lastBackup).max(by: { $0.endedAt < $1.endedAt }) else {
+                return tip("No backup yet")
+            }
+            return tip("Last backup \(format.when(newest.endedAt))")
+        }
     }
 
     private static func icon(banners: [MenuBanner], plans: [PlanStatus], lines: [PlanLine]) -> StatusIconState {
@@ -253,7 +347,7 @@ public enum MenuPresentation {
         var banners: [MenuBanner] = []
         if status.plans.isEmpty {
             banners.append(MenuBanner(
-                severity: .warning, title: "Setup not finished",
+                severity: .warning, title: "No backup plan yet",
                 detail: "Set up a backup plan to start backing up this Mac.", action: .setUp))
         }
         let alerts = Set(status.plans.flatMap(\.alerts))
@@ -266,41 +360,36 @@ public enum MenuPresentation {
         }
         if notificationsAuthorised == false || alerts.contains(.notificationsOff) {
             banners.append(MenuBanner(
-                severity: .warning, title: "Notifications are off — Restorey can’t alert you",
-                detail: "Turn them on so a problem with a backup reaches you.", action: .turnOnNotifications))
+                severity: .warning, title: "Notifications are off",
+                detail: "Restorey can’t alert you. Turn them on so a problem with a backup reaches you.",
+                action: .turnOnNotifications))
         }
         for plan in status.plans {
             switch plan.setupState {
             case .unfinished:
                 banners.append(MenuBanner(
                     severity: .warning, title: "Setup not finished",
-                    detail: scoped("Finish setting it up to start backing up.", plan.plan, of: status.plans.count),
-                    action: .finishSetup(plan.plan.id)))
+                    detail: "Finish setting it up to start backing up.",
+                    action: .finishSetup(plan.plan.id), planID: plan.plan.id))
             case .needsNewKit:
                 banners.append(MenuBanner(
                     severity: .warning, title: "New recovery kit needed",
-                    detail: scoped("Save the new kit so backups can carry on.", plan.plan, of: status.plans.count),
-                    action: .saveRecoveryKit(plan.plan.id)))
+                    detail: "Save the new kit so backups can carry on.",
+                    action: .saveRecoveryKit(plan.plan.id), planID: plan.plan.id))
             case .complete:
                 break
             }
             if !plan.plan.hasCheckInURL && !plan.plan.offMacNoteDismissed {
                 banners.append(MenuBanner(
                     severity: .warning, title: "No off-Mac monitoring",
-                    detail: scoped("Add a check-in URL so you hear if this Mac stops.", plan.plan, of: status.plans.count),
-                    action: .addCheckInURL(plan.plan.id), dismiss: .dismissOffMacNote(plan.plan.id)))
+                    detail: "Add a check-in URL so you hear if this Mac stops.",
+                    action: .addCheckInURL(plan.plan.id), dismiss: .dismissOffMacNote(plan.plan.id), planID: plan.plan.id))
             }
         }
         // Errors first, otherwise in the order found.
         return banners.enumerated()
             .sorted { ($0.element.severity, $1.offset) > ($1.element.severity, $0.offset) }
             .map(\.element)
-    }
-
-    /// With several plans, a banner says which one it is about.
-    private static func scoped(_ sentence: String, _ plan: Plan, of count: Int) -> String {
-        guard count > 1, let first = sentence.first else { return sentence }
-        return "\(plan.name): \(first.lowercased())\(sentence.dropFirst())"
     }
 
     // MARK: Plan lines
@@ -317,10 +406,12 @@ public enum MenuPresentation {
     ) -> PlanLine {
         let plan = status.plan
         var line = PlanLine(
-            id: plan.id, name: plan.name, status: "", destination: destination(status, format))
+            id: plan.id, name: plan.name, status: "", destination: destination(status, format),
+            hasBackup: status.lastBackup != nil)
         switch status.phase {
         case .running(let progress, let retrying):
             line.status = "Backing up"
+            line.isRunning = true
             // While restic is still counting, its totals only grow: no fraction, no time left (Task 16e).
             if let progress {
                 if progress.scanFinished {
@@ -329,11 +420,19 @@ public enum MenuPresentation {
                     line.isChecking = true
                 }
             }
-            line.detail = retrying.map { "Retrying: \($0)" } ?? runningDetail(progress, format)
+            if let retrying {
+                // The agent's reason can be restic's error: the Overview has it, the menu says what is happening.
+                line.detail = "Retrying: \(retrying)"
+                line.menuDetail = "Retrying after a problem"
+            } else {
+                line.detail = runningDetail(progress, format)
+                line.menuDetail = line.detail
+            }
         case .paused(let until):
             line.status = "Paused"
             line.isPaused = true
             line.detail = Words.resumes(until, format)
+            line.menuDetail = line.detail
         case .idle, .skipped, .stopped:
             settled(status, into: &line, format)
         }
@@ -362,6 +461,8 @@ public enum MenuPresentation {
             line.status = Words.backupFailed(failed, format)
             if let reason = failed?.outcome.failureReason {
                 line.detail = reason
+                // Only Restorey's own short reasons go in the menu; restic's error is "Show Details…" away.
+                line.menuDetail = failed?.outcome.shortFailureReason
             } else if case .stopped(let reason) = status.phase {
                 line.detail = reason
             }
@@ -374,10 +475,14 @@ public enum MenuPresentation {
             line.status = "No successful backup in \(days) \(days == 1 ? "day" : "days")"
             line.severity = .error
             // A skipped run is usually why nothing has succeeded.
-            if case .skipped(let reason) = status.phase { line.detail = reason.summary }
+            if case .skipped(let reason) = status.phase {
+                line.detail = reason.summary
+                line.menuDetail = reason.summary
+            }
             return
         }
         if case .stopped(let reason) = status.phase {
+            // The agent's reason, of any length: the menu item opens the plan, whose page shows it (audit P5).
             line.status = "Stopped"
             line.detail = reason
             line.severity = .error
@@ -387,10 +492,23 @@ public enum MenuPresentation {
         let facts = settledFacts(status, format)
         line.status = facts.status
         // A skip with no backup yet is the status itself, so it isn't repeated in the detail.
-        var details = facts.issues.filter { $0 != facts.status }
-        if details.isEmpty, let next = status.nextRunAt { details = [Words.next(next, format)] }
-        line.detail = details.isEmpty ? nil : details.joined(separator: " · ")
+        var details = facts.issues.filter { $0.full != facts.status }
+        if details.isEmpty, let next = status.nextRunAt {
+            let text = Words.next(next, format)
+            details = [Issue(full: text, short: text)]
+        }
+        line.detail = details.isEmpty ? nil : details.map(\.full).joined(separator: " · ")
+        // One line in the menu: the first (a skip first, then the worst found first), the rest in the tooltip.
+        line.menuDetail = details.first.map { first in
+            details.count > 1 ? "\(first.short) (+\(details.count - 1) more)" : first.short
+        }
         line.severity = facts.severity
+    }
+
+    /// Something a settled plan's line says, in full (the Overview) and short enough for the menu (audit P5).
+    fileprivate struct Issue: Equatable {
+        var full: String
+        var short: String
     }
 
     /// What a settled plan (no failure alert, not stopped) shows, apart from its next run: the status, what needs
@@ -398,7 +516,7 @@ public enum MenuPresentation {
     /// Overview's headline and reason, so a coloured Overview headline always has its reason (re-review N1).
     fileprivate struct SettledFacts {
         var status: String
-        var issues: [String]
+        var issues: [Issue]
         var severity: Severity?
     }
 
@@ -406,7 +524,7 @@ public enum MenuPresentation {
         let alerts = Set(status.alerts)
         var facts = SettledFacts(status: Words.noBackup(status), issues: [], severity: nil)
         func flag(_ text: String, _ level: Severity) {
-            facts.issues.append(text)
+            facts.issues.append(Issue(full: text, short: text))
             facts.severity = max(facts.severity ?? level, level)
         }
 
@@ -418,11 +536,13 @@ public enum MenuPresentation {
         if status.lastBackup == nil, case .idle = status.phase, let next = status.nextRunAt,
             let outcome = status.latestBackupRecord?.outcome, Words.interruptsFirstBackup(outcome)
         {
-            facts.issues.append("The first backup was interrupted. It carries on at \(format.time(next)), keeping what’s already uploaded.")
+            facts.issues.append(Issue(
+                full: "The first backup was interrupted. It carries on at \(format.time(next)), keeping what’s already uploaded.",
+                short: "Interrupted, carries on at \(format.time(next))"))
         }
         if case .skipped(let reason) = status.phase {
             if status.lastBackup == nil { facts.status = reason.summary }
-            facts.issues.insert(reason.summary, at: 0)
+            facts.issues.insert(Issue(full: reason.summary, short: reason.summary), at: 0)
             if reason != .agentUpdating { facts.severity = max(facts.severity ?? .warning, .warning) }
         }
         if alerts.contains(.checkInRejected) { flag("The check-in service rejected the last ping", .warning) }
@@ -433,20 +553,23 @@ public enum MenuPresentation {
 
     // MARK: Destination
 
-    /// "B2 · my-backups · 486 GB, 3 days ago": the size only once it has been measured.
-    private static func destination(_ status: PlanStatus, _ format: TextContext) -> String {
-        var text: String
+    /// "B2 · my-backups · 486 GB, 3 days ago": the size only once it has been measured. A plan named after its
+    /// repository (setup's default, `StorageForm.planName`) has its name in the section header already, so the line
+    /// keeps only what is new, the size, or is left out (audit P3).
+    private static func destination(_ status: PlanStatus, _ format: TextContext) -> String? {
+        let place: String
         switch status.plan.repository {
         case .s3(let location):
-            text = "\(location.provider == .b2 ? "B2" : "S3") · \(location.bucket)"
+            place = "\(location.provider == .b2 ? "B2" : "S3") · \(location.bucket)"
         case .raw(let repository, _):
-            text = rawDestination(repository)
+            place = rawDestination(repository)
         }
-        if let size = status.repositorySize {
+        let size = status.repositorySize.map { size in
             let age = DisplayFormat.age(of: size.measuredAt, now: format.now, calendar: format.calendar, locale: format.locale)
-            text += " · \(DisplayFormat.size(size.bytes, locale: format.locale)), \(age)"
+            return "\(DisplayFormat.size(size.bytes, locale: format.locale)), \(age)"
         }
-        return text
+        let parts = (place == status.plan.name ? [] : [place]) + [size].compactMap(\.self)
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private static let backendNames = [
@@ -473,10 +596,12 @@ public enum MenuPresentation {
         let lines = running.map { plan -> PlanLine in
             var line = PlanLine(
                 id: plan.plan.id, name: plan.plan.name,
-                status: "Finishing the current backup before updating", destination: destination(plan, format))
+                status: "Finishing the current backup before updating", destination: destination(plan, format),
+                isRunning: true, hasBackup: plan.lastBackup != nil)
             // Time left means nothing until restic has finished counting (Task 16e).
             if case .running(let progress?, _) = plan.phase, progress.scanFinished, let seconds = progress.secondsRemaining {
                 line.detail = "\(DisplayFormat.remaining(seconds: seconds)) left"
+                line.menuDetail = line.detail
             }
             return line
         }
@@ -659,7 +784,7 @@ extension MenuPresentation {
             // agent's, and its detail is the reason.
             let banner = content.banners.first
             overview.headline = banner?.title ?? content.message ?? ""
-            overview.reason = banner?.detail
+            overview.reason = banner?.detail ?? content.messageDetail
             overview.severity = banner?.severity
         }
 
@@ -706,7 +831,7 @@ extension MenuPresentation {
             // The same facts as the menu's line, without its "Next …" (that time is the row's): every warning or
             // error is in the reason, a first run's skip included (re-review N1).
             let facts = settledFacts(plan, format)
-            overview.reason = facts.issues.isEmpty ? nil : facts.issues.joined(separator: " · ")
+            overview.reason = facts.issues.isEmpty ? nil : facts.issues.map(\.full).joined(separator: " · ")
             overview.severity = facts.severity
             // The items belong to the line `settledFacts` just put in the reason: the same record.
             if let last = plan.lastBackup, Words.unreadable(last) != nil { overview.unreadable = UnreadableSummary(record: last) }
@@ -855,6 +980,18 @@ extension RunOutcome {
         case .credentialsUnavailable: "credentials unavailable"
         case .interrupted: "interrupted"
         case .failed(_, let reason): reason
+        default: nil
+        }
+    }
+
+    /// The failure reason as a menu line shows it (audit P5): Restorey's own short reasons, capitalised to start the
+    /// line, and nil for restic's error, which can be any length.
+    var shortFailureReason: String? {
+        switch self {
+        case .wrongPassword: "Wrong password"
+        case .repositoryMissing: "Repository not found"
+        case .credentialsUnavailable: "Credentials unavailable"
+        case .interrupted: "Interrupted"
         default: nil
         }
     }

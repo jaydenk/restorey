@@ -151,6 +151,8 @@ struct MenuPresentationTests {
         let sentence = "The first backup was interrupted. It carries on at 10:25, keeping what’s already uploaded."
         #expect(content.plans[0].status == "No backup yet")
         #expect(content.plans[0].detail == sentence)
+        // The menu's line is short (audit P5); the Overview and the item's tooltip have the sentence.
+        #expect(content.plans[0].menuDetail == "Interrupted, carries on at 10:25")
         #expect(content.plans[0].severity == nil)
         #expect(content.icon == .ok)
         // The Overview reads the same facts.
@@ -327,7 +329,10 @@ struct MenuPresentationTests {
         let content = Self.make(Self.status([Self.line(Self.plan())]), notifications: false)
         #expect(content.icon == .warning)
         #expect(content.banners.count == 1)
-        #expect(content.banners[0].title == "Notifications are off — Restorey can’t alert you")
+        #expect(content.banners[0].title == "Notifications are off")
+        #expect(content.banners[0].detail
+            == "Restorey can’t alert you. Turn them on so a problem with a backup reaches you.")
+        #expect(content.banners[0].planID == nil)
         #expect(content.banners[0].severity == .warning)
         #expect(content.banners[0].action == .turnOnNotifications)
         #expect(content.banners[0].dismiss == nil)
@@ -337,9 +342,9 @@ struct MenuPresentationTests {
         let plan = Self.plan()
         let content = Self.make(
             Self.status([Self.line(plan, alerts: [.notificationsOff])]), notifications: false)
-        #expect(content.banners.map(\.title) == ["Notifications are off — Restorey can’t alert you"])
+        #expect(content.banners.map(\.title) == ["Notifications are off"])
         let fromAlert = Self.make(Self.status([Self.line(plan, alerts: [.notificationsOff])]), notifications: nil)
-        #expect(fromAlert.banners.map(\.title) == ["Notifications are off — Restorey can’t alert you"])
+        #expect(fromAlert.banners.map(\.title) == ["Notifications are off"])
     }
 
     @Test func noOffMacMonitoringCanBeAddedOrDismissed() {
@@ -512,11 +517,15 @@ struct MenuPresentationTests {
         #expect(content.plans[0].status == "Backed up at 14:16")
     }
 
-    @Test func severalPlansNameTheOneABannerIsAbout() {
+    /// Task 17d: a banner about one plan carries the plan, so the menu puts it in that plan's section; its words no
+    /// longer need the plan's name in front.
+    @Test func aBannerAboutAPlanCarriesThePlan() {
         let first = Self.plan("MacBook", checkIn: false)
         let second = Self.plan("Photos drive")
         let content = Self.make(Self.status([Self.line(first), Self.line(second)]))
-        #expect(content.banners[0].detail == "MacBook: add a check-in URL so you hear if this Mac stops.")
+        #expect(content.banners == [MenuBanner(
+            severity: .warning, title: "No off-Mac monitoring", detail: "Add a check-in URL so you hear if this Mac stops.",
+            action: .addCheckInURL(first.id), dismiss: .dismissOffMacNote(first.id), planID: first.id)])
     }
 
     // MARK: Updating and an unanswering agent
@@ -629,10 +638,11 @@ struct MenuPresentationTests {
     @Test func noPlansYet() {
         let content = Self.make(Self.status([]))
         #expect(content.icon == .warning)
-        #expect(content.message == "No backup plans yet")
+        // The banner says it; a second line saying the same went (Task 17d).
+        #expect(content.message == nil)
         #expect(content.actions.plans.isEmpty)
         #expect(content.banners == [MenuBanner(
-            severity: .warning, title: "Setup not finished", detail: "Set up a backup plan to start backing up this Mac.",
+            severity: .warning, title: "No backup plan yet", detail: "Set up a backup plan to start backing up this Mac.",
             action: .setUp)])
         #expect(BannerAction.setUp.buttonTitle == "Finish Setup…")
     }
@@ -640,10 +650,13 @@ struct MenuPresentationTests {
     @Test func aDamagedInstallationAndARegistrationFailure() {
         let damaged = Self.make(nil, health: .damaged)
         #expect(damaged.icon == .error)
-        #expect(damaged.message == "Restorey’s installation is damaged — reinstall it from the download")
+        #expect(damaged.message == "Restorey’s installation is damaged")
+        #expect(damaged.messageDetail == "Reinstall Restorey from the download.")
         let failed = Self.make(nil, health: .failed("Couldn’t register the agent."))
         #expect(failed.icon == .error)
-        #expect(failed.message == "Couldn’t register the agent.")
+        // The sentence ends in a system error of any length, so it is the line's tooltip (audit P5).
+        #expect(failed.message == "Backups couldn’t be set up")
+        #expect(failed.messageDetail == "Couldn’t register the agent.")
     }
 
     @Test func aConfigurationErrorStopsEverything() {
@@ -651,7 +664,12 @@ struct MenuPresentationTests {
         status.configError = "config.json is from a newer version"
         let content = Self.make(status)
         #expect(content.icon == .error)
-        #expect(content.message == "Restorey can’t read its settings: config.json is from a newer version")
+        // Never the raw error in a menu line (audit P5): the banner opens Settings → Plans, which shows it.
+        #expect(content.message == nil)
+        #expect(content.plans.isEmpty)
+        #expect(content.banners == [MenuBanner(
+            severity: .error, title: "Restorey can’t read its settings", detail: "config.json is from a newer version",
+            action: .showSettingsError)])
     }
 
     /// Carried from the old `statusIconState` tests: a plan the agent stopped (a configuration problem) is an
@@ -678,11 +696,88 @@ struct MenuPresentationTests {
         #expect(StatusIconState.paused < .warning && StatusIconState.warning < .error)
     }
 
+    // MARK: Task 17d: short menu lines, the destination, the tooltip
+
+    /// Audit P5: only Restorey's own short reasons are a menu line; restic's error and an agent's stop reason stay in
+    /// `detail` (the Overview, the item's tooltip).
+    @Test func theMenuDetailIsNeverARawError() {
+        let plan = Self.plan()
+        let raw = Self.record(plan, .failed(exitCode: 1, reason: "Fatal: unable to open config file: Stat: 403"), at: Self.at(14, 16))
+        let failed = Self.make(Self.status([Self.line(plan, last: raw, alerts: [.backupFailed])])).plans[0]
+        #expect(failed.detail == "Fatal: unable to open config file: Stat: 403")
+        #expect(failed.menuDetail == nil)
+        let password = Self.record(plan, .wrongPassword, at: Self.at(14, 16))
+        let wrong = Self.make(Self.status([Self.line(plan, last: password, alerts: [.backupFailed])])).plans[0]
+        #expect(wrong.detail == "wrong password")
+        #expect(wrong.menuDetail == "Wrong password")
+        let stopped = Self.make(Self.status([Self.line(plan, phase: .stopped(reason: "The repository was not found"), next: nil)]))
+        #expect(stopped.plans[0].menuDetail == nil)
+        let progress = BackupStatus(percentDone: 0.1, totalBytes: 1_000_000_000, bytesDone: 100_000_000, scanFinished: true)
+        let retrying = Self.make(Self.status([
+            Self.line(plan, phase: .running(progress, retrying: "lock held by another client")),
+        ]))
+        #expect(retrying.plans[0].menuDetail == "Retrying after a problem")
+    }
+
+    /// Audit P5: one thing per menu line; the rest is counted, and in the tooltip.
+    @Test func severalIssuesShowTheFirstAndCountTheRest() {
+        let plan = Self.plan()
+        let content = Self.make(Self.status([
+            Self.line(plan, phase: .skipped(.onBattery), outcome: .warning(unreadable: 3), alerts: [.checkInRejected]),
+        ]))
+        #expect(content.plans[0].detail
+            == "Skipped while on battery · 3 files couldn’t be read · The check-in service rejected the last ping")
+        #expect(content.plans[0].menuDetail == "Skipped while on battery (+2 more)")
+    }
+
+    @Test func aSettledPlansMenuDetailIsItsNextRun() {
+        let content = Self.make(Self.status([Self.line(Self.plan())]))
+        #expect(content.plans[0].menuDetail == "Next 15:16")
+        #expect(content.plans[0].hasBackup)
+        #expect(!content.plans[0].isRunning)
+    }
+
+    /// Audit P3: a plan named after its repository (setup's default) doesn't repeat it under its name.
+    @Test func theDestinationDoesNotRepeatThePlansName() {
+        let named = Self.plan("B2 · my-backups")
+        #expect(Self.make(Self.status([Self.line(named)])).plans[0].destination == nil)
+        let size = RepositorySize(bytes: 486_000_000_000, measuredAt: Self.at(14, 20, daysAgo: 3))
+        #expect(Self.make(Self.status([Self.line(named, size: size)])).plans[0].destination == "486 GB, 3 days ago")
+        #expect(Self.make(Self.status([Self.line(Self.plan("MacBook"), size: size)])).plans[0].destination
+            == "B2 · my-backups · 486 GB, 3 days ago")
+    }
+
+    /// Audit T9: the status item's tooltip.
+    @Test func theStatusItemsTooltip() {
+        let plan = Self.plan()
+        #expect(Self.make(Self.status([Self.line(plan)])).toolTip == "Restorey — Last backup at 14:16")
+        #expect(Self.make(Self.status([Self.line(plan, backedUpAt: Self.at(9, 5, daysAgo: 1))])).toolTip
+            == "Restorey — Last backup yesterday at 09:05")
+        #expect(Self.make(Self.status([Self.line(plan, backedUpAt: nil)])).toolTip == "Restorey — No backup yet")
+        let progress = BackupStatus(percentDone: 0.5, totalBytes: 10, bytesDone: 5)
+        #expect(Self.make(Self.status([Self.line(plan, phase: .running(progress, retrying: nil))])).toolTip
+            == "Restorey — Backing up")
+        #expect(Self.make(Self.status([Self.line(plan, phase: .paused(until: Self.at(15, 0)))])).toolTip
+            == "Restorey — Paused")
+        // The worst problem: an error before a warning, a banner's words, or a plan's (named when there are several).
+        #expect(Self.make(Self.status([Self.line(plan)]), notifications: false).toolTip
+            == "Restorey — Notifications are off")
+        #expect(Self.make(Self.status([Self.line(plan)], fdaMissing: true), notifications: false).toolTip
+            == "Restorey — Full Disk Access is missing")
+        let failed = Self.record(plan, .wrongPassword, at: Self.at(14, 16))
+        let other = Self.plan("Photos")
+        #expect(Self.make(Self.status([Self.line(other), Self.line(plan, last: failed, alerts: [.backupFailed])])).toolTip
+            == "Restorey — MacBook: Backup failed at 14:16")
+        #expect(Self.make(nil, health: .checking).toolTip == "Restorey — Connecting to Restorey’s background process…")
+        #expect(Self.make(nil, health: .notRunning(reachable: true)).toolTip == "Restorey — Backups aren’t running")
+        #expect(Self.make(nil, health: .damaged).toolTip == "Restorey — Restorey’s installation is damaged")
+    }
+
     // MARK: Helpers
 
     private static func text(of content: MenuContent) -> String {
         var parts: [String] = content.banners.flatMap { [$0.title, $0.detail] }
-        parts += content.plans.flatMap { [$0.name, $0.status, $0.detail ?? "", $0.destination] }
+        parts += content.plans.flatMap { [$0.name, $0.status, $0.detail ?? "", $0.menuDetail ?? "", $0.destination ?? ""] }
         parts.append(content.message ?? "")
         return parts.joined(separator: "\n")
     }

@@ -35,6 +35,9 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
     private var visibilityObservation: NSKeyValueObservation?
     /// Between `menuWillOpen` and `menuDidClose`: changes are drawn into the open menu at once.
     private var menuIsOpen = false
+    /// Option was held as the menu opened (Option-click), so it shows the diagnostics section until it closes
+    /// (audit T1). As in Apple's own menu bar extras, the section comes with the click; it isn't added mid-menu.
+    private var showsDiagnostics = false
     #if DEBUG
     private var openDeveloperWindow: (() -> Void)?
     #endif
@@ -101,13 +104,35 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
     private func changed() {
         switch mode {
         case .refused: setIcon(.warning)
-        case .broken: setIcon(.error)
+        case .broken(let message):
+            setIcon(.error)
+            item.button?.toolTip = "Restorey — \(message)"
         case .running(let supervisor, _):
             let content = content(supervisor)
             setIcon(content.icon)
+            // The state at a glance without opening the menu (audit T9); VoiceOver reads it as the button's help.
+            item.button?.toolTip = content.toolTip
             // A closed menu is built when it next opens (`menuNeedsUpdate`).
-            if menuIsOpen { MenuBuilder.build(content, into: menu, actions: self, developer: Self.developer) }
+            if menuIsOpen { build(content, supervisor) }
         }
+    }
+
+    private func build(_ content: MenuContent, _ supervisor: AgentSupervisor) {
+        MenuBuilder.build(
+            content, into: menu, actions: self, developer: Self.developer,
+            diagnostics: showsDiagnostics ? diagnostics(supervisor) : nil)
+    }
+
+    /// What Option-click shows: this copy's and the agent's versions, and the logs.
+    private func diagnostics(_ supervisor: AgentSupervisor) -> MenuDiagnostics {
+        let info = Bundle.main.infoDictionary ?? [:]
+        return MenuDiagnostics(
+            appVersion: info["CFBundleShortVersionString"] as? String ?? "unknown",
+            appBuild: info["CFBundleVersion"] as? String ?? "unknown",
+            health: supervisor.health, agentVersion: supervisor.lastHello?.agentVersion,
+            agentBuild: supervisor.lastHello?.agentBuild,
+            lastLog: MenuDiagnostics.lastLog(supervisor.status ?? supervisor.lastKnownStatus),
+            system: "macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
     }
 
     private func setIcon(_ state: StatusIconState) {
@@ -135,9 +160,9 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
             menu.addItem(.separator())
             menu.addItem(quitItem())
         case .running(let supervisor, _):
-            // Nothing is highlighted as the menu opens; an item highlighted when it last closed gets its colours back.
-            MenuBuilder.willHighlight(nil, in: menu)
-            MenuBuilder.build(content(supervisor), into: menu, actions: self, developer: Self.developer)
+            // Read as the menu is about to open, from the click that opened it.
+            showsDiagnostics = NSEvent.modifierFlags.contains(.option)
+            build(content(supervisor), supervisor)
         }
     }
 
@@ -147,11 +172,6 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
 
     func menuDidClose(_ menu: NSMenu) {
         menuIsOpen = false
-    }
-
-    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
-        guard case .running = mode else { return }
-        MenuBuilder.willHighlight(item, in: menu)
     }
 
     private func line(_ title: String) -> NSMenuItem {
@@ -212,6 +232,21 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
             #if DEBUG
             openDeveloperWindow?()
             #endif
+        case .showLog(let file):
+            // Only a file inside the logs folder's runs (`logURL`), and only while it is still there.
+            if let url = HistoryPresentation.logURL(file, logsDirectory: supervisor.identity.logsDirectory()),
+                FileManager.default.fileExists(atPath: url.path)
+            {
+                NSWorkspace.shared.open(url)
+            } else {
+                router.showSettings(section: .history)
+            }
+        case .showLogsFolder:
+            NSWorkspace.shared.activateFileViewerSelecting([supervisor.identity.logsDirectory()])
+        case .copyDiagnostics:
+            let text = diagnostics(supervisor).text(content(supervisor))
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
         case .quit:
             quit()
         }
@@ -241,6 +276,8 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
             router.showRecoveryKit(planID: planID)
         case .showDetails(let planID):
             router.showSettings(section: .history, planID: planID)
+        case .showSettingsError:
+            router.showSettings(section: .plans)
         }
     }
 

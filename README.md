@@ -46,12 +46,15 @@ folder by default, with the default exclusions) and the schedule (hourly by defa
 optional check-in URL), then start the first backup. Quitting part-way resumes where you left off. "Add Plan…" in
 Settings → Plans runs the same steps for another plan.
 
-**The menu.** The menu bar icon shows the worst state across all plans. The menu lists any problem first, each with
-its fix (Full Disk Access missing, notifications off, the agent not running or switched off, an unfinished setup, a
-recovery kit to save again, no off-Mac monitoring); then one entry per plan with its status, progress or next run,
-and destination (choosing it opens the plan in Settings, and a failed one has "Show Details…" for its history);
-then Resume, Back Up Now and Pause, Restore Files…, Settings… (⌘,) and Quit Restorey. Backups run from the background
-agent whether or not the app is open.
+**The menu.** The menu bar icon shows the worst state across all plans, and its tooltip says it in words
+("Restorey — Last backup at 14:16", or the worst problem). The menu lists any problem with the whole Mac first, each as
+an item named for its fix with the problem under it (Allow Full Disk Access…, Turn On Notifications…, Restart Backups,
+Turn On in Login Items…); then a section per plan, headed by its name, with its status, progress or next run, and
+destination (choosing it opens the plan in Settings), then that plan's own problems (Finish Setup…, Save Recovery
+Kit…, Add Check-In URL… with Don't Show This Again) and, after a failure, Show Details… for its history; then Resume,
+Back Up Now and Pause, Restore Files…, Settings… (⌘,) and Quit Restorey. Option-click the icon for diagnostics: the
+app's and the background process's versions, Show Last Run Log, Show Logs in Finder and Copy Diagnostics. Backups run
+from the background agent whether or not the app is open.
 
 **Settings** has four sections in its toolbar:
 
@@ -363,8 +366,8 @@ the dot in its close button while a plan or the Network section has unsaved edit
 Save or Cancel question on close and quit asks about (the router's one `unsavedSettings`). Esc closes the sheets that have
 only a Done button (exclusions, items marked not for backup, biggest additions, files that couldn't be read) as
 Done does; the two that edit apply into the page's unsaved fields, so the page's Revert is their way back. The menu's routes pick the section
-and plan: a plan's line opens it in Plans, "Show Details…" opens History for that plan, and "No off-Mac monitoring —
-Add…" opens the plan's Schedule tab, whose Alerts section has the check-in URL.
+and plan: a plan's status opens it in Plans, "Show Details…" opens History for that plan, and "Add Check-In URL…" opens
+the plan's Schedule tab, whose Alerts section has the check-in URL.
 
 Every pane is laid out the same way (UI polish pass, Task 17c): a grouped form (`Form`, `.formStyle(.grouped)`), as
 System Settings has, with each setting a row (`LabeledContent`, the label leading and the control trailing),
@@ -399,7 +402,7 @@ needing a new kit shows "New recovery kit needed" with "Save Recovery Kit…"; a
 time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`PlanNote`). Every other plan has tabs:
 
 - **Overview**, first and where a plan opens (picked in the list, the menu's plan line, a new Settings window; a
-  route that names a tab, such as "Add…" for Schedule, keeps it; `planRequestLandsOnFirstTab`): a headline with the
+  route that names a tab, such as the menu's "Add Check-In URL…" for Schedule, keeps it; `planRequestLandsOnFirstTab`): a headline with the
   plan's state only ("Up to date", "Backing up — 42%", "Paused", "Backup failed", "Stopped", "Needs attention",
   "Waiting for a new recovery kit", "No backup yet") and the menu's reason under it, coloured only when the plan
   itself needs attention; then the times, only in the Last backup and Next backup rows ("Today at 17:10", "Tomorrow
@@ -456,9 +459,9 @@ them. The check isn't a run: it leaves nothing in the plan's history or run logs
 and a Back Up Now meanwhile waits its turn in the repository's queue, as during the size measurement after an
 adopt. Like that measurement it is registered with the agent only once its turn comes (registrations are counted,
 since the two can overlap), so deleting the plan never waits for whatever is queued ahead of it. The typed secrets go when the save succeeds, on Revert, when another plan is shown and when
-the window closes. Every change of the plan shown (the list, a plan's line in the menu, "Add…", opening the app
+the window closes. Every change of the plan shown (the list, a plan's status in the menu, "Add Check-In URL…", opening the app
 again) goes through one guard (`PlanSelection`): with unsaved edits, a request for another plan waits for "Discard
-your changes…?" (a tab the route named, such as Alerts for "Add…", is shown once the switch happens), and closing
+your changes…?" (a tab the route named, such as Alerts for "Add Check-In URL…", is shown once the switch happens), and closing
 the window or quitting Restorey asks Save, Don't Save or Cancel (a refused save cancels the quit; a quit while
 Settings already has a question up is cancelled, and the window brought forward so that question is answered first). The editor belongs to the window, so going
 to General and back keeps them. − under the list (or Delete, or "Delete Plan…" in a plan's context menu) asks with the developer window's words ("Its
@@ -517,7 +520,10 @@ glyphs are vector SVG template images in `App/Assets.xcassets` (`StatusIdle`, `S
 `StatusAttention`, `StatusError`, mapped in `App/StatusIcon.swift`), 18 × 19 pt, with 1.7 pt layer outlines and 1.6 pt state marks 6.5 pt tall (about the weight of `wifi` and `battery.100percent` at menu bar size), monochrome like
 the rest of the menu bar (owner, 12 Nov 2026). A template image is drawn from its alpha channel, so the menu bar
 tints and dims them like its own and keeps the fade (Apple's `NSImage.isTemplate`: "You can use the alpha channel in
-the image to adjust the opacity of black content"); colour is kept for the text inside the open menu.
+the image to adjust the opacity of black content"); colour is kept for the severity symbols inside the open menu.
+The icon's tooltip says the state in words, updated with the icon (`MenuContent.toolTip`): the worst problem when
+there is one ("Restorey — Full Disk Access is missing", or "Restorey — MacBook: Backup failed at 14:16" with several
+plans), otherwise "Restorey — Backing up", "Restorey — Paused" or the newest backup, "Restorey — Last backup at 14:16".
 `scripts/verify-bundle.sh` checks every glyph is in the built app as a template image.
 
 ### The app icon
@@ -534,44 +540,67 @@ Tool), and preview any appearance with Icon Composer's `ictool` (`--export-image
 for example). `scripts/verify-bundle.sh` checks both bundles carry the icon. The icon and glyphs are original
 artwork.
 
-With no plan at all, the menu shows "Setup not finished — Finish Setup…" (a warning), which reopens setup where it
-was left, so a setup window closed before its first plan can always be found again.
+With no plan at all, the menu shows "Finish Setup…" over "No backup plan yet" (a warning), which reopens setup where
+it was left, so a setup window closed before its first plan can always be found again.
 
-The menu, top to bottom:
+The menu is built from standard AppKit items (Task 17d), so it looks, highlights and reads to VoiceOver as the system's
+own menus do: section headers (`NSMenuItem.sectionHeader(title:)`, macOS 14), a title with a subtitle under it
+(`NSMenuItem.subtitle`, macOS 14.4), a symbol image and a tooltip. Which rows there are and what they say is decided in
+`MenuLayout` (RestoreyCore, tested string for string); `App/MenuBuilder.swift` only makes the items. Top to bottom:
 
-- **Banners** for each problem, errors first, each with its fix: choosing the banner runs it. "Full Disk Access is
-  missing — Open System Settings" opens Privacy & Security → Full Disk Access and Settings → General, which holds the tile to drag
-  into the list (the banner goes when the agent finds access granted); "Notifications are off — Restorey can't alert you —
-  Open System Settings" opens the agent's page in Notifications; "Backups aren’t running — Restart Backups";
-  "Backups are switched off — Open System Settings"; "Setup not finished — Finish Setup…"; "New recovery
-  kit needed — Save Recovery Kit…"; "No off-Mac monitoring — Add…" (opens the plan in Settings), with "Don't Show
-  This Again" under it.
-- **One entry per plan**: its name, status ("Backed up at 14:16", "Backing up", grey "Paused" with "Resumes by
-  itself at 15:20", "Backup failed at 14:16" in red, with the time and reason of the newest backup that had a verdict, the same record
-the "backup failed" alert is decided from, so a skip, pause or lock since doesn't hide them; a skip reason in
-orange), a detail line (bytes done of the total and time left
-  while backing up, or the next run; no upload speed, because restic 0.19.1 reports no count of bytes uploaded, only bytes
-  processed, which counts unchanged files at once) and its destination with the repository size. A running
-  backup has a progress bar under it. restic counts the files while it is already backing them up, so its totals only
-  grow until the count is done and a percentage would read 100% long before the backup is. Until restic reports the
-  count as finished (`verbose_status` `scan_finished`), the bar has no end and the detail reads "Checking for changes…
-  412,000 files so far", with no percentage and no time left (also in the "Finishing the current backup" line while
-  the agent updates). After that come the bar, "1.2 of 365 GB · ~6 min" and "Backing up — 42%". If restic never
-  reports it, the checking line stays until the backup ends. Choosing a plan opens it in Settings; a failed one has "Show Details…" (its
-  history).
+- **Problems with the whole Mac**, errors first. Each is one item named for its fix, the problem as its subtitle,
+  why it matters as its tooltip, and the severity's symbol (the system's red octagon or yellow triangle, in their own
+  colours). Choosing it runs the fix: "Allow Full Disk Access…" (Full Disk Access is missing) opens Privacy &
+  Security → Full Disk Access and Settings → General, which holds the tile to drag into the list (it goes when the
+  agent finds access granted); "Turn On Notifications…" (Notifications are off) opens the agent's page in
+  Notifications; "Restart Backups" (Backups aren't running, or aren't responding); "Turn On in Login Items…"
+  (Backups are switched off); "Finish Setup…" (No backup plan yet); and "Show in Settings…" (Restorey can't read its
+  settings), which opens Settings → Plans with the reason. A line such as "Last known: backed up at 13:16" or
+  "Backups couldn't be set up" follows when there is one, with any long reason in its tooltip.
+- **A section per plan**, headed by the plan's name. Its status item has the status as its title ("Backed up at
+  14:16", "Backing up", "Paused", "Backup failed at 14:16", "Stopped") and a symbol for the state: a tick once backed
+  up, a dashed circle before the first backup, an up arrow while backing up, a pause mark, or the warning or error
+  symbol. Under the title, one short detail and the destination: bytes done of the total and time left while backing
+  up, "Resumes by itself at 15:20", the next run, or the first thing that needs attention ("Skipped while on
+  battery (+1 more)"); then "B2 · my-backups · 486 GB, 3 days ago". A plan named after its repository (setup's
+  default) shows only the size there, not its name again. A menu line is never restic's raw error: a failure from
+  restic, a stop's reason or a retry's cause is the item's tooltip and the plan's Overview, one click away (choosing
+  the status opens the plan in Settings); Restorey's own short reasons ("Wrong password") do show. A running backup
+  has a progress bar under the status, across the menu's width. restic counts the files while it is already backing
+  them up, so its totals only grow until the count is done and a percentage would read 100% long before the backup
+  is. Until restic reports the count as finished (`verbose_status` `scan_finished`), the bar has no end and the
+  detail reads "Checking for changes… 412,000 files so far", with no percentage and no time left (also under
+  "Finishing the current backup before updating" while the agent updates). After that come the bar and "1.2 of 365 GB
+  · ~6 min". If restic never reports it, the checking line stays until the backup ends. No upload speed: restic
+  0.19.1 reports no count of bytes uploaded, only bytes processed, which counts unchanged files at once. Then the
+  plan's own problems, as above: "Finish Setup…" (Setup not finished), "Save Recovery Kit…" (New recovery kit
+  needed), "Add Check-In URL…" (No off-Mac monitoring, opening the plan's Schedule tab) with "Don't Show This Again"
+  as its own item; and after a failure, "Show Details…" (its history). The failure's time and reason are the newest
+  backup that had a verdict, the same record the "backup failed" alert is decided from, so a skip, pause or lock
+  since doesn't hide them. Every item in a section has a symbol, as HIG Menus asks of a group ("provide icons for all
+  menu items in a group, or none of them"), and they always show: macOS 27 hides menu item images unless an item asks
+  (`preferredImageVisibility = .visible`), and these carry the state.
 - **Resume**, **Back Up Now** and **Pause**. With one plan they act on it; with several, each opens a submenu whose
   first item, "All Plans", acts on every plan, then one item per plan (an AppKit item with a submenu can't also
-  have its own action). They appear only while the agent is healthy.
+  have its own action). A submenu stays available when none of its items can act, with those items disabled (HIG
+  Menus). They appear only while the agent is healthy.
 - **Restore Files…** (a submenu of plans when there are several; an unfinished plan isn't listed, having no
   recovery kit and perhaps no repository yet), which opens the plan's restic restore commands (see "The recovery
-  kit"), **Settings…** (⌘,), the Debug-only
-  **Developer…**, and **Quit Restorey** (⌘Q).
+  kit").
+- **Diagnostics**, only when the icon is Option-clicked (as Apple's Wi-Fi and Bluetooth extras do): "Restorey 0.1.0
+  (11)", the background process's version or state, "Show Last Run Log" (the newest run's log), "Show Logs in
+  Finder" and "Copy Diagnostics" (the versions, macOS and everything the menu shows, in full, on the clipboard).
+  Nothing in it changes a backup or a setting. The section comes with the click and stays until the menu closes;
+  NSMenu reports no change of modifier keys while it is open, and an Option alternate (`isAlternate`) only swaps
+  one existing item for another, so holding Option after opening doesn't add it.
+- **Settings…** (⌘,), the Debug-only **Developer…**, and **Quit Restorey** (⌘Q).
 
-Coloured text (the fix in the accent colour) and the severity symbol switch to the highlight's text colour on
-the row under the pointer, since the highlight is the accent colour and AppKit leaves an attributed title's colours
-as they are. A plan's status words are never coloured: a warning or error has a tinted symbol before them (a triangle
-or an octagon), so the status doesn't rest on colour alone. The menu updates while it is open: progress and status change in place under the pointer. When rows come or
-go (a backup starts and its progress bar appears, a banner is raised) the items are replaced instead.
+Status words are never coloured; a warning or an error has its symbol, a triangle or an octagon, so the state doesn't
+rest on colour alone, and VoiceOver reads each item as one sentence with the plan's name and the severity's word
+("MacBook, Error: Backup failed at 14:16, B2 · my-backups"). Long explanations are tooltips, so the menu stays about
+as wide as its longest short line. The menu updates while it is open: progress and status change in place under the
+pointer. When rows come or go (a backup starts and its progress bar appears, a problem is raised) the items are
+replaced instead.
 
 ## What a backup run does
 
@@ -966,7 +995,7 @@ repository password or storage key (or environment value), or a new host label (
 as `--host`, so an old kit would restore the old group's latest snapshot), clears the kit's confirmation, and the
 plan's backups wait until the new kit is saved and confirmed. A new host label doesn't clear a stopped plan's stop;
 only a new address or key can cure one. Adding, changing or removing the check-in URL doesn't need a new kit: it
-isn't needed to restore, so answering "No off-Mac monitoring — Add…" never stops backups.
+isn't needed to restore, so answering the menu's "Add Check-In URL…" never stops backups.
 
 **Restore Files…** in the menu opens the same commands for the chosen plan (a plan picker switches between
 plans). Passwords and keys show as dots. "Show Passwords and Keys" shows them and keeps them shown (the button
