@@ -1,7 +1,7 @@
 import Foundation
 
 /// A saved plan being edited in Settings → Plans (UI design §6.2): the fields as typed, the secrets typed into the
-/// Storage and Alerts tabs, and every decision about them: whether anything changed, which warnings show, whether
+/// Storage and Schedule tabs (the check-in URL), and every decision about them: whether anything changed, which warnings show, whether
 /// saving pauses backups for a new recovery kit, and the request a save sends. Pure; the app's `PlanEditModel`
 /// does the call.
 ///
@@ -17,7 +17,7 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
         public var exclusions: [String]
         public var fileTypeExclusions: [String]
         public var oneFileSystem: Bool
-        /// The What tab's sheet for items apps mark as not for backup (Task 15c).
+        /// The Folders tab's sheet for items apps mark as not for backup (Task 15c).
         public var skipsItemsMarkedNotForBackup: Bool
         public var backUpAnyway: [String]
         /// The interval, the battery rule and retention (as text), shared with setup's schedule step.
@@ -28,7 +28,7 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
         public var pruneEnabled: Bool
         public var forgetCadence: ForgetCadence
         public var noSuccessAlertDays: Int
-        /// The Alerts tab's "Remove" for the saved check-in URL.
+        /// The Schedule tab's Alerts "Remove" for the saved check-in URL.
         public var removeCheckInURL: Bool
 
         public init(plan: Plan) {

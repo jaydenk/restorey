@@ -155,7 +155,7 @@ public protocol MarkedItemsFinding: Sendable {
 /// backing up together), but gives up at once when the outstanding one has already outlived its deadline (stuck), so
 /// only that one thread is ever blocked.
 public final class MarkedItemsLookGate: Sendable {
-    /// The real Spotlight finder's, shared by every look in the process (the agent's backups, the app's What tab).
+    /// The real Spotlight finder's, shared by every look in the process (the agent's backups, the app's Folders tab).
     public static let spotlight = MarkedItemsLookGate()
 
     /// The outstanding look's deadline; nil when none is outstanding.
@@ -273,7 +273,7 @@ public struct MarkedItemsScan: Sendable {
     }
 }
 
-/// The What tab's sheet: each outer marked item with a "Back up anyway" checkbox, and the count its line shows. The same
+/// The Folders tab's sheet: each outer marked item with a "Back up anyway" checkbox, and the count its line shows. The same
 /// collapse as the agent's, so the sheet lists what a backup would skip.
 public enum MarkedItemsList {
     public struct Row: Sendable, Equatable, Identifiable {
@@ -328,7 +328,7 @@ public enum MarkedItemsList {
     }
 }
 
-/// The words for items apps mark as not for backup, in the What tab and its sheet. Information, never a warning.
+/// The words for items apps mark as not for backup, in the Folders tab and its sheet. Information, never a warning.
 public enum MarkedNotForBackupText {
     static let items = "items apps mark as not for backup"
 
@@ -345,7 +345,7 @@ public enum MarkedNotForBackupText {
         }
     }
 
-    /// Under the What tab's line and above the sheet's list when the app lacks Full Disk Access (the agent's last
+    /// Under the Folders tab's line and above the sheet's list when the app lacks Full Disk Access (the agent's last
     /// probe): the app reads the attribute itself, and can't in protected folders, so those items drop out of its
     /// list. Backups are unaffected (the agent checks for itself). Nil with access.
     public static func incompleteNote(fullDiskAccessMissing: Bool) -> String? {

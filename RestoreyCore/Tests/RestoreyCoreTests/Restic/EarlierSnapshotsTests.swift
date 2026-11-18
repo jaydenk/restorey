@@ -177,7 +177,7 @@ struct EarlierSnapshotsTests {
         #expect(groups.first?.removeIDs == ["a10", "a11"].map(Self.id))
     }
 
-    /// A group retention leaves whole is still listed (with nothing to remove), so the Keep tab can count it.
+    /// A group retention leaves whole is still listed (with nothing to remove), so the Retention tab can count it.
     @Test func groupsWithNothingToRemoveAreKept() throws {
         let line = reply([group("a1", paths: current, tags: nil, remove: 0)])
         let groups = try groups(line, plan())

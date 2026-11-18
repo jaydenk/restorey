@@ -4,7 +4,7 @@ import Foundation
 /// "Review exclusions…". The defaults get the mockup's wording; anything changed is counted instead.
 public enum ExclusionsSummary {
     /// - Parameter mentionsMarkedItems: names the items apps mark as not for backup when the plan skips them (Task
-    ///   15c). The What tab passes false: it shows them on a line of their own, with a count.
+    ///   15c). The Folders tab passes false: it shows them on a line of their own, with a count.
     public static func line(plan: Plan, home: URL, identity: Identity, mentionsMarkedItems: Bool = true) -> String {
         let marked = mentionsMarkedItems && plan.skipsItemsMarkedNotForBackup
         let defaults = plan.exclusions == DefaultExclusions.paths(home: home, identity: identity)

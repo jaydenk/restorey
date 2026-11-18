@@ -414,6 +414,29 @@ public enum Repository: Codable, Sendable, Equatable {
 
     /// restic 0.19.1's registered backends other than `local`.
     static let networkSchemes: Set<String> = ["azure", "b2", "gs", "rclone", "rest", "s3", "sftp", "swift"]
+
+    /// Where the repository is, for the symbol beside its plan in Settings → Plans: a storage service's (S3, B2,
+    /// Azure, Google Cloud Storage, Swift, or rclone's, whose remotes are such services), another machine on the network
+    /// (an SFTP or rest-server host, or a backend restic wouldn't know), or this Mac (a folder or drive).
+    public var place: RepositoryPlace {
+        switch self {
+        case .s3: return .cloud
+        case .raw(let repository, _):
+            guard Self.rawLocationNeedsNetwork(repository) else { return .thisMac }
+            let scheme = repository.split(separator: ":", maxSplits: 1).first.map(String.init) ?? ""
+            return Self.cloudSchemes.contains(scheme) ? .cloud : .server
+        }
+    }
+
+    /// The backends that are storage services rather than a machine of the user's own.
+    static let cloudSchemes: Set<String> = ["azure", "b2", "gs", "rclone", "s3", "swift"]
+}
+
+/// Where a plan's repository is (`Repository.place`).
+public enum RepositoryPlace: Sendable, Equatable {
+    case thisMac
+    case cloud
+    case server
 }
 
 public struct S3Location: Codable, Sendable, Equatable {

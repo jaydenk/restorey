@@ -29,7 +29,7 @@ struct SettingsWindow: View {
     /// The narrowest every section fits in: General and History need about 760, Plans its tab row (`PlansPane`),
     /// measured now. `WindowRouter` takes it once per window made (Task 14c R2), so a text-size change applies from the next one.
     @MainActor static func measuredMinimumWidth() -> CGFloat {
-        max(760, PlansPane.minimumWidth(tabRowWidth: PlanTabs<EmptyView>.naturalWidth()).rounded(.up))
+        max(760, PlansPane.minimumWidth(tabRowWidth: PlanTabPicker.naturalWidth()).rounded(.up))
     }
 
     let context: SettingsContext

@@ -2,7 +2,7 @@ import CoreServices
 import Darwin
 import Foundation
 
-/// The real `MarkedItemsFinding`, shared by the agent (before each backup) and the app (the What tab's sheet).
+/// The real `MarkedItemsFinding`, shared by the agent (before each backup) and the app (the Folders tab's sheet).
 ///
 /// Spotlight through `MDQueryCreate` and a synchronous `MDQueryExecute` (`kMDQuerySynchronous`, Metadata.framework
 /// `MDQuery.h`): it "will not return until the query has finished gathering the initial results", running the calling

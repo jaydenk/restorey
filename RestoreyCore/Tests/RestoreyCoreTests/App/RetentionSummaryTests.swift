@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import RestoreyCore
 
-/// The plain-English line under the Keep tab's controls (Task 16a). Each rule is worded as restic 0.19.1's `forget`
+/// The plain-English line under the Retention tab's counts (Task 16a). Each rule is worded as restic 0.19.1's `forget`
 /// documentation words it: `--keep-hourly n` keeps "for the last n hours which have one or more snapshots ... only the
 /// most recent one for each hour", on natural boundaries, so a quiet stretch doesn't use up the count.
 struct RetentionSummaryTests {

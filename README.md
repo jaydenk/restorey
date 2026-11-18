@@ -370,10 +370,13 @@ Every pane is laid out the same way (UI polish pass, Task 17c): a grouped form (
 System Settings has, with each setting a row (`LabeledContent`, the label leading and the control trailing),
 related rows in sections, and the explanations in the sections' footers. Number fields (the retention counts and the
 upload limits) are right-aligned in digits of one width, each with a stepper beside it (`NumberField`; a click writes
-the next value, `StepperText`, and the field's own check is unchanged). A plan's tabs are AppKit's tab view
-(`NSTabView`, HIG Tab views), at most six as the HIG asks; SwiftUI's `TabView` left its tab row at zero size here (the
-row is hosted SwiftUI that can't measure itself mid-update, and the tab view measures it only when its tabs change),
-so `PlanTabs` gives the labels again once the update has finished. The plan list is a bordered list with the
+the next value, `StepperText`, and the field's own check is unchanged). A plan's six tabs are a segmented control
+centred above an unboxed grouped form (`PlanTabPicker`, a SwiftUI `Picker` with `.segmented` style), the way System
+Settings switches the sub-pages of one pane (Trackpad's Point & Click, Scroll & Zoom and More Gestures; owner's
+decision, Task 17c fix round 1): the grouped cards sit on the window's background, not in a tab view's bezel box.
+VoiceOver names it "Plan page", Full Keyboard Access reaches it and the arrow keys move between segments. The Save bar
+stays under every tab, dimmed where there is nothing to save, so the page doesn't change height as the tabs change.
+The plan list is a bordered list with the
 standard square + and − buttons under it (`SquareButton`, AppKit's `.smallSquare` bezel; HIG Buttons, "Square
 buttons"), as Mail's Accounts and Users & Groups have; Delete (⌫) and the row's context menu delete too.
 
@@ -385,8 +388,9 @@ System Settings, Allow…, Restart Backups), the logs folder (Show in Finder), a
 note saying where to show it. These are read again whenever Restorey comes back to the front. The words are
 `SettingsGeneral`'s (`RestoreyCore`).
 
-**Plans** lists the plans, each with a symbol for where it backs up (a drive or folder on this Mac, or another
-machine), with + ("Add Plan…") under the list, which opens setup from "Where backups go" (`SetupProgress.addingPlan`).
+**Plans** lists the plans, each with a symbol for where it backs up (`Repository.place`): a cloud for a storage
+service (B2, S3, Azure, Google Cloud Storage, Swift, rclone), a server for another machine on the network (SFTP, a
+restic REST server), a drive for a folder or drive on this Mac, with + ("Add Plan…") under the list, which opens setup from "Where backups go" (`SetupProgress.addingPlan`).
 Setup keeps one saved progress, so `SetupFlow.addingPlan` decides what it opens: a new add, the add or first run
 already under way, or, when another plan's setup isn't finished, a question offering to finish that one first. An
 unfinished plan shows "Setup not finished" with "Finish Setup…" (setup is still making it, so it has no tabs); a plan
@@ -402,11 +406,11 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   at 09:00"); and Back Up Now, Pause while a backup runs, Resume while paused and Restore Files…, enabled as the menu's
   items are and asking the agent the same way (`MenuPresentation.overview`, `AgentActions`). They sit under the
   headline: Back Up Now, the most likely action, in the prominent style at the trailing end with Pause or Resume
-  beside it, and Restore Files…, a different task, at the leading end (HIG Buttons). The page has no save bar, since
-  nothing on it is edited, unless a sheet left edits waiting (History likewise). After a backup that
+  beside it, and Restore Files…, a different task, at the leading end (HIG Buttons). Revert and Save stay dimmed here, since
+  nothing on the page is edited, unless a sheet left edits waiting (History likewise). After a backup that
   couldn't read some files, "Show…" under the reason opens "Files that couldn't be read" (see below). It follows the agent
   live, progress included. The window is at least as wide as the list and the row of six tabs, measured with the
-  system's fonts each time a Settings window opens (`PlanTabs.naturalWidth`), so a text-size change applies from the next one.
+  system's fonts each time a Settings window opens (`PlanTabPicker.naturalWidth`), so a text-size change applies from the next one.
 - **Folders** ("What" until Task 17c): its name, the folders and drives, the exclusions (setup's line and "Review Exclusions…" sheet), and a
   line counting the items apps mark as not for backup ("Also skipped: 1,145 items apps mark as not for backup") with
   "Show…", a sheet with the plan's switch for them and the list, each with "Back up anyway".
@@ -492,13 +496,15 @@ restic's folder listings added at least 1 MB ("Biggest additions: folder listing
 data), with "Show…" (see "What each backup added" below). A row with both this and the couldn't-read "Show…" labels them "Show Unreadable Files…" and "Show Biggest
 Additions…" (`HistoryPresentation.links`).
 
-It is a table (SwiftUI `Table`, Task 17c; HIG Lists and tables): Time, Plan (in the all-plans list), Step, Outcome,
-Added and Duration columns, newest first until a heading is clicked, every column sortable (by the run's end time, the
+It is a table (SwiftUI `Table`, Task 17c; HIG Lists and tables): Time, Plan and Step (in the all-plans list), Outcome,
+Added and Duration columns (a plan's own list has no Step column: its outcomes already name the step, "Old snapshots
+tidied", "Check failed", and Outcome gets the width), newest first until a heading is clicked, every column sortable (by the run's end time, the
 bytes added and the seconds taken, not their text) and resizable. The Outcome cell has the outcome's symbol and words,
 the failure's reason or the unreadable files' count (`HistoryRow.note`), the biggest-additions line, and the row's
 links: one "Show…" per sheet and "Show Log". Double-clicking a row (or Return) opens its log, and its context menu has
 Show Log, Show Log in Finder and each sheet by its full name ("Show Unreadable Files…", "Show Biggest Additions…",
-`HistoryLink.menuTitle`). A cell too narrow for its words shows the rest as a help tag.
+`HistoryLink.menuTitle`). The outcome and its reason wrap to the column's width, so they are read in full at the
+window's smallest size; only the biggest-additions line, a list of names, stays on one line with a help tag.
 
 ### The menu bar
 

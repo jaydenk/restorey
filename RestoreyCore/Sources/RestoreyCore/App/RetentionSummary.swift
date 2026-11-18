@@ -1,6 +1,6 @@
 import Foundation
 
-/// The plain-English line under the Keep tab's controls (Task 16a), and the note about the weekly check.
+/// The plain-English line under the Retention tab's counts (Task 16a), and the note about the weekly check.
 ///
 /// The wording follows restic 0.19.1's `forget` documentation (doc/060_forget.rst): `--keep-hourly n` is "for the last
 /// n hours which have one or more snapshots, keep only the most recent one for each hour", and likewise for days,

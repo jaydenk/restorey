@@ -38,7 +38,7 @@ public enum EarlierSnapshotsText {
         return Confirmation(title: title, message: message, button: "Remove \(n) \(n == 1 ? "Snapshot" : "Snapshots")")
     }
 
-    /// The Keep tab's line for one group.
+    /// The Retention tab's line for one group.
     public static func row(_ group: EarlierSnapshotGroup, home: String = NSHomeDirectory()) -> String {
         let n = group.removeIDs.count
         let removes = "retention would remove \(n == 0 ? "none" : String(n))."
@@ -50,7 +50,7 @@ public enum EarlierSnapshotsText {
         }
     }
 
-    /// The Keep tab's one line when there is nothing to apply, or nil when some group has snapshots to remove.
+    /// The Retention tab's one line when there is nothing to apply, or nil when some group has snapshots to remove.
     public static func nothingToApply(_ preview: EarlierSnapshotsPreview) -> String? {
         if preview.groups.isEmpty {
             return "No earlier snapshots from this Mac to apply retention to."

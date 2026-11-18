@@ -54,7 +54,7 @@ struct PlansPane: View {
     static let pagePadding: CGFloat = 16
 
     /// The narrowest the pane can be with every tab showing in full: the list, the gap after it, and the tab row
-    /// (`tabRowWidth`, measured) inside the page's padding. The Settings window's minimum width comes from it (Task 14c R1).
+    /// (`tabRowWidth`, measured), inside the pane's padding. The Settings window's minimum width comes from it (Task 14c R1).
     static func minimumWidth(tabRowWidth: CGFloat) -> CGFloat {
         listWidth + 3 * pagePadding + tabRowWidth
     }
@@ -201,8 +201,8 @@ struct PlansPane: View {
     }
 }
 
-/// A plan in the list: where it backs up to as a symbol (a drive or folder on this Mac, or another machine), its name,
-/// and the note under it.
+/// A plan in the list: where it backs up to as a symbol (a cloud storage service, a server on the network, or a drive or
+/// folder on this Mac; `Repository.place`), its name, and the note under it.
 private struct PlanRow: View {
     let plan: PlanStatus
 
@@ -215,11 +215,20 @@ private struct PlanRow: View {
                 }
             }
         } icon: {
-            Image(systemName: plan.plan.repository.needsNetwork ? "cloud" : "externaldrive")
+            Image(systemName: Self.symbol(plan.plan.repository.place))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
         }
         .padding(.vertical, 2)
+    }
+
+    /// A storage service is the cloud, a machine on the network a server, a folder or drive on this Mac a drive.
+    static func symbol(_ place: RepositoryPlace) -> String {
+        switch place {
+        case .cloud: "cloud"
+        case .server: "server.rack"
+        case .thisMac: "externaldrive"
+        }
     }
 }
 
@@ -242,7 +251,7 @@ private struct PlanListNote: View {
     }
 }
 
-/// A plan's tabs (UI design §6.2; Task 17c, P10): six, the most the HIG's tab views allow, named for what each holds.
+/// A plan's tabs (UI design §6.2; Task 17c, P10): six, named for what each holds.
 /// Which one shows is `ShellState.settingsPlanTab`, so the menu's "No off-Mac monitoring — Add…" can open Schedule,
 /// whose Alerts section holds the check-in URL.
 enum PlanTab: String, CaseIterable, Identifiable {
@@ -261,103 +270,34 @@ enum PlanTab: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The tabs with nothing to edit: their page has the save bar only while edits from elsewhere wait (a sheet's "Don’t
-    /// Back Up" adds an exclusion from either).
-    var isEditable: Bool { self != .overview && self != .history }
 }
 
-/// The tabs of a plan's page as the system draws a tab view (HIG Tab views: "Use a tab view in the main window area —
-/// instead of a segmented control — for view switching"): AppKit's `NSTabView`, with the shown tab's SwiftUI page in a
-/// hosting view. SwiftUI's own `TabView` (`.grouped`) was tried first, and its tab row came out at zero size, the labels
-/// cut to "F…", "S…" (an off-screen render, Task 17c), for the reason given in `makeNSView`, which SwiftUI's wrapper
-/// gives no way to fix. Only the shown tab has its page; the others are made when chosen. The pages get the window's
-/// `AgentSupervisor` again, since a hosting view starts a new environment.
-struct PlanTabs<Content: View>: NSViewRepresentable {
+/// The row of a plan's tabs: a segmented control centred above the page, as System Settings switches the sub-pages of
+/// one pane (Trackpad's Point & Click, Scroll & Zoom and More Gestures; Sound's Output and Input), with the page's
+/// grouped form unboxed below it (Task 17c fix round 1, owner's decision; it replaced AppKit's tab view, whose bezel box
+/// held the grouped cards in a second box). Six short labels, within the HIG's "about five to seven segments in a
+/// wide interface" (Segmented controls). A segmented control doesn't shrink below its segments, so it keeps its natural
+/// width (`fixedSize`) and the window is made wide enough for it (`PlansPane.minimumWidth`) rather than letting it
+/// overflow, which centres the overflow and clips both edges (Task 14c R1). VoiceOver names it "Plan page"; with Full
+/// Keyboard Access it is in the key view loop, and the arrow keys move between segments.
+struct PlanTabPicker: View {
     @Binding var tab: PlanTab
-    let supervisor: AgentSupervisor?
-    @ViewBuilder let content: (PlanTab) -> Content
 
-    func makeCoordinator() -> Coordinator { Coordinator(tab: $tab) }
-
-    func makeNSView(context: Context) -> NSView {
-        let tabs = NSTabView()
-        for tab in PlanTab.allCases {
-            let item = NSTabViewItem(identifier: tab.rawValue)
-            item.label = tab.title
-            item.view = NSView()
-            tabs.addTabViewItem(item)
+    var body: some View {
+        Picker("Plan page", selection: $tab) {
+            ForEach(PlanTab.allCases) { Text($0.title).tag($0) }
         }
-        tabs.selectTabViewItem(withIdentifier: tab.rawValue)
-        tabs.delegate = context.coordinator
-        // In a plain container that SwiftUI sizes, following it by its autoresizing mask as a tab view in an AppKit
-        // window does.
-        let container = NSView(frame: tabs.frame)
-        tabs.autoresizingMask = [.width, .height]
-        container.addSubview(tabs)
-        context.coordinator.tabs = tabs
-        // The tab row is itself hosted SwiftUI (`NSTabViewSegmentedControl`), and it can't measure itself while the
-        // window's SwiftUI is mid-update, which is when this runs: it measured 0 × 0, and the tab view sizes its row
-        // only when its tabs change, not when it is resized, so the row stayed that size (measured in an off-screen
-        // render, Task 17c, where a tab view made outside an update sized its row to the labels at once). The labels
-        // are given again once this update has finished, which makes the tab view measure the row afresh.
-        DispatchQueue.main.async { [weak tabs] in
-            for item in tabs?.tabViewItems ?? [] {
-                let label = item.label
-                item.label = ""
-                item.label = label
-            }
-        }
-        return container
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .accessibilityLabel("Plan page")
     }
 
-    func updateNSView(_ container: NSView, context: Context) {
-        guard let tabs = context.coordinator.tabs else { return }
-        context.coordinator.tab = $tab
-        if tabs.selectedTabViewItem?.identifier as? String != tab.rawValue {
-            context.coordinator.updating = true
-            tabs.selectTabViewItem(withIdentifier: tab.rawValue)
-            context.coordinator.updating = false
-        }
-        guard let item = tabs.selectedTabViewItem else { return }
-        let page = AnyView(content(tab).environment(supervisor))
-        if let host = item.view as? NSHostingView<AnyView> {
-            host.rootView = page
-        } else {
-            item.view = NSHostingView(rootView: page)
-        }
-        // A tab not shown keeps no page, so nothing in it runs (its tasks, its timers) until it is chosen again.
-        for other in tabs.tabViewItems where other !== item && other.view is NSHostingView<AnyView> {
-            other.view = NSView()
-        }
-    }
-
-    @MainActor
-    final class Coordinator: NSObject, NSTabViewDelegate {
-        var tab: Binding<PlanTab>
-        var updating = false
-        weak var tabs: NSTabView?
-        init(tab: Binding<PlanTab>) { self.tab = tab }
-
-        func tabView(_ tabView: NSTabView, didSelect item: NSTabViewItem?) {
-            guard !updating, let raw = item?.identifier as? String, let chosen = PlanTab(rawValue: raw) else { return }
-            if tab.wrappedValue != chosen { tab.wrappedValue = chosen }
-        }
-    }
-
-    /// The tab row's natural width with the system's fonts as they are now: what the tab view's own row needs for the
-    /// six labels. Measured each time a Settings window is made (`WindowRouter.showSettings`), so a change to the text
-    /// size applies from the next one; one off-screen tab view, so cheap.
+    /// The row's natural width with the system's fonts as they are now. Measured each time a Settings window is made
+    /// (`WindowRouter.showSettings`), so a change to the text size applies from the next one; one off-screen layout of
+    /// a six-segment control, so cheap.
     @MainActor static func naturalWidth() -> CGFloat {
-        let tabs = NSTabView(frame: NSRect(x: 0, y: 0, width: 2000, height: 100))
-        for tab in PlanTab.allCases {
-            let item = NSTabViewItem(identifier: tab.rawValue)
-            item.label = tab.title
-            tabs.addTabViewItem(item)
-        }
-        tabs.layoutSubtreeIfNeeded()
-        let row = tabs.subviews.compactMap { $0 as? NSSegmentedControl }.first
-        // The row's own width, plus the tab view's inset from its frame on each side.
-        return (row?.intrinsicContentSize.width ?? tabs.minimumSize.width) + 2 * 12
+        NSHostingView(rootView: PlanTabPicker(tab: .constant(.overview))).fittingSize.width
     }
 }
 
@@ -377,12 +317,13 @@ private struct PlanDetail: View {
             if status.setupState == .needsNewKit {
                 NewKitBanner(planID: status.plan.id, context: context)
             }
-            PlanTabs(tab: $tab, supervisor: context.supervisor) { tab in
-                page(tab)
-            }
-            if tab.isEditable || model.edit.isDirty {
-                SaveBar(model: model)
-            }
+            PlanTabPicker(tab: $tab)
+                .frame(maxWidth: .infinity)
+            page(tab)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // On every tab, so the page keeps its height as the tabs change (review M2); on Overview and History, which
+            // edit nothing themselves, Revert and Save stay dimmed until a sheet leaves edits.
+            SaveBar(model: model)
         }
     }
 
@@ -398,7 +339,7 @@ private struct PlanDetail: View {
         case .storage:
             PlanStorageTab(model: model) { context.showRecoveryKit(status.plan.id) }.disabled(model.saving)
         case .retention: PlanRetentionTab(model: model, connection: context.supervisor.connection).disabled(model.saving)
-        case .history: HistoryList(planID: status.plan.id, editor: model).padding(12)
+        case .history: HistoryList(planID: status.plan.id, editor: model).padding(.top, 8)
         }
     }
 }

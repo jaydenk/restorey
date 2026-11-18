@@ -118,14 +118,18 @@ struct HistoryList: View {
                 }
                 .width(min: 70, ideal: 110, max: 130)
             }
-            TableColumn("Step", value: \.operation) { row in
-                Text(row.operation)
+            // A plan's own list has no Step column: its outcomes already say the step ("Backed up", "Old snapshots
+            // tidied", "Check failed", "Skipped: …"), and the width goes to Outcome (review I2).
+            if planID == nil {
+                TableColumn("Step", value: \.operation) { row in
+                    Text(row.operation)
+                }
+                .width(min: 52, ideal: 52, max: 64)
             }
-            .width(min: 52, ideal: 52, max: 64)
             TableColumn("Outcome", value: \.outcome) { row in
                 OutcomeCell(row: row, links: links(row), showLog: { open(row) }, show: { show($0, row) })
             }
-            .width(min: 96, ideal: 106)
+            .width(min: 180, ideal: 200)
             TableColumn("Added", value: \.addedSortKey) { row in
                 Text(row.added ?? "").monospacedDigit()
             }
@@ -200,7 +204,9 @@ struct HistoryList: View {
 }
 
 /// A row's Outcome cell: the outcome's symbol (its own shape, so it isn't carried by colour alone) and words, what
-/// belongs with it, the biggest additions' line, and the row's links.
+/// belongs with it, the biggest additions' line, and the row's links. The words and the reason wrap to the column's width
+/// (with no `fixedSize`, which made the table size the row for one line and cut the rest; review I2), so a failure's
+/// reason is read in full at any width; the additions line, a list of names, stays on one line with a help tag.
 private struct OutcomeCell: View {
     let row: HistoryRow
     /// The row's "Show…" links, from `HistoryPresentation.links`.
@@ -214,10 +220,10 @@ private struct OutcomeCell: View {
                 Image(systemName: row.kind.symbolName)
                     .foregroundStyle(row.kind.tint)
                     .accessibilityLabel(row.kind.accessibilityLabel)
-                Text(row.outcome).fixedSize(horizontal: false, vertical: true).help(row.outcome)
+                Text(row.outcome).lineLimit(nil)
             }
             if let note = row.note {
-                Text(note).explanatoryNote().help(note)
+                Text(note).font(.subheadline).foregroundStyle(.secondary).lineLimit(nil)
             }
             if let additions = row.biggestAdditions {
                 Text(additions.line).explanatoryNote().lineLimit(1).truncationMode(.tail).help(additions.line)
@@ -237,6 +243,7 @@ private struct OutcomeCell: View {
             }
         }
         .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

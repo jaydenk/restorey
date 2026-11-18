@@ -79,9 +79,8 @@ struct NumberField: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            PlainTextField(title: placeholder, text: $text, isNumeric: true)
+            PlainTextField(title: placeholder, text: $text, isNumeric: true, accessibilityName: name)
                 .frame(width: width)
-                .accessibilityLabel(name)
             Stepper(name, onIncrement: { text = step(text, 1) }, onDecrement: { text = step(text, -1) })
                 .labelsHidden()
                 .accessibilityLabel(name)
@@ -111,7 +110,8 @@ struct UploadLimitField: View {
 }
 
 /// The optional check-in URL, a secret: "A check-in URL is saved" with Remove when there is one, otherwise a
-/// `SecretField`; then why it is worth having (product spec §6.2).
+/// `SecretField`; then why it is worth having (product spec §6.2). Setup's Schedule step lays it out as a labelled
+/// field; Settings → Plans → Schedule puts `CheckInURLValue` in a form row and the explanation in the section's footer.
 struct CheckInURLField: View {
     /// The plan has one saved (`Plan.hasCheckInURL`).
     let saved: Bool
@@ -120,17 +120,35 @@ struct CheckInURLField: View {
     let problem: String?
 
     var body: some View {
-        SetupField(label: "Check-in URL (optional)", problem: problem) {
-            if saved, !remove {
-                HStack {
-                    Text("A check-in URL is saved.")
-                    Button("Remove") { remove = true }
-                }
-            } else {
-                SecretField(title: "https://hc-ping.com/…", text: $text)
-            }
+        SetupField(label: CheckInURLValue.label, problem: problem) {
+            CheckInURLValue(saved: saved, remove: $remove, text: $text)
         }
         Text(ScheduleForm.checkInExplanation)
             .explanatoryNote()
+    }
+}
+
+/// The check-in URL's control: "A check-in URL is saved." with Remove while one is saved and kept, otherwise the secret's
+/// field. Shared by setup and Settings, so the two can't drift apart.
+struct CheckInURLValue: View {
+    static let label = "Check-in URL (optional)"
+
+    let saved: Bool
+    @Binding var remove: Bool
+    @Binding var text: String
+
+    /// Whether the field shows (rather than the saved note), for a row that sizes the field.
+    static func showsField(saved: Bool, remove: Bool) -> Bool { !saved || remove }
+
+    var body: some View {
+        if Self.showsField(saved: saved, remove: remove) {
+            SecretField(title: "https://hc-ping.com/…", text: $text)
+        } else {
+            HStack {
+                Text("A check-in URL is saved.")
+                Button("Remove") { remove = true }
+            }
+            .fixedSize()
+        }
     }
 }

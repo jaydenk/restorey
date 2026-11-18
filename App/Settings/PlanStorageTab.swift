@@ -70,18 +70,27 @@ struct PlanStorageTab: View {
     }
 }
 
+/// The width of a secret's field and its Show switch in a `SecretRow`.
+let secretRowFieldWidth: CGFloat = 240
+
 /// A form row with a secret's field: its label, then the field and its Show switch at the trailing edge. Laid out by
 /// hand, since a grouped form's `LabeledContent` set a value holding a field and a switch under its label instead of
-/// beside it (Task 17c, seen in an off-screen render).
+/// beside it (Task 17c, seen in an off-screen render). `fieldWidth` nil lets the value take the width it needs (the
+/// check-in URL's saved note).
 struct SecretRow<Field: View>: View {
     let label: String
+    var fieldWidth: CGFloat? = secretRowFieldWidth
     @ViewBuilder let field: Field
 
     var body: some View {
         HStack(spacing: 12) {
             Text(label)
             Spacer(minLength: 8)
-            field.frame(width: 240)
+            if let fieldWidth {
+                field.frame(width: fieldWidth)
+            } else {
+                field
+            }
         }
     }
 }

@@ -148,7 +148,7 @@ struct UnreadableItemsTests {
         // In the saved plan too: already so.
         let saved = try #require(rows([permission], exclusions: [pattern], saved: [pattern]).first)
         #expect(saved.action == .excluded(unsaved: false))
-        // Removed from the form (Undo, or in the What tab): offered again.
+        // Removed from the form (Undo, or in the Folders tab): offered again.
         let removed = try #require(rows([permission], exclusions: [], saved: [pattern]).first)
         #expect(removed.action == .dontBackUp(pattern: pattern))
     }

@@ -337,7 +337,7 @@ struct AgentStateTests {
 
     /// The check-in URL isn't needed to open or restore the repository (product spec §7's kit is the address, the
     /// password, the backend keys, the host label and the commands), so adding, changing or removing it from the
-    /// Alerts tab doesn't pause backups for a new kit. Answering "No off-Mac monitoring — Add…" mustn't stop them.
+    /// Schedule tab's Alerts section doesn't pause backups for a new kit. Answering "No off-Mac monitoring — Add…" mustn't stop them.
     @Test func checkInURLChangeKeepsTheRecoveryKit() async throws {
         let dir = try TempDirectory()
         let clock = TestClock()

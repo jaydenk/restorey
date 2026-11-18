@@ -64,21 +64,16 @@ struct PlanScheduleTab: View {
         }
     }
 
-    /// The optional check-in URL, a secret: "A check-in URL is saved" with Remove when there is one, otherwise a
-    /// `SecretField` (setup's `CheckInURLField`, laid out as a form row).
+    /// The optional check-in URL (`CheckInURLValue`, setup's too) as a form row. The saved note and Remove take the
+    /// width they need; the field has the secret row's width.
     @ViewBuilder private var checkInURL: some View {
         let key = SecretKey.checkInURL(model.planID)
-        SecretRow(label: "Check-in URL (optional)") {
-            if model.saved.hasCheckInURL, !model.fields.removeCheckInURL {
-                HStack {
-                    Text("A check-in URL is saved.")
-                    Button("Remove") { model.fields.removeCheckInURL = true }
-                }
-            } else {
-                SecretField(
-                    title: "https://hc-ping.com/…",
-                    text: Binding(get: { model.secret(key) }, set: { model.setSecret($0, for: key) }))
-            }
+        let showsField = CheckInURLValue.showsField(
+            saved: model.saved.hasCheckInURL, remove: model.fields.removeCheckInURL)
+        SecretRow(label: CheckInURLValue.label, fieldWidth: showsField ? secretRowFieldWidth : nil) {
+            CheckInURLValue(
+                saved: model.saved.hasCheckInURL, remove: $model.fields.removeCheckInURL,
+                text: Binding(get: { model.secret(key) }, set: { model.setSecret($0, for: key) }))
         }
     }
 

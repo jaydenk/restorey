@@ -271,6 +271,8 @@ struct PlainTextField: NSViewRepresentable {
     var onSubmit: (@MainActor () -> Void)?
     /// A number's field: right-aligned, in digits of one width, so the numbers line up (`NumberField`, Task 17c).
     var isNumeric = false
+    /// What VoiceOver calls the field when its placeholder isn't a name ("0", "None"); nil uses the title.
+    var accessibilityName: String?
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text, onSubmit: onSubmit) }
 
@@ -287,7 +289,7 @@ struct PlainTextField: NSViewRepresentable {
         context.coordinator.text = $text
         context.coordinator.onSubmit = onSubmit
         field.placeholderString = title
-        field.setAccessibilityLabel(title)
+        field.setAccessibilityLabel(accessibilityName ?? title)
         if isNumeric {
             field.alignment = .right
             field.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
