@@ -1,3 +1,4 @@
+import AppIntents
 import AppKit
 import OSLog
 import RestoreyCore
@@ -16,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: StatusItemController?
     private var supervisor: AgentSupervisor?
     private let router = WindowRouter()
+    /// What the Shortcuts actions reach the agent through (Task 17e).
+    private let shortcuts = ShortcutGateway()
     private var mode = ShellMode.running
     private let setupStore = SetupProgressStore(defaults: .standard)
     /// Set once the launch has decided whether setup opens (P2-10), so it opens at most once by itself.
@@ -27,6 +30,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static func main() {
         let app = NSApplication.shared
         let delegate = AppDelegate()
+        // Before the app runs, so an action that launched Restorey finds it (App Intents' dependency manager).
+        let shortcuts = delegate.shortcuts
+        AppDependencyManager.shared.add(dependency: shortcuts)
         app.delegate = delegate
         app.setActivationPolicy(.accessory)
         withExtendedLifetime(delegate) { app.run() }
@@ -79,6 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .fault("Can't read the identity from Info.plist: \(String(describing: error), privacy: .public)")
             mode = .broken
             statusItem = StatusItemController(broken: Self.damagedMessage)
+            shortcuts.copy = .refused(Self.damagedMessage)
             return
         }
         let log = AppLog(identity: identity, kind: .app)
@@ -90,6 +97,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             log.info("Not touching the agent: this copy at \(Bundle.main.bundlePath) is \(verdict)")
             mode = .refused
             statusItem = StatusItemController(refused: verdict, router: router)
+            shortcuts.copy = .refused(verdict == .translocated
+                ? "macOS is running this copy of Restorey from a temporary location. Move it to Applications."
+                : "Restorey only runs from the Applications folder.")
             let mover = AppMover(bundle: .main, identity: identity, translocated: verdict == .translocated)
             router.makeSetupModel = { [setupStore] _ in
                 // Always the move screen; the saved progress is the installed copy's and is left alone.
@@ -123,9 +133,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         saved: setupStore.load(), plans: supervisor.lastKnownStatus?.plans, installed: true),
                     store: setupStore)
             }
+            shortcuts.copy = .installed(supervisor)
             supervisor.observe { [weak self, weak supervisor] in
                 guard let self, let supervisor else { return }
                 self.openSetupAtLaunchIfNeeded(status: supervisor.status)
+                self.shortcuts.statusChanged(supervisor.lastKnownStatus)
             }
             supervisor.start()
         }

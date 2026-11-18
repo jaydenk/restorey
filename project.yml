@@ -60,6 +60,9 @@ targets:
         buildPhase: resources
     dependencies:
       - package: RestoreyCore
+      # The Shortcuts actions (Task 17e). Linked explicitly: Xcode's App Intents metadata step ("Extract App Intents
+      # Metadata") skips a target with no AppIntents.framework dependency, and Shortcuts then never sees the actions.
+      - sdk: AppIntents.framework
       # Built first, but embedded by the "Embed agent" script below rather than by an Embed
       # Files phase: Xcode resolves that phase's product name once (from Debug), so a
       # configuration-specific PRODUCT_NAME (RestoreyDevAgent vs RestoreyAgent) breaks Release.

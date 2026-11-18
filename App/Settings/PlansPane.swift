@@ -101,10 +101,7 @@ struct PlansPane: View {
                     ForEach(plans, id: \.plan.id) { plan in
                         PlanRow(plan: plan)
                             .tag(UUID?.some(plan.plan.id))
-                            .contextMenu {
-                                Button("Delete Plan…") { askToDelete(plan.plan) }
-                                    .disabled(deletionInProgress)
-                            }
+                            .contextMenu { planMenu(plan) }
                     }
                 }
                 .listStyle(.bordered)
@@ -122,6 +119,45 @@ struct PlansPane: View {
                 SeverityText(deletionProblem)
             }
         }
+    }
+
+    /// A plan's context menu (Task 17e, audit T4): the menu's actions for it, enabled as the menu's items are (its
+    /// `PlanChoice`, from the same `MenuPresentation` inputs), then History, then Delete Plan… behind its confirmation.
+    /// Nothing here that isn't elsewhere already: the status menu, the Overview tab and the list's − button.
+    @ViewBuilder private func planMenu(_ plan: PlanStatus) -> some View {
+        let id = plan.plan.id
+        let choice = planChoices.first { $0.id == id }
+        let connection = context.supervisor.connection
+        Button("Back Up Now") { AgentActions.backUpNow(id, connection) }
+            .disabled(choice?.canBackUp != true)
+        if choice?.canResume == true {
+            Button("Resume") { AgentActions.resume([id], connection) }
+        } else {
+            Button("Pause") { AgentActions.pause([id], connection) }
+                .disabled(choice?.canPause != true)
+        }
+        Button("Restore Files…") { context.showRestoreFiles(id) }
+            .disabled(choice?.canRestore != true)
+        Divider()
+        // The menu's "Show Details…" route: Settings → History, filtered to the plan.
+        Button("Show in History") {
+            state.historyFilter = HistoryFilterRequest(planID: id)
+            state.settingsSection = .history
+        }
+        Divider()
+        Button("Delete Plan…") { askToDelete(plan.plan) }
+            .disabled(deletionInProgress)
+    }
+
+    /// What the menu would let each plan do now (`MenuPresentation`'s `MenuActions`).
+    private var planChoices: [PlanChoice] {
+        let supervisor = context.supervisor
+        return MenuPresentation.make(
+            health: supervisor.health,
+            status: menuStatus(health: supervisor.health, live: supervisor.status, lastKnown: supervisor.lastKnownStatus),
+            notificationsAuthorised: supervisor.lastHello?.notificationsAuthorised,
+            now: Date(), calendar: .autoupdatingCurrent, locale: .autoupdatingCurrent
+        ).actions.plans
     }
 
     /// Through the one guard (`ShellState.requestPlan`): a switch away from unsaved edits asks first.

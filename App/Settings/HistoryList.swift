@@ -4,9 +4,9 @@ import SwiftUI
 
 /// The runs, newest first (UI design §6.4, mockup `v0.1-settings.html`), as a table (Task 17c, P11; HIG Lists and
 /// tables: sortable, resizable columns): time, plan, step, how it ended in the menu's wording, what it added and how
-/// long it took. A row's log opens with a double-click, its "Show Log" link or its context menu, which also has the
-/// row's "Show…" sheets. `planID` fixes the list to one plan (a plan's History tab); nil lists every plan with a plan
-/// filter. The rows are `HistoryPresentation`'s.
+/// long it took. A row's log opens with a double-click, its "Show Log" link or its context menu, which also has Show Log
+/// in Finder, Copy Outcome and the row's "Show…" sheets; ⌘C copies the selected rows (Task 17e). `planID` fixes the
+/// list to one plan (a plan's History tab); nil lists every plan with a plan filter. The rows are `HistoryPresentation`'s.
 ///
 /// The records come from the agent's `history` call, fetched again whenever a plan's newest record changes, so a
 /// run that ends while the list is open appears in it. Reads the supervisor from the environment.
@@ -145,6 +145,7 @@ struct HistoryList: View {
                     .disabled(row.logFile == nil)
                 Button("Show Log in Finder") { reveal(row) }
                     .disabled(row.logFile == nil)
+                Button("Copy Outcome") { copy(HistoryPresentation.outcomeText(row)) }
                 let links = links(row)
                 if !links.isEmpty {
                     Divider()
@@ -157,6 +158,17 @@ struct HistoryList: View {
             // A double-click (or Return) on one row opens its log, as Finder opens a document.
             if ids.count == 1, let row = rows.first(where: { ids.contains($0.id) }) { open(row) }
         }
+        // Edit → Copy (⌘C): the selected rows as text, one line each, in the list's order (Task 17e, audit P11).
+        .onCopyCommand {
+            let selected = rows.filter { selection.contains($0.id) }
+            guard !selected.isEmpty else { return [] }
+            return [NSItemProvider(object: HistoryPresentation.copyText(selected) as NSString)]
+        }
+    }
+
+    private func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     /// Opens the sheet behind one of the row's links (`HistoryPresentation.links`).

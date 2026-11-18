@@ -941,7 +941,7 @@ extension MenuPresentation {
 }
 
 /// The inputs that shape text: the time, calendar and locale.
-private struct TextContext {
+struct TextContext {
     var now: Date
     var calendar: Calendar
     var locale: Locale

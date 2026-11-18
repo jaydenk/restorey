@@ -4,6 +4,8 @@ import SwiftUI
 
 /// What a plan leaves out, as a sheet (setup's sources step and Settings' Folders tab): folders (restic patterns;
 /// Restorey's own folders stay), file types, and whether other file systems mounted inside a source are skipped.
+/// Folders dragged in from Finder are left out by the same rule as "Add Folder…" (`FolderDrop`), with the list ringed
+/// while the drag is over it, and Delete (⌫ or ⌦) removes the selected rows as Remove does (Task 17e, audit T3).
 struct ExclusionsSheet: View {
     @Binding var exclusions: [String]
     @Binding var fileTypes: [String]
@@ -11,6 +13,8 @@ struct ExclusionsSheet: View {
     let home: URL
     let identity: Identity
     @State private var selection: Set<String> = []
+    /// Why the last add (button or drop) left something out; cleared by the next change to the list.
+    @State private var addProblem: String?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -35,13 +39,15 @@ struct ExclusionsSheet: View {
             .listStyle(.bordered)
             .frame(minHeight: 140, idealHeight: 180)
             .accessibilityLabel("Folders left out")
+            .onDeleteCommand(perform: selection.subtracting(own).isEmpty ? nil : { remove(own: own) })
+            .acceptsDroppedFolders { add($0) }
+            if let addProblem {
+                SeverityText(addProblem, severity: .warning)
+            }
             HStack {
                 Button("Add Folder…", action: addFolder)
-                Button("Remove") {
-                    exclusions.removeAll { selection.contains($0) && !own.contains($0) }
-                    selection = []
-                }
-                .disabled(selection.subtracting(own).isEmpty)
+                Button("Remove") { remove(own: own) }
+                    .disabled(selection.subtracting(own).isEmpty)
             }
             Text("File types").font(.headline)
             FileTypesEditor(types: $fileTypes)
@@ -69,10 +75,21 @@ struct ExclusionsSheet: View {
         panel.message = "Choose the folders to leave out of the backup."
         Task { @MainActor in
             guard await panel.presentForKeyWindow() == .OK else { return }
-            for url in panel.urls {
-                let pattern = DefaultExclusions.pattern(forFolder: url.path)
-                if !exclusions.contains(pattern) { exclusions.append(pattern) }
-            }
+            add(PickedItem.classify(panel.urls))
         }
+    }
+
+    /// The button's and a drop's one way in.
+    private func add(_ items: [PickedItem]) {
+        let outcome = FolderDrop.addingExclusions(items, to: exclusions)
+        exclusions = outcome.list
+        addProblem = outcome.problem
+    }
+
+    /// The selected rows but Restorey's own folders, which always stay.
+    private func remove(own: Set<String>) {
+        exclusions.removeAll { selection.contains($0) && !own.contains($0) }
+        selection = []
+        addProblem = nil
     }
 }

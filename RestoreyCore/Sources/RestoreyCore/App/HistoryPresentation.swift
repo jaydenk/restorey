@@ -249,6 +249,21 @@ public enum HistoryPresentation {
         return links
     }
 
+    /// What a row's "Copy Outcome" puts on the pasteboard (Task 17e, audit T4): how the run ended and what belongs with
+    /// it, as the Outcome column shows them ("Backup failed · wrong password").
+    public static func outcomeText(_ row: HistoryRow) -> String {
+        ([row.outcome] + [row.note].compactMap(\.self)).joined(separator: " · ")
+    }
+
+    /// What Copy (⌘C) puts on the pasteboard for the selected rows: one line per run, in the list's order, with every
+    /// column the list has ("Yesterday, 09:05 · Home · Backup · Backed up · 1.2 GB · 3 min").
+    public static func copyText(_ rows: [HistoryRow]) -> String {
+        rows.map { row in
+            ([row.time, row.plan, row.operation, row.outcome] + [row.detail].compactMap(\.self)).joined(separator: " · ")
+        }
+        .joined(separator: "\n")
+    }
+
     /// The run's log file to open, or nil. The path comes from the agent, relative to the logs folder; only a file
     /// under its `runs/` folder is ever opened, so a path that climbs out (`..`) or is absolute opens nothing.
     public static func logURL(_ logFile: String, logsDirectory: URL) -> URL? {

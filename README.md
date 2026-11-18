@@ -56,6 +56,14 @@ Back Up Now and Pause, Restore Files…, Settings… (⌘,) and Quit Restorey. O
 app's and the background process's versions, Show Last Run Log, Show Logs in Finder and Copy Diagnostics. Backups run
 from the background agent whether or not the app is open.
 
+**Shortcuts and Siri.** Restorey adds four actions to Shortcuts, Spotlight and Siri, with no setting up: **Back Up
+Now**, **Pause Backups** (for an hour, as the menu's Pause), **Resume Backups** and **Get Last Backup**, which gives the
+plan's last backup time and outcome as values a shortcut can use (Time, Outcome, Backed Up, Last Successful Backup,
+Summary). Each takes a plan, or none for every plan (Get Last Backup: the newest backup of any plan), and is refused
+with a sentence saying why wherever the menu's item would be dimmed: "“Home” is already backing up.", "Backups are
+switched off.". Say "Back up with Restorey" or "When did Restorey last back up", or use them in a Focus or
+shortcut automation, such as backing up before you close the lid.
+
 **Settings** has four sections in its toolbar:
 
 - **General**: Open at login, Full Disk Access, notifications and Backups in the background, each with its fix, and the
@@ -63,8 +71,10 @@ from the background agent whether or not the app is open.
   Restorey's icon and name and "Drag this into the list, then switch it on.", and Open System Settings; once it is on,
   it is one row with a green tick and "Full Disk Access is on".
 - **Plans**: the plans in a list with + (Add Plan…) and − (Delete Plan…) under it, and the selected plan's six tabs.
+  A plan's context menu has Back Up Now, Pause (or Resume), Restore Files…, Show in History and Delete Plan….
   **Overview** (its state, Back Up Now with Pause or Resume beside it, Restore Files…, the last and next backup, and
-  any iCloud files skipped); **Folders** (the name, folders, drives and exclusions); **Schedule** (how often, the
+  any iCloud files skipped); **Folders** (the name, folders, drives and exclusions; drag folders and drives from Finder into the Folders list or
+  the exclusions list, and press Delete to remove the selected ones); **Schedule** (how often, the
   battery rule, the plan's own upload limit, and its alerts: the check-in URL and "no successful backup in N days");
   **Storage** (the address, read-only, the password and keys, the host label, and "Show Recovery Kit…");
   **Retention** (how many hourly, daily, weekly and monthly snapshots to keep, prune, and **Earlier snapshots**:
@@ -77,7 +87,8 @@ from the background agent whether or not the app is open.
   in Low Data Mode (on by default), and a list of Wi-Fi networks to skip backups on. Adding the first network asks
   for Location permission, which macOS requires before it shows any app the Wi-Fi network's name.
 - **History**: every plan's runs in a table, newest first, sortable by any column and filtered by plan and by outcome,
-  each with its log (double-click a run, or use its context menu).
+  each with its log (double-click a run, or use its context menu: Show Log, Show Log in Finder, Copy Outcome and the
+  run's sheets). ⌘C copies the selected runs as text.
 
 When files exist only in iCloud, not on this Mac, a backup skips them. The plan's Overview then says "iCloud Drive
 files skipped" under the last backup, and its info button explains how many and how to include them. Restorey counts
@@ -381,7 +392,12 @@ VoiceOver names it "Plan page", Full Keyboard Access reaches it and the arrow ke
 stays under every tab, dimmed where there is nothing to save, so the page doesn't change height as the tabs change.
 The plan list is a bordered list with the
 standard square + and − buttons under it (`SquareButton`, AppKit's `.smallSquare` bezel; HIG Buttons, "Square
-buttons"), as Mail's Accounts and Users & Groups have; Delete (⌫) and the row's context menu delete too.
+buttons"), as Mail's Accounts and Users & Groups have; Delete (⌫) and the row's context menu delete too. The row's
+context menu (Task 17e) also has the menu's Back Up Now, Pause (Resume while the plan is paused) and Restore Files…,
+enabled as the status menu's items are for that plan (its `PlanChoice` from `MenuPresentation`, the same inputs) and
+asking the agent the same way (`AgentActions`), and Show in History, which opens History filtered to the plan as the
+menu's "Show Details…" does. Delete Plan… there asks first, as − does. Nothing in it is new: each item is elsewhere
+already.
 
 **General** has Open at login (the switch re-reads `SMAppService` after every change, so a Restorey switched off in
 System Settings → General → Login Items shows as off with a note and "Open System Settings", never as what was asked),
@@ -416,7 +432,14 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   system's fonts each time a Settings window opens (`PlanTabPicker.naturalWidth`), so a text-size change applies from the next one.
 - **Folders** ("What" until Task 17c): its name, the folders and drives, the exclusions (setup's line and "Review Exclusions…" sheet), and a
   line counting the items apps mark as not for backup ("Also skipped: 1,145 items apps mark as not for backup") with
-  "Show…", a sheet with the plan's switch for them and the list, each with "Back up anyway".
+  "Show…", a sheet with the plan's switch for them and the list, each with "Back up anyway". Folders and drives
+  dragged from Finder onto the Folders list, or onto the exclusions sheet's list, are added by the same rule as its add
+  button (`FolderDrop`, RestoreyCore: only folders and drives, so a file or an app is refused, and nothing listed twice,
+  sources compared by where they lead), and what the rule leaves out is said under the list ("“notes.txt” isn't a
+  folder. Only folders and drives can be added."). The list is ringed in the accent colour while a drag is over it
+  (`dropDestination(for:isEnabled:action:)` and `onDropSessionUpdated`, macOS 26). Delete (⌫ or ⌦,
+  `onDeleteCommand`) removes the selected rows as Remove does (never Restorey's own exclusions), and a folder's
+  context menu has Show in Finder and Remove. Setup's "What to back up" step uses the same list.
 - **Schedule**: the interval, the battery rule and the plan's own upload limit in MB/s (empty, the default, is none;
   a networked repository also gets its share of the Mac-wide limit, the smaller winning, Ruling P2-7). Under the
   interval, one quiet line gives the plan's last backup and next run in the menu's words ("Last backup at 14:16 ·
@@ -505,8 +528,10 @@ tidied", "Check failed", and Outcome gets the width), newest first until a headi
 bytes added and the seconds taken, not their text) and resizable. The Outcome cell has the outcome's symbol and words,
 the failure's reason or the unreadable files' count (`HistoryRow.note`), the biggest-additions line, and the row's
 links: one "Show…" per sheet and "Show Log". Double-clicking a row (or Return) opens its log, and its context menu has
-Show Log, Show Log in Finder and each sheet by its full name ("Show Unreadable Files…", "Show Biggest Additions…",
-`HistoryLink.menuTitle`). The outcome and its reason wrap to the column's width, so they are read in full at the
+Show Log, Show Log in Finder, Copy Outcome ("Backup failed · wrong password", `HistoryPresentation.outcomeText`) and
+each sheet by its full name ("Show Unreadable Files…", "Show Biggest Additions…", `HistoryLink.menuTitle`). Edit →
+Copy (⌘C, `onCopyCommand`) copies the selected rows, one line each with every column ("14:16 · Home · Backup · Backed
+up · 1.2 GB · 3 min", `HistoryPresentation.copyText`). The outcome and its reason wrap to the column's width, so they are read in full at the
 window's smallest size; only the biggest-additions line, a list of names, stays on one line with a help tag.
 
 ### The menu bar
@@ -528,6 +553,37 @@ backup, "Restorey — Last backup at 14:16". A sentence that already names the a
 isn't prefixed again. Its relative day ("yesterday at 09:05") is made again when the calendar day changes
 (`NSCalendarDayChanged`, which macOS also posts on waking after midnight), as well as on every status change.
 `scripts/verify-bundle.sh` checks every glyph is in the built app as a template image.
+
+### Shortcuts
+
+Restorey's Shortcuts actions (Task 17e, audit T2) are App Intents in the app's own bundle (`App/Intents`): Back Up Now,
+Pause Backups, Resume Backups and Get Last Backup, each with an optional plan (a `PlanEntity`, listed from the agent's
+status by an `EnumerableEntityQuery`), and an `AppShortcutsProvider` whose phrases put them in Spotlight and Siri with
+no setting up (every phrase names the app, as App Intents requires; the plans' names are offered in the phrases and
+App Intents is told when they change, `updateAppShortcutParameters()`). The app links `AppIntents.framework`
+explicitly in `project.yml`: Xcode's "Extract App Intents Metadata" step skips a target without that dependency, and
+the actions then never reach Shortcuts; the build writes `Contents/Resources/Metadata.appintents`.
+
+- **Where they run.** In the app, never an App Intents extension: only the app talks to the agent. Each action is
+  `supportedModes = .background` (macOS 26; it replaces `openAppWhenRun`), so it runs without bringing a window
+  forward, and Shortcuts launches Restorey in the background to run one when it isn't running (Apple, "Configuring
+  the runtime behavior of your app intents": "Code in your app bundle can run in either the foreground or
+  background"). That launch is an ordinary one, so it starts the agent supervisor as any launch does.
+- **The same path and rules as the menu.** An action reaches the agent through the supervisor's `AgentConnection`,
+  handed to App Intents by `AppDependencyManager` before the app runs (`ShortcutGateway`, made in `AppDelegate.main`).
+  It is decided by `ShortcutRules` (RestoreyCore, tested): from the menu's own `MenuContent`, so an action is refused
+  exactly when the menu's item is dimmed or missing, and says why in the menu's words ("“Home” hasn't finished
+  setup.", "Backups aren't running."). Restorey just launched by an action waits, up to 30 s and by observing the
+  supervisor rather than polling, while the menu would still say "Connecting…" or "Updating…". The menu's Pause has
+  one length, an hour (`planPauseDuration`), so Pause Backups has no duration to choose.
+- **Errors** are `ShortcutError`, which conforms to `CustomLocalizedStringResourceConvertible`: Shortcuts shows an
+  error's `localizedStringResource`, and a plain `Error` reads as a generic failure. A plan deleted since a shortcut
+  was made still resolves (as "Deleted plan"), so the action runs and says "That plan is no longer in Restorey."
+  rather than failing before it starts.
+- **Nothing secret** crosses an intent: a plan is its id and name. Get Last Backup only reads the status the menu
+  shows (the last known one while the agent is down) and changes nothing; it returns a `TransientAppEntity` with the
+  newest backup's time and outcome in the History list's words, whether it saved the data, the last successful
+  backup's time, and a summary ("Home: Backup failed — Yesterday at 09:05 (wrong password)").
 
 ### The app icon
 
