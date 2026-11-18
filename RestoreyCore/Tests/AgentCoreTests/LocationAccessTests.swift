@@ -2,6 +2,7 @@ import Dispatch
 import Foundation
 import RestoreyCore
 import Testing
+import TestSupport
 @testable import AgentCore
 
 /// The agent's Location logic (`LocationAccess`) against a fake Core Location: Location Services off for the Mac
@@ -23,6 +24,8 @@ struct LocationAccessTests {
         let requests = Locked(0)
         /// While set, a services read blocks until it is signalled (a locationd that doesn't answer).
         let hang = Locked<DispatchSemaphore?>(nil)
+        /// Yields at each `requestWhenInUse`, so a test can wait for the prompt without polling.
+        let prompted = AsyncStream<Void>.makeStream()
 
         var api: LocationAccess.API {
             LocationAccess.API(
@@ -35,7 +38,10 @@ struct LocationAccessTests {
                     statusReads.mutate { $0 += 1 }
                     return status.value
                 },
-                requestWhenInUse: { [self] in requests.mutate { $0 += 1 } })
+                requestWhenInUse: { [self] in
+                    requests.mutate { $0 += 1 }
+                    prompted.continuation.yield()
+                })
         }
     }
 
@@ -66,7 +72,7 @@ struct LocationAccessTests {
         let access = Self.access(fake)
         access.statusChanged(.authorisedWhenInUse)
         // The report's own read of the switch (services on) finishes first.
-        while access.knownServicesEnabled == nil { await Task.yield() }
+        await access.readSettled()
         fake.servicesOn.set(false)
         let reply = await access.request()
         #expect(reply == LocationPermissionReply(authorised: false, status: "authorisedWhenInUse", servicesEnabled: false))
@@ -77,12 +83,14 @@ struct LocationAccessTests {
 
     @Test func anUndecidedAgentAsksOnceAndRepliesWithTheAnswer() async {
         let fake = FakeLocation()
-        let access = Self.access(fake)
+        let clock = ManualClock()
+        let access = Self.access(fake, clock: clock)
         async let first = access.request()
         async let second = access.request()
-        // Let both requests reach the wait.
-        while fake.requests.value == 0 { await Task.yield() }
-        try? await Task.sleep(for: .milliseconds(50))
+        // Let both requests reach the wait: the prompt, then both requests' bounds sleeping. (Were the second still
+        // reading the switch, it would find the status decided and reply the same, so the test holds either way.)
+        for await _ in fake.prompted.stream { break }
+        await clock.sleepers(atLeast: 2)
         fake.status.set(.authorisedWhenInUse)
         access.statusChanged(.authorisedWhenInUse)
         let replies = await [first, second]
@@ -104,8 +112,9 @@ struct LocationAccessTests {
         let clock = ManualClock()
         let access = Self.access(fake, requestBound: .milliseconds(100), clock: clock)
         async let replied = access.request()
-        // The request's bound is the only sleeper left once the services read (services on) has answered.
-        while fake.requests.value == 0 { await Task.yield() }
+        // By the prompt, the services read (services on) has answered and its bound is cancelled, so the next sleeper
+        // is the request's bound.
+        for await _ in fake.prompted.stream { break }
         await clock.sleepers(atLeast: 1)
         clock.advance(by: .milliseconds(100))
         let reply = await replied
@@ -138,7 +147,7 @@ struct LocationAccessTests {
         #expect(fake.servicesReads.value == 1, "one read in flight at a time")
         fake.hang.set(nil)
         gate.signal()
-        while access.knownServicesEnabled == nil { await Task.yield() }
+        await access.readSettled()
         #expect(access.knownServicesEnabled == true)
     }
 
@@ -147,7 +156,7 @@ struct LocationAccessTests {
         let fake = FakeLocation()
         let access = Self.access(fake)
         access.statusChanged(.restricted)
-        while access.knownServicesEnabled == nil { await Task.yield() }
+        await access.readSettled()
         #expect(await access.current() == LocationPermissionReply(authorised: false, status: "restricted", servicesEnabled: true))
         fake.servicesOn.set(false)
         #expect(await access.current() == LocationPermissionReply(authorised: false, status: "restricted", servicesEnabled: false))
@@ -170,7 +179,7 @@ struct LocationAccessTests {
         let access = Self.access(fake)
         fake.servicesOn.set(false)
         access.statusChanged(.denied)
-        while access.knownServicesEnabled == nil { await Task.yield() }
+        await access.readSettled()
         #expect(access.knownServicesEnabled == false)
         #expect(access.knownAuthorised == false)
         #expect(fake.servicesReads.value == 1)

@@ -12,7 +12,7 @@ struct MarkedNotForBackupRunnerTests {
         let answer: MarkedItemsQuery
         let stillMarked: Set<String>
         let asked = Mutex(0)
-        let gate = MarkedItemsLookGate()
+        let gate = OneOutstandingGate()
 
         init(_ answer: MarkedItemsQuery, stillMarked: Set<String>) {
             self.answer = answer
@@ -209,7 +209,7 @@ struct MarkedNotForBackupRunnerTests {
     /// without another query, logged once for the episode, and nothing is recorded or skipped.
     @Test func aHungSpotlightIsLoggedOnceAndNeverQueriedAgain() async throws {
         final class Hung: MarkedItemsFinding, Sendable {
-            let gate = MarkedItemsLookGate()
+            let gate = OneOutstandingGate()
             let release = DispatchSemaphore(value: 0)
             let asked = Mutex(0)
             func query(scopes: [String], limit: Int) -> MarkedItemsQuery {
@@ -251,7 +251,7 @@ struct MarkedNotForBackupRunnerTests {
 /// Forwards to an index set after the fixture exists (its source folder is only known then).
 private struct Forward: MarkedItemsFinding {
     let box: Locked<MarkedNotForBackupRunnerTests.FakeIndex?>
-    let gate = MarkedItemsLookGate()
+    let gate = OneOutstandingGate()
     init(_ box: Locked<MarkedNotForBackupRunnerTests.FakeIndex?>) { self.box = box }
     func query(scopes: [String], limit: Int) -> MarkedItemsQuery { box.value?.query(scopes: scopes, limit: limit) ?? .found([]) }
     func isMarked(_ path: String) -> Bool { box.value?.isMarked(path) ?? false }

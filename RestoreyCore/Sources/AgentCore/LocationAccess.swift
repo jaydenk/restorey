@@ -64,6 +64,8 @@ public final class LocationAccess {
     /// The last services read; nil until the first finishes.
     private let servicesEnabled = Mutex<Bool?>(nil)
     private var reading = false
+    /// `readSettled()` callers, resumed when the read in flight finishes.
+    private var readSettledWaiters: [CheckedContinuation<Void, Never>] = []
     /// Callers waiting for the services read, each with its bound's timer (stopped once the read answers).
     private var servicesWaiters: [UUID: (continuation: CheckedContinuation<Bool?, Never>, bound: Task<Void, Never>)] = [:]
     /// Requests waiting for the user to answer the prompt, resumed together by the next decided status, each with its
@@ -147,9 +149,19 @@ public final class LocationAccess {
         }
     }
 
+    /// Returns once no services read is in flight (at once if none is). For tests: waits for a background read to
+    /// land without polling.
+    func readSettled() async {
+        guard reading else { return }
+        await withCheckedContinuation { readSettledWaiters.append($0) }
+    }
+
     private func servicesRead(_ enabled: Bool) {
         servicesEnabled.withLock { $0 = enabled }
         reading = false
+        let settled = readSettledWaiters
+        readSettledWaiters = []
+        for waiter in settled { waiter.resume() }
         let waiters = servicesWaiters
         servicesWaiters = [:]
         for waiter in waiters.values {

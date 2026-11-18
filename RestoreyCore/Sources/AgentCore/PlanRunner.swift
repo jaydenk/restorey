@@ -160,6 +160,11 @@ public actor PlanRunner {
     /// Set once a backup has logged that an earlier Spotlight look is still outstanding; cleared by the next look that
     /// runs, so a stuck episode is logged once.
     private var loggedStuckLook = false
+    /// One cloud-only walk at a time (task 18 fix round 1): an `fts` walk stuck in a File Provider call can't be
+    /// stopped, so without it every backup would leave one more blocked thread behind.
+    nonisolated let cloudOnlyWalkGate = OneOutstandingGate()
+    /// Set once a backup has logged that an earlier cloud-only walk is still stuck; cleared by the next walk that runs.
+    private var loggedStuckWalk = false
     /// The latest background run `backUpNow` started, by plan.
     private var background: [UUID: Task<RunRecord, Never>] = [:]
     /// Plans to back up (trigger `.manual`) as soon as their run, being paused, has ended: a Resume that
@@ -551,17 +556,38 @@ public actor PlanRunner {
     /// (`success` with a snapshot, or `warning`; `unchanged` made none but the files are still skipped). Information
     /// only: nil for any other run, and when the count gives up, which is logged at INFO. It runs on a background
     /// thread and is bounded, so it never blocks or fails the run (Task 15b).
+    ///
+    /// One walk at a time (`cloudOnlyWalkGate`): a count that finds another plan's walk running waits for it within
+    /// its own deadline, and one that finds a walk still stuck past its deadline doesn't walk at all (nil, logged once
+    /// per episode), so a wedged File Provider holds one thread, not one per backup.
     private func countCloudOnly(after record: RunRecord, plan: Plan) async -> CloudOnlyCount? {
         guard Self.savedData(record.outcome) else { return nil }
         let count = deps.cloudOnlySkipped
         let (sources, exclusions) = (plan.sources, plan.exclusions)
+        let end = ContinuousClock.now.advanced(by: .seconds(deps.cloudOnlyDeadline))
+        let gate = cloudOnlyWalkGate
+        guard await gate.enter(until: end) else {
+            if !loggedStuckWalk {
+                loggedStuckWalk = true
+                deps.agentInfo(
+                    "Not counting cloud-only files for plan \(plan.id.uuidString): an earlier count is still waiting "
+                        + "for the file system to answer")
+            }
+            return nil
+        }
+        loggedStuckWalk = false
+        let remaining = max(0, ContinuousClock.now.duration(to: end) / .seconds(1))
         // On a thread of its own, neither a Swift concurrency one nor a GCD global queue's (task 18): the walk blocks in
         // system calls, and a deadline on a global queue waited for a free thread. The first of the walk and the
         // deadline decides; a walk that finishes later is ignored and touches nothing but its own locals.
         let result: CloudOnlyCounter.Result? = await OwnThread.run(
-            named: "Restorey cloud-only count", qualityOfService: .utility, deadline: deps.cloudOnlyDeadline,
-            orElse: .gaveUp
-        ) { count(sources, exclusions) }
+            named: "Restorey cloud-only count", qualityOfService: .utility, deadline: remaining, orElse: .gaveUp
+        ) {
+            let result = count(sources, exclusions)
+            // Only when the walk has really returned: a walk abandoned at the deadline keeps the gate until then.
+            gate.leave()
+            return result
+        }
         switch result {
         case .counted(let counted): return counted
         case .gaveUp:

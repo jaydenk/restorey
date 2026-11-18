@@ -146,7 +146,7 @@ struct MarkedNotForBackupTests {
         let answer: MarkedItemsQuery
         let stillMarked: Set<String>
         let asked = Mutex<[[String]]>([])
-        let gate = MarkedItemsLookGate()
+        let gate = OneOutstandingGate()
 
         init(_ answer: MarkedItemsQuery, stillMarked: Set<String>) {
             self.answer = answer
@@ -189,38 +189,17 @@ struct MarkedNotForBackupTests {
         #expect(index.asked.withLock { $0 }.isEmpty)
     }
 
-    /// Task 18: the deadline doesn't wait for a free thread. With GCD's constrained global queues starved (as on a
-    /// busy few-core Mac) a deadline on `DispatchQueue.global` never fired, and the stuck query's own result won.
+    /// A query held until after the look has returned: the deadline decides. The same under GCD starvation is
+    /// `GlobalQueueStarvationTests`, run on its own.
     @Test func theDeadlineWinsOverAStuckQuery() async {
-        /// A query held until the test lets it go, after the look has returned, or for 2 seconds, which only keeps a
-        /// failing run from hanging (the look then returns `.found`). The starvation also ends from a thread of its
-        /// own, a second after the query returns (so a deadline still starved can't beat the query's result): the
-        /// test's own code may be waiting for a Swift concurrency thread that something else in the process holds
-        /// while that waits on a global queue (the real Spotlight query does).
-        final class Stuck: MarkedItemsFinding, Sendable {
-            let gate = MarkedItemsLookGate()
-            let release = DispatchSemaphore(value: 0)
-            let starvation = GlobalQueueStarvation()
-            func query(scopes: [String], limit: Int) -> MarkedItemsQuery {
-                _ = release.wait(timeout: .now() + 2)
-                Thread.detachNewThread { [starvation] in
-                    Thread.sleep(forTimeInterval: 1)
-                    starvation.end()
-                }
-                return .found([])
-            }
-            func isMarked(_ path: String) -> Bool { true }
-        }
-        let stuck = Stuck()
-        let result = await MarkedItemsScan.offPool(finder: stuck, sources: ["/Users/me"], deadline: 0.1)
-        stuck.starvation.end()
-        stuck.release.signal()
-        #expect(result == .gaveUp)
+        let held = Held()
+        #expect(await MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: 0.1) == .gaveUp)
+        held.release.signal()
     }
 
     /// A query that blocks until the test lets it go, counting how often it was asked.
     final class Held: MarkedItemsFinding, Sendable {
-        let gate = MarkedItemsLookGate()
+        let gate = OneOutstandingGate()
         let release = DispatchSemaphore(value: 0)
         let asked = Mutex(0)
         func query(scopes: [String], limit: Int) -> MarkedItemsQuery {

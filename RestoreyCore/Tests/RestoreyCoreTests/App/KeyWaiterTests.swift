@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import RestoreyCore
 
 /// Fix rounds 3 and 4, N1/I1/M1/M2: after the owner approves a reveal, the window is waited for (key again, or a
@@ -56,7 +57,6 @@ struct KeyWaiterTests {
         }
         #expect(await waiter.waitUntilKey(timeout: .seconds(60)))
         #expect(clock.sleeperCount == 0, "the timeout was cancelled, not left sleeping")
-        while waiter.runningTimeouts > 0 { await Task.yield() }
     }
 
     /// I1: `cancel` (the window closing) ends every wait at once, each exactly once, with false, and stops the timers.
@@ -76,7 +76,6 @@ struct KeyWaiterTests {
         // The clock never moved, so each false is the cancel's, not a timeout's.
         #expect(results == [false, false, false])
         #expect(clock.sleeperCount == 0, "every timeout was cancelled")
-        while waiter.runningTimeouts > 0 { await Task.yield() }
     }
 
     /// A cancel is for the waits in progress: the waiter still works for the next one.

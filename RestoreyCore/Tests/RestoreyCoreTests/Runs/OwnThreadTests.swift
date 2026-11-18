@@ -11,24 +11,32 @@ struct OwnThreadTests {
         #expect(value == 7)
     }
 
-    /// With GCD's constrained global queues starved, as on a busy few-core Mac, the deadline still ends the wait;
-    /// the work, held until after, finishes on its own thread and its result is dropped.
-    @Test func theDeadlineWinsWhileGlobalQueuesAreStarved() async {
+    /// Work still running at the deadline: the deadline's value, and the work, released after, finishes on its own
+    /// thread with its result dropped. The same under GCD starvation is `GlobalQueueStarvationTests`.
+    @Test func theDeadlineWinsOverWorkStillRunning() async {
         let release = DispatchSemaphore(value: 0)
         let finished = DispatchSemaphore(value: 0)
-        let starvation = GlobalQueueStarvation()
         let value = await OwnThread.run(named: "test", qualityOfService: .utility, deadline: 0.1, orElse: -1) {
-            // The timeout only keeps a failing run from hanging. The starvation ends here too, off the pool, in case
-            // the test's own code is waiting for a Swift concurrency thread that something starved holds.
-            _ = release.wait(timeout: .now() + 5)
-            starvation.end()
+            release.wait()
             finished.signal()
             return 7
         }
-        starvation.end()
         release.signal()
         #expect(value == -1)
         await OwnThread.run(named: "test wait", qualityOfService: .utility) { finished.wait() }
+    }
+
+    /// The deadline's thread is never below utility (a background one gets the most timer latency), and keeps a
+    /// higher caller's class.
+    @Test func theDeadlineThreadIsAtLeastUtility() async {
+        let background = await OwnThread.run(named: "test", qualityOfService: .background) {
+            OwnThread.deadlineQualityOfService
+        }
+        #expect(background == .utility)
+        let userInitiated = await OwnThread.run(named: "test", qualityOfService: .userInitiated) {
+            OwnThread.deadlineQualityOfService
+        }
+        #expect(userInitiated == .userInitiated)
     }
 
     @Test func theWorkRunsOnItsOwnNamedThread() async {

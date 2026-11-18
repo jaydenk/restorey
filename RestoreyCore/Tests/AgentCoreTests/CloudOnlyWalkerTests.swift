@@ -249,4 +249,34 @@ struct CloudOnlyWalkerTests {
         while !finished.value { try await Task.sleep(for: .milliseconds(10)) }
         #expect(await f.history().lastBackupRecord?.cloudOnlySkipped == nil)
     }
+
+    /// Task 18 fix round 1: one walk at a time. While a walk is stuck past its deadline, later backups don't walk at
+    /// all (logged once for the episode), so a wedged File Provider holds one thread, not one per backup. Once it
+    /// returns, the next backup walks again.
+    @Test func aStuckWalkIsNotJoinedByAnother() async throws {
+        let walks = Locked(0)
+        let release = DispatchSemaphore(value: 0)
+        let f = try await RunnerFixture.make(
+            cloudOnlySkipped: { _, _ in
+                let first = walks.exchange(walks.value + 1) == 0
+                if first { release.wait() }
+                return Self.counted(9)
+            }, cloudOnlyDeadline: 0.3)
+        defer { f.remove() }
+        defer { release.signal() }
+        try f.write("a.txt", "hello")
+
+        let stuck = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        let second = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        let third = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        #expect([stuck, second, third].map(\.cloudOnlySkipped) == [nil, nil, nil])
+        #expect(walks.value == 1, "no second walk while the first is stuck")
+        #expect(f.agentInfo.value.filter { $0.contains("Not counting cloud-only files") }.count == 1)
+
+        release.signal()
+        while f.runner.cloudOnlyWalkGate.isBusy { try await Task.sleep(for: .milliseconds(10)) }
+        let after = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        #expect(after.cloudOnlySkipped == CloudOnlyCount(skipped: 9, includesOtherProviders: false))
+        #expect(walks.value == 2)
+    }
 }

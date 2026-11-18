@@ -28,6 +28,12 @@ scripts/fetch-binaries.sh
 step "Test RestoreyCore"
 swift test --package-path RestoreyCore
 
+# Deadlines under GCD starvation, on their own: these park every constrained global-queue thread in the test process,
+# so they would stall other tests beside them (README: "Building from source"). Skipped in the run above.
+step "Test deadlines under GCD starvation (alone)"
+RESTOREY_STARVATION_TESTS=1 swift test --package-path RestoreyCore --skip-build --no-parallel \
+  --filter GlobalQueueStarvationTests
+
 step "Generate the Xcode project"
 xcodegen generate --quiet
 

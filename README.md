@@ -132,6 +132,14 @@ xcodegen`; CI installs exactly 2.46.0 from its release, checked against the publ
    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test --package-path RestoreyCore
    ```
 
+   The deadline tests under GCD starvation (`GlobalQueueStarvationTests`) park every thread GCD will give the
+   test process's global queues, which would stall any test running beside them, so a plain `swift test` skips
+   them and `scripts/ci.sh` runs them on their own afterwards:
+
+   ```sh
+   RESTOREY_STARVATION_TESTS=1 swift test --package-path RestoreyCore --no-parallel --filter GlobalQueueStarvationTests
+   ```
+
 3. For a signed local install, copy `Config/Local.example.xcconfig` to `Config/Local.xcconfig` (gitignored) and
    set `DEVELOPMENT_TEAM`. Then build, sign and install `RestoreyDev.app` into `/Applications`:
 

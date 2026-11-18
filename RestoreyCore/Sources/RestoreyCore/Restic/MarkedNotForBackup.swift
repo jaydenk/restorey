@@ -145,46 +145,8 @@ public protocol MarkedItemsFinding: Sendable {
     /// True when `path` itself (no symlink followed) still carries the attribute. Metadata only: nothing is opened.
     func isMarked(_ path: String) -> Bool
     /// The gate `MarkedItemsScan.offPool` holds while a look at this finder is outstanding. The real finder's is
-    /// process-wide (`MarkedItemsLookGate.spotlight`); each fake has its own, so parallel tests don't meet.
-    var gate: MarkedItemsLookGate { get }
-}
-
-/// At most one look per finder at a time (review I2). A synchronous Spotlight query can't be stopped, so a hung `mds`
-/// would otherwise leave one more blocked thread behind every look, without limit. The gate holds the outstanding
-/// look's deadline: a look that arrives while one is outstanding waits for it within its own deadline (two plans
-/// backing up together), but gives up at once when the outstanding one has already outlived its deadline (stuck), so
-/// only that one thread is ever blocked.
-public final class MarkedItemsLookGate: Sendable {
-    /// The real Spotlight finder's, shared by every look in the process (the agent's backups, the app's Folders tab).
-    public static let spotlight = MarkedItemsLookGate()
-
-    /// The outstanding look's deadline; nil when none is outstanding.
-    private let outstanding = Mutex<ContinuousClock.Instant?>(nil)
-
-    public init() {}
-
-    /// True while a look is outstanding.
-    public var isBusy: Bool { outstanding.withLock { $0 != nil } }
-
-    enum Entry: Equatable {
-        case entered
-        /// A look is outstanding, and is still within its deadline.
-        case wait
-        /// A look is outstanding past its deadline.
-        case stuck
-    }
-
-    func enter(until deadline: ContinuousClock.Instant, now: ContinuousClock.Instant) -> Entry {
-        outstanding.withLock { current in
-            guard let current else {
-                current = deadline
-                return .entered
-            }
-            return now >= current ? .stuck : .wait
-        }
-    }
-
-    func leave() { outstanding.withLock { $0 = nil } }
+    /// process-wide (`OneOutstandingGate.spotlight`); each fake has its own, so parallel tests don't meet.
+    var gate: OneOutstandingGate { get }
 }
 
 /// One look for marked items within a plan's sources, within a bound: Spotlight's candidates, each checked to still
@@ -242,19 +204,7 @@ public struct MarkedItemsScan: Sendable {
     ) async -> Result {
         let end = ContinuousClock.now.advanced(by: .seconds(deadline))
         let gate = finder.gate
-        while true {
-            let now = ContinuousClock.now
-            switch gate.enter(until: end, now: now) {
-            case .entered: break
-            case .stuck: return .busy
-            case .wait:
-                if now >= end { return .busy }
-                try? await Task.sleep(for: .milliseconds(50))
-                if Task.isCancelled { return .busy }
-                continue
-            }
-            break
-        }
+        guard await gate.enter(until: end) else { return .busy }
         let scan = MarkedItemsScan(finder: finder, limit: limit, isOutOfTime: { ContinuousClock.now >= end })
         let remaining = max(0, ContinuousClock.now.duration(to: end) / .seconds(1))
         // The deadline has a thread of its own too (`OwnThread`): one on a GCD global queue waited for a free thread,

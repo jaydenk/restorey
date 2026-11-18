@@ -8,7 +8,9 @@ import Foundation
 /// `await`. A job that throws still completes its link, so the chain never wedges.
 ///
 /// Each job's work runs on a detached task, never on this actor, so a job that is still running
-/// doesn't hold up queueing or a job for another key. The detached task runs on Swift concurrency's
+/// doesn't hold up queueing or a job for another key. `Task.detached` is the structural guarantee:
+/// a synchronous hold on the actor can't be observed without blocking a thread, so the test checks
+/// the work's `#isolation` instead. The detached task runs on Swift concurrency's
 /// cooperative pool, which has only as many threads as the Mac has cores, so the work must not
 /// block its thread (a semaphore wait, `waitUntilExit`, a synchronous system call that can hang):
 /// that would hold up every other task waiting for one, other keys' jobs included. Run such work

@@ -17,7 +17,7 @@ public struct SpotlightMarkedItems: MarkedItemsFinding {
     public init() {}
 
     /// Process-wide: every look at Spotlight in this process shares it, so a hung `mds` blocks one thread at most.
-    public var gate: MarkedItemsLookGate { .spotlight }
+    public var gate: OneOutstandingGate { .spotlight }
 
     public func query(scopes: [String], limit: Int) -> MarkedItemsQuery {
         // A scope that isn't a folder fails the whole query (`MDQueryExecute` returns false), and holds nothing anyway.

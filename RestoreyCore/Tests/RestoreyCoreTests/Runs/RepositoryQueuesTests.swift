@@ -100,25 +100,31 @@ struct RepositoryQueuesTests {
         #expect(await queues.pendingKeyCount == 0)
     }
 
-    /// Ruling R18: a job's work runs off the actor, so a job still running doesn't hold up queueing or another key's
-    /// job. A is held mid-job (suspended on a gate, so no thread is blocked: task 18) while B is queued and run to the
-    /// end; A finishes only after.
-    @Test(.timeLimit(.minutes(1))) func aJobStillRunningDoesNotHoldUpAnotherKey() async {
+    /// Ruling R18: a job's work runs off the queue's actor, and a job still running doesn't hold up another key's.
+    ///
+    /// The original test held A in a synchronous loop, which proved the first half only by blocking a cooperative
+    /// thread, the fault task 18 removes. A held job that suspends leaves any actor free, so it proves the second
+    /// half only. The first half is checked through `#isolation` in the work instead: the actor the work runs isolated
+    /// to, read without blocking anything. `Task.detached` in `enqueue` is what guarantees it; the check fails if the
+    /// work comes to run on the actor (a `nonisolated(nonsending)` work closure, whose `#isolation` is its caller's,
+    /// awaited from the actor).
+    @Test(.timeLimit(.minutes(1))) func aJobRunsOffTheActorAndDoesNotHoldUpAnotherKey() async {
         let queues = RepositoryQueues()
         let log = Log()
         let aStarted = Gate(), releaseA = Gate()
         let a = await queues.enqueue(repository: "A") {
+            let isolation = #isolation
+            await log.add(isolation.map { $0 === queues } == true ? "A on the actor" : "A off the actor")
             await aStarted.open()
             await releaseA.wait()
             await log.add("A end")
         }
         await aStarted.wait()
         let b = await queues.enqueue(repository: "B") { await log.add("B start") }
-        #expect(await queues.pendingKeyCount == 2, "the actor answers while A runs")
         await b.value()
         await releaseA.open()
         await a.value()
-        #expect(await log.events == ["B start", "A end"])
+        #expect(await log.events == ["A off the actor", "B start", "A end"])
     }
 
     // MARK: Cancellation
