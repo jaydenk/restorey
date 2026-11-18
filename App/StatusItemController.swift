@@ -33,6 +33,9 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
     private let menu = NSMenu()
     private let mode: Mode
     private var visibilityObservation: NSKeyValueObservation?
+    /// `NSCalendarDayChanged`: the tooltip and the menu say "yesterday at 09:05", which is only right on the day they
+    /// were made.
+    private var dayChangeObserver: NSObjectProtocol?
     /// Between `menuWillOpen` and `menuDidClose`: changes are drawn into the open menu at once.
     private var menuIsOpen = false
     /// Option was held as the menu opened (Option-click), so it shows the diagnostics section until it closes
@@ -59,6 +62,13 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
         super.init()
         setUp()
         supervisor.observe { [weak self] in self?.changed() }
+        // Posted when the system's calendar day changes, and on waking after midnight ("If the device is asleep when
+        // the day changes, this notification will be posted on wakeup"), so the relative day is made again.
+        dayChangeObserver = NotificationCenter.default.addObserver(
+            forName: .NSCalendarDayChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.changed() }
+        }
     }
 
     #if DEBUG

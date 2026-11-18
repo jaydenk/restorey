@@ -747,6 +747,19 @@ struct MenuPresentationTests {
             == "B2 · my-backups · 486 GB, 3 days ago")
     }
 
+    /// Review minor 3: setup names a networked raw repository "restic · sftp" while the line says "SFTP"; either name
+    /// already says where it backs up. Names are compared as a person reads them, case and spacing aside.
+    @Test func theDestinationComparesNamesAsTheyRead() {
+        let sftp = Repository.raw(repository: "sftp:me@host:/srv/repo", environmentNames: [])
+        for name in ["restic · sftp", "SFTP", " sftp "] {
+            #expect(Self.make(Self.status([Self.line(Self.plan(name, repository: sftp))])).plans[0].destination == nil, "\(name)")
+        }
+        #expect(Self.make(Self.status([Self.line(Self.plan("Server", repository: sftp))])).plans[0].destination == "SFTP")
+        let local = Repository.raw(repository: "/Volumes/Backup/repo", environmentNames: [])
+        #expect(Self.make(Self.status([Self.line(Self.plan("Local · repo", repository: local))])).plans[0].destination == nil)
+        #expect(Self.make(Self.status([Self.line(Self.plan("b2 · MY-BACKUPS"))])).plans[0].destination == nil)
+    }
+
     /// Audit T9: the status item's tooltip.
     @Test func theStatusItemsTooltip() {
         let plan = Self.plan()
@@ -770,7 +783,19 @@ struct MenuPresentationTests {
             == "Restorey — MacBook: Backup failed at 14:16")
         #expect(Self.make(nil, health: .checking).toolTip == "Restorey — Connecting to Restorey’s background process…")
         #expect(Self.make(nil, health: .notRunning(reachable: true)).toolTip == "Restorey — Backups aren’t running")
-        #expect(Self.make(nil, health: .damaged).toolTip == "Restorey — Restorey’s installation is damaged")
+        // A sentence that starts with the app's name isn't given it twice (review minor 2).
+        #expect(Self.make(nil, health: .damaged).toolTip == "Restorey’s installation is damaged")
+        var unreadable = Self.status([Self.line(plan)])
+        unreadable.configError = "config.json is from a newer version"
+        #expect(Self.make(unreadable).toolTip == "Restorey can’t read its settings")
+    }
+
+    /// Review minor 2: with several plans, a problem about one plan names it in the tooltip, as a plan's line does.
+    @Test func theTooltipNamesThePlanAProblemIsAbout() {
+        let photos = Self.plan("Photos drive", checkIn: false)
+        #expect(Self.make(Self.status([Self.line(Self.plan()), Self.line(photos)])).toolTip
+            == "Restorey — Photos drive: No off-Mac monitoring")
+        #expect(Self.make(Self.status([Self.line(photos)])).toolTip == "Restorey — No off-Mac monitoring")
     }
 
     // MARK: Helpers

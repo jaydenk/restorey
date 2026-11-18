@@ -523,7 +523,10 @@ tints and dims them like its own and keeps the fade (Apple's `NSImage.isTemplate
 the image to adjust the opacity of black content"); colour is kept for the severity symbols inside the open menu.
 The icon's tooltip says the state in words, updated with the icon (`MenuContent.toolTip`): the worst problem when
 there is one ("Restorey — Full Disk Access is missing", or "Restorey — MacBook: Backup failed at 14:16" with several
-plans), otherwise "Restorey — Backing up", "Restorey — Paused" or the newest backup, "Restorey — Last backup at 14:16".
+plans, for a plan's problem as for its status), otherwise "Restorey — Backing up", "Restorey — Paused" or the newest
+backup, "Restorey — Last backup at 14:16". A sentence that already names the app ("Restorey can't read its settings")
+isn't prefixed again. Its relative day ("yesterday at 09:05") is made again when the calendar day changes
+(`NSCalendarDayChanged`, which macOS also posts on waking after midnight), as well as on every status change.
 `scripts/verify-bundle.sh` checks every glyph is in the built app as a template image.
 
 ### The app icon
@@ -562,8 +565,9 @@ own menus do: section headers (`NSMenuItem.sectionHeader(title:)`, macOS 14), a 
   up, a dashed circle before the first backup, an up arrow while backing up, a pause mark, or the warning or error
   symbol. Under the title, one short detail and the destination: bytes done of the total and time left while backing
   up, "Resumes by itself at 15:20", the next run, or the first thing that needs attention ("Skipped while on
-  battery (+1 more)"); then "B2 · my-backups · 486 GB, 3 days ago". A plan named after its repository (setup's
-  default) shows only the size there, not its name again. A menu line is never restic's raw error: a failure from
+  battery (+1 more)"); then "B2 · my-backups · 486 GB, 3 days ago". A plan whose name already says where it backs
+  up (the name setup gave it, such as "restic · sftp" for an SFTP repository, or the line's own words, ignoring case
+  and spacing) shows only the size there, not its place again. A menu line is never restic's raw error: a failure from
   restic, a stop's reason or a retry's cause is the item's tooltip and the plan's Overview, one click away (choosing
   the status opens the plan in Settings); Restorey's own short reasons ("Wrong password") do show. A running backup
   has a progress bar under the status, across the menu's width. restic counts the files while it is already backing

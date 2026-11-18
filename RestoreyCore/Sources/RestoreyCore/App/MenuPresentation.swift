@@ -286,16 +286,21 @@ public enum MenuPresentation {
     // MARK: Tooltip
 
     /// The status item's tooltip (audit T9): the worst problem when there is one, otherwise what is happening or the
-    /// newest backup, after the app's name.
+    /// newest backup, after the app's name. With several plans, a problem about one plan names it. Its relative day
+    /// ("yesterday at 09:05") is only right on the day it is made, so the app makes it again when the day changes
+    /// (`StatusItemController`, `NSCalendarDayChanged`).
     private static func toolTip(_ content: MenuContent, status: AgentStatus?, format: TextContext) -> String {
-        func tip(_ text: String) -> String { "Restorey — \(text)" }
+        // A sentence that already starts with the app's name ("Restorey can't read its settings") isn't given it twice.
+        func tip(_ text: String) -> String { text.hasPrefix("Restorey") ? text : "Restorey — \(text)" }
         switch content.icon {
         case .error, .warning:
             let several = content.plans.count > 1
-            let problems = content.banners.map { ($0.severity, $0.title) }
-                + content.plans.compactMap { line in
-                    line.severity.map { ($0, several ? "\(line.name): \(line.status)" : line.status) }
-                }
+            func scoped(_ text: String, _ planID: UUID?) -> String {
+                guard several, let name = content.plans.first(where: { $0.id == planID })?.name else { return text }
+                return "\(name): \(text)"
+            }
+            let problems = content.banners.map { ($0.severity, scoped($0.title, $0.planID)) }
+                + content.plans.compactMap { line in line.severity.map { ($0, scoped(line.status, line.id)) } }
             if let worst = problems.max(by: { $0.0 < $1.0 }).flatMap({ worst in problems.first { $0.0 == worst.0 } }) {
                 return tip(worst.1)
             }
@@ -553,9 +558,10 @@ public enum MenuPresentation {
 
     // MARK: Destination
 
-    /// "B2 · my-backups · 486 GB, 3 days ago": the size only once it has been measured. A plan named after its
-    /// repository (setup's default, `StorageForm.planName`) has its name in the section header already, so the line
-    /// keeps only what is new, the size, or is left out (audit P3).
+    /// "B2 · my-backups · 486 GB, 3 days ago": the size only once it has been measured. A plan whose name already says
+    /// where it backs up has it in the section header, so the line keeps only what is new, the size, or is left out
+    /// (audit P3). That is a name setup gave it (`StorageForm.planName`: "restic · sftp" for what this line calls
+    /// "SFTP") or one that reads as this line's place, compared as a person reads them: case, accents and spacing aside.
     private static func destination(_ status: PlanStatus, _ format: TextContext) -> String? {
         let place: String
         switch status.plan.repository {
@@ -568,8 +574,14 @@ public enum MenuPresentation {
             let age = DisplayFormat.age(of: size.measuredAt, now: format.now, calendar: format.calendar, locale: format.locale)
             return "\(DisplayFormat.size(size.bytes, locale: format.locale)), \(age)"
         }
-        let parts = (place == status.plan.name ? [] : [place]) + [size].compactMap(\.self)
+        let named = [place, StorageForm.planName(for: status.plan.repository)].contains { readsTheSame($0, status.plan.name) }
+        let parts = (named ? [] : [place]) + [size].compactMap(\.self)
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private static func readsTheSame(_ a: String, _ b: String) -> Bool {
+        let trim = { (text: String) in text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        return trim(a).compare(trim(b), options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive]) == .orderedSame
     }
 
     private static let backendNames = [
