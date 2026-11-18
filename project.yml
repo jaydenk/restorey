@@ -4,6 +4,11 @@ options:
   deploymentTarget:
     macOS: "27.0"
   xcodeVersion: "27.0"
+  # Icon Composer's AppIcon.icon is a package (icon.json + Assets/): treat it as one file, or XcodeGen adds its
+  # insides as loose resources and actool never sees the icon (xcodegen-gotchas; XcodeGen issue #1556).
+  fileTypes:
+    icon:
+      file: true
 configFiles:
   Debug: Config/Debug.xcconfig
   Release: Config/Release.xcconfig
@@ -26,6 +31,9 @@ targets:
     platform: macOS
     sources:
       - Agent
+      # The agent posts the notifications, which show its bundle's icon, so it carries the app icon too.
+      - path: Resources/AppIcon.icon
+        buildPhase: resources
     dependencies:
       - package: RestoreyCore
         product: RestoreyCore
@@ -41,12 +49,15 @@ targets:
         INFOPLIST_FILE: Agent/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_ENTITLEMENTS: Agent/Agent.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SKIP_INSTALL: YES
   Restorey:
     type: application
     platform: macOS
     sources:
       - App
+      - path: Resources/AppIcon.icon
+        buildPhase: resources
     dependencies:
       - package: RestoreyCore
       # Built first, but embedded by the "Embed agent" script below rather than by an Embed
@@ -62,6 +73,9 @@ targets:
         INFOPLIST_FILE: App/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_ENTITLEMENTS: App/App.entitlements
+        # actool compiles the layered icon into Assets.car (macOS 26+) and AppIcon.icns, and adds CFBundleIconName and
+        # CFBundleIconFile to the built Info.plist.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       configs:
         # The Developer window is Debug-only: a Release build doesn't compile its files at all (its uses are
         # also behind #if DEBUG). ci.sh checks the built Release app has none of its types (verify-bundle.sh).

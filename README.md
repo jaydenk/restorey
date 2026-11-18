@@ -509,11 +509,30 @@ window's smallest size; only the biggest-additions line, a list of names, stays 
 ### The menu bar
 
 The icon and the menu come from one place (`MenuPresentation` in RestoreyCore), so they can't disagree. The icon
-shows the worst state across all plans, from SF Symbols: OK (`externaldrive.badge.timemachine`), backing up (the
-drive with an upload badge), paused (a pause badge), warning (an outlined "!" triangle) and error
-(`externaldrive.fill.badge.xmark`, the only filled icon). All five are template images, monochrome like the rest of
-the menu bar (owner, 12 Nov 2026), so the menu bar tints and dims them like its own; colour is kept for the text
-inside the open menu.
+shows the worst state across all plans, as the "Layers" glyph that matches the app icon: three stacked snapshot
+layers fading back in time (the newest full, the next 65 %, the oldest 35 %), whose top slot shows the state. OK shows
+the newest layer; backing up, an up arrow lifting it away; paused, a pause mark; warning, a "!"; and error (a problem
+that stops backups), an "×". The two older layers never change, so the icon keeps its size and place. The five
+glyphs are vector SVG template images in `App/Assets.xcassets` (`StatusIdle`, `StatusBackingUp`, `StatusPaused`,
+`StatusAttention`, `StatusError`, mapped in `App/StatusIcon.swift`), 18 × 18 pt with a 1.3 pt stroke, monochrome like
+the rest of the menu bar (owner, 12 Nov 2026). A template image is drawn from its alpha channel, so the menu bar
+tints and dims them like its own and keeps the fade (Apple's `NSImage.isTemplate`: "You can use the alpha channel in
+the image to adjust the opacity of black content"); colour is kept for the text inside the open menu.
+`scripts/verify-bundle.sh` checks every glyph is in the built app as a template image.
+
+### The app icon
+
+The app icon ("Snapshots") is the same three layers in white on a teal gradient, the newest with an up arrow lifting
+out of it. It is an Icon Composer document, `Resources/AppIcon.icon` (`icon.json` and one SVG per layer in
+`Assets/`), so macOS 26 and later render its default, dark, clear and tinted appearances and Liquid Glass from the
+layers; actool compiles it into `Assets.car` and an `AppIcon.icns` (`ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon`).
+Both the app and the agent carry it, because notifications show the agent's icon; the About panel, the Dock, the Full
+Disk Access drag tile and System Settings' lists read it from the bundle. `project.yml` declares `.icon` a single file
+(`options.fileTypes`), or XcodeGen would add the package's insides as loose resources. To change the artwork, edit
+the layer SVGs (1024 × 1024 canvas, unmasked, white) or open the document in Icon Composer (Xcode → Open Developer
+Tool), and preview any appearance with Icon Composer's `ictool` (`--export-image --platform macOS --rendition Dark`,
+for example). `scripts/verify-bundle.sh` checks both bundles carry the icon. The icon and glyphs are original
+artwork.
 
 With no plan at all, the menu shows "Setup not finished — Finish Setup…" (a warning), which reopens setup where it
 was left, so a setup window closed before its first plan can always be found again.
