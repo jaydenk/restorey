@@ -1320,7 +1320,7 @@ struct PlanRunnerTests {
         func go(_ n: Int) { FileManager.default.createFile(atPath: dir.appendingPathComponent("go-\(n)").path, contents: nil) }
 
         /// Releases every step and removes the folder. The stub's wait loop also leaves when its folder is gone, so no
-        /// stub outlives a test that stopped early, whatever the order of the two (`stubsEndWhenTheirFolderIsGone`).
+        /// stub outlives a test that stopped early, whatever the order of the two (`aSteppedStubEndsWhenItsFolderIsGone`).
         func finish() {
             for n in 1..<max(steps, 1) { go(n) }
             try? FileManager.default.removeItem(at: dir)
