@@ -31,8 +31,14 @@ swift test --package-path RestoreyCore
 # Deadlines under GCD starvation, on their own: these park every constrained global-queue thread in the test process,
 # so they would stall other tests beside them (README: "Building from source"). Skipped in the run above.
 step "Test deadlines under GCD starvation (alone)"
+starvation_log=build/starvation-tests.log
 RESTOREY_STARVATION_TESTS=1 swift test --package-path RestoreyCore --skip-build --no-parallel \
-  --filter GlobalQueueStarvationTests
+  --filter GlobalQueueStarvationTests 2>&1 | tee "$starvation_log"
+# A skipped suite or a filter that matches nothing would also exit 0: require both tests to have passed.
+if [[ $(grep -cE "Test [A-Za-z]+WhileGlobalQueuesAreStarved\(\) passed" "$starvation_log") -ne 2 ]]; then
+  echo "error: the two GCD starvation tests didn't both run and pass (log: $starvation_log)" >&2
+  exit 1
+fi
 
 step "Generate the Xcode project"
 xcodegen generate --quiet

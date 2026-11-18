@@ -103,11 +103,15 @@ public final class OneOutstandingGate: Sendable {
         case wait
         /// A run is outstanding past its deadline.
         case stuck
+        /// None is outstanding, but this caller's own deadline has passed: entering would start work only to abandon
+        /// it at once while it held the gate (re-review N2).
+        case expired
     }
 
     func enter(until deadline: ContinuousClock.Instant, now: ContinuousClock.Instant) -> Entry {
         outstanding.withLock { current in
             guard let current else {
+                guard now < deadline else { return .expired }
                 current = deadline
                 return .entered
             }
@@ -124,7 +128,7 @@ public final class OneOutstandingGate: Sendable {
             let now = ContinuousClock.now
             switch enter(until: deadline, now: now) {
             case .entered: return true
-            case .stuck: return false
+            case .stuck, .expired: return false
             case .wait:
                 if now >= deadline { return false }
                 try? await Task.sleep(for: .milliseconds(50))
