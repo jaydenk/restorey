@@ -257,18 +257,15 @@ public struct MarkedItemsScan: Sendable {
         }
         let scan = MarkedItemsScan(finder: finder, limit: limit, isOutOfTime: { ContinuousClock.now >= end })
         let remaining = max(0, ContinuousClock.now.duration(to: end) / .seconds(1))
-        return await withCheckedContinuation { continuation in
-            let once = ResumeOnce(continuation)
-            let thread = Thread {
-                let result = scan.run(sources: sources)
-                // Only when the query has really returned: a timed-out look keeps the gate until then.
-                gate.leave()
-                once.resume(result)
-            }
-            thread.qualityOfService = .utility
-            thread.name = "Restorey marked-items scan"
-            thread.start()
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + remaining) { once.resume(.gaveUp) }
+        // The deadline has a thread of its own too (`OwnThread`): one on a GCD global queue waited for a free thread,
+        // so on a busy few-core Mac it didn't bound the query at all (task 18).
+        return await OwnThread.run(
+            named: "Restorey marked-items scan", qualityOfService: .utility, deadline: remaining, orElse: .gaveUp
+        ) {
+            let result = scan.run(sources: sources)
+            // Only when the query has really returned: a timed-out look keeps the gate until then.
+            gate.leave()
+            return result
         }
     }
 }

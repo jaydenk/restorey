@@ -189,20 +189,33 @@ struct MarkedNotForBackupTests {
         #expect(index.asked.withLock { $0 }.isEmpty)
     }
 
+    /// Task 18: the deadline doesn't wait for a free thread. With GCD's constrained global queues starved (as on a
+    /// busy few-core Mac) a deadline on `DispatchQueue.global` never fired, and the stuck query's own result won.
     @Test func theDeadlineWinsOverAStuckQuery() async {
-        /// A query that never returns within the test.
-        struct Stuck: MarkedItemsFinding {
+        /// A query held until the test lets it go, after the look has returned, or for 2 seconds, which only keeps a
+        /// failing run from hanging (the look then returns `.found`). The starvation also ends from a thread of its
+        /// own, a second after the query returns (so a deadline still starved can't beat the query's result): the
+        /// test's own code may be waiting for a Swift concurrency thread that something else in the process holds
+        /// while that waits on a global queue (the real Spotlight query does).
+        final class Stuck: MarkedItemsFinding, Sendable {
             let gate = MarkedItemsLookGate()
+            let release = DispatchSemaphore(value: 0)
+            let starvation = GlobalQueueStarvation()
             func query(scopes: [String], limit: Int) -> MarkedItemsQuery {
-                Thread.sleep(forTimeInterval: 2)
+                _ = release.wait(timeout: .now() + 2)
+                Thread.detachNewThread { [starvation] in
+                    Thread.sleep(forTimeInterval: 1)
+                    starvation.end()
+                }
                 return .found([])
             }
             func isMarked(_ path: String) -> Bool { true }
         }
-        let started = ContinuousClock.now
-        let result = await MarkedItemsScan.offPool(finder: Stuck(), sources: ["/Users/me"], deadline: 0.1)
+        let stuck = Stuck()
+        let result = await MarkedItemsScan.offPool(finder: stuck, sources: ["/Users/me"], deadline: 0.1)
+        stuck.starvation.end()
+        stuck.release.signal()
         #expect(result == .gaveUp)
-        #expect(ContinuousClock.now - started < .seconds(1.5))
     }
 
     /// A query that blocks until the test lets it go, counting how often it was asked.
@@ -223,9 +236,13 @@ struct MarkedNotForBackupTests {
     @Test func aStuckLookIsNotJoinedByAnother() async {
         let held = Held()
         #expect(await MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: 0.1) == .gaveUp)
+        // The deadline can win before the scan's thread has even reached the query on a busy Mac: wait for it to be
+        // asked (and stuck), so the next look meets a query really hung.
+        while held.asked.withLock({ $0 }) == 0 { try? await Task.sleep(for: .milliseconds(10)) }
         let started = ContinuousClock.now
-        #expect(await MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: 5) == .busy)
-        #expect(ContinuousClock.now - started < .seconds(0.5), "it gives up at once")
+        // Waiting for the stuck look would take this look's whole minute; giving up at once takes next to nothing.
+        #expect(await MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: 60) == .busy)
+        #expect(ContinuousClock.now - started < .seconds(30), "it gives up at once")
         #expect(held.asked.withLock { $0 } == 1)
 
         held.release.signal()
@@ -283,14 +300,17 @@ struct MarkedNotForBackupTests {
         #expect(!reader.isMarked(root.appendingPathComponent("missing").path))
     }
 
-    @Test func theRealQueryAnswersForAFolderSpotlightDoesntIndex() {
+    @Test func theRealQueryAnswersForAFolderSpotlightDoesntIndex() async {
         // A folder Spotlight has no entries for, and one that doesn't exist: no candidates, not a failure.
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("restorey-unindexed-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        // The query blocks, so it runs on a thread of its own, as the agent's does, not on a Swift concurrency one.
         let reader = SpotlightMarkedItems()
-        #expect(reader.query(scopes: [root.path], limit: 10) == .found([]))
-        #expect(reader.query(scopes: [root.path + "-missing"], limit: 10) == .found([]))
+        let found = await OwnThread.run(named: "test Spotlight query", qualityOfService: .utility) {
+            [reader.query(scopes: [root.path], limit: 10), reader.query(scopes: [root.path + "-missing"], limit: 10)]
+        }
+        #expect(found == [.found([]), .found([])])
     }
 
     // MARK: Stored fields

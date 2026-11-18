@@ -121,6 +121,17 @@ xcodegen`; CI installs exactly 2.46.0 from its release, checked against the publ
    scripts/ci.sh
    ```
 
+   GitHub's runners have few cores, so Swift concurrency's thread pool (one thread per core) and GCD's global
+   queues fill up there long before they do on a desktop Mac. Neither the code nor the tests may block a Swift
+   concurrency thread (a semaphore wait, `waitUntilExit`, a synchronous call that can hang): blocking work runs
+   on a thread of its own (`OwnThread`), deadlines included, never on a global queue. Tests of timeouts move a
+   `ManualClock` rather than measuring wall-clock time. To check a change for pool blockers on any Mac, run the
+   tests with the pool cut to one thread:
+
+   ```sh
+   LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test --package-path RestoreyCore
+   ```
+
 3. For a signed local install, copy `Config/Local.example.xcconfig` to `Config/Local.xcconfig` (gitignored) and
    set `DEVELOPMENT_TEAM`. Then build, sign and install `RestoreyDev.app` into `/Applications`:
 

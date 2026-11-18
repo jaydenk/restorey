@@ -7,7 +7,13 @@ import Testing
 /// The agent's Location logic (`LocationAccess`) against a fake Core Location: Location Services off for the Mac
 /// answers at once and never asks, an undecided agent asks once, and a locationd that doesn't answer can't hold a
 /// reply past its bound. Nothing here touches Core Location.
+///
+/// The bounds sleep on a `ManualClock` that only the test moves (task 18), so a reply that comes "at the bound" is
+/// one the test let the bound decide, and one that comes "at once" came with the clock still: neither depends on how
+/// soon the scheduler wakes a sleeper. A reply that wrongly waited for a bound the clock never reaches would never
+/// come, and the suite's time limit fails it.
 @MainActor
+@Suite(.timeLimit(.minutes(1)))
 struct LocationAccessTests {
     final class FakeLocation: Sendable {
         let servicesOn = Locked(true)
@@ -34,9 +40,10 @@ struct LocationAccessTests {
     }
 
     private static func access(
-        _ fake: FakeLocation, requestBound: Duration = .seconds(30), servicesBound: Duration = .seconds(5)
+        _ fake: FakeLocation, requestBound: Duration = .seconds(30), servicesBound: Duration = .seconds(5),
+        clock: ManualClock = ManualClock()
     ) -> LocationAccess {
-        LocationAccess(api: fake.api, requestBound: requestBound, servicesBound: servicesBound)
+        LocationAccess(api: fake.api, requestBound: requestBound, servicesBound: servicesBound, clock: clock)
     }
 
     // MARK: Location Services off for the Mac (Task 15 deferral, fix round 1 M2, M6)
@@ -45,9 +52,8 @@ struct LocationAccessTests {
         let fake = FakeLocation()
         fake.servicesOn.set(false)
         let access = Self.access(fake)
-        let started = ContinuousClock.now
+        // The clock never moves: the reply comes without waiting out either bound.
         let reply = await access.request()
-        #expect(ContinuousClock.now - started < .seconds(2))
         #expect(reply == LocationPermissionReply(authorised: false, status: "notDetermined", servicesEnabled: false))
         #expect(fake.requests.value == 0, "requestWhenInUseAuthorization is never called with services off")
         #expect(fake.statusReads.value == 0, "no Core Location call but the services read")
@@ -95,7 +101,14 @@ struct LocationAccessTests {
 
     @Test func anUnansweredPromptRepliesAtTheBound() async {
         let fake = FakeLocation()
-        let reply = await Self.access(fake, requestBound: .milliseconds(100)).request()
+        let clock = ManualClock()
+        let access = Self.access(fake, requestBound: .milliseconds(100), clock: clock)
+        async let replied = access.request()
+        // The request's bound is the only sleeper left once the services read (services on) has answered.
+        while fake.requests.value == 0 { await Task.yield() }
+        await clock.sleepers(atLeast: 1)
+        clock.advance(by: .milliseconds(100))
+        let reply = await replied
         #expect(reply.status == "notDetermined")
         #expect(!reply.authorised)
         #expect(fake.requests.value == 1)
@@ -109,11 +122,17 @@ struct LocationAccessTests {
         let fake = FakeLocation()
         let gate = DispatchSemaphore(value: 0)
         fake.hang.set(gate)
-        let access = Self.access(fake, servicesBound: .milliseconds(100))
-        let started = ContinuousClock.now
-        let first = await access.current()
-        let second = await access.current()
-        #expect(ContinuousClock.now - started < .seconds(3))
+        let clock = ManualClock()
+        let access = Self.access(fake, servicesBound: .milliseconds(100), clock: clock)
+        // Each call waits on its bound; moving the clock past it is what returns it, the read still hung.
+        async let firstReply = access.current()
+        await clock.sleepers(atLeast: 1)
+        clock.advance(by: .milliseconds(100))
+        let first = await firstReply
+        async let secondReply = access.current()
+        await clock.sleepers(atLeast: 1)
+        clock.advance(by: .milliseconds(100))
+        let second = await secondReply
         #expect(first.servicesEnabled == nil, "nothing known yet")
         #expect(second.servicesEnabled == nil)
         #expect(fake.servicesReads.value == 1, "one read in flight at a time")

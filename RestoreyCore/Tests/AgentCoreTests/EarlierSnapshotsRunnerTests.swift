@@ -229,7 +229,11 @@ struct EarlierSnapshotsRunnerTests {
         let holder = try await LockHolder(f)
         let before = try await f.snapshotIDs()
 
-        #expect(try await f.state.previewEarlierSnapshots(f.planID).group(.beforeAdoption) == group)
+        // The same group in any order: restic loads snapshots in parallel and lists those with the same time (the
+        // seeded "daily" pair shares its hours with the untagged ones) in whatever order they loaded, so `removeIDs`
+        // can come back reordered between two previews (task 18; restic 0.19.1 `ForAllSnapshots`, `sort.Stable`).
+        let during = try #require(try await f.state.previewEarlierSnapshots(f.planID).group(.beforeAdoption))
+        #expect(during.inAnyOrder == group.inAnyOrder)
         do {
             _ = try await f.state.removeEarlierSnapshots(
                 EarlierSnapshotsRequest(planID: f.planID, confirmation: EarlierSnapshotsConfirmation(group)))
@@ -440,6 +444,16 @@ struct EarlierSnapshotsRunnerTests {
         _ = try await f.runner.runBackup(planID: f.planID, trigger: .manual)
         #expect(await f.history().pendingEarlierRemoval == nil)
         #expect(Set(try await f.snapshots().map(\.id)).isDisjoint(with: group.removeIDs))
+    }
+}
+
+extension EarlierSnapshotGroup {
+    /// The group with its IDs sorted, for comparing two previews: restic's order of snapshots with the same time isn't
+    /// fixed.
+    var inAnyOrder: EarlierSnapshotGroup {
+        var group = self
+        group.removeIDs.sort()
+        return group
     }
 }
 

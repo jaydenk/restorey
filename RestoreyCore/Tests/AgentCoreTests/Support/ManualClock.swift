@@ -20,6 +20,8 @@ final class ManualClock: Clock, Sendable {
         var now = Instant(offset: .zero)
         var nextID = 0
         var sleepers: [Sleeper] = []
+        /// `sleepers(atLeast:)` calls waiting for that many sleeps.
+        var watchers: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
     }
 
     private let state = Mutex(State())
@@ -37,13 +39,17 @@ final class ManualClock: Clock, Sendable {
         }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-                let outcome: Result<Void, any Error>? = state.withLock { state in
-                    if Task.isCancelled { return .failure(CancellationError()) }
-                    if deadline <= state.now { return .success(()) }
+                let (outcome, watchers) = state.withLock { state -> (Result<Void, any Error>?, [CheckedContinuation<Void, Never>]) in
+                    if Task.isCancelled { return (.failure(CancellationError()), []) }
+                    if deadline <= state.now { return (.success(()), []) }
                     state.sleepers.append(Sleeper(id: id, deadline: deadline, continuation: continuation))
-                    return nil
+                    let count = state.sleepers.count
+                    let due = state.watchers.filter { $0.count <= count }.map(\.continuation)
+                    state.watchers.removeAll { $0.count <= count }
+                    return (nil, due)
                 }
                 if let outcome { continuation.resume(with: outcome) }
+                for watcher in watchers { watcher.resume() }
             }
         } onCancel: {
             let cancelled = state.withLock { state -> CheckedContinuation<Void, any Error>? in
@@ -51,6 +57,19 @@ final class ManualClock: Clock, Sendable {
                 return state.sleepers.remove(at: index).continuation
             }
             cancelled?.resume(throwing: CancellationError())
+        }
+    }
+
+    /// Returns once at least `count` sleeps are waiting: the code under test has reached its timer. No polling, and no
+    /// wall-clock time, so it doesn't depend on when the scheduler runs anything.
+    func sleepers(atLeast count: Int) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let now = state.withLock { state in
+                if state.sleepers.count >= count { return true }
+                state.watchers.append((count, continuation))
+                return false
+            }
+            if now { continuation.resume() }
         }
     }
 

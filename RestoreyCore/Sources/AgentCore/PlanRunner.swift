@@ -555,15 +555,13 @@ public actor PlanRunner {
         guard Self.savedData(record.outcome) else { return nil }
         let count = deps.cloudOnlySkipped
         let (sources, exclusions) = (plan.sources, plan.exclusions)
-        // On a dispatch thread, not a Swift concurrency one: the walk blocks in system calls. The first of the walk and
-        // the deadline decides; a walk that finishes later is ignored and touches nothing but its own locals.
-        let result: CloudOnlyCounter.Result? = await withCheckedContinuation { continuation in
-            let once = ResumeOnce(continuation)
-            DispatchQueue.global(qos: .utility).async { once.resume(count(sources, exclusions)) }
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + deps.cloudOnlyDeadline) {
-                once.resume(.gaveUp)
-            }
-        }
+        // On a thread of its own, neither a Swift concurrency one nor a GCD global queue's (task 18): the walk blocks in
+        // system calls, and a deadline on a global queue waited for a free thread. The first of the walk and the
+        // deadline decides; a walk that finishes later is ignored and touches nothing but its own locals.
+        let result: CloudOnlyCounter.Result? = await OwnThread.run(
+            named: "Restorey cloud-only count", qualityOfService: .utility, deadline: deps.cloudOnlyDeadline,
+            orElse: .gaveUp
+        ) { count(sources, exclusions) }
         switch result {
         case .counted(let counted): return counted
         case .gaveUp:

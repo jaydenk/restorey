@@ -253,9 +253,11 @@ public struct AppMoveRunner<Probe: AppMoveProbe>: Sendable {
         if case .refuse(let refusal) = decision { throw AppMoveError.refused(refusal) }
         let installer = installer
         do {
-            try await Task.detached {
-                try installer.install(source, at: destination, replacing: decision == .replace)
-            }.value
+            // The copy blocks in file system calls (from a disk image, perhaps), so it gets a thread of its own rather
+            // than holding one of Swift concurrency's few (task 18).
+            try await OwnThread.run(named: "Restorey app move", qualityOfService: .userInitiated) {
+                Result { try installer.install(source, at: destination, replacing: decision == .replace) }
+            }.get()
         } catch {
             throw AppMove.error(from: error)
         }

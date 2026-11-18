@@ -100,19 +100,23 @@ struct RepositoryQueuesTests {
         #expect(await queues.pendingKeyCount == 0)
     }
 
-    @Test(.timeLimit(.minutes(1))) func longSynchronousJobDoesNotBlockAnotherKey() async {
+    /// Ruling R18: a job's work runs off the actor, so a job still running doesn't hold up queueing or another key's
+    /// job. A is held mid-job (suspended on a gate, so no thread is blocked: task 18) while B is queued and run to the
+    /// end; A finishes only after.
+    @Test(.timeLimit(.minutes(1))) func aJobStillRunningDoesNotHoldUpAnotherKey() async {
         let queues = RepositoryQueues()
         let log = Log()
-        let aStarted = Gate()
+        let aStarted = Gate(), releaseA = Gate()
         let a = await queues.enqueue(repository: "A") {
             await aStarted.open()
-            for _ in 0..<30 { usleep(10_000) }  // ~300 ms of blocking, synchronous work
+            await releaseA.wait()
             await log.add("A end")
         }
         await aStarted.wait()
-        // Were A's work on the actor, this call would not return until A had finished.
         let b = await queues.enqueue(repository: "B") { await log.add("B start") }
+        #expect(await queues.pendingKeyCount == 2, "the actor answers while A runs")
         await b.value()
+        await releaseA.open()
         await a.value()
         #expect(await log.events == ["B start", "A end"])
     }

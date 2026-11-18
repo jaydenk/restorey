@@ -221,27 +221,32 @@ struct CloudOnlyWalkerTests {
 
     @Test func aStuckWalkIsAbandonedAtTheDeadlineAndItsLateResultDiscarded() async throws {
         let finished = Locked<Bool>(false)
+        // The walk is held until the test lets it go, after the backup has returned (task 18: no assumption about
+        // how long the backup takes). It blocks its own thread, never a Swift concurrency one.
+        let release = DispatchSemaphore(value: 0)
         let f = try await RunnerFixture.make(
             cloudOnlySkipped: { _, _ in
-                Thread.sleep(forTimeInterval: 15)
+                release.wait()
                 finished.set(true)
                 return Self.counted(9)
             }, cloudOnlyDeadline: 0.3)
         defer { f.remove() }
+        // Should the backup throw, the walk's thread still ends (a second signal does nothing).
+        defer { release.signal() }
         try f.write("a.txt", "hello")
 
         let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
 
+        #expect(!finished.value)
+        release.signal()
         guard case .success = record.outcome else {
             Issue.record("expected success, got \(record.outcome)")
             return
         }
-        #expect(!finished.value)
         #expect(record.cloudOnlySkipped == nil)
         #expect(f.agentInfo.value.contains { $0.contains("Gave up counting cloud-only files") })
         // The walk finishes later; nothing it returns reaches the history.
-        for _ in 0..<250 where !finished.value { try await Task.sleep(for: .milliseconds(100)) }
-        #expect(finished.value)
+        while !finished.value { try await Task.sleep(for: .milliseconds(10)) }
         #expect(await f.history().lastBackupRecord?.cloudOnlySkipped == nil)
     }
 }

@@ -8,8 +8,7 @@ struct ResticInvocationAcceptanceTests {
     private struct Result { let status: Int32; let stdout: String; let stderr: String }
 
     /// Runs restic and waits for it without blocking a thread: `waitUntilExit()` would hold one of the
-    /// cooperative pool's few threads for the whole run and starve tests that need a free one
-    /// (`RepositoryQueuesTests.longSynchronousJobDoesNotBlockAnotherKey`).
+    /// cooperative pool's few threads for the whole run and starve tests that need a free one (task 18).
     private func run(_ restic: URL, _ inv: ResticInvocation, dir: URL, tag: String) async throws -> Result {
         let process = Process()
         process.executableURL = restic

@@ -116,12 +116,21 @@ struct HelperAuthorisationTests {
         #expect(processInfo(pid: getpid())?.startTime == first.startTime)
     }
 
-    @Test func processInfoOfAnExitedProcessIsNil() throws {
+    @Test func processInfoOfAnExitedProcessIsNil() async throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/true")
-        try process.run()
-        process.waitUntilExit()
-        // Reaped by waitUntilExit, so the pid names no process (barring immediate reuse).
-        #expect(processInfo(pid: process.processIdentifier) == nil)
+        // Awaited through the termination handler, not `waitUntilExit()`, which would block one of Swift
+        // concurrency's few threads (task 18). Foundation reaps the child before calling the handler (it reports the
+        // exit status), so the pid then names no process (barring immediate reuse).
+        let pid: pid_t = try await withCheckedThrowingContinuation { continuation in
+            process.terminationHandler = { continuation.resume(returning: $0.processIdentifier) }
+            do {
+                try process.run()
+            } catch {
+                process.terminationHandler = nil
+                continuation.resume(throwing: error)
+            }
+        }
+        #expect(processInfo(pid: pid) == nil)
     }
 }

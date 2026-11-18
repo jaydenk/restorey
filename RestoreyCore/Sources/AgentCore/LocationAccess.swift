@@ -54,6 +54,9 @@ public final class LocationAccess {
     private let api: API
     private let requestBound: Duration
     private let servicesBound: Duration
+    /// What the bounds sleep on: tests pass a clock they move themselves, so no test depends on when the scheduler
+    /// wakes a sleeper (task 18).
+    private let clock: any Clock<Duration>
     private let queue = DispatchQueue(label: "Restorey.LocationServices", qos: .userInitiated)
 
     /// The last status Core Location reported; nil until its first report.
@@ -61,14 +64,17 @@ public final class LocationAccess {
     /// The last services read; nil until the first finishes.
     private let servicesEnabled = Mutex<Bool?>(nil)
     private var reading = false
-    private var servicesWaiters: [UUID: CheckedContinuation<Bool?, Never>] = [:]
-    /// Requests waiting for the user to answer the prompt, resumed together by the next decided status.
-    private var waiting: [UUID: CheckedContinuation<LocationPermissionReply, Never>] = [:]
+    /// Callers waiting for the services read, each with its bound's timer (stopped once the read answers).
+    private var servicesWaiters: [UUID: (continuation: CheckedContinuation<Bool?, Never>, bound: Task<Void, Never>)] = [:]
+    /// Requests waiting for the user to answer the prompt, resumed together by the next decided status, each with its
+    /// bound's timer.
+    private var waiting: [UUID: (continuation: CheckedContinuation<LocationPermissionReply, Never>, bound: Task<Void, Never>)] = [:]
 
-    public init(api: API, requestBound: Duration, servicesBound: Duration) {
+    public init(api: API, requestBound: Duration, servicesBound: Duration, clock: any Clock<Duration> = ContinuousClock()) {
         self.api = api
         self.requestBound = requestBound
         self.servicesBound = servicesBound
+        self.clock = clock
     }
 
     /// For `hello`: nil until the user has been asked (or before Core Location's first report).
@@ -107,14 +113,13 @@ public final class LocationAccess {
         let id = UUID()
         return await withCheckedContinuation { continuation in
             let first = waiting.isEmpty
-            waiting[id] = continuation
-            // One prompt however many callers wait; a second request would do nothing anyway.
-            if first { api.requestWhenInUse() }
-            Task { [weak self, requestBound] in
-                try? await Task.sleep(for: requestBound)
-                guard let self else { return }
+            let bound = Task { [weak self, requestBound, clock] in
+                guard (try? await clock.sleep(for: requestBound)) != nil, let self else { return }
                 finish(id, status: lastReported.withLock { $0 } ?? .notDetermined, servicesEnabled: knownServicesEnabled)
             }
+            waiting[id] = (continuation, bound)
+            // One prompt however many callers wait; a second request would do nothing anyway.
+            if first { api.requestWhenInUse() }
         }
     }
 
@@ -124,13 +129,12 @@ public final class LocationAccess {
     private func readServices() async -> Bool? {
         let id = UUID()
         return await withCheckedContinuation { continuation in
-            servicesWaiters[id] = continuation
-            startServicesRead()
-            Task { [weak self, servicesBound] in
-                try? await Task.sleep(for: servicesBound)
-                guard let self else { return }
-                servicesWaiters.removeValue(forKey: id)?.resume(returning: knownServicesEnabled)
+            let bound = Task { [weak self, servicesBound, clock] in
+                guard (try? await clock.sleep(for: servicesBound)) != nil, let self else { return }
+                servicesWaiters.removeValue(forKey: id)?.continuation.resume(returning: knownServicesEnabled)
             }
+            servicesWaiters[id] = (continuation, bound)
+            startServicesRead()
         }
     }
 
@@ -148,11 +152,16 @@ public final class LocationAccess {
         reading = false
         let waiters = servicesWaiters
         servicesWaiters = [:]
-        for continuation in waiters.values { continuation.resume(returning: enabled) }
+        for waiter in waiters.values {
+            waiter.bound.cancel()
+            waiter.continuation.resume(returning: enabled)
+        }
     }
 
     private func finish(_ id: UUID, status: LocationAuthorisation, servicesEnabled: Bool?) {
-        waiting.removeValue(forKey: id)?.resume(returning: Self.reply(status, servicesEnabled: servicesEnabled))
+        guard let waiter = waiting.removeValue(forKey: id) else { return }
+        waiter.bound.cancel()
+        waiter.continuation.resume(returning: Self.reply(status, servicesEnabled: servicesEnabled))
     }
 
     private static func reply(_ status: LocationAuthorisation, servicesEnabled: Bool?) -> LocationPermissionReply {

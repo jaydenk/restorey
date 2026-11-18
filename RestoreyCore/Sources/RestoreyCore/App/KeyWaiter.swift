@@ -38,8 +38,11 @@ public final class KeyWaiter {
     private var waiters: [UUID: Waiter] = [:]
     /// Timeout tasks still sleeping (for tests: one that ended early must stop, fix round 4, M2).
     private(set) var runningTimeouts = 0
+    /// What the timeouts sleep on: tests pass a clock they move themselves, so no test depends on when the scheduler
+    /// wakes a sleeper (task 18).
+    private let clock: any Clock<Duration>
 
-    public init() {}
+    public init(clock: any Clock<Duration> = ContinuousClock()) { self.clock = clock }
 
     /// Key, and if a prompt is in progress, key again since the prompt took it.
     var isBack: Bool { isKey && prompt == .none }
@@ -68,8 +71,8 @@ public final class KeyWaiter {
         let id = UUID()
         return await withCheckedContinuation { continuation in
             runningTimeouts += 1
-            let timer = Task { @MainActor in
-                let expired = (try? await Task.sleep(for: timeout)) != nil
+            let timer = Task { @MainActor [clock] in
+                let expired = (try? await clock.sleep(for: timeout)) != nil
                 self.runningTimeouts -= 1
                 if expired { self.waiters.removeValue(forKey: id)?.continuation.resume(returning: false) }
             }
