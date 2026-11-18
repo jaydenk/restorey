@@ -510,11 +510,11 @@ window's smallest size; only the biggest-additions line, a list of names, stays 
 
 The icon and the menu come from one place (`MenuPresentation` in RestoreyCore), so they can't disagree. The icon
 shows the worst state across all plans, as the "Layers" glyph that matches the app icon: three stacked snapshot
-layers fading back in time (the newest full, the next 65 %, the oldest 35 %), whose top slot shows the state. OK shows
+layers fading back in time (the newest full, the next 70 %, the oldest 45 %), whose top slot shows the state. OK shows
 the newest layer; backing up, an up arrow lifting it away; paused, a pause mark; warning, a "!"; and error (a problem
 that stops backups), an "×". The two older layers never change, so the icon keeps its size and place. The five
 glyphs are vector SVG template images in `App/Assets.xcassets` (`StatusIdle`, `StatusBackingUp`, `StatusPaused`,
-`StatusAttention`, `StatusError`, mapped in `App/StatusIcon.swift`), 18 × 18 pt with a 1.3 pt stroke, monochrome like
+`StatusAttention`, `StatusError`, mapped in `App/StatusIcon.swift`), 18 × 19 pt, with 1.7 pt layer outlines and 1.6 pt state marks 6.5 pt tall (about the weight of `wifi` and `battery.100percent` at menu bar size), monochrome like
 the rest of the menu bar (owner, 12 Nov 2026). A template image is drawn from its alpha channel, so the menu bar
 tints and dims them like its own and keeps the fade (Apple's `NSImage.isTemplate`: "You can use the alpha channel in
 the image to adjust the opacity of black content"); colour is kept for the text inside the open menu.
