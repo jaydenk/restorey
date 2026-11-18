@@ -41,7 +41,9 @@ struct SourcesEditor: View {
             .contextMenu(forSelectionType: String.self) { paths in
                 if !paths.isEmpty {
                     Button("Show in Finder") { reveal(paths) }
+                    // Dimmed exactly when the Remove button and the Delete key can't act: the list is disabled.
                     Button("Remove") { remove(paths) }
+                        .disabled(!isEnabled)
                 }
             }
             .onDeleteCommand(perform: selection.isEmpty || !isEnabled ? nil : { remove(selection) })

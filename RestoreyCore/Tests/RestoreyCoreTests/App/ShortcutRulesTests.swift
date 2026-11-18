@@ -250,6 +250,52 @@ struct ShortcutRulesTests {
 struct FolderDropTests {
     private static func folder(_ path: String) -> PickedItem { PickedItem(path: path, kind: .folder) }
 
+    // MARK: Reading what an item is (review 17e, Important 1)
+
+    /// A folder, a file, a package, a link to each of the first two, and a broken link, in a fresh temporary folder.
+    private static func fixture() throws -> URL {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("FolderDropTests-\(UUID().uuidString)")
+        try fm.createDirectory(at: root.appendingPathComponent("Folder"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: root.appendingPathComponent("Tool.app/Contents"), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: root.appendingPathComponent("notes.txt"))
+        try fm.createSymbolicLink(
+            at: root.appendingPathComponent("Folder link"), withDestinationURL: root.appendingPathComponent("Folder"))
+        try fm.createSymbolicLink(
+            at: root.appendingPathComponent("notes link"), withDestinationURL: root.appendingPathComponent("notes.txt"))
+        try fm.createSymbolicLink(
+            at: root.appendingPathComponent("Broken link"), withDestinationURL: root.appendingPathComponent("Gone"))
+        return root
+    }
+
+    @Test func aLinkToAFolderIsAFolderAndKeepsThePathChosen() throws {
+        let root = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let names = ["Folder", "Folder link", "notes.txt", "notes link", "Tool.app", "Broken link", "Never there"]
+        let items = PickedItem.classify(names.map { root.appendingPathComponent($0) })
+        #expect(items.map(\.kind) == [.folder, .folder, .file, .file, .file, .missing, .missing])
+        // The path the person chose, not where the link leads (the add rule compares sources by where they lead).
+        #expect(items[1].path == root.appendingPathComponent("Folder link").path)
+        #expect(PickedItem.classify([URL(string: "https://example.com")!]).map(\.kind) == [.notOnDisk])
+    }
+
+    @Test func aLinkedFolderIsAddedAndIsTheSamePlaceAsItsTarget() throws {
+        let root = try Self.fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let link = PickedItem.classify([root.appendingPathComponent("Folder link")])
+        let added = FolderDrop.addingSources(link, to: [])
+        #expect(added.problem == nil)
+        #expect(added.list == [root.appendingPathComponent("Folder link").path])
+        let again = FolderDrop.addingSources(PickedItem.classify([root.appendingPathComponent("Folder")]), to: added.list)
+        #expect(again.problem == "“Folder” is already in the list.")
+    }
+
+    @Test func aMissingItemSaysItCantBeFound() {
+        let outcome = FolderDrop.addingSources([PickedItem(path: "/Users/me/Gone", kind: .missing)], to: [])
+        #expect(outcome.list.isEmpty)
+        #expect(outcome.problem == "“Gone” can’t be found.")
+    }
+
     @Test func foldersAreAddedInOrderAndStandardised() {
         let outcome = FolderDrop.addingSources(
             [Self.folder("/Users/me/Documents/"), Self.folder("/Volumes/Photos")], to: ["/Users/me/Pictures"])
@@ -296,6 +342,29 @@ struct FolderDropTests {
         #expect(outcome.problem == "“com.jaydenkerr.restorey” is already in the list.")
         #expect(FolderDrop.addingExclusions([PickedItem(path: "/Users/me/a.txt", kind: .file)], to: []).problem
             == "“a.txt” isn’t a folder. Only folders and drives can be added.")
+    }
+}
+
+/// Pause or Resume across several plans where some calls fail (review 17e, Minor 2): the error names each.
+struct ShortcutPartialFailureTests {
+    @Test func everyFailedPlanIsNamedAndTheOthersSaidDone() {
+        let message = ShortcutRules.failureMessage(
+            .pause,
+            outcomes: [
+                .init(planName: "Home", failure: nil),
+                .init(planName: "Photos", failure: "Restorey couldn’t reach its background process (timed out)."),
+                .init(planName: "Docs", failure: nil),
+            ])
+        #expect(message == "Restorey couldn’t pause “Photos”: Restorey couldn’t reach its background process (timed out). "
+            + "“Home” and “Docs” are paused.")
+        let resume = ShortcutRules.failureMessage(
+            .resume,
+            outcomes: [.init(planName: "Home", failure: "Not now"), .init(planName: "Docs", failure: "Busy.")])
+        #expect(resume == "Restorey couldn’t resume “Home”: Not now. Restorey couldn’t resume “Docs”: Busy.")
+        let one = ShortcutRules.failureMessage(
+            .resume, outcomes: [.init(planName: "Home", failure: nil), .init(planName: "Docs", failure: "Busy.")])
+        #expect(one == "Restorey couldn’t resume “Docs”: Busy. “Home” has resumed.")
+        #expect(ShortcutRules.failureMessage(.pause, outcomes: [.init(planName: "Home", failure: nil)]) == nil)
     }
 }
 

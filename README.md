@@ -73,9 +73,9 @@ shortcut automation, such as backing up before you close the lid.
 - **Plans**: the plans in a list with + (Add Plan…) and − (Delete Plan…) under it, and the selected plan's six tabs.
   A plan's context menu has Back Up Now, Pause (or Resume), Restore Files…, Show in History and Delete Plan….
   **Overview** (its state, Back Up Now with Pause or Resume beside it, Restore Files…, the last and next backup, and
-  any iCloud files skipped); **Folders** (the name, folders, drives and exclusions; drag folders and drives from Finder into the Folders list or
-  the exclusions list, and press Delete to remove the selected ones); **Schedule** (how often, the
-  battery rule, the plan's own upload limit, and its alerts: the check-in URL and "no successful backup in N days");
+  any iCloud files skipped); **Folders** (the name, folders, drives and exclusions; drag folders and drives from
+  Finder into the Folders list or the exclusions list, and press Delete to remove the selected ones); **Schedule**
+  (how often, the battery rule, the plan's own upload limit, and its alerts: the check-in URL and "no successful backup in N days");
   **Storage** (the address, read-only, the password and keys, the host label, and "Show Recovery Kit…");
   **Retention** (how many hourly, daily, weekly and monthly snapshots to keep, prune, and **Earlier snapshots**:
   applying retention to the snapshots of the plan's previous folder lists, or from before Restorey adopted the
@@ -435,7 +435,9 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   "Show…", a sheet with the plan's switch for them and the list, each with "Back up anyway". Folders and drives
   dragged from Finder onto the Folders list, or onto the exclusions sheet's list, are added by the same rule as its add
   button (`FolderDrop`, RestoreyCore: only folders and drives, so a file or an app is refused, and nothing listed twice,
-  sources compared by where they lead), and what the rule leaves out is said under the list ("“notes.txt” isn't a
+  sources compared by where they lead). Each item is judged where it leads (`PickedItem.classify`): a link to a folder
+  is a folder and is kept as the path chosen, a link to a file is a file, and a broken link "can't be found". What the
+  rule leaves out is said under the list ("“notes.txt” isn't a
   folder. Only folders and drives can be added."). The list is ringed in the accent colour while a drag is over it
   (`dropDestination(for:isEnabled:action:)` and `onDropSessionUpdated`, macOS 26). Delete (⌫ or ⌦,
   `onDeleteCommand`) removes the selected rows as Remove does (never Restorey's own exclusions), and a folder's
@@ -531,8 +533,8 @@ links: one "Show…" per sheet and "Show Log". Double-clicking a row (or Return)
 Show Log, Show Log in Finder, Copy Outcome ("Backup failed · wrong password", `HistoryPresentation.outcomeText`) and
 each sheet by its full name ("Show Unreadable Files…", "Show Biggest Additions…", `HistoryLink.menuTitle`). Edit →
 Copy (⌘C, `onCopyCommand`) copies the selected rows, one line each with every column ("14:16 · Home · Backup · Backed
-up · 1.2 GB · 3 min", `HistoryPresentation.copyText`). The outcome and its reason wrap to the column's width, so they are read in full at the
-window's smallest size; only the biggest-additions line, a list of names, stays on one line with a help tag.
+up · 1.2 GB · 3 min", `HistoryPresentation.copyText`). The outcome and its reason wrap to the column's width, so they
+are read in full at the window's smallest size; only the biggest-additions line, a list of names, stays on one line with a help tag.
 
 ### The menu bar
 
@@ -568,7 +570,11 @@ the actions then never reach Shortcuts; the build writes `Contents/Resources/Met
   `supportedModes = .background` (macOS 26; it replaces `openAppWhenRun`), so it runs without bringing a window
   forward, and Shortcuts launches Restorey in the background to run one when it isn't running (Apple, "Configuring
   the runtime behavior of your app intents": "Code in your app bundle can run in either the foreground or
-  background"). That launch is an ordinary one, so it starts the agent supervisor as any launch does.
+  background"). That launch starts the agent supervisor as any launch does, but opens no window by itself: not setup
+  at launch, not a copy outside Applications' move screen, not Settings for a hidden icon. AppKit says which launch it
+  was (`NSApplication.launchIsDefaultUserInfoKey`, false for a launch "in some other sense not a default launch"), and
+  `AppLaunch` opens those windows only for a default launch, so the action stays in the background. Apple doesn't
+  document that a Shortcuts launch sets the key to false; the owner's hand check confirms it on the Mac.
 - **The same path and rules as the menu.** An action reaches the agent through the supervisor's `AgentConnection`,
   handed to App Intents by `AppDependencyManager` before the app runs (`ShortcutGateway`, made in `AppDelegate.main`).
   It is decided by `ShortcutRules` (RestoreyCore, tested): from the menu's own `MenuContent`, so an action is refused
@@ -576,6 +582,9 @@ the actions then never reach Shortcuts; the build writes `Contents/Resources/Met
   setup.", "Backups aren't running."). Restorey just launched by an action waits, up to 30 s and by observing the
   supervisor rather than polling, while the menu would still say "Connecting…" or "Updating…". The menu's Pause has
   one length, an hour (`planPauseDuration`), so Pause Backups has no duration to choose.
+- **Several plans.** Pause Backups and Resume Backups with no plan make the call for every plan the menu could act on,
+  each whatever the others did, and if any fails, the error names each plan that failed, with its reason, and those
+  that changed ("Restorey couldn't pause “Photos”: … “Home” is paused.", `ShortcutRules.failureMessage`).
 - **Errors** are `ShortcutError`, which conforms to `CustomLocalizedStringResourceConvertible`: Shortcuts shows an
   error's `localizedStringResource`, and a plain `Error` reads as a generic failure. A plan deleted since a shortcut
   was made still resolves (as "Deleted plan"), so the action runs and says "That plan is no longer in Restorey."

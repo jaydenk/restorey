@@ -101,9 +101,7 @@ struct PauseBackupsIntent: AppIntent {
             planID: plan?.id, health: ready.health, content: ready.content, status: ready.status
         ).get(orThrow: ShortcutError.init)
         guard case .pause(let plans) = call.kind else { return .result(dialog: "\(call.dialog)") }
-        for id in plans {
-            if case .failure(let error) = await ready.connection.pause(id) { throw ShortcutError(error.description) }
-        }
+        try await perPlan(.pause, plans, ready, ready.connection.pause)
         return .result(dialog: "\(call.dialog)")
     }
 }
@@ -129,9 +127,7 @@ struct ResumeBackupsIntent: AppIntent {
             planID: plan?.id, health: ready.health, content: ready.content, status: ready.status
         ).get(orThrow: ShortcutError.init)
         guard case .resume(let plans) = call.kind else { return .result(dialog: "\(call.dialog)") }
-        for id in plans {
-            if case .failure(let error) = await ready.connection.resume(id) { throw ShortcutError(error.description) }
-        }
+        try await perPlan(.resume, plans, ready, ready.connection.resume)
         return .result(dialog: "\(call.dialog)")
     }
 }
@@ -221,6 +217,25 @@ struct RestoreyShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Get Last Backup", systemImageName: "clock.arrow.circlepath")
     }
+}
+
+/// Makes the menu's per-plan call for each plan, every one whatever the earlier ones did (as the menu's "All Plans"
+/// does), then throws one error naming each plan that failed and those that changed (`ShortcutRules.failureMessage`).
+@MainActor
+private func perPlan(
+    _ action: ShortcutRules.PerPlanAction, _ plans: [UUID], _ ready: ShortcutGateway.Ready,
+    _ call: (UUID) async -> Result<AgentStatus, AgentCallError>
+) async throws {
+    var outcomes: [ShortcutRules.PlanOutcome] = []
+    for id in plans {
+        let name = ready.content.actions.plans.first { $0.id == id }?.name ?? "Deleted plan"
+        if case .failure(let error) = await call(id) {
+            outcomes.append(.init(planName: name, failure: error.description))
+        } else {
+            outcomes.append(.init(planName: name, failure: nil))
+        }
+    }
+    if let message = ShortcutRules.failureMessage(action, outcomes: outcomes) { throw ShortcutError(message) }
 }
 
 private extension Result where Failure == ShortcutRefusal {

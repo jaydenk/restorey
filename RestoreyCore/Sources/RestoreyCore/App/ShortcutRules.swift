@@ -156,6 +156,46 @@ public enum ShortcutRules {
         planName.map { "“\($0)” is already backing up." } ?? "Restorey is already backing up."
     }
 
+    /// Which of the menu's per-plan calls a multi-plan action made.
+    public enum PerPlanAction: Sendable {
+        case pause, resume
+    }
+
+    /// One plan's call in a multi-plan Pause or Resume: `failure` is the agent's or the connection's sentence.
+    public struct PlanOutcome: Sendable, Equatable {
+        public var planName: String
+        public var failure: String?
+
+        public init(planName: String, failure: String?) {
+            self.planName = planName
+            self.failure = failure
+        }
+    }
+
+    /// The error for a Pause or Resume across several plans where some calls failed: each failed plan by name, with its
+    /// reason, in the menu's alert wording ("Restorey couldn't pause …"), then the plans that did pause or resume, so a
+    /// shortcut never leaves the person unsure which plans changed. Nil when every call succeeded. Every call is made
+    /// whatever the earlier ones did, as the menu's "All Plans" does (`AgentActions`).
+    public static func failureMessage(_ action: PerPlanAction, outcomes: [PlanOutcome]) -> String? {
+        let failed = outcomes.filter { $0.failure != nil }
+        guard !failed.isEmpty else { return nil }
+        let verb = action == .pause ? "pause" : "resume"
+        var sentences = failed.map { outcome in
+            var reason = outcome.failure ?? ""
+            if !reason.hasSuffix(".") { reason += "." }
+            return "Restorey couldn’t \(verb) “\(outcome.planName)”: \(reason)"
+        }
+        let done = outcomes.filter { $0.failure == nil }.map { "“\($0.planName)”" }
+        if !done.isEmpty {
+            let names = done.count == 1 ? done[0] : done.dropLast().joined(separator: ", ") + " and " + done.last!
+            let one = done.count == 1
+            sentences.append(action == .pause
+                ? "\(names) \(one ? "is" : "are") paused."
+                : "\(names) \(one ? "has" : "have") resumed.")
+        }
+        return sentences.joined(separator: " ")
+    }
+
     // MARK: Get Last Backup
 
     /// The plan's newest backup, whatever its outcome, in the History list's words; `planID` nil: the newest backup of

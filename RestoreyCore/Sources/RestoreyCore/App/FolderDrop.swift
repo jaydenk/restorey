@@ -8,8 +8,10 @@ public enum PickedItemKind: Sendable, Equatable {
     /// A file, or a package such as an app, which the open panel treats as a file (`treatsFilePackagesAsDirectories`
     /// is false) and so never offers here.
     case file
-    /// Not a file on this Mac: a web link, or a file that has gone.
+    /// Not a file at all: a web link.
     case notOnDisk
+    /// A path with nothing there, a broken link included.
+    case missing
 }
 
 /// An item to add to a plan's Folders list or Exclusions list.
@@ -20,6 +22,28 @@ public struct PickedItem: Sendable, Equatable {
     public init(path: String, kind: PickedItemKind) {
         self.path = path
         self.kind = kind
+    }
+}
+
+extension PickedItem {
+    /// What each URL is on disk, judged where it leads: a link to a folder is a folder (Finder and the open panel hand
+    /// over the link, and before Task 17e the add button took it), a link to a file is a file, and a broken link is
+    /// missing. The path kept is the one the person chose (standardised, not resolved), as the add button stored
+    /// before; `FormValidation.addingSources` already compares sources by where they lead. A package such as an app is
+    /// a file, as the open panel treats it (`treatsFilePackagesAsDirectories` is false). Reads only the file system's
+    /// own facts (`fileExists(atPath:isDirectory:)`, which follows links, and `isPackageKey`), never a file's contents.
+    public static func classify(_ urls: [URL], fileManager: FileManager = .default) -> [PickedItem] {
+        urls.map { url in
+            guard url.isFileURL else { return PickedItem(path: url.absoluteString, kind: .notOnDisk) }
+            let path = url.standardizedFileURL.path
+            let target = url.resolvingSymlinksInPath()
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: target.path, isDirectory: &isDirectory) else {
+                return PickedItem(path: path, kind: .missing)
+            }
+            let isPackage = (try? target.resourceValues(forKeys: [.isPackageKey]))?.isPackage == true
+            return PickedItem(path: path, kind: isDirectory.boolValue && !isPackage ? .folder : .file)
+        }
     }
 }
 
@@ -63,6 +87,7 @@ public enum FolderDrop {
     private struct Refused {
         var files: [String] = []
         var elsewhere = 0
+        var missing: [String] = []
         var listed: [String] = []
 
         mutating func accepts(_ item: PickedItem) -> Bool {
@@ -70,6 +95,7 @@ public enum FolderDrop {
             case .folder: return true
             case .file: files.append(FolderDrop.name(item.path))
             case .notOnDisk: elsewhere += 1
+            case .missing: missing.append(FolderDrop.name(item.path))
             }
             return false
         }
@@ -83,6 +109,11 @@ public enum FolderDrop {
             default: sentences.append("\(files.count) items aren’t folders. Only folders and drives can be added.")
             }
             if elsewhere > 0 { sentences.append("Only folders and drives on this Mac can be added.") }
+            switch missing.count {
+            case 0: break
+            case 1: sentences.append("“\(missing[0])” can’t be found.")
+            default: sentences.append("\(missing.count) items can’t be found.")
+            }
             switch listed.count {
             case 0: break
             case 1: sentences.append("“\(listed[0])” is already in the list.")

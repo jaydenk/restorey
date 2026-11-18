@@ -1,24 +1,9 @@
 import RestoreyCore
 import SwiftUI
 
-extension PickedItem {
-    /// What each URL is on disk, for `FolderDrop`: a folder (a drive's root included), a file (a package such as an app
-    /// counts as one, as the open panel treats it), or not on this Mac.
-    static func classify(_ urls: [URL]) -> [PickedItem] {
-        urls.map { url in
-            guard url.isFileURL else { return PickedItem(path: url.absoluteString, kind: .notOnDisk) }
-            let path = url.standardizedFileURL.path
-            guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey]),
-                let isDirectory = values.isDirectory
-            else { return PickedItem(path: path, kind: .notOnDisk) }
-            return PickedItem(path: path, kind: isDirectory && values.isPackage != true ? .folder : .file)
-        }
-    }
-}
-
 /// A list that takes folders dragged from Finder (Task 17e, audit T3): the list is ringed in the accent colour while a
 /// drag is over it, as Finder's own drop targets are, and `onDrop` gets the dropped items, to add through the same
-/// rule as the list's add button (`FolderDrop`).
+/// rule as the list's add button (`FolderDrop`), each item read by `PickedItem.classify` (RestoreyCore).
 ///
 /// `dropDestination(for:isEnabled:action:)` (macOS 26) takes the files as `URL`s; `onDropSessionUpdated` (macOS 26) reports
 /// the drag entering and leaving, which draws the ring.

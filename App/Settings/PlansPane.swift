@@ -110,7 +110,7 @@ struct PlansPane: View {
                 ListAddRemoveBar(
                     addName: "Add Plan…", removeName: "Delete Plan…", add: addPlan,
                     remove: { if let selected { askToDelete(selected.plan) } },
-                    canAdd: listAvailable, canRemove: selected != nil && !deletionInProgress && slot.editor?.saving != true)
+                    canAdd: listAvailable, canRemove: selected != nil && canDelete)
             }
             if deletionInProgress {
                 ProgressView().controlSize(.small)
@@ -146,7 +146,13 @@ struct PlansPane: View {
         }
         Divider()
         Button("Delete Plan…") { askToDelete(plan.plan) }
-            .disabled(deletionInProgress)
+            .disabled(!canDelete)
+    }
+
+    /// Whether a plan can be asked to be deleted: the one rule for −, Delete and the context menu (review 17e, Minor 3).
+    /// Not while a deletion runs, and not while plan edits are being saved, which − already waited for.
+    private var canDelete: Bool {
+        !deletionInProgress && slot.editor?.saving != true
     }
 
     /// What the menu would let each plan do now (`MenuPresentation`'s `MenuActions`).
@@ -192,8 +198,7 @@ struct PlansPane: View {
     }
 
     private func askToDelete(_ plan: Plan) {
-        // Not while that plan's edits are being saved.
-        guard !deletionInProgress, !(slot.editor?.planID == plan.id && slot.editor?.saving == true) else { return }
+        guard canDelete else { return }
         deletionProblem = nil
         deleting = DeleteRequest(planID: plan.id, name: plan.name)
     }

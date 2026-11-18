@@ -105,6 +105,25 @@ public func shellOpeningAtLaunch(mode: ShellMode, statusItemVisible: Bool) -> Sh
     statusItemVisible ? nil : shellOpeningOnReopen(mode: mode, statusItemVisible: false)
 }
 
+/// Why this launch happened, as AppKit says in `NSApplicationDidFinishLaunching`'s `launchIsDefaultUserInfoKey`
+/// (`NSApplicationLaunchIsDefaultLaunchKey`): "false if the app was launched to open or print a file, to perform a
+/// Service action, if the app had saved state that will be restored, or if the app launch was in some other sense not
+/// a default launch". Restorey launched only to run a Shortcuts action, in the background (`supportedModes =
+/// .background`), is such a launch: it opens no window by itself (setup at launch, P2-10; the move screen of a copy
+/// outside Applications; Settings for a hidden icon), so the action stays in the background (review 17e, Minor 1).
+/// The windows are still a click away, from the status item or by opening Restorey again.
+public struct AppLaunch: Sendable, Equatable {
+    /// The key's value; nil when the notification didn't carry it, treated as the user's launch as before.
+    public var isDefaultLaunch: Bool?
+
+    public init(isDefaultLaunch: Bool?) {
+        self.isDefaultLaunch = isDefaultLaunch
+    }
+
+    /// Whether this launch opens Restorey's at-launch windows.
+    public var opensWindows: Bool { isDefaultLaunch != false }
+}
+
 // MARK: Settings section and plan
 
 /// What the Settings window shows: a section, and in Plans, a plan.

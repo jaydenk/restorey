@@ -194,4 +194,14 @@ struct AppShellTests {
     @Test func aRouteForNoPlanKeepsTheTab() {
         #expect(!planRequestLandsOnFirstTab(.route(planID: nil)))
     }
+
+    // MARK: A launch to run a Shortcuts action (review 17e, Minor 1)
+
+    @Test func onlyAUsersLaunchOpensWindowsByItself() {
+        // AppKit's NSApplicationLaunchIsDefaultLaunchKey: false for a launch that isn't the user opening the app.
+        #expect(AppLaunch(isDefaultLaunch: true).opensWindows)
+        #expect(!AppLaunch(isDefaultLaunch: false).opensWindows)
+        // An older or unusual launch without the key is treated as the user's, as before.
+        #expect(AppLaunch(isDefaultLaunch: nil).opensWindows)
+    }
 }
