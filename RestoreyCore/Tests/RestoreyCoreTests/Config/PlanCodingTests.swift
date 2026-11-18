@@ -25,7 +25,7 @@ struct PlanCodingTests {
         #expect(created.sources == ["/Users/me"])
         #expect(created.exclusions == ["/Users/me/Library/Caches"])
         #expect(created.schedule == .interval(seconds: 3600))
-        #expect(created.conditions == Conditions(battery: .minimumPercent(20), skipOnConstrainedNetwork: true))
+        #expect(created.conditions == Conditions(battery: .minimumPercent(20)))
         #expect(created.retention == Retention(hourly: 24, daily: 30, weekly: 52, monthly: 120))
         #expect(created.pruneEnabled)
         #expect(created.forgetCadence == .afterEachBackup)
@@ -34,6 +34,8 @@ struct PlanCodingTests {
         #expect(created.noSuccessAlertDays == 3)
         #expect(!created.hasCheckInURL)
         #expect(created.recoveryKitConfirmedAt == nil)
+        #expect(created.setupCompletedAt == nil)
+        #expect(!created.offMacNoteDismissed)
         #expect(created.createdAt == Self.now)
 
         let adopted = plan(.s3(Self.s3), .adopted)
@@ -59,6 +61,18 @@ struct PlanCodingTests {
         #expect(p.validationErrors().isEmpty)
     }
 
+    @Test func aPlansUploadLimitMustBePositiveWhenSet() {
+        var p = plan(.s3(Self.s3), .created)
+        for limit in [0, -1, -1024] {
+            p.uploadLimitKiB = limit
+            #expect(p.validationErrors() == [.uploadLimitNotPositive(kiB: limit)])
+        }
+        p.uploadLimitKiB = 1
+        #expect(p.validationErrors().isEmpty)
+        p.uploadLimitKiB = nil
+        #expect(p.validationErrors().isEmpty)
+    }
+
     @Test func newHotPlansGetDistinctIDs() {
         #expect(plan(.s3(Self.s3), .created).id != plan(.s3(Self.s3), .created).id)
     }
@@ -78,9 +92,12 @@ struct PlanCodingTests {
         original.uploadLimitKiB = 2048
         original.hasCheckInURL = true
         original.recoveryKitConfirmedAt = Self.now
+        original.setupCompletedAt = Self.now
+        original.offMacNoteDismissed = true
         original.conditions.battery = .neverOnBattery
         var rawPlan = plan(.raw(repository: "rest:http://nas/repo", environmentNames: ["A", "B"]), .adopted)
         rawPlan.conditions.battery = .minimumPercent(35)
+        rawPlan.adoptedAt = Self.now
 
         for sample in [original, rawPlan] {
             let decoded = try VersionedStore<PlanBox>.makeDecoder()

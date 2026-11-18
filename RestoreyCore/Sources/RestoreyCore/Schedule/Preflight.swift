@@ -25,17 +25,26 @@ public struct PreflightEnvironment: Sendable {
     /// Whether the path is the root of a mounted volume.
     public var isMountPoint: @Sendable (String) -> Bool
     public var fileExists: @Sendable (String) -> Bool
+    /// The Mac-wide network rules (`ConfigFile.network`). The plan runner sets them from the config.
+    public var networkSettings: NetworkSettings
+    /// The Wi-Fi network's name, or nil when it can't be read (no Location permission, or not on Wi-Fi),
+    /// which never skips (Ruling P2-8). Called only when the skip list has names.
+    public var currentWiFiName: @Sendable () -> String?
 
     public init(
         power: PowerState,
         network: NetworkState,
         isMountPoint: @escaping @Sendable (String) -> Bool,
-        fileExists: @escaping @Sendable (String) -> Bool
+        fileExists: @escaping @Sendable (String) -> Bool,
+        networkSettings: NetworkSettings = .defaults,
+        currentWiFiName: @escaping @Sendable () -> String? = { nil }
     ) {
         self.power = power
         self.network = network
         self.isMountPoint = isMountPoint
         self.fileExists = fileExists
+        self.networkSettings = networkSettings
+        self.currentWiFiName = currentWiFiName
     }
 }
 
@@ -49,7 +58,9 @@ public enum PreflightResult: Equatable, Sendable {
 /// Decides whether a due run should start. The checks run in a fixed order and the first that trips
 /// wins: network, then battery, then volumes and sources. So no network on a low battery is
 /// `.noNetwork`. The network checks apply only to a repository that needs the network
-/// (`Repository.needsNetwork`); `skipOnConstrainedNetwork` is the plan's toggle for the constrained one.
+/// (`Repository.needsNetwork`), in this order: no network, a constrained or expensive network (when the
+/// Mac-wide `skipOnConstrainedNetwork` is on), then a Wi-Fi network in the Mac-wide skip list, matched
+/// ignoring case (`NetworkSettings.isSkipped(wiFiName:)`). The rules come from `env.networkSettings`.
 ///
 /// Every source on `/Volumes/<name>` (the path itself or anything below it) requires `/Volumes/<name>`
 /// to be a mount point, whether or not the path exists. When the drive is unplugged, macOS can leave
@@ -66,8 +77,13 @@ public func preflight(plan: Plan, env: PreflightEnvironment) -> PreflightResult 
         case .unsatisfied:
             return .skip(.noNetwork)
         case .satisfied(let constrained, let expensive):
-            if plan.conditions.skipOnConstrainedNetwork && (constrained || expensive) {
+            if env.networkSettings.skipOnConstrainedNetwork && (constrained || expensive) {
                 return .skip(.constrainedNetwork)
+            }
+            if !env.networkSettings.skippedWiFiNames.isEmpty, let name = env.currentWiFiName(),
+                env.networkSettings.isSkipped(wiFiName: name)
+            {
+                return .skip(.skippedWiFi(name))
             }
         }
     }
@@ -87,7 +103,7 @@ public func preflight(plan: Plan, env: PreflightEnvironment) -> PreflightResult 
         }
     }
     if let missing = plan.sources.first(where: { !env.fileExists($0) }) {
-        return .fail("\(missing) doesn't exist")
+        return .fail("\(missing) doesn’t exist")
     }
     return .run
 }

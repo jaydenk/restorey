@@ -79,13 +79,15 @@ do {
 
     if let team = AgentListener.teamID(in: .main) {
         // Started now, so the network path is known by the first run.
-        let observers = SystemObservers()
+        let observers = SystemObservers(log: log)
         keptAlive.append(observers)
         let scheduler = Scheduler(log: log)
         Task { @MainActor in
             let secrets = KeychainSecretStore(service: identity.rootID, accessGroup: identity.keychainAccessGroup)
+            // One store for the runner's writes and the state's deletes of a plan's logs.
+            let runLogs = RunLogStore(identity: identity)
             let state = await AgentState(
-                directory: identity.applicationSupportDirectory(), secrets: secrets, now: { Date() })
+                directory: identity.applicationSupportDirectory(), secrets: secrets, runLogs: runLogs, now: { Date() })
             systemStop.attach(state: state)
             if let configError = await state.status().configError {
                 log.error("Not running any plan until the settings are fixed: \(configError)")
@@ -99,9 +101,13 @@ do {
                 log: { log.info($0) })
             let notifier = Notifier()
             await state.attach(notifier: notifier, log: { log.info($0) })
+            // Refused run actions (final review M5). Info, as before: a refusal is an answer, not a fault.
+            await state.attach(agentLog: { log.info($0) })
+            // Made here, on the main thread, whose run loop delivers Core Location's reports.
+            let location = LocationPermission()
             let service = AgentService(
-                state: state, log: log, notifier: notifier, executableFingerprint: launchFingerprint,
-                plansChanged: { scheduler.nudge(.configChanged) })
+                state: state, log: log, notifier: notifier, location: location,
+                executableFingerprint: launchFingerprint, plansChanged: { scheduler.nudge(.configChanged) })
             let listener = AgentListener(service: service, log: log)
             await state.setStatusObserver { listener.broadcast($0) }
             keptAlive.append(listener)
@@ -122,7 +128,7 @@ do {
             }
             let runner = PlanRunner(dependencies: RunnerDependencies(
                 state: state, secrets: secrets, queues: RepositoryQueues(), supervisor: .shared,
-                logStore: RunLogStore(identity: identity),
+                logStore: runLogs,
                 checkIn: CheckInService(
                     secrets: secrets, session: CheckInService.makeSession(),
                     log: { line, level in level == .error ? log.error(line) : log.info(line) },
@@ -139,7 +145,11 @@ do {
                 now: { Date() },
                 sleepPrevention: SleepPrevention(api: SystemObservers.sleepAssertions) { log.error($0) },
                 agentLog: { log.error($0) },
-                binaryReplaced: { executableReplaced() }))
+                agentInfo: { log.info($0) },
+                binaryReplaced: { executableReplaced() },
+                cloudOnlySkipped: CloudOnlySkipped.counter(home: FileManager.default.homeDirectoryForCurrentUser),
+                // Items apps mark as not for backup (Task 15c); each run's list goes in <Application Support>/not-for-backup.
+                markedItems: SpotlightMarkedItems()))
             keptAlive.append(runner)
             systemStop.attach(runner: runner)
             // Recovery runs to completion before the runner is attached, so a run action that arrives

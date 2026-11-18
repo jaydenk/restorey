@@ -17,11 +17,18 @@ public func alertConditions(
 ) -> Set<AlertCondition> {
     var conditions = activeConditions(history: history, plan: plan, now: now)
     if notificationsAuthorised != true { conditions.insert(.notificationsOff) }
-    if history.activeAlerts[.fullDiskAccessMissing] != nil, fullDiskAccessMissing != false {
+    if fullDiskAccessAlertStands(history: history, fullDiskAccessMissing: fullDiskAccessMissing) {
         conditions.insert(.fullDiskAccessMissing)
     }
     if plan.hasCheckInURL, history.activeAlerts[.checkInRejected] != nil { conditions.insert(.checkInRejected) }
     return conditions
+}
+
+/// Whether a plan's `fullDiskAccessMissing` alert stands: a run raised it (`PlanRunner.commit`) and no probe
+/// has found access granted since. `alertConditions` and the status's alerts both decide it here, so a
+/// status built right after a probe that found access granted never shows the alert.
+func fullDiskAccessAlertStands(history: PlanRunHistory, fullDiskAccessMissing: Bool?) -> Bool {
+    history.activeAlerts[.fullDiskAccessMissing] != nil && fullDiskAccessMissing != false
 }
 
 /// One round of alert bookkeeping for a plan. A newly raised condition starts with no notification

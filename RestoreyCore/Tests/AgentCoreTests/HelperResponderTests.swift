@@ -101,6 +101,31 @@ struct HelperResponderTests {
         #expect(try result.get() == Data("pa ss\"wörd\n".utf8))
     }
 
+    /// While Settings checks typed credentials (`AgentState.probeRepository(_:candidates:)`), the check's restic gets
+    /// them, not the keychain's; once the check ends, the keychain's again.
+    @Test func candidatePasswordAndKeysAreServedOnlyWhileTheyAreBeingChecked() async throws {
+        let f = try await Fixture()
+        await f.superviseRestic()
+        f.state.candidates.set(
+            [.repositoryPassword(f.planID): "new pässword", .s3SecretAccessKey(f.planID): "new-secret"], for: f.planID)
+        var result = await f.responder.respond(to: try f.request(.repositoryPassword), callerPID: Self.caller)
+        #expect(try result.get() == Data("new pässword".utf8))
+        // A key not typed comes from the keychain, the typed one from the check.
+        result = await f.responder.respond(to: try f.request(.s3Credentials), callerPID: Self.caller)
+        #expect(try result.get() == makeCredentialProcessJSON(accessKeyID: "key-id", secret: "new-secret", now: Self.fixedNow))
+        f.state.candidates.set(nil, for: f.planID)
+        result = await f.responder.respond(to: try f.request(.repositoryPassword), callerPID: Self.caller)
+        #expect(try result.get() == Data("pa ss\"wörd\n".utf8))
+    }
+
+    /// A candidate is checked like the keychain's value: an unsupervised caller still gets nothing.
+    @Test func aCandidatePasswordIsRefusedToAnUnsupervisedCaller() async throws {
+        let f = try await Fixture()
+        f.state.candidates.set([.repositoryPassword(f.planID): "new"], for: f.planID)
+        let result = await f.responder.respond(to: try f.request(.repositoryPassword), callerPID: Self.caller)
+        #expect(Self.refusal(result) == .notSupervised)
+    }
+
     @Test func s3CredentialsAreTheCredentialProcessJSON() async throws {
         let f = try await Fixture()
         await f.superviseRestic()
@@ -166,7 +191,7 @@ struct HelperResponderTests {
             Issue.record("expected secretUnavailable, got \(result)")
             return
         }
-        #expect(reason == "The repository password isn't in the Keychain")
+        #expect(reason == "The repository password isn’t in the Keychain")
         #expect(!reason.contains(f.planID.uuidString))
         #expect(await f.state.takeHelperFailure(planID: f.planID) == reason)
     }
@@ -180,7 +205,7 @@ struct HelperResponderTests {
             Issue.record("expected secretUnavailable, got \(result)")
             return
         }
-        #expect(reason == "The S3 secret access key isn't in the Keychain")
+        #expect(reason == "The S3 secret access key isn’t in the Keychain")
         #expect(!reason.contains(f.planID.uuidString))
         #expect(await f.state.takeHelperFailure(planID: f.planID) == reason)
     }
@@ -194,7 +219,7 @@ struct HelperResponderTests {
             Issue.record("expected secretUnavailable, got \(result)")
             return
         }
-        #expect(reason == "Restorey couldn't read the repository password from the Keychain: keychain error -25308 (User interaction is not allowed.)")
+        #expect(reason == "Restorey couldn’t read the repository password from the Keychain: keychain error -25308 (User interaction is not allowed.)")
         #expect(!reason.contains(f.planID.uuidString))
         #expect(await f.state.takeHelperFailure(planID: f.planID) == reason)
         #expect(await f.state.takeHelperFailure(planID: f.planID) == nil)

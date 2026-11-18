@@ -9,14 +9,15 @@ final class DeveloperWindowController: NSObject, NSWindowDelegate {
     private let model: DeveloperModel
     private var window: NSWindow?
 
-    init(supervisor: AgentSupervisor, identity: Identity) {
-        model = DeveloperModel(supervisor: supervisor, identity: identity)
+    init(supervisor: AgentSupervisor, identity: Identity, planDeleted: @escaping (UUID) -> Void) {
+        model = DeveloperModel(supervisor: supervisor, identity: identity, planDeleted: planDeleted)
         super.init()
     }
 
     /// The form's secrets don't outlive the window.
     func windowWillClose(_ notification: Notification) {
         model.clearSecrets()
+        WindowActivation.windowClosed(.developer)
     }
 
     func show() {
@@ -29,8 +30,7 @@ final class DeveloperWindowController: NSObject, NSWindowDelegate {
             made.delegate = self
             window = made
         }
-        NSApplication.shared.activate()
-        window?.makeKeyAndOrderFront(nil)
+        if let window { WindowActivation.bringForward(window, as: .developer) }
     }
 }
 
@@ -67,37 +67,38 @@ struct DeveloperView: View {
             }
 
             Form {
-                TextField("Name", text: $model.name)
-                TextField("Host label", text: $model.hostLabel)
+                LabeledContent("Name") { PlainTextField(title: "Name", text: $model.name) }
+                LabeledContent("Host label") { PlainTextField(title: "Host label", text: $model.hostLabel) }
                 Picker("Provider", selection: $model.kind) {
                     ForEach(DeveloperModel.Kind.allCases) { Text($0.rawValue).tag($0) }
                 }
                 if model.kind == .local {
-                    TextField("Repository path", text: $model.localPath)
+                    LabeledContent("Repository path") {
+                        PlainTextField(title: "Repository path", text: $model.localPath)
+                    }
                 } else {
-                    TextField("Endpoint", text: $model.endpoint)
-                    TextField("Bucket", text: $model.bucket)
-                    TextField("Prefix", text: $model.prefix)
-                    SecureField("Key ID", text: $model.keyID)
-                    SecureField("Secret", text: $model.secret)
+                    LabeledContent("Endpoint") { PlainTextField(title: "Endpoint", text: $model.endpoint) }
+                    LabeledContent("Bucket") { PlainTextField(title: "Bucket", text: $model.bucket) }
+                    LabeledContent("Prefix") { PlainTextField(title: "Prefix", text: $model.prefix) }
+                    LabeledContent("Key ID") { SecretField(title: "Key ID", text: $model.keyID) }
+                    LabeledContent("Secret") { SecretField(title: "Secret", text: $model.secret) }
                 }
-                SecureField("Repository password", text: $model.repositoryPassword)
+                LabeledContent("Repository password") {
+                    SecretField(title: "Repository password", text: $model.repositoryPassword)
+                }
                 if model.selectedPlanID == nil {
                     Toggle("Existing repository (adopt, never prune)", isOn: $model.adoptExisting)
                 }
                 if model.selectedPlanID != nil {
                     LabeledContent("Check-in URL", value: model.checkInSummary)
                 }
-                SecureField(model.selectedPlan?.hasCheckInURL == true ? "New check-in URL" : "Check-in URL (optional)",
-                            text: $model.checkInURL)
+                let checkInTitle = model.selectedPlan?.hasCheckInURL == true ? "New check-in URL" : "Check-in URL (optional)"
+                LabeledContent(checkInTitle) { SecretField(title: checkInTitle, text: $model.checkInURL) }
                 if model.selectedPlan?.hasCheckInURL == true {
                     Toggle("Remove check-in URL", isOn: $model.removeCheckInURL)
                 }
-                LabeledContent("Sources (one per line)") {
-                    TextEditor(text: $model.sources)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(minHeight: 70)
-                }
+                LabeledContent("Sources") { SourcesEditor(sources: $model.sources) }
+                LabeledContent("Excluded file types") { FileTypesEditor(types: $model.fileTypes) }
             }
             if model.selectedPlanID != nil {
                 Text("Leave a secret or the check-in URL empty to keep the saved one. Use \"Remove check-in URL\" to remove it.")
@@ -117,6 +118,7 @@ struct DeveloperView: View {
                 Button("Pause") { model.pause() }
                 Button("Resume") { model.resume() }
                 Button("Request notifications") { model.requestNotifications() }
+                Button("Request Location") { model.requestLocation() }
                 Button("Delete plan…", role: .destructive) { confirmingDelete = true }
                     .disabled(model.selectedPlan == nil)
             }

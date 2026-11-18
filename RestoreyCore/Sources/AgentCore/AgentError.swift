@@ -10,6 +10,8 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
     /// is about to exit on its own, so the app must not unregister the agent launchd starts next.
     case restarting
     case invalidPlan([PlanValidationError])
+    /// `saveNetworkSettings` was sent settings with these problems; nothing was saved.
+    case invalidNetworkSettings([NetworkSettingsError])
     case unknownPlan
     case planRunning(name: String)
     case alreadyRunning(name: String)
@@ -19,8 +21,10 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
     case foreignSecret
     /// No `PlanRunner` is attached yet (the agent is still starting), so nothing can run.
     case runnerUnavailable
-    /// A plan never backs up before the user confirms they saved its recovery kit (spec §7).
-    case recoveryKitNotConfirmed(name: String)
+    /// A plan never backs up before the user confirms they saved its recovery kit (spec §7). `setupFinished`: the
+    /// plan's kit was confirmed once and a change to its repository or a secret asks for a new one (Ruling R28),
+    /// which reads differently from a first backup (carry list).
+    case recoveryKitNotConfirmed(name: String, setupFinished: Bool)
     /// `createRepository` found a repository at the address; restic init never overwrites one.
     case repositoryAlreadyExists
     /// A restic action asked for by the app (create, adopt) failed. The text is already redacted.
@@ -32,24 +36,27 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
 
     public var message: String {
         switch self {
-        case .configUnavailable: "Restorey can't change its settings until the problem with them is fixed"
-        case .draining: "Restorey is finishing the current backup before updating the agent"
-        case .restarting: "Restorey's agent is restarting to finish an update. Try again in a moment"
+        case .configUnavailable: "Restorey can’t change its settings until the problem with them is fixed"
+        case .draining: "Restorey is finishing the current backup before updating"
+        case .restarting: "Restorey is restarting to finish an update. Try again in a moment"
         case .invalidPlan(let errors):
             errors.map(Self.message(for:)).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
                 .joined(separator: ". ")
-        case .unknownPlan: "There's no plan with that ID"
+        case .invalidNetworkSettings(let errors): errors.map(\.message).joined(separator: ". ")
+        case .unknownPlan: "There’s no plan with that ID"
         case .planRunning(let name): "\(name) is backing up. Wait for it to finish, then delete it"
         case .alreadyRunning(let name): "\(name) is already backing up"
         case .planDeleting(let name): "\(name) is being deleted"
         case .foreignSecret: "A secret in the request belongs to a different plan"
-        case .runnerUnavailable: "Restorey's agent is still starting up. Try again in a moment"
-        case .recoveryKitNotConfirmed(let name):
-            "Confirm you've saved the recovery kit for \(name) before its first backup"
+        case .runnerUnavailable: "Restorey is still starting up. Try again in a moment"
+        case .recoveryKitNotConfirmed(let name, setupFinished: false):
+            "Confirm you’ve saved the recovery kit for \(name) before its first backup"
+        case .recoveryKitNotConfirmed(let name, setupFinished: true):
+            "Save a new recovery kit for \(name) — the saved one has the old keys"
         case .repositoryAlreadyExists: "A repository already exists there"
         case .operationFailed(let detail): detail
         case .storage(let detail): detail
-        case .invalidRequest(let detail): "Restorey couldn't read the request: \(detail)"
+        case .invalidRequest(let detail): "Restorey couldn’t read the request: \(detail)"
         }
     }
 
@@ -57,12 +64,12 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
 
     static func message(for error: PlanValidationError) -> String {
         switch error {
-        case .emptyHostLabel: "The host label can't be empty"
+        case .emptyHostLabel: "The host label can’t be empty"
         case .noSources: "Choose at least one source folder"
         case .relativeSource: "Source folders must be absolute paths"
-        case .intervalTooShort: "Backups can't run more often than every 5 minutes"
-        case .invalidFileType(let entry):
-            "\"\(entry)\" isn't a file type to exclude: give the extension alone, such as dmg or tar.gz, with no leading dot, slash, wildcard or space"
+        case .intervalTooShort: "Backups can’t run more often than every 5 minutes"
+        case .invalidFileType(let entry): FormValidation.fileTypeProblem(rejected: [entry])
+        case .uploadLimitNotPositive: "The upload limit must be more than 0 KiB/s"
         }
     }
 }

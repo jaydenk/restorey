@@ -4,6 +4,11 @@ options:
   deploymentTarget:
     macOS: "27.0"
   xcodeVersion: "27.0"
+  # Icon Composer's AppIcon.icon is a package (icon.json + Assets/): treat it as one file, or XcodeGen adds its
+  # insides as loose resources and actool never sees the icon (xcodegen-gotchas; XcodeGen issue #1556).
+  fileTypes:
+    icon:
+      file: true
 configFiles:
   Debug: Config/Debug.xcconfig
   Release: Config/Release.xcconfig
@@ -26,11 +31,17 @@ targets:
     platform: macOS
     sources:
       - Agent
+      # The agent posts the notifications, which show its bundle's icon, so it carries the app icon too.
+      - path: Resources/AppIcon.icon
+        buildPhase: resources
     dependencies:
       - package: RestoreyCore
         product: RestoreyCore
       - package: RestoreyCore
         product: AgentCore
+      # The Wi-Fi name for the "skip on these Wi-Fi networks" rule, and the Location permission it needs.
+      - sdk: CoreWLAN.framework
+      - sdk: CoreLocation.framework
     settings:
       base:
         PRODUCT_NAME: $(RESTOREY_AGENT_PRODUCT_NAME)
@@ -38,14 +49,20 @@ targets:
         INFOPLIST_FILE: Agent/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_ENTITLEMENTS: Agent/Agent.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SKIP_INSTALL: YES
   Restorey:
     type: application
     platform: macOS
     sources:
       - App
+      - path: Resources/AppIcon.icon
+        buildPhase: resources
     dependencies:
       - package: RestoreyCore
+      # The Shortcuts actions (Task 17e). Linked explicitly: Xcode's App Intents metadata step ("Extract App Intents
+      # Metadata") skips a target with no AppIntents.framework dependency, and Shortcuts then never sees the actions.
+      - sdk: AppIntents.framework
       # Built first, but embedded by the "Embed agent" script below rather than by an Embed
       # Files phase: Xcode resolves that phase's product name once (from Debug), so a
       # configuration-specific PRODUCT_NAME (RestoreyDevAgent vs RestoreyAgent) breaks Release.
@@ -59,6 +76,14 @@ targets:
         INFOPLIST_FILE: App/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_ENTITLEMENTS: App/App.entitlements
+        # actool compiles the layered icon into Assets.car (macOS 26+) and AppIcon.icns, and adds CFBundleIconName and
+        # CFBundleIconFile to the built Info.plist.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        # The Developer window is Debug-only: a Release build doesn't compile its files at all (its uses are
+        # also behind #if DEBUG). ci.sh checks the built Release app has none of its types (verify-bundle.sh).
+        Release:
+          EXCLUDED_SOURCE_FILE_NAMES: $(SRCROOT)/App/Developer/*
     postBuildScripts:
       - name: Embed agent
         script: |
@@ -86,6 +111,16 @@ targets:
               --identifier "${RESTOREY_RESTIC_IDENTIFIER}" \
               --sign "${EXPANDED_CODE_SIGN_IDENTITY}" "$DEST"
           fi
+        basedOnDependencyAnalysis: false
+      # Last on purpose. Xcode builds into the same product folder every time and never re-dates it, so the bundle
+      # kept its first build's modification date (10 Nov) through every later build, and ditto/zip copies keep it
+      # too. The Dock (and Finder) check a cached icon against that date, so they kept showing the icon-less
+      # placeholder after the icon landed. Re-dating the bundle makes every build look changed to them.
+      # A folder's date isn't part of its code signature, so this doesn't disturb signing.
+      - name: Re-date bundle
+        script: |
+          set -euo pipefail
+          touch "${TARGET_BUILD_DIR}/${WRAPPER_NAME}"
         basedOnDependencyAnalysis: false
   # Hosted by the agent so the tests run with its keychain-access-groups entitlement and signature.
   # Bare `swift test` cannot do that (-34018 errSecMissingEntitlement; README, spec §10).

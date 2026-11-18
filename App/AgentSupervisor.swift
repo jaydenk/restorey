@@ -14,7 +14,14 @@ final class AgentSupervisor {
     /// The latest status from the agent. Cleared whenever the health leaves `.healthy`, and fetched
     /// afresh on every return to it (`shouldRefetchStatus`).
     private(set) var status: AgentStatus?
+    /// The latest status accepted, never cleared: what the menu shows as "Last known" while the agent is down
+    /// (`menuStatus`). Also what a new status is ordered against.
+    private(set) var lastKnownStatus: AgentStatus?
     private(set) var lastHello: HelloReply?
+    /// Ruling R76: agent processes seen replaced. A status from one of them is dropped.
+    var retiredAgentRuns: Set<UUID> { runs.retired }
+
+    let identity: Identity
 
     @ObservationIgnored let connection: AgentConnection
     @ObservationIgnored private let registration: AgentRegistration
@@ -36,9 +43,11 @@ final class AgentSupervisor {
     /// `AgentHealthPolicy.unreachableGrace`).
     @ObservationIgnored private var unreachableSince: Date?
     @ObservationIgnored private var drainRetryDelay: TimeInterval = AgentHealthPolicy.heartbeatInterval
+    @ObservationIgnored private var runs = AgentRunTracker()
 
     init(installed: InstalledCopy, identity: Identity, log: AppLog, defaults: UserDefaults = .standard) {
         self.installed = installed
+        self.identity = identity
         self.log = log
         self.defaults = defaults
         registration = AgentRegistration(installed: installed, identity: identity, defaults: defaults)
@@ -83,6 +92,14 @@ final class AgentSupervisor {
         registration.openLoginItems()
     }
 
+    /// A hello outside the heartbeat, for setup's permissions step: the notification answer the agent holds can
+    /// change in System Settings at any time, and the step shows it within its 2 s poll. Only the hello's
+    /// reply is noted; the heartbeat still decides the agent's health.
+    func refreshHello() async {
+        guard case .success(let reply) = await connection.hello(request) else { return }
+        noteHello(reply)
+    }
+
     // MARK: Heartbeat
 
     private func heartbeat() async {
@@ -103,7 +120,9 @@ final class AgentSupervisor {
         let askedAt = Date()
         let beat = smStatus == .enabled ? await helloWithRetry() : .unreachable
         guard !busy else { return }
-        if case .ok(let reply) = beat { lastHello = reply } else { lastHello = nil }
+        // `SMAppService.status` (`smStatus`) is read afresh above at every heartbeat, so the user switching the
+        // agent off in Login Items shows within one heartbeat while the app runs.
+        if case .ok(let reply) = beat { noteHello(reply) } else { noteHello(nil) }
         if smStatus == .enabled, beat == .unreachable {
             if unreachableSince == nil { unreachableSince = askedAt }
         } else {
@@ -154,7 +173,7 @@ final class AgentSupervisor {
                 set(.checking)
             } catch {
                 let failure = AgentHealthState.failed(
-                    "Restorey couldn't register its background agent: \(error.localizedDescription)")
+                    "Restorey couldn’t register its background process: \(error.localizedDescription)")
                 // Retried every heartbeat; logged once per distinct failure.
                 if health != failure { log.error("Couldn't register the agent: \(error)") }
                 set(failure)
@@ -192,7 +211,7 @@ final class AgentSupervisor {
         for _ in 0..<30 {
             try? await Task.sleep(for: .seconds(2))
             if case .success(let reply) = await connection.hello(request) {
-                lastHello = reply
+                noteHello(reply)
                 if agentIsCurrent(
                     reply, appVersion: request.appVersion, appBuild: request.appBuild,
                     executableFingerprintOnDisk: Self.fingerprintOnDisk(reply)) {
@@ -255,7 +274,7 @@ final class AgentSupervisor {
             log.info("Re-registered the agent; status is now \(registration.status)")
         } catch {
             log.error("Couldn't re-register the agent: \(error)")
-            set(.failed("Restorey couldn't register its background agent: \(error.localizedDescription)"))
+            set(.failed("Restorey couldn’t register its background process: \(error.localizedDescription)"))
         }
     }
 
@@ -317,10 +336,28 @@ final class AgentSupervisor {
         }
     }
 
+    /// A new agent run in a hello retires the run before it (R76). The menu shows the notification banner from the
+    /// hello, so a change there is a change to show.
+    private func noteHello(_ reply: HelloReply?) {
+        if let reply { runs.helloReported(reply.agentRun) }
+        let notificationsChanged = reply?.notificationsAuthorised != lastHello?.notificationsAuthorised
+        lastHello = reply
+        if notificationsChanged { notify() }
+    }
+
     private func received(_ status: AgentStatus) {
-        // By the agent's sequence number, not its clock, which can go backwards (final review M1).
-        guard status.supersedes(self.status) else { return }
+        // By the agent's sequence number, not its clock, which can go backwards (final review M1), and never from
+        // an agent process already replaced (R76). Ordered against the last status accepted, which outlives
+        // `status` being cleared, so a late reply can't slip in while the health changes.
+        guard runs.shouldAccept(status, over: lastKnownStatus) else {
+            if let run = status.agentRun, runs.retired.contains(run) {
+                log.info("Ignored a late status from agent run \(run.uuidString), which has been replaced")
+            }
+            return
+        }
+        runs.statusAccepted(status.agentRun)
         self.status = status
+        lastKnownStatus = status
         notify()
     }
 

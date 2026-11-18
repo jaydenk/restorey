@@ -1,0 +1,61 @@
+<style>
+  .win { border:1px solid #c7c7cc; border-radius:10px; background:#fff; color:#1d1d1f; font:13px -apple-system,"SF Pro Text",sans-serif; overflow:hidden; max-width:760px; }
+  .bar { background:#ececef; padding:6px 10px; font-weight:600; font-size:12px; }
+  .tb { display:flex; gap:26px; justify-content:center; background:#ececef; padding:6px 0 8px; font-size:11px; border-bottom:1px solid #d6d6da; }
+  .tb span { text-align:center; } .tb .on { color:#0a64d8; font-weight:600; }
+  .side { width:170px; background:#f5f5f7; border-right:1px solid #e0e0e4; padding:8px; font-size:12px; }
+  .side div { padding:4px 6px; border-radius:5px; } .side .on { background:#0a84ff; color:#fff; }
+  .main { flex:1; padding:10px 12px; font-size:12px; }
+  .tabs { display:flex; border:1px solid #c7c7cc; border-radius:6px; overflow:hidden; font-size:11px; margin-bottom:10px; }
+  .tabs span { flex:1; text-align:center; padding:3px 0; } .tabs .on { background:#0a84ff; color:#fff; }
+  .row { display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid #f0f0f2; }
+  .muted { color:#6e6e73; font-size:11px; } .add { color:#0a64d8; }
+  .ok { color:#248a3d; } .warn { color:#c93400; }
+  .pair { display:grid; grid-template-columns:1fr; gap:18px; }
+</style>
+
+<h2>Both: toolbar outside, sidebar and tabs inside Plans</h2>
+<p class="subtitle">Three toolbar sections. Plans opens the sidebar-and-tabs view. History is all plans together, and each plan's History tab shows the same list filtered to that plan.</p>
+
+<div class="pair">
+  <div class="win"><div class="bar">Restorey Settings — Plans</div>
+    <div class="tb"><span>⚙︎<br>General</span><span class="on">▤<br>Plans</span><span>⏱<br>History</span></div>
+    <div style="display:flex;min-height:220px">
+      <div class="side">
+        <div class="on">MacBook → B2</div>
+        <div>Photos drive → B2</div>
+        <div class="add" style="margin-top:6px">+ Add plan…</div>
+      </div>
+      <div class="main">
+        <div class="tabs"><span>What</span><span class="on">Schedule</span><span>Storage</span><span>Keep</span><span>Alerts</span><span>History</span></div>
+        <div class="row"><span>Back up</span><span>Every hour ▾</span></div>
+        <div class="row"><span>On battery</span><span>Above 20% ▾</span></div>
+        <div class="row"><span>On a hotspot / Low Data Mode</span><span>Skip ▾</span></div>
+        <div class="row"><span>Upload limit</span><span>Off ▾ <span class="muted">(or e.g. 5 MB/s)</span></span></div>
+        <div class="muted" style="margin-top:8px">"+ Add plan…" opens the same steps as first-run setup, from "Where backups go" on.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="win"><div class="bar">Restorey Settings — History</div>
+    <div class="tb"><span>⚙︎<br>General</span><span>▤<br>Plans</span><span class="on">⏱<br>History</span></div>
+    <div class="main" style="min-height:170px">
+      <div class="row"><span class="muted">All plans ▾</span><span class="muted">Show: everything ▾</span></div>
+      <div class="row"><span><span class="ok">●</span> 14:16 · MacBook → B2 · Backed up</span><span class="muted">2.1 MB · 7 s · log</span></div>
+      <div class="row"><span><span class="ok">●</span> 14:16 · MacBook → B2 · Old snapshots tidied</span><span class="muted">1 removed · log</span></div>
+      <div class="row"><span><span class="warn">●</span> 13:15 · Photos drive → B2 · Skipped: drive not connected</span><span class="muted">log</span></div>
+      <div class="row"><span><span class="ok">●</span> 13:15 · MacBook → B2 · Backed up</span><span class="muted">640 B · 5 s · log</span></div>
+    </div>
+  </div>
+
+  <div class="win"><div class="bar">Restorey Settings — General</div>
+    <div class="tb"><span class="on">⚙︎<br>General</span><span>▤<br>Plans</span><span>⏱<br>History</span></div>
+    <div class="main" style="min-height:120px">
+      <div class="row"><span>Open at login</span><span>✓</span></div>
+      <div class="row"><span>Full Disk Access</span><span class="ok">Granted</span></div>
+      <div class="row"><span>Notifications</span><span class="ok">Allowed</span></div>
+      <div class="row"><span>Background agent</span><span class="ok">Running · 0.1.0 (11)</span></div>
+      <div class="row"><span>Logs</span><span class="add">Show in Finder</span></div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,82 @@
+{
+  "fill" : {
+    "linear-gradient" : [
+      "srgb:0.07843,0.52157,0.47843,1.00000",
+      "srgb:0.04314,0.36471,0.33333,1.00000"
+    ],
+    "orientation" : {
+      "start" : {
+        "x" : 0.5,
+        "y" : 0
+      },
+      "stop" : {
+        "x" : 0.5,
+        "y" : 1
+      }
+    }
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name" : "4-arrow.svg",
+          "name" : "4 Arrow"
+        },
+        {
+          "image-name" : "3-newest-snapshot.svg",
+          "name" : "3 Newest snapshot"
+        }
+      ],
+      "name" : "Newest snapshot",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.2
+      }
+    },
+    {
+      "layers" : [
+        {
+          "image-name" : "2-older-snapshot.svg",
+          "name" : "2 Older snapshot",
+          "opacity" : 0.6
+        }
+      ],
+      "name" : "Older snapshot",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.2
+      }
+    },
+    {
+      "layers" : [
+        {
+          "image-name" : "1-oldest-snapshot.svg",
+          "name" : "1 Oldest snapshot",
+          "opacity" : 0.35
+        }
+      ],
+      "name" : "Oldest snapshot",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.2
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}

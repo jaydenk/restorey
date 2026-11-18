@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 
 @testable import RestoreyCore
@@ -7,7 +8,6 @@ struct PreflightTests {
     private func plan(
         sources: [String] = ["/Users/me"],
         battery: BatteryRule = .minimumPercent(20),
-        skipConstrained: Bool = true,
         repository: Repository = .raw(repository: "sftp:backup@nas:/srv/restic", environmentNames: [])
     ) -> Plan {
         var plan = Plan.newHotPlan(
@@ -15,7 +15,7 @@ struct PreflightTests {
             repository: repository,
             origin: .created, hostLabel: "mac", sources: sources, exclusions: [],
             now: Date(timeIntervalSince1970: 1_800_000_000))
-        plan.conditions = Conditions(battery: battery, skipOnConstrainedNetwork: skipConstrained)
+        plan.conditions = Conditions(battery: battery)
         return plan
     }
 
@@ -24,11 +24,13 @@ struct PreflightTests {
         power: PowerState = PowerState(onBattery: false, percent: 100),
         network: NetworkState = .satisfied(constrained: false, expensive: false),
         mounted: Set<String> = [],
-        existing: Set<String> = ["/Users/me"]
+        existing: Set<String> = ["/Users/me"],
+        networkSettings: NetworkSettings = .defaults
     ) -> PreflightEnvironment {
         PreflightEnvironment(
             power: power, network: network,
-            isMountPoint: { mounted.contains($0) }, fileExists: { existing.contains($0) })
+            isMountPoint: { mounted.contains($0) }, fileExists: { existing.contains($0) },
+            networkSettings: networkSettings)
     }
 
     @Test func allSourcesPresentRuns() {
@@ -49,9 +51,81 @@ struct PreflightTests {
         #expect(preflight(plan: plan(), env: e) == .skip(.constrainedNetwork))
     }
 
+    /// The rule is Mac-wide (Ruling P2-6): it comes from the environment's network settings.
     @Test func constrainedNetworkRunsWhenTheOptionIsOff() {
-        let e = env(network: .satisfied(constrained: true, expensive: true))
-        #expect(preflight(plan: plan(skipConstrained: false), env: e) == .run)
+        var off = NetworkSettings.defaults
+        off.skipOnConstrainedNetwork = false
+        let e = env(network: .satisfied(constrained: true, expensive: true), networkSettings: off)
+        #expect(preflight(plan: plan(), env: e) == .run)
+    }
+
+    private static let s3 = Repository.s3(S3Location(
+        provider: .b2, endpoint: URL(string: "https://s3.us-west-004.backblazeb2.com")!, bucket: "bucket",
+        prefix: "mac"))
+    private static let folder = Repository.raw(repository: "/Volumes/Backup/restic", environmentNames: [])
+
+    /// The Mac-wide rule applies only to a repository that needs the network (Ruling R69).
+    @Test func constrainedNetworkSkipsAnS3PlanButNotAPathPlan() {
+        let e = env(network: .satisfied(constrained: true, expensive: false), mounted: ["/Volumes/Backup"])
+        #expect(preflight(plan: plan(repository: Self.s3), env: e) == .skip(.constrainedNetwork))
+        #expect(preflight(plan: plan(repository: Self.folder), env: e) == .run)
+    }
+
+    private func wiFi(
+        _ name: String?, skipping names: [String], network: NetworkState = .satisfied(constrained: false, expensive: false)
+    ) -> PreflightEnvironment {
+        var e = env(network: network, mounted: ["/Volumes/Backup"], networkSettings: NetworkSettings(
+            uploadLimitKiB: nil, skipOnConstrainedNetwork: true, skippedWiFiNames: names))
+        e.currentWiFiName = { name }
+        return e
+    }
+
+    /// The skip names the network as the Mac reports it, whatever the list's spelling.
+    @Test func aListedWiFiNetworkSkipsIgnoringCase() {
+        #expect(preflight(plan: plan(repository: Self.s3), env: wiFi("Café", skipping: ["café"])) == .skip(.skippedWiFi("Café")))
+        #expect(preflight(plan: plan(), env: wiFi("Café", skipping: ["Home", "CAFÉ"])) == .skip(.skippedWiFi("Café")))
+    }
+
+    @Test func anUnlistedWiFiNetworkRuns() {
+        #expect(preflight(plan: plan(), env: wiFi("Home 5G", skipping: ["Home"])) == .run)
+    }
+
+    /// Ruling P2-8: no Location permission, or not on Wi-Fi, never skips.
+    @Test func anUnknownWiFiNameRuns() {
+        #expect(preflight(plan: plan(), env: wiFi(nil, skipping: ["Home"])) == .run)
+    }
+
+    @Test func aListedWiFiNetworkDoesntSkipAPathPlan() {
+        #expect(preflight(plan: plan(repository: Self.folder), env: wiFi("Home", skipping: ["Home"])) == .run)
+    }
+
+    /// No network wins over the Wi-Fi rule, and the constrained rule is checked first.
+    @Test func theNetworkChecksComeInOrder() {
+        #expect(preflight(plan: plan(), env: wiFi("Home", skipping: ["Home"], network: .unsatisfied)) == .skip(.noNetwork))
+        let constrained = NetworkState.satisfied(constrained: true, expensive: false)
+        #expect(preflight(plan: plan(), env: wiFi("Home", skipping: ["Home"], network: constrained))
+            == .skip(.constrainedNetwork))
+    }
+
+    /// With no names listed, the Wi-Fi name isn't read at all.
+    @Test func theWiFiNameIsReadOnlyWhenNamesAreListed() {
+        let reads = ReadCounter()
+        var e = env()
+        e.currentWiFiName = { reads.value.withLock { $0 += 1 }; return "Home" }
+        #expect(preflight(plan: plan(), env: e) == .run)
+        #expect(reads.value.withLock { $0 } == 0)
+    }
+
+    final class ReadCounter: Sendable {
+        let value = Mutex(0)
+    }
+
+    @Test func theEnvironmentDefaultsToTheDefaultNetworkSettings() {
+        let e = PreflightEnvironment(
+            power: PowerState(onBattery: false, percent: 100), network: .satisfied(constrained: true, expensive: false),
+            isMountPoint: { _ in false }, fileExists: { _ in true })
+        #expect(e.networkSettings == .defaults)
+        #expect(preflight(plan: plan(), env: e) == .skip(.constrainedNetwork))
     }
 
     @Test func neverOnBatterySkipsOnBattery() {
@@ -97,7 +171,7 @@ struct PreflightTests {
     @Test func mountedVolumeWithMissingFolderFails() {
         let p = plan(sources: ["/Volumes/Media/Photos"])
         let e = env(mounted: ["/Volumes/Media"], existing: ["/Volumes/Media"])
-        #expect(preflight(plan: p, env: e) == .fail("/Volumes/Media/Photos doesn't exist"))
+        #expect(preflight(plan: p, env: e) == .fail("/Volumes/Media/Photos doesn’t exist"))
     }
 
     @Test func staleDirectoryOnUnmountedVolumeSkips() {
@@ -128,12 +202,12 @@ struct PreflightTests {
 
     @Test func missingNonVolumePathFails() {
         let p = plan(sources: ["/Users/me", "/Users/me/Gone"])
-        #expect(preflight(plan: p, env: env()) == .fail("/Users/me/Gone doesn't exist"))
+        #expect(preflight(plan: p, env: env()) == .fail("/Users/me/Gone doesn’t exist"))
     }
 
     @Test func firstMissingPathIsReported() {
         let p = plan(sources: ["/a", "/b"])
-        #expect(preflight(plan: p, env: env(existing: [])) == .fail("/a doesn't exist"))
+        #expect(preflight(plan: p, env: env(existing: [])) == .fail("/a doesn’t exist"))
     }
 
     @Test func unmountedVolumeBeatsAnEarlierMissingPath() {

@@ -22,14 +22,15 @@ struct PlanSecrets {
             do {
                 previous[key] = .some(try store.read(key))
             } catch {
-                throw AgentError.storage("Restorey couldn't read \(key.account) from the Keychain: \(error)")
+                throw AgentError.storage("Restorey couldn’t read \(key.account) from the Keychain: \(error)")
             }
         }
     }
 
-    /// True when any submitted value differs from what the keychain holds (including a new key).
-    var changesAnyValue: Bool {
-        entries.contains { entry in changes(entry) }
+    /// True when any submitted value differs from what the keychain holds (including a new key), leaving out
+    /// the keys in `excluded`.
+    func changesAnyValue(excluding excluded: Set<SecretKey> = []) -> Bool {
+        entries.contains { entry in !excluded.contains(entry.key) && changes(entry) }
     }
 
     /// True when a value is submitted for `key` and differs from what the keychain holds.
@@ -49,7 +50,7 @@ struct PlanSecrets {
             do {
                 try store.write(entry.value, for: entry.key)
             } catch {
-                let failure = "Restorey couldn't save \(entry.key.account) in the Keychain: \(error)"
+                let failure = "Restorey couldn’t save \(entry.key.account) in the Keychain: \(error)"
                 throw AgentError.storage(failure + Self.describe(restore()))
             }
         }
@@ -57,7 +58,7 @@ struct PlanSecrets {
             do {
                 try store.delete(key)
             } catch {
-                let failure = "Restorey couldn't remove \(key.account) from the Keychain: \(error)"
+                let failure = "Restorey couldn’t remove \(key.account) from the Keychain: \(error)"
                 throw AgentError.storage(failure + Self.describe(restore()))
             }
         }
@@ -81,6 +82,6 @@ struct PlanSecrets {
     static func describe(_ restoreFailures: [String]) -> String {
         restoreFailures.isEmpty
             ? ""
-            : ". Restorey also couldn't put back the previous \(restoreFailures.joined(separator: ", "))"
+            : ". Restorey also couldn’t put back the previous \(restoreFailures.joined(separator: ", "))"
     }
 }

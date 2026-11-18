@@ -117,7 +117,7 @@ struct SystemStopTests {
         #expect(await f.state.stopForSystem(runner: f.runner))
         #expect(ContinuousClock.now - started < Self.stubbornResticRuns / 2, "the stop waited for restic")
         let outcome = try await run.value.outcome
-        #expect(ContinuousClock.now - started < Self.stubbornResticRuns / 2, "restic wasn't killed")
+        #expect(ContinuousClock.now - started < Self.stubbornResticRuns / 2, "restic wasn’t killed")
         #expect(outcome == .stoppedBySystem)
         #expect(await f.pings() == [])
     }
@@ -146,8 +146,8 @@ struct SystemStopTests {
         // The stop's own wait is bounded, so it returns in time either way: time the run to its end.
         let record = try await run.value
         let took = ContinuousClock.now - started
-        #expect(took < pauseGrace / 2, "the run ended \(took) after SIGTERM: the pause's SIGKILL wasn't brought forward")
-        #expect(record.outcome == .paused, "the pause's own non-verdict outcome")
+        #expect(took < pauseGrace / 2, "the run ended \(took) after SIGTERM: the pause’s SIGKILL wasn’t brought forward")
+        #expect(record.outcome == .paused, "the pause’s own non-verdict outcome")
         #expect(await f.pings() == [])
         #expect((await f.history()).runningRecordID == nil, "committed, not left to recovery")
     }

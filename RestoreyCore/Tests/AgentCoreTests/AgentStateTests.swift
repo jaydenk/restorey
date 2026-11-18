@@ -206,9 +206,11 @@ struct AgentStateTests {
     }
 
     @Test(arguments: [
-        ("emptyHostLabel", "The host label can't be empty"),
+        ("emptyHostLabel", "The host label can’t be empty"),
         ("noSources", "Choose at least one source folder"),
-        ("intervalTooShort", "Backups can't run more often than every 5 minutes"),
+        ("intervalTooShort", "Backups can’t run more often than every 5 minutes"),
+        ("uploadLimitZero", "The upload limit must be more than 0 KiB/s"),
+        ("uploadLimitNegative", "The upload limit must be more than 0 KiB/s"),
     ])
     func savePlanRejectsEveryValidationError(_ kind: String, _ expected: String) async throws {
         let dir = try TempDirectory()
@@ -218,6 +220,8 @@ struct AgentStateTests {
         switch kind {
         case "emptyHostLabel": plan.hostLabel = "  "
         case "noSources": plan.sources = []
+        case "uploadLimitZero": plan.uploadLimitKiB = 0
+        case "uploadLimitNegative": plan.uploadLimitKiB = -5
         default: plan.schedule = .interval(seconds: 299)
         }
         await #expect {
@@ -235,7 +239,7 @@ struct AgentStateTests {
         await #expect {
             try await state.savePlan(Self.request(plan))
         } throws: {
-            Self.message($0) == "The host label can't be empty. Source folders must be absolute paths"
+            Self.message($0) == "The host label can’t be empty. Source folders must be absolute paths"
         }
     }
 
@@ -314,6 +318,319 @@ struct AgentStateTests {
         #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == nil)
     }
 
+    /// The kit's restore commands name the host label (`restic restore latest --host <label>`), so a kit saved
+    /// before a new label would restore the old group's latest snapshot: a new label needs a new kit.
+    @Test func hostLabelChangeResetsTheRecoveryKit() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        var plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        _ = try await state.confirmRecoveryKit(plan.id)
+        plan.name = "Renamed"
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: []))
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt != nil)
+        plan.hostLabel = "studio"
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: []))
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == nil)
+    }
+
+    /// The check-in URL isn't needed to open or restore the repository (product spec §7's kit is the address, the
+    /// password, the backend keys, the host label and the commands), so adding, changing or removing it from the
+    /// Schedule tab's Alerts section doesn't pause backups for a new kit. Answering "No off-Mac monitoring — Add…" mustn't stop them.
+    @Test func checkInURLChangeKeepsTheRecoveryKit() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        var plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        _ = try await state.confirmRecoveryKit(plan.id)
+        let confirmedAt = clock.now
+
+        plan.hasCheckInURL = true
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: [
+            SecretEntry(key: .checkInURL(plan.id), value: "https://hc-ping.com/first"),
+        ]))
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == confirmedAt)
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: [
+            SecretEntry(key: .checkInURL(plan.id), value: "https://hc-ping.com/second"),
+        ]))
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == confirmedAt)
+        plan.hasCheckInURL = false
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: []))
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == confirmedAt)
+
+        // A key changed alongside it still needs a new kit.
+        plan.hasCheckInURL = true
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: [
+            SecretEntry(key: .checkInURL(plan.id), value: "https://hc-ping.com/third"),
+            SecretEntry(key: .s3SecretAccessKey(plan.id), value: "rotated"),
+        ]))
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == nil)
+    }
+
+    // MARK: Setup state (Ruling P2-3, Review Focus 2)
+
+    @Test func firstKitConfirmationSetsSetupCompleted() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        var plan = Self.plan(now: clock.now)
+        // The agent owns it: a client can't send a plan that has already finished setup.
+        plan.setupCompletedAt = clock.now
+        _ = try await state.savePlan(Self.request(plan))
+        var status = try #require(await state.status().plans.first)
+        #expect(status.setupState == .unfinished)
+        #expect(status.plan.setupCompletedAt == nil)
+
+        clock.advance(60)
+        status = try #require(try await state.confirmRecoveryKit(plan.id).plans.first)
+        let completedAt = clock.now
+        #expect(status.setupState == .complete)
+        #expect(status.plan.setupCompletedAt == completedAt)
+
+        // A changed secret means a new recovery kit, but setup stays finished.
+        clock.advance(60)
+        plan.setupCompletedAt = nil
+        status = try #require(try await state.savePlan(Self.request(plan, password: "a new password")).plans.first)
+        #expect(status.setupState == .needsNewKit)
+        #expect(status.plan.setupCompletedAt == completedAt)
+
+        // Confirming the new kit doesn't move when setup finished.
+        clock.advance(60)
+        status = try #require(try await state.confirmRecoveryKit(plan.id).plans.first)
+        #expect(status.setupState == .complete)
+        #expect(status.plan.setupCompletedAt == completedAt)
+        // And it survives a reload from disk.
+        let reloaded = await Self.makeState(dir, clock: clock)
+        #expect(await reloaded.status().plans.first?.plan.setupCompletedAt == completedAt)
+    }
+
+    // MARK: The screens' calls: history, recovery kit, off-Mac note
+
+    /// Every plan's records in one list, newest first. A last backup that has fallen out of `recent` is
+    /// still listed, and one that is still in `recent` is listed once.
+    @Test func historyMergesPlansNewestFirst() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let first = Self.plan(now: clock.now)
+        let second = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(first))
+        _ = try await state.savePlan(Self.request(second))
+
+        func record(_ plan: Plan, _ outcome: RunOutcome, minutesAgo: Double) -> RunRecord {
+            let start = clock.now.addingTimeInterval(-minutesAgo * 60)
+            return RunRecord(
+                id: UUID(), planID: plan.id, operation: .backup, trigger: .scheduled, startedAt: start,
+                endedAt: start.addingTimeInterval(30), outcome: outcome, summary: nil, logFile: "")
+        }
+        // The first plan: a success, then a full `recent` of skips (250 to 201 minutes ago) that pushes it out.
+        let success = record(first, .success(snapshotID: "abc"), minutesAgo: 300)
+        let skips = (0..<PlanRunHistory.recentLimit).map {
+            record(first, .skipped(.onBattery), minutesAgo: 250 - Double($0))
+        }
+        _ = try await state.updateHistory(first.id) { history in
+            history.record(success)
+            for skip in skips { history.record(skip) }
+        }
+        #expect(try await state.runInputs(first.id).history.recent.contains(success) == false)
+        // The second plan: its last backup is still in `recent`, between the first plan's skips.
+        let unchanged = record(second, .unchanged, minutesAgo: 225.5)
+        let failed = record(second, .failed(exitCode: 1, reason: "boom"), minutesAgo: 100)
+        _ = try await state.updateHistory(second.id) { history in
+            history.record(unchanged)
+            history.record(failed)
+        }
+
+        let newestSkips = Array(skips[25...].reversed()) // 201 to 225 minutes ago
+        let olderSkips = Array(skips[..<25].reversed()) // 226 to 250 minutes ago
+        #expect(try await state.history(nil) == [failed] + newestSkips + [unchanged] + olderSkips + [success])
+        #expect(try await state.history(first.id) == skips.reversed() + [success])
+        #expect(try await state.history(second.id) == [failed, unchanged])
+        await #expect { try await state.history(UUID()) } throws: { ($0 as? AgentError) == .unknownPlan }
+    }
+
+    /// The kit holds every stored secret: an S3 plan's password, both keys and its check-in URL; a raw
+    /// plan's password and each environment value, in the plan's order.
+    @Test func recoveryKitReturnsAllSecrets() async throws {
+        let dir = try TempDirectory()
+        let secrets = InMemorySecretStore()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, secrets: secrets, clock: clock)
+        var s3 = Self.plan(now: clock.now)
+        s3.hasCheckInURL = true
+        var request = Self.request(s3)
+        let checkIn = SecretEntry(key: .checkInURL(s3.id), value: "https://hc-ping.com/not-a-real-uuid")
+        request.secrets.append(checkIn)
+        _ = try await state.savePlan(request)
+
+        let s3Kit = try await state.recoveryKit(s3.id)
+        #expect(s3Kit.plan == s3)
+        #expect(s3Kit.secrets == request.secrets)
+
+        let raw = Plan.newHotPlan(
+            name: "NAS",
+            repository: .raw(repository: "rest:https://nas.local:8000/mac",
+                             environmentNames: ["RESTIC_REST_USERNAME", "RESTIC_REST_PASSWORD"]),
+            origin: .created, hostLabel: "mac", sources: ["/Users/me"], exclusions: [], now: clock.now)
+        let rawSecrets = [
+            SecretEntry(key: .repositoryPassword(raw.id), value: "raw password"),
+            SecretEntry(key: .environment(raw.id, name: "RESTIC_REST_USERNAME"), value: "me"),
+            SecretEntry(key: .environment(raw.id, name: "RESTIC_REST_PASSWORD"), value: "rest secret"),
+        ]
+        // Saved in another order: the kit follows the plan's environment names.
+        _ = try await state.savePlan(SavePlanRequest(plan: raw, secrets: rawSecrets.reversed()))
+        let rawKit = try await state.recoveryKit(raw.id)
+        #expect(rawKit.plan == raw)
+        #expect(rawKit.secrets == rawSecrets)
+
+        // A kit missing a secret would be useless in a disaster: refused, naming the account only.
+        try secrets.delete(.environment(raw.id, name: "RESTIC_REST_PASSWORD"))
+        await #expect { _ = try await state.recoveryKit(raw.id) } throws: { error in
+            let text = Self.message(error) ?? ""
+            return text.contains("environment.RESTIC_REST_PASSWORD") && !text.contains("rest secret")
+        }
+    }
+
+    @Test func recoveryKitRefusedForUnknownPlan() async throws {
+        let dir = try TempDirectory()
+        let state = await Self.makeState(dir)
+        _ = try await state.savePlan(Self.request(Self.plan(now: Date(timeIntervalSince1970: 1_800_000_000))))
+        await #expect { _ = try await state.recoveryKit(UUID()) } throws: { ($0 as? AgentError) == .unknownPlan }
+    }
+
+    /// The agent owns `offMacNoteDismissed`: only `dismissOffMacNote` sets it, and a saved plan can't
+    /// clear it (or set it on a new plan).
+    @Test func dismissOffMacNotePersists() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        var plan = Self.plan(now: clock.now)
+        plan.offMacNoteDismissed = true
+        _ = try await state.savePlan(Self.request(plan))
+        #expect(await state.status().plans.first?.plan.offMacNoteDismissed == false)
+
+        let status = try await state.dismissOffMacNote(plan.id)
+        #expect(status.plans.first?.plan.offMacNoteDismissed == true)
+
+        plan.offMacNoteDismissed = false
+        let resaved = try await state.savePlan(Self.request(plan))
+        #expect(resaved.plans.first?.plan.offMacNoteDismissed == true)
+
+        let reloaded = await Self.makeState(dir, clock: clock)
+        #expect(await reloaded.status().plans.first?.plan.offMacNoteDismissed == true)
+        await #expect { _ = try await state.dismissOffMacNote(UUID()) } throws: { ($0 as? AgentError) == .unknownPlan }
+    }
+
+    @Test func lastBackupSkipsMaintenanceRecords() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        #expect(await state.status().plans.first?.lastBackup == nil)
+
+        func record(_ operation: ResticOperation, _ outcome: RunOutcome, minutesAgo: Double) -> RunRecord {
+            let start = clock.now.addingTimeInterval(-minutesAgo * 60)
+            return RunRecord(
+                id: UUID(), planID: plan.id, operation: operation, trigger: .scheduled, startedAt: start,
+                endedAt: start.addingTimeInterval(30), outcome: outcome, summary: nil, logFile: "")
+        }
+        let failed = record(.backup, .failed(exitCode: 1, reason: "boom"), minutesAgo: 40)
+        let unchanged = record(.backup, .unchanged, minutesAgo: 30)
+        let skipped = record(.backup, .skipped(.onBattery), minutesAgo: 20)
+        let forget = record(.forget(dryRun: false), .success(snapshotID: nil), minutesAgo: 10)
+        let size = RepositorySize(bytes: 12_345_678_901, measuredAt: clock.now.addingTimeInterval(-600))
+        let status = try await state.updateHistory(plan.id) { history in
+            // Oldest first, so `recent` reads newest first: forget, skipped, unchanged, failed.
+            for item in [failed, unchanged, skipped, forget] { history.record(item) }
+            history.repositorySize = size
+        }
+        let planStatus = try #require(status.plans.first)
+        #expect(planStatus.lastRecord == forget)
+        #expect(planStatus.lastBackup == unchanged)
+        #expect(planStatus.repositorySize == size)
+
+        // A warning counts as backed up; a newer failure or pause doesn't replace it.
+        let warning = record(.backup, .warning(unreadable: 2), minutesAgo: 5)
+        let paused = record(.backup, .paused, minutesAgo: 1)
+        let after = try await state.updateHistory(plan.id) { history in
+            history.record(warning)
+            history.record(paused)
+        }
+        #expect(after.plans.first?.lastBackup == warning)
+
+        // A weekend of hourly skips, more than `recent` holds, leaves it in place.
+        let skips = (0...PlanRunHistory.recentLimit).map {
+            record(.backup, .skipped(.volumeNotMounted("Backup")), minutesAgo: -Double($0) * 60)
+        }
+        let weekend = try await state.updateHistory(plan.id) { history in
+            for skip in skips { history.record(skip) }
+        }
+        #expect(weekend.plans.first?.lastRecord?.outcome == .skipped(.volumeNotMounted("Backup")))
+        #expect(weekend.plans.first?.lastBackup == warning)
+    }
+
+    @Test func statusCarriesTheNetworkSettings() async throws {
+        let dir = try TempDirectory()
+        let state = await Self.makeState(dir)
+        #expect(await state.status().network == .defaults)
+    }
+
+    // MARK: Network settings (Ruling P2-6)
+
+    @Test func saveNetworkSettingsPersistsAndPushes() async throws {
+        let dir = try TempDirectory()
+        let state = await Self.makeState(dir)
+        let pushes = Mutex<[AgentStatus]>([])
+        await state.setStatusObserver { status in pushes.withLock { $0.append(status) } }
+        let settings = NetworkSettings(uploadLimitKiB: 750, skipOnConstrainedNetwork: false, skippedWiFiNames: [" Café ", "Home"])
+
+        let status = try await state.saveNetworkSettings(settings)
+
+        let saved = NetworkSettings(uploadLimitKiB: 750, skipOnConstrainedNetwork: false, skippedWiFiNames: ["Café", "Home"])
+        #expect(status.network == saved, "names are trimmed")
+        #expect(await state.networkSettings == saved)
+        #expect(pushes.withLock { $0 }.map(\.network) == [saved])
+        let reloaded = await Self.makeState(dir)
+        #expect(await reloaded.status().network == saved)
+    }
+
+    @Test(arguments: [
+        (NetworkSettings(uploadLimitKiB: 0, skipOnConstrainedNetwork: true, skippedWiFiNames: []),
+         "The upload limit must be more than 0 KiB/s"),
+        (NetworkSettings(uploadLimitKiB: nil, skipOnConstrainedNetwork: true, skippedWiFiNames: ["  "]),
+         "A Wi-Fi network name can’t be empty"),
+        (NetworkSettings(uploadLimitKiB: -5, skipOnConstrainedNetwork: true, skippedWiFiNames: ["Home", "home"]),
+         "The upload limit must be more than 0 KiB/s. The Wi-Fi network “home” is in the list more than once"),
+    ])
+    func saveNetworkSettingsRefusesInvalidSettings(settings: NetworkSettings, sentence: String) async throws {
+        let dir = try TempDirectory()
+        let state = await Self.makeState(dir)
+        let pushes = Mutex(0)
+        await state.setStatusObserver { _ in pushes.withLock { $0 += 1 } }
+
+        await #expect { try await state.saveNetworkSettings(settings) } throws: { Self.message($0) == sentence }
+        #expect(await state.networkSettings == .defaults)
+        #expect(!FileManager.default.fileExists(atPath: dir.config.path), "nothing written")
+        #expect(pushes.withLock { $0 } == 0)
+    }
+
+    @Test func saveNetworkSettingsKeepsThePlans() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        _ = try await state.confirmRecoveryKit(plan.id)
+        let before = await state.status().plans.map(\.plan)
+
+        let status = try await state.saveNetworkSettings(
+            NetworkSettings(uploadLimitKiB: 100, skipOnConstrainedNetwork: true, skippedWiFiNames: []))
+        #expect(status.plans.map(\.plan) == before)
+    }
+
     @Test func configWriteFailureRestoresTheOldSecrets() async throws {
         let dir = try TempDirectory()
         let clock = TestClock()
@@ -377,7 +694,49 @@ struct AgentStateTests {
 
         await #expect {
             try await state.deletePlan(doomed.id)
-        } throws: { Self.message($0) == "There's no plan with that ID" }
+        } throws: { Self.message($0) == "There’s no plan with that ID" }
+    }
+
+    /// The plan's run logs go with it, not 400 days later; other plans' logs stay.
+    @Test func deletePlanRemovesRunLogs() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let runLogs = RunLogStore(root: dir.url.appendingPathComponent("logs"), subsystem: "test.restorey")
+        let state = await AgentState(directory: dir.url, secrets: InMemorySecretStore(), runLogs: runLogs, now: clock.function)
+        let doomed = Self.plan(now: clock.now)
+        let kept = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(doomed))
+        _ = try await state.savePlan(Self.request(kept))
+        let runs = dir.url.appendingPathComponent("logs/runs")
+        for plan in [doomed, kept] {
+            try await runLogs.begin(planID: plan.id, operation: .backup, startedAt: clock.now, redactor: Redactor(secrets: [])).close()
+        }
+
+        _ = try await state.deletePlan(doomed.id)
+        #expect(!FileManager.default.fileExists(atPath: runs.appendingPathComponent(doomed.id.uuidString).path))
+        #expect(FileManager.default.fileExists(atPath: runs.appendingPathComponent(kept.id.uuidString).path))
+    }
+
+    /// Logs that can't be removed don't stop the rest of the clean-up, and the reply says what was left.
+    @Test func deletePlanReportsRunLogsItCouldNotRemove() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let runLogs = RunLogStore(root: dir.url.appendingPathComponent("logs"), subsystem: "test.restorey")
+        let secrets = InMemorySecretStore()
+        let state = await AgentState(directory: dir.url, secrets: secrets, runLogs: runLogs, now: clock.function)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        try await runLogs.begin(planID: plan.id, operation: .backup, startedAt: clock.now, redactor: Redactor(secrets: [])).close()
+        let planLogs = dir.url.appendingPathComponent("logs/runs/\(plan.id.uuidString)")
+        // A read-only plan folder: its log file can't be removed.
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: planLogs.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: planLogs.path) }
+
+        await #expect {
+            try await state.deletePlan(plan.id)
+        } throws: { Self.message($0)?.hasPrefix("Home was deleted, but Restorey couldn’t remove its run logs") == true }
+        #expect(await state.status().plans.isEmpty)
+        #expect(try secrets.read(.repositoryPassword(plan.id)) == nil)
     }
 
     @Test func deletePlanRefusesARunningPlan() async throws {
@@ -416,7 +775,7 @@ struct AgentStateTests {
         _ = try await delete.value
         await #expect {
             try await state.beginRun(planID: plan.id)
-        } throws: { Self.message($0) == "There's no plan with that ID" }
+        } throws: { Self.message($0) == "There’s no plan with that ID" }
         #expect(await state.status().plans.isEmpty)
     }
 
@@ -448,7 +807,7 @@ struct AgentStateTests {
 
         await #expect {
             try await state.pause(UUID())
-        } throws: { Self.message($0) == "There's no plan with that ID" }
+        } throws: { Self.message($0) == "There’s no plan with that ID" }
     }
 
     @Test func statusReportsNextRunOnlyOnceTheRecoveryKitIsConfirmed() async throws {
@@ -564,8 +923,9 @@ struct AgentStateTests {
         #expect(status.configError != nil)
         #expect(status.configError?.contains("newer") == true)
         #expect(status.plans.isEmpty)
+        #expect(status.network == nil, "config.json couldn’t be read")
 
-        let refused = "Restorey can't change its settings until the problem with them is fixed"
+        let refused = "Restorey can’t change its settings until the problem with them is fixed"
         await #expect { try await state.savePlan(Self.request(plan)) } throws: { Self.message($0) == refused }
         await #expect { try await state.deletePlan(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.pause(plan.id) } throws: { Self.message($0) == refused }
@@ -576,6 +936,12 @@ struct AgentStateTests {
         await #expect { try await state.createRepository(plan.id) } throws: { Self.message($0) == refused }
         await #expect { _ = try await state.adopt(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.beginRun(planID: plan.id) } throws: { Self.message($0) == refused }
+        await #expect { try await state.saveNetworkSettings(.defaults) } throws: { Self.message($0) == refused }
+        await #expect { _ = try await state.probeRepository(plan.id) } throws: { Self.message($0) == refused }
+        await #expect { try await state.dismissOffMacNote(plan.id) } throws: { Self.message($0) == refused }
+        // Reads too: without the files there is no plan to answer for.
+        await #expect { _ = try await state.history(nil) } throws: { Self.message($0) == refused }
+        await #expect { _ = try await state.recoveryKit(plan.id) } throws: { Self.message($0) == refused }
 
         #expect(try Data(contentsOf: dir.config) == configBefore)
         #expect(try Data(contentsOf: dir.state) == stateBefore)
@@ -598,13 +964,14 @@ struct AgentStateTests {
         #expect(status.configError?.contains("state.json") == true)
         // The plans are still listed, each stopped with the reason.
         #expect(status.plans.map(\.plan) == [plan])
+        #expect(status.network == .defaults, "config.json was read")
         guard case .stopped(let reason)? = status.plans.first?.phase else {
             Issue.record("expected a stopped phase, got \(String(describing: status.plans.first?.phase))")
             return
         }
         #expect(reason.contains("state.json"))
         #expect(status.plans.first?.nextRunAt == nil)
-        let refused = "Restorey can't change its settings until the problem with them is fixed"
+        let refused = "Restorey can’t change its settings until the problem with them is fixed"
         await #expect { try await state.pause(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.savePlan(Self.request(plan)) } throws: { Self.message($0) == refused }
         await #expect { try await state.deletePlan(plan.id) } throws: { Self.message($0) == refused }
@@ -660,6 +1027,66 @@ struct AgentStateTests {
         #expect(history.activeAlerts[.configurationError] != nil)
     }
 
+    /// A new host label needs a new kit (Ruling R3) but cures nothing a stop is about: the stop stays.
+    @Test func aHostLabelChangeKeepsAStop() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        var plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        try await Self.stop(state, plan.id)
+
+        plan.hostLabel = "studio"
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: []))
+        let history = try await state.runInputs(plan.id).history
+        #expect(history.stoppedReason == "The repository password is wrong")
+        #expect(history.activeAlerts[.configurationError] != nil)
+    }
+
+    /// Fix round 3, N2: two registrations for one plan (an adopt's size measurement and a credential check) can
+    /// overlap; the first to end mustn't end the other's, or deleting the plan wouldn't wait for it.
+    @Test func overlappingMeasurementsAreCounted() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        try await state.beginMeasurement(planID: plan.id)
+        try await state.beginMeasurement(planID: plan.id)
+        await state.endMeasurement(planID: plan.id)
+        #expect(await state.isMeasuring(plan.id))
+        await state.endMeasurement(planID: plan.id)
+        #expect(await !state.isMeasuring(plan.id))
+        // An end with nothing registered changes nothing.
+        await state.endMeasurement(planID: plan.id)
+        #expect(await !state.isMeasuring(plan.id))
+    }
+
+    /// Fix round 3, N3: the status carries the newest backup of any outcome (for Done) and the newest backup with a
+    /// verdict (for the menu's failure line, as `activeConditions` decides `backupFailed`).
+    @Test func theStatusCarriesTheNewestBackupAndTheNewestVerdict() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        func record(_ outcome: RunOutcome, _ minutes: Double) -> RunRecord {
+            RunRecord(
+                id: UUID(), planID: plan.id, operation: .backup, trigger: .scheduled,
+                startedAt: clock.now.addingTimeInterval(minutes * 60), endedAt: clock.now.addingTimeInterval(minutes * 60),
+                outcome: outcome, summary: nil, logFile: "")
+        }
+        let failed = record(.wrongPassword, 1)
+        let skipped = record(.skipped(.onBattery), 2)
+        try await state.updateHistory(plan.id) { history in
+            history.record(failed)
+            history.record(skipped)
+        }
+        let status = try #require(await state.status().plans.first)
+        #expect(status.latestBackupRecord == skipped)
+        #expect(status.latestBackupVerdict == failed)
+    }
+
     // MARK: Runs need the runner
 
     /// Runs are the plan runner's (PlanRunnerTests); with none attached they are refused, not dropped.
@@ -672,7 +1099,9 @@ struct AgentStateTests {
         await #expect(throws: AgentError.runnerUnavailable) { try await state.backUpNow(plan.id) }
         await #expect(throws: AgentError.runnerUnavailable) { try await state.createRepository(plan.id) }
         await #expect(throws: AgentError.runnerUnavailable) { _ = try await state.adopt(plan.id) }
-        #expect(AgentError.runnerUnavailable.message == "Restorey's agent is still starting up. Try again in a moment")
+        await #expect(throws: AgentError.runnerUnavailable) { _ = try await state.probeRepository(plan.id) }
+        await #expect(throws: AgentError.runnerUnavailable) { try await state.probeFullDiskAccess() }
+        #expect(AgentError.runnerUnavailable.message == "Restorey is still starting up. Try again in a moment")
     }
 
     // MARK: Drain (Review Focus 3)
@@ -708,7 +1137,7 @@ struct AgentStateTests {
         }
         try await Self.waitUntilDraining(state)
 
-        let refused = "Restorey is finishing the current backup before updating the agent"
+        let refused = "Restorey is finishing the current backup before updating"
         await #expect { try await state.backUpNow(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.backUpNow(nil) } throws: { Self.message($0) == refused }
         await #expect { try await state.createRepository(plan.id) } throws: { Self.message($0) == refused }
@@ -718,6 +1147,7 @@ struct AgentStateTests {
         await #expect { try await state.confirmRecoveryKit(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.resume(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.beginRun(planID: plan.id) } throws: { Self.message($0) == refused }
+        await #expect { try await state.saveNetworkSettings(.defaults) } throws: { Self.message($0) == refused }
         let other = Self.plan(now: clock.now)
         await #expect { try await state.beginRun(planID: other.id) } throws: { Self.message($0) == refused }
         // Pause is allowed, so the user can still stop a long first backup.
@@ -777,7 +1207,8 @@ struct AgentStateTests {
         let state = await Self.makeState(dir)
         let start = ContinuousClock.now
         await state.prepareForRestart()
-        #expect(ContinuousClock.now - start < .seconds(1))
+        // Replies without waiting on anything: well under the ping budget the drain would otherwise be held to.
+        #expect(ContinuousClock.now - start < AgentState.drainPingBudget / 2)
         #expect(await state.isDraining)
         await #expect(throws: AgentError.draining) { try await state.backUpNow(nil) }
     }
@@ -883,7 +1314,7 @@ extension AgentStateTests {
         while exits.value == 0 { try await Task.sleep(for: .milliseconds(10)) }
         try await Task.sleep(for: .milliseconds(200))
         #expect(exits.value == 1)
-        #expect(AgentError.restarting.message == "Restorey's agent is restarting to finish an update. Try again in a moment")
+        #expect(AgentError.restarting.message == "Restorey is restarting to finish an update. Try again in a moment")
     }
 
     @Test func reregistrationIsRefusedDuringTheAppsRestartDrain() async throws {

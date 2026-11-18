@@ -13,9 +13,9 @@ enum AgentCallError: Error, Equatable, CustomStringConvertible {
 
     var description: String {
         switch self {
-        case .unreachable(let detail): "Restorey couldn't reach its background agent (\(detail))."
+        case .unreachable(let detail): "Restorey couldn’t reach its background process (\(detail))."
         case .refused(let message): message
-        case .badReply(let detail): "Restorey's background agent sent a reply it couldn't read (\(detail))."
+        case .badReply(let detail): "Restorey’s background process sent a reply it couldn’t read (\(detail))."
         }
     }
 }
@@ -67,12 +67,22 @@ final class AgentConnection {
         return await statusCall(timeout: .seconds(60)) { $0.savePlan(data, withReply: $1) }
     }
 
+    func saveNetworkSettings(_ settings: NetworkSettings) async -> Result<AgentStatus, AgentCallError> {
+        guard let data = try? XPCCoding.encode(settings) else { return .failure(.badReply("network settings")) }
+        return await statusCall(timeout: .seconds(60)) { $0.saveNetworkSettings(data, withReply: $1) }
+    }
+
     func deletePlan(_ planID: UUID) async -> Result<AgentStatus, AgentCallError> {
         await statusCall(timeout: .seconds(60)) { $0.deletePlan(planID.uuidString, withReply: $1) }
     }
 
-    func backUpNow(_ planID: UUID?) async -> Result<AgentStatus, AgentCallError> {
-        await statusCall(timeout: .seconds(60)) { $0.backUpNow(planID?.uuidString, withReply: $1) }
+    /// Its status also feeds `onStatus`, like the status calls'.
+    func backUpNow(_ planID: UUID?) async -> Result<BackUpNowReply, AgentCallError> {
+        let result = await call(BackUpNowReply.self, timeout: .seconds(60)) {
+            $0.backUpNow(planID?.uuidString, withReply: $1)
+        }
+        if case .success(let reply) = result { onStatus?(reply.status) }
+        return result
     }
 
     func pause(_ planID: UUID) async -> Result<AgentStatus, AgentCallError> {
@@ -96,11 +106,78 @@ final class AgentConnection {
         await call(AdoptReport.self, timeout: .seconds(1200)) { $0.adopt(planID.uuidString, withReply: $1) }
     }
 
+    /// Like `adopt`, restic may retry an unreachable backend for up to 15 minutes.
+    func probeRepository(_ planID: UUID) async -> Result<RepositoryProbe, AgentCallError> {
+        await call(RepositoryProbe.self, timeout: .seconds(1200)) { $0.probeRepository(planID.uuidString, withReply: $1) }
+    }
+
+    /// What `probeRepository` would find with these typed credentials in place of the saved ones, which are left
+    /// as they are. 20 minutes, like the probe: restic retries an unreachable backend for up to 15, and the check
+    /// may wait its turn in the repository's queue. An agent without this call can't answer: Ruling P-2's handshake
+    /// restarts any agent whose build differs from the app's, so the two always match.
+    func probeRepositoryCredentials(_ planID: UUID, secrets: [SecretEntry]) async -> Result<RepositoryProbe, AgentCallError> {
+        guard let data = try? XPCCoding.encode(CredentialProbeRequest(planID: planID, secrets: secrets)) else {
+            return .failure(.badReply("credential probe request"))
+        }
+        return await call(RepositoryProbe.self, timeout: .seconds(1200)) { $0.probeRepositoryCredentials(data, withReply: $1) }
+    }
+
+    /// What the plan's retention would remove from its earlier snapshots (Task 14b). 20 minutes, like the probes: it
+    /// waits its turn in the repository's queue, and restic retries an unreachable backend for up to 15.
+    func previewEarlierSnapshots(_ planID: UUID) async -> Result<EarlierSnapshotsPreview, AgentCallError> {
+        await call(EarlierSnapshotsPreview.self, timeout: .seconds(1200)) {
+            $0.previewEarlierSnapshots(planID.uuidString, withReply: $1)
+        }
+    }
+
+    /// Removes the confirmed earlier snapshots still in scope. No timeout: it waits behind any backup in the repository's
+    /// queue and for another client's lock, and a timeout here would say "unreachable" while the agent goes on removing.
+    func removeEarlierSnapshots(_ request: EarlierSnapshotsRequest) async -> Result<EarlierSnapshotsRemoval, AgentCallError> {
+        guard let data = try? XPCCoding.encode(request) else { return .failure(.badReply("earlier snapshots request")) }
+        return await call(EarlierSnapshotsRemoval.self, timeout: nil) { $0.removeEarlierSnapshots(data, withReply: $1) }
+    }
+
+    /// Setup's confirmed removal, run by the agent after the plan's next successful backup.
+    func removeEarlierSnapshotsAfterNextBackup(_ request: EarlierSnapshotsRequest) async -> Result<AgentStatus, AgentCallError> {
+        guard let data = try? XPCCoding.encode(request) else { return .failure(.badReply("earlier snapshots request")) }
+        return await statusCall(timeout: .seconds(60)) { $0.removeEarlierSnapshotsAfterNextBackup(data, withReply: $1) }
+    }
+
+    /// One plan's run records, or every plan's when `planID` is nil, newest first.
+    func history(_ planID: UUID?) async -> Result<[RunRecord], AgentCallError> {
+        await call([RunRecord].self, timeout: .seconds(10)) { $0.history(planID?.uuidString, withReply: $1) }
+    }
+
+    /// The plan's secrets for the recovery kit. Hold the reply only while the kit is shown.
+    func recoveryKit(_ planID: UUID) async -> Result<RecoveryKitSecrets, AgentCallError> {
+        await call(RecoveryKitSecrets.self, timeout: .seconds(30)) { $0.recoveryKit(planID.uuidString, withReply: $1) }
+    }
+
+    func probeFullDiskAccess() async -> Result<AgentStatus, AgentCallError> {
+        await statusCall(timeout: .seconds(10)) { $0.probeFullDiskAccess(withReply: $1) }
+    }
+
+    func dismissOffMacNote(_ planID: UUID) async -> Result<AgentStatus, AgentCallError> {
+        await statusCall(timeout: .seconds(60)) { $0.dismissOffMacNote(planID.uuidString, withReply: $1) }
+    }
+
     /// Waits for the user to answer the agent's prompt.
     func requestNotificationPermission() async -> Result<NotificationPermissionReply, AgentCallError> {
         await call(NotificationPermissionReply.self, timeout: .seconds(600)) {
             $0.requestNotificationPermission(withReply: $1)
         }
+    }
+
+    /// Waits for the user to answer the agent's Location prompt, which it needs to read the Wi-Fi name.
+    func requestLocationPermission() async -> Result<LocationPermissionReply, AgentCallError> {
+        await call(LocationPermissionReply.self, timeout: .seconds(600)) {
+            $0.requestLocationPermission(withReply: $1)
+        }
+    }
+
+    /// Whether Location Services is on for the Mac and the agent's authorisation, without asking.
+    func locationAccess() async -> Result<LocationPermissionReply, AgentCallError> {
+        await call(LocationPermissionReply.self, timeout: .seconds(15)) { $0.locationAccess(withReply: $1) }
     }
 
     /// Drops the connection, e.g. after `unregister()`; the next call makes a new one.
@@ -156,7 +233,7 @@ final class AgentConnection {
                         once.resume(.failure(.badReply(String(describing: error))))
                     }
                 } else {
-                    once.resume(.failure(.refused(error ?? "Restorey's background agent gave no reason.")))
+                    once.resume(.failure(.refused(error ?? "Restorey’s background process gave no reason.")))
                 }
             }
         }

@@ -145,6 +145,15 @@ struct AgentStateAlertTests {
         await state.helloReply(agentVersion: "1", agentBuild: "2", executablePath: "/x", executableFingerprint: nil)
     }
 
+    /// R76: hello names the same agent run as the statuses, so the app can retire the run before a relaunch.
+    @Test func helloNamesTheRunItsStatusesCarry() async throws {
+        let world = try await world()
+        let reply = await hello(world.state)
+        let status = await world.state.status()
+        #expect(reply.agentRun != nil)
+        #expect(reply.agentRun == status.agentRun)
+    }
+
     /// The notification centre has stopped answering: `hello` still replies at once, from what it knows.
     @Test func helloRepliesPromptlyWhileTheNotifierHangs() async throws {
         let world = try await world()
@@ -284,7 +293,7 @@ struct AgentStateAlertTests {
         _ = try await fixture.runner.runBackup(planID: fixture.planID, trigger: .scheduled)
         await fixture.state.alertsDelivered()
         #expect(await notifier.titles == [
-            "Backup failed — Fixture", "Full Disk Access is missing — Restorey can't read your files",
+            "Backup failed — Fixture", "Full Disk Access is missing — Restorey can’t read your files",
         ])
 
         fixture.clock.advance(30 * 60)
@@ -300,8 +309,11 @@ struct AgentStateAlertTests {
     // MARK: A notification centre that doesn't answer (Ruling R44)
 
     /// The notifier hangs on every call. Saves, runs and the scheduler's tick carry on regardless, and
-    /// delivery finishes once it answers.
-    @Test(.timeLimit(.minutes(1)))
+    /// delivery finishes once it answers. The limit is a backstop against a hang, not a speed bound: the tick runs a
+    /// real backup and its maintenance, which take 30 to 65 s on a busy runner, so it matches the other real-restic
+    /// fixture suites (3 minutes). The restic work stays real: the test's claim is that the backup and its
+    /// maintenance complete, not only that the notifier is bypassed.
+    @Test(.timeLimit(.minutes(3)))
     func aHungNotifierHoldsNothingUp() async throws {
         let fixture = try await RunnerFixture.make()
         defer { fixture.remove() }
@@ -321,12 +333,12 @@ struct AgentStateAlertTests {
         // The backup, and the maintenance that followed it in the same run.
         let latest = try #require(await fixture.history().recent.first { $0.operation == .backup })
         guard case .success = latest.outcome else {
-            Issue.record("expected the tick's backup to succeed, got \(latest.outcome)")
+            Issue.record("expected the tick’s backup to succeed, got \(latest.outcome)")
             return
         }
 
         await notifier.answer()
-        #expect(await fixture.state.deliverAlerts(waitingAtMost: .seconds(10)))
+        #expect(await fixture.state.deliverAlerts(waitingAtMost: .seconds(3600)))
     }
 
     @Test func aTimedOutPostIsNotCountedAndRecovers() async throws {
@@ -357,9 +369,9 @@ struct AgentStateAlertTests {
         await state.attach(notifier: notifier, log: { _ in })
         await state.deliverAlerts()
         let posted = await notifier.posted
-        #expect(posted.map(\.title) == ["Restorey has stopped — its settings can't be read"])
+        #expect(posted.map(\.title) == ["Restorey has stopped — its settings can’t be read"])
         #expect(posted.first?.identifier == "alert.agent.loadError")
-        #expect(posted.first?.body.hasPrefix("config.json can't be read") == true)
+        #expect(posted.first?.body.hasPrefix("config.json can’t be read") == true)
 
         clock.advance(59 * 60)
         await state.deliverAlerts()
@@ -380,7 +392,7 @@ struct AgentStateAlertTests {
         #expect(await state.status().plans.first?.alerts == [.configurationError])
         await state.attach(notifier: world.notifier, log: { _ in })
         await state.deliverAlerts()
-        #expect(await world.notifier.titles == ["Restorey has stopped — its settings can't be read"])
+        #expect(await world.notifier.titles == ["Restorey has stopped — its settings can’t be read"])
     }
 
     // MARK: Check-in results (Ruling R46)

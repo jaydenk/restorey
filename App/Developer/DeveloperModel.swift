@@ -26,8 +26,8 @@ final class DeveloperModel {
     var secret = ""
     var repositoryPassword = ""
     var localPath = "/tmp/restorey-dev-repo"
-    /// One absolute path per line.
-    var sources = ""
+    var sources: [String] = []
+    var fileTypes = DefaultExclusions.fileTypes
     var checkInURL = ""
     /// "Remove check-in URL": the only way to clear a saved one (Ruling R53).
     var removeCheckInURL = false
@@ -40,9 +40,13 @@ final class DeveloperModel {
     @ObservationIgnored let supervisor: AgentSupervisor
     @ObservationIgnored private let identity: Identity
 
-    init(supervisor: AgentSupervisor, identity: Identity) {
+    /// The router's `planDeleted`: closes a setup window on the plan and forgets progress naming it, as Settings does.
+    @ObservationIgnored let planDeleted: (UUID) -> Void
+
+    init(supervisor: AgentSupervisor, identity: Identity, planDeleted: @escaping (UUID) -> Void) {
         self.supervisor = supervisor
         self.identity = identity
+        self.planDeleted = planDeleted
     }
 
     var plans: [Plan] { supervisor.status?.plans.map(\.plan) ?? [] }
@@ -64,7 +68,8 @@ final class DeveloperModel {
         guard let plan = selectedPlan else { return }
         name = plan.name
         hostLabel = plan.hostLabel
-        sources = plan.sources.joined(separator: "\n")
+        sources = plan.sources
+        fileTypes = plan.fileTypeExclusions
         adoptExisting = plan.origin == .adopted
         switch plan.repository {
         case .s3(let location):
@@ -123,8 +128,8 @@ final class DeveloperModel {
     func resume() { planAction("Resume") { await $0.resume($1) } }
     func adopt() { planAction("Adopt") { await $0.adopt($1) } }
 
-    /// Deletes the chosen plan through the agent (its config entry, Keychain items, credentials file and
-    /// history). The repository and the plan's run logs are left alone. The form returns to "New plan".
+    /// Deletes the chosen plan through the agent (its config entry, Keychain items, credentials file, history and
+    /// run logs, Ruling P2-12). The repository is left alone. The form returns to "New plan".
     func deletePlan() {
         guard let id = selectedPlanID else {
             output = "Delete plan: choose a plan first."
@@ -132,6 +137,8 @@ final class DeveloperModel {
         }
         run("Delete plan") { [connection = supervisor.connection] in
             let result = await connection.deletePlan(id)
+            // Setup progress naming the plan has nothing left to finish (live finding 2, review M4), as in Settings.
+            if case .success = result { self.planDeleted(id) }
             if case .success = result, self.selectedPlanID == id { self.selectedPlanID = nil }
             return Self.describe(result)
         }
@@ -140,6 +147,13 @@ final class DeveloperModel {
     func requestNotifications() {
         run("Request notifications") { [connection = supervisor.connection] in
             Self.describe(await connection.requestNotificationPermission())
+        }
+    }
+
+    /// Asks the agent for Location permission (the prompt appears the first time) and shows its reply.
+    func requestLocation() {
+        run("Request Location") { [connection = supervisor.connection] in
+            Self.describe(await connection.requestLocationPermission())
         }
     }
 
@@ -176,16 +190,14 @@ final class DeveloperModel {
             throw FormError(description: "Plan details are still loading — try again in a moment")
         }
         let repository = try makeRepository()
-        let sourceList = sources.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-            .map { NSString(string: $0).expandingTildeInPath }
         var plan: Plan
         if let existing = selectedPlan {
             plan = existing
             plan.name = name
             plan.repository = repository
             plan.hostLabel = hostLabel
-            plan.sources = sourceList
+            plan.sources = sources
+            plan.fileTypeExclusions = fileTypes
         } else {
             guard !repositoryPassword.isEmpty else { throw FormError(description: "A new plan needs a repository password.") }
             if case .s3 = repository, keyID.isEmpty || secret.isEmpty {
@@ -194,8 +206,9 @@ final class DeveloperModel {
             let home = FileManager.default.homeDirectoryForCurrentUser
             plan = Plan.newHotPlan(
                 name: name, repository: repository, origin: adoptExisting ? .adopted : .created,
-                hostLabel: hostLabel, sources: sourceList,
-                exclusions: DefaultExclusions.paths(home: home, identity: identity), now: Date())
+                hostLabel: hostLabel, sources: sources,
+                exclusions: DefaultExclusions.paths(home: home, identity: identity),
+                fileTypeExclusions: fileTypes, now: Date())
         }
         // Empty means unchanged; only "Remove check-in URL" clears it (the agent then deletes the secret).
         let checkIn = try checkInIntent(existing: plan.hasCheckInURL, field: checkInURL, remove: removeCheckInURL)

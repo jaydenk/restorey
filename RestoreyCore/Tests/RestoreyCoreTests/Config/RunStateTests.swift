@@ -32,7 +32,7 @@ struct RunStateTests {
         history.lastPruneAt = date(1_800_000_080)
         history.lastCheckAt = date(1_800_000_090)
         history.runningRecordID = recordID
-        history.recent = [makeRecord()]
+        history.record(makeRecord())
         history.activeAlerts = [
             .backupFailed: AlertNotificationState(raisedAt: date(1_800_000_100), lastNotifiedAt: nil, count: 1),
             .noRecentSuccess: AlertNotificationState(
@@ -192,6 +192,82 @@ struct RunStateTests {
         let data = try encoder.encode(record)
         #expect(String(decoding: data, as: UTF8.self).contains(#""droppedLogLines":3"#))
         #expect(try JSONDecoder().decode(RunRecord.self, from: data) == record)
+    }
+
+    /// Ruling P2-9: the measured size is kept with the history; state written before it existed has none.
+    @Test func repositorySizeRoundTrips() throws {
+        var history = PlanRunHistory()
+        history.repositorySize = RepositorySize(bytes: 5_000_000_000, measuredAt: Date(timeIntervalSince1970: 1_800_000_000))
+        let data = try JSONEncoder().encode(history)
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: data) == history)
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: Data("{}".utf8)).repositorySize == nil)
+    }
+
+    /// Task 14b: setup's confirmed removal of pre-adoption snapshots waits in the history for the first successful
+    /// backup. State written before it existed has none, and one naming a scope only a newer build knows is dropped
+    /// (nothing is removed), not fatal.
+    @Test func pendingEarlierRemovalRoundTripsAndANewerScopeIsDropped() throws {
+        var history = PlanRunHistory()
+        history.pendingEarlierRemoval = EarlierSnapshotsConfirmation(
+            scope: .beforeAdoption, snapshotIDs: [String(repeating: "a", count: 64)])
+        let data = try JSONEncoder().encode(history)
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: data) == history)
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: Data("{}".utf8)).pendingEarlierRemoval == nil)
+        let newer = #"{"pendingEarlierRemoval":{"scope":{"type":"fromTheFuture"},"snapshotIDs":["x"]}}"#
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: Data(newer.utf8)).pendingEarlierRemoval == nil)
+    }
+
+    /// Final review I2: the count of failed pending removals round-trips, is absent in older state, and is said only from
+    /// the third backup in a row.
+    @Test func pendingRemovalFailuresRoundTripAndShowFromTheThird() throws {
+        var history = PlanRunHistory()
+        history.pendingEarlierRemovalFailures = PendingRemovalFailures(count: 2, reason: "the preview broke")
+        let data = try JSONEncoder().encode(history)
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: data) == history)
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: Data("{}".utf8)).pendingEarlierRemovalFailures == nil)
+        #expect(PendingRemovalFailures(count: 2, reason: "x").noticeReason == nil)
+        #expect(PendingRemovalFailures(count: 3, reason: "x").noticeReason == "x")
+        #expect(PendingRemovalFailures(count: 9, reason: "x").noticeReason == "x")
+    }
+
+    /// Review fix 1: more skips than `recentLimit` push the backup out of `recent`, not out of
+    /// `lastBackupRecord`, and that survives the state file.
+    @Test func lastBackupOutlivesMoreThanFiftySkips() throws {
+        var history = PlanRunHistory()
+        let backup = makeRecord()
+        history.record(backup)
+        for index in 0...PlanRunHistory.recentLimit {
+            var skip = makeRecord()
+            skip.id = UUID()
+            skip.startedAt = date(1_800_000_100 + Double(index) * 3600)
+            skip.endedAt = skip.startedAt
+            skip.outcome = .skipped(.volumeNotMounted("Backup"))
+            skip.summary = nil
+            history.record(skip)
+        }
+        #expect(!history.recent.contains(backup))
+        #expect(history.lastBackupRecord == backup)
+        let decoded = try JSONDecoder().decode(PlanRunHistory.self, from: JSONEncoder().encode(history))
+        #expect(decoded.lastBackupRecord == backup)
+        #expect(decoded == history)
+    }
+
+    /// State written before `lastBackupRecord` existed: the newest data-saving backup still in `recent`.
+    @Test func oldStateTakesTheLastBackupFromRecent() throws {
+        var history = PlanRunHistory()
+        let backup = makeRecord()
+        var forget = makeRecord()
+        forget.id = UUID()
+        forget.operation = .forget(dryRun: false)
+        history.record(backup)
+        history.record(forget)
+        var old = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(history)) as? [String: Any])
+        #expect(old["lastBackupRecord"] != nil)
+        old["lastBackupRecord"] = nil
+        let decoded = try JSONDecoder().decode(PlanRunHistory.self, from: JSONSerialization.data(withJSONObject: old))
+        #expect(decoded.lastBackupRecord == backup)
+        // No such record at all: nil.
+        #expect(try JSONDecoder().decode(PlanRunHistory.self, from: Data("{}".utf8)).lastBackupRecord == nil)
     }
 
     @Test func runningRecordRoundTrips() throws {

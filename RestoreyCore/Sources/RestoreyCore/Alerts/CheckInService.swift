@@ -184,8 +184,8 @@ public actor CheckInService: CheckInSending {
     private static func describe(_ error: URLError) -> String {
         switch error.code {
         case .timedOut: "timed out"
-        case .cannotConnectToHost: "couldn't connect"
-        case .cannotFindHost, .dnsLookupFailed: "couldn't find the server"
+        case .cannotConnectToHost: "couldn’t connect"
+        case .cannotFindHost, .dnsLookupFailed: "couldn’t find the server"
         case .notConnectedToInternet, .networkConnectionLost: "no network connection"
         case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate,
              .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot:

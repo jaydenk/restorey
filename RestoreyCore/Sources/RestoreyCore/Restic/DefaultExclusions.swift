@@ -47,6 +47,8 @@ public enum DefaultExclusions {
             // The survey: these error on every run even with Full Disk Access.
             "\(h)/Library/Application Support/FileProvider/*/wharf",
             "\(h)/Library/Group Containers/group.com.apple.secure-control-center-preferences",
+            // Not under a `Library/` level, so the Group Containers pattern above misses it; EPERM on every run.
+            "\(h)/Library/Group Containers/group.com.apple.CoreSpeech/Caches",
         ]
     }
 
@@ -58,12 +60,33 @@ public enum DefaultExclusions {
     /// caches folder is covered by `~/Library/Caches`.
     public static func paths(home: URL, identity: Identity) -> [String] {
         var result = paths(home: home)
+        for own in ownFolders(home: home, identity: identity) where !result.contains(own) { result.append(own) }
+        return result
+    }
+
+    /// Restorey's own logs and Application Support folders for `identity`, as exclusion patterns. The
+    /// exclusions editor keeps these: removing one would defeat `--skip-if-unchanged` (above).
+    public static func ownFolders(home: URL, identity: Identity) -> [String] {
         let h = escapedGlob(home.path)
-        for own in [
+        return [
             "\(h)/Library/Logs/\(escapedGlob(identity.logsDirectoryName))",
             "\(h)/Library/Application Support/\(escapedGlob(identity.rootID))",
-        ] where !result.contains(own) { result.append(own) }
-        return result
+        ]
+    }
+
+    /// The exclusion pattern for a folder the user picks: its path with glob characters escaped, so it
+    /// matches only itself.
+    public static func pattern(forFolder path: String) -> String {
+        escapedGlob(URL(fileURLWithPath: path).standardizedFileURL.path)
+    }
+
+    /// An exclusion pattern as the editor lists it: `~` for the home folder, otherwise as restic gets it (an
+    /// escape stays visible, so a literal `*` can be told from a wildcard).
+    public static func displayPattern(_ pattern: String, home: URL) -> String {
+        let h = escapedGlob(home.path)
+        if pattern == h { return "~" }
+        if pattern.hasPrefix(h + "/") { return "~" + pattern.dropFirst(h.count) }
+        return pattern
     }
 
     /// File-type exclusions a new plan starts with (Ruling R64b), Backblaze-style: extensions without the
@@ -79,13 +102,14 @@ public enum DefaultExclusions {
     ]
 
     /// `path` with the characters restic's matcher (Go's `filepath.Match`) treats specially escaped with a
-    /// backslash, so a literal path matches only itself.
+    /// backslash, so a literal path matches only itself. Done per Unicode scalar, as Go reads runes: a `[` followed by
+    /// a combining mark is one Swift `Character` but still a `[` to restic (review I1, Task 15c).
     static func escapedGlob(_ path: String) -> String {
-        var result = ""
-        for character in path {
-            if "\\*?[]".contains(character) { result.append("\\") }
-            result.append(character)
+        var result = String.UnicodeScalarView()
+        for scalar in path.unicodeScalars {
+            if "\\*?[]".unicodeScalars.contains(scalar) { result.append("\\") }
+            result.append(scalar)
         }
-        return result
+        return String(result)
     }
 }

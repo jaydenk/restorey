@@ -43,7 +43,7 @@ struct CheckInServiceTests {
 
     /// Success goes to the URL, a failure to `/fail`; there is no `/start` ping (Ruling R57).
     @Test func successAndFailPaths() async throws {
-        let server = try StubHTTPServer()
+        let server = try await StubHTTPServer()
         defer { server.stop() }
         let checkIn = try service(server)
         await checkIn.send(.success, planID: planID)
@@ -54,7 +54,7 @@ struct CheckInServiceTests {
 
     /// The success ping goes to the URL exactly as stored; `/fail` adds one `/` and its suffix.
     @Test func aTrailingSlashOnTheURLIsNotDoubled() async throws {
-        let server = try StubHTTPServer()
+        let server = try await StubHTTPServer()
         defer { server.stop() }
         let checkIn = try service(server, path: "/abc/")
         await checkIn.send(.fail(body: "x"), planID: planID)
@@ -63,7 +63,7 @@ struct CheckInServiceTests {
     }
 
     @Test func failBodyIsSent() async throws {
-        let server = try StubHTTPServer()
+        let server = try await StubHTTPServer()
         defer { server.stop() }
         let checkIn = try service(server)
         let body = "restic exit code 3\nFatal: unable to open config file — no such file\n"
@@ -77,7 +77,7 @@ struct CheckInServiceTests {
     }
 
     @Test func retriesOn503ThenSucceeds() async throws {
-        let server = try StubHTTPServer(script: [.status(503), .status(503)])
+        let server = try await StubHTTPServer(script: [.status(503), .status(503)])
         defer { server.stop() }
         let log = LogLines()
         let checkIn = try service(server, log: log)
@@ -87,7 +87,7 @@ struct CheckInServiceTests {
     }
 
     @Test func givesUpAfterThreeRetries() async throws {
-        let server = try StubHTTPServer(script: Array(repeating: .status(500), count: 10))
+        let server = try await StubHTTPServer(script: Array(repeating: .status(500), count: 10))
         defer { server.stop() }
         let log = LogLines()
         let checkIn = try service(server, log: log)
@@ -98,7 +98,7 @@ struct CheckInServiceTests {
     }
 
     @Test func noRetryOn404() async throws {
-        let server = try StubHTTPServer(script: [.status(404)])
+        let server = try await StubHTTPServer(script: [.status(404)])
         defer { server.stop() }
         let log = LogLines()
         let checkIn = try service(server, log: log)
@@ -120,7 +120,7 @@ struct CheckInServiceTests {
     }
 
     @Test func theResultIsReportedFor2xxAnd4xxOnly() async throws {
-        let server = try StubHTTPServer(script: [.status(404), .status(200)] + Array(repeating: .status(503), count: 4))
+        let server = try await StubHTTPServer(script: [.status(404), .status(200)] + Array(repeating: .status(503), count: 4))
         defer { server.stop() }
         let results = Results()
         let checkIn = try service(server, results: results)
@@ -135,7 +135,7 @@ struct CheckInServiceTests {
     /// timeout and is retried. The real session's 30 s and 60 s timeouts would make this a two-minute
     /// test, so this one uses 1 s and 2 s; `realSessionTimeouts` checks the real values.
     @Test func timeoutDoesNotHang() async throws {
-        let server = try StubHTTPServer(script: Array(repeating: .hang, count: 4))
+        let server = try await StubHTTPServer(script: Array(repeating: .hang, count: 4))
         defer { server.stop() }
         let log = LogLines()
         let session = CheckInService.makeSession(requestTimeout: 1, resourceTimeout: 2)
@@ -148,7 +148,7 @@ struct CheckInServiceTests {
 
     /// With the real 30 s and 60 s timeouts, the send budget is what ends a hung send.
     @Test func theBudgetEndsAHungSend() async throws {
-        let server = try StubHTTPServer(script: [.hang])
+        let server = try await StubHTTPServer(script: [.hang])
         defer { server.stop() }
         let log = LogLines()
         let checkIn = try service(server, budget: .seconds(1), log: log)
@@ -160,7 +160,7 @@ struct CheckInServiceTests {
 
     /// A retry whose back-off would end after the budget is not made.
     @Test func aRetryThatWouldOverrunTheBudgetIsSkipped() async throws {
-        let server = try StubHTTPServer(script: [.status(503)])
+        let server = try await StubHTTPServer(script: [.status(503)])
         defer { server.stop() }
         let log = LogLines()
         let checkIn = try service(server, retryDelays: [.seconds(30)], budget: .seconds(5), log: log)
@@ -173,7 +173,7 @@ struct CheckInServiceTests {
     }
 
     @Test func missingURLSendsNothing() async throws {
-        let server = try StubHTTPServer()
+        let server = try await StubHTTPServer()
         defer { server.stop() }
         let log = LogLines()
         let checkIn = try service(nil, log: log)
@@ -195,7 +195,7 @@ struct CheckInServiceTests {
     }
 
     @Test func theLogNeverNamesTheURL() async throws {
-        let server = try StubHTTPServer(script: [.status(503), .status(404)])
+        let server = try await StubHTTPServer(script: [.status(503), .status(404)])
         defer { server.stop() }
         let log = LogLines()
         let checkIn = try service(server, path: "/secret-token", log: log)

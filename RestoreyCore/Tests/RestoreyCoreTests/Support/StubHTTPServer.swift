@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import RestoreyCore
 import Synchronization
 
 /// A minimal HTTP/1.1 server on 127.0.0.1 and a free port, for tests only. It reads the request line,
@@ -26,7 +27,7 @@ final class StubHTTPServer: Sendable {
     var baseURL: String { "http://127.0.0.1:\(port)" }
 
     private let listener: NWListener
-    private let queue = DispatchQueue(label: "StubHTTPServer")
+    private let queue: DispatchQueue
     private let state = Shared()
 
     private struct State {
@@ -41,33 +42,36 @@ final class StubHTTPServer: Sendable {
         func withLock<T>(_ body: (inout State) -> T) -> T { mutex.withLock { body(&$0) } }
     }
 
-    init(script: [Reply] = []) throws {
+    /// Waits for the listener without blocking a thread: a semaphore wait here would hold one of Swift concurrency's
+    /// few threads, starving tests that need a free one (task 18).
+    init(script: [Reply] = []) async throws {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         parameters.allowLocalEndpointReuse = true
-        listener = try NWListener(using: parameters)
+        let listener = try NWListener(using: parameters)
+        let queue = DispatchQueue(label: "StubHTTPServer")
+        self.listener = listener
+        self.queue = queue
         state.withLock { $0.script = script }
 
-        let ready = DispatchSemaphore(value: 0)
-        let failed = Mutex(false)
-        listener.stateUpdateHandler = { newState in
-            switch newState {
-            case .ready: ready.signal()
-            case .failed, .cancelled:
-                failed.withLock { $0 = true }
-                ready.signal()
-            default: break
-            }
-        }
-        listener.newConnectionHandler = { [state, queue] connection in
+        listener.newConnectionHandler = { [state] connection in
             state.withLock { $0.connections.append(connection) }
             connection.start(queue: queue)
             Self.receive(on: connection, buffer: Data(), state: state)
         }
-        listener.start(queue: queue)
-        guard ready.wait(timeout: .now() + 5) == .success, !failed.withLock({ $0 }),
-            let port = listener.port?.rawValue
-        else {
+        let ready = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            let once = ResumeOnce(continuation)
+            listener.stateUpdateHandler = { newState in
+                switch newState {
+                case .ready: once.resume(true)
+                // Waiting (no usable network) fails too, rather than hanging the test.
+                case .failed, .cancelled, .waiting: once.resume(false)
+                default: break
+                }
+            }
+            listener.start(queue: queue)
+        }
+        guard ready, let port = listener.port?.rawValue else {
             listener.cancel()
             throw StartFailure()
         }

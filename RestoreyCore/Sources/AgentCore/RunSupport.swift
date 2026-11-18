@@ -8,11 +8,31 @@ final class RunHandle: Sendable {
     private struct State {
         var intent: InterruptIntent?
         var process: ResticProcess?
+        var backupStepDone = false
     }
 
     private let state = Mutex(State())
 
+    /// The run is a backup (scheduled or Back Up Now), not a one-off action (create, adopt, probe) or an unlock.
+    let isBackup: Bool
+
+    init(isBackup: Bool = false) {
+        self.isBackup = isBackup
+    }
+
     var intent: InterruptIntent? { state.withLock { $0.intent } }
+
+    /// A backup whose backup step is still under way and hasn't been asked to stop (pause, delete, system stop,
+    /// update). Its maintenance afterwards (forget, prune, check) doesn't count: that isn't the backup a caller
+    /// asking for one wants.
+    var isLiveBackup: Bool {
+        state.withLock { isBackup && $0.intent == nil && !$0.backupStepDone }
+    }
+
+    /// The backup step has ended (its record is committed); what follows is maintenance.
+    func backupStepEnded() {
+        state.withLock { $0.backupStepDone = true }
+    }
 
     /// The restic process the run currently has, if any.
     var process: ResticProcess? { state.withLock { $0.process } }
@@ -59,6 +79,20 @@ final class StepLog: Sendable {
 
     func close() { writer?.close() }
 
+    /// The lines written for one restic message in a step running `operation`. `forget`'s reply (one JSON
+    /// line holding every kept and removed snapshot in full) becomes one summary line per group: kept 400
+    /// days, the raw reply made an hourly plan's logs grow by gigabytes. A reply that can't be read is
+    /// noted by its size, still without the JSON.
+    static func lines(for message: ResticMessage, operation: ResticOperation) -> [String] {
+        if case .forget(let dryRun) = operation, case .unparseable(let line) = message, ForgetReport.isReport(line) {
+            guard let groups = try? ForgetReport.groups(from: line) else {
+                return ["restic's forget reply couldn't be read, so it is left out of this log (\(line.utf8.count) bytes)"]
+            }
+            return groups.isEmpty ? ["Forget: no snapshots of this plan to keep or remove"] : groups.map { $0.summary(dryRun: dryRun) }
+        }
+        return text(for: message).map { [$0] } ?? []
+    }
+
     /// The text written for one restic message. Progress lines are left out: they arrive twice a second
     /// and the UI already shows them.
     static func text(for message: ResticMessage) -> String? {
@@ -90,7 +124,9 @@ final class StepLog: Sendable {
 
 /// Feeds a running backup's progress to `AgentState.updateRun` in arrival order without blocking
 /// restic's drain thread. The "retrying" text (Ruling R14) is the latest stderr line containing
-/// "retrying", redacted, and is cleared by the next status line.
+/// "retrying", redacted, and is cleared by the next status line. restic's `scan_finished` line (Task 16e) marks the
+/// progress as one whose totals are final: it may arrive before the first status, so it is remembered for the ones
+/// after it.
 final class ProgressFeed: Sendable {
     private let continuation: AsyncStream<ResticMessage>.Continuation
     private let consumer: Task<Void, Never>
@@ -101,11 +137,18 @@ final class ProgressFeed: Sendable {
         consumer = Task {
             var progress: BackupStatus?
             var retrying: String?
+            var scanFinished = false
             for await message in stream {
                 switch message {
-                case .status(let status):
+                case .status(var status):
+                    status.scanFinished = scanFinished
                     progress = status
                     retrying = nil
+                case .verboseStatus(let item?) where item.isScanFinished:
+                    scanFinished = true
+                    // Nothing to show until a status has arrived to carry it.
+                    guard progress != nil else { continue }
+                    progress?.scanFinished = true
                 case .unparseable(let line):
                     retrying = redactor.redact(line)
                 default:
@@ -120,6 +163,8 @@ final class ProgressFeed: Sendable {
     func send(_ message: ResticMessage) {
         switch message {
         case .status:
+            continuation.yield(message)
+        case .verboseStatus(let item?) where item.isScanFinished:
             continuation.yield(message)
         case .unparseable(let line) where line.localizedCaseInsensitiveContains("retrying"):
             continuation.yield(message)
@@ -150,4 +195,6 @@ final class LineCollector: Sendable {
     }
 
     var last: String? { lines.withLock { $0.last } }
+
+    var all: [String] { lines.withLock { $0 } }
 }

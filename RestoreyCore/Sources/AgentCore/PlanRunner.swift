@@ -29,11 +29,34 @@ public struct RunnerDependencies: Sendable {
     public var interruptGracePeriod: Duration
     /// Held while each restic step runs, so the Mac doesn't idle-sleep mid-run (spec §8). Nil: none.
     public var sleepPrevention: SleepPrevention?
-    /// Writes a line to the agent's own log (`agent.log`), for problems the user may need to find.
+    /// Writes a line to the agent's own log (`agent.log`) at ERROR, for problems the user may need to find.
     public var agentLog: @Sendable (String) -> Void
+    /// Writes a line to `agent.log` at INFO, for something that went as asked but is worth a trace, such as setup's
+    /// confirmed removal of earlier snapshots after a backup (Task 14b).
+    public var agentInfo: @Sendable (String) -> Void
     /// True once the agent's executable on disk is no longer the one it was started from (an update
     /// replaced the bundle). Checked before every restic step and on every scheduler tick (Ruling R55).
     public var binaryReplaced: @Sendable () -> Bool
+    /// Counts the cloud-only files a backup skipped, for the plan's sources and exclusions. Called off the actor, on a
+    /// background thread, after a backup that saved the data; nil: not counted, or it gave up. Never throws or
+    /// affects the run (the agent passes `CloudOnlySkipped.counter`).
+    /// Nil: there is no counter, so nothing was counted. `.gaveUp`: the bound was reached.
+    public var cloudOnlySkipped: @Sendable (_ sources: [String], _ exclusions: [String]) -> CloudOnlyCounter.Result?
+    /// Seconds the runner waits for the count before carrying on without it, even if the walk is stuck in one system
+    /// call. The walk may finish later on its own thread; its result is discarded.
+    public var cloudOnlyDeadline: TimeInterval
+    /// Finds the items apps mark as not for backup before each backup of a plan that skips them (Task 15c); the agent
+    /// passes `SpotlightMarkedItems`. Nil: none are looked for, so none are skipped and nothing is recorded.
+    public var markedItems: (any MarkedItemsFinding)?
+    /// Seconds the look for marked items may take before the backup carries on without it (`MarkedItemsScan.offPool`).
+    public var markedItemsDeadline: TimeInterval
+    /// Where each backup's list of marked items is written (`<planID>.txt`, 0600, in a 0700 folder) for restic's
+    /// `--exclude-file`, and removed once restic has finished. Leftovers from an agent that died mid-run go at the
+    /// next start (`recoverAfterStart`). Defaults to `<credentialsDirectory>/not-for-backup`.
+    public var notForBackupDirectory: URL
+    /// restic's `--retry-lock` for the maintenance commands (`ResticContext.maintenanceRetryLock`): five minutes;
+    /// tests that hold a lock shorten it.
+    public var maintenanceRetryLock: String
 
     public init(
         state: AgentState, secrets: any SecretStore, queues: RepositoryQueues, supervisor: SupervisedProcesses,
@@ -45,7 +68,14 @@ public struct RunnerDependencies: Sendable {
         interruptGracePeriod: Duration = .seconds(10),
         sleepPrevention: SleepPrevention? = nil,
         agentLog: @escaping @Sendable (String) -> Void = { _ in },
-        binaryReplaced: @escaping @Sendable () -> Bool = { false }
+        agentInfo: @escaping @Sendable (String) -> Void = { _ in },
+        binaryReplaced: @escaping @Sendable () -> Bool = { false },
+        cloudOnlySkipped: @escaping @Sendable ([String], [String]) -> CloudOnlyCounter.Result? = { _, _ in nil },
+        cloudOnlyDeadline: TimeInterval = CloudOnlyCounter.defaultTimeLimit,
+        markedItems: (any MarkedItemsFinding)? = nil,
+        markedItemsDeadline: TimeInterval = MarkedNotForBackup.timeLimit,
+        notForBackupDirectory: URL? = nil,
+        maintenanceRetryLock: String = "5m"
     ) {
         self.state = state
         self.secrets = secrets
@@ -65,7 +95,15 @@ public struct RunnerDependencies: Sendable {
         self.interruptGracePeriod = interruptGracePeriod
         self.sleepPrevention = sleepPrevention
         self.agentLog = agentLog
+        self.agentInfo = agentInfo
         self.binaryReplaced = binaryReplaced
+        self.cloudOnlySkipped = cloudOnlySkipped
+        self.cloudOnlyDeadline = cloudOnlyDeadline
+        self.markedItems = markedItems
+        self.markedItemsDeadline = markedItemsDeadline
+        self.notForBackupDirectory = notForBackupDirectory
+            ?? credentialsDirectory.appendingPathComponent("not-for-backup", isDirectory: true)
+        self.maintenanceRetryLock = maintenanceRetryLock
     }
 }
 
@@ -75,11 +113,15 @@ public struct RunnerDependencies: Sendable {
 /// 2. `preflight`;
 /// 3. the Full Disk Access probe (missing: a failure and the `fullDiskAccessMissing` alert, no restic);
 /// 4. the repository's queue; in its slot, a plain `unlock` first if a restic died there by a signal;
-/// 5. the backup, classified (there is no check-in `/start` ping, Ruling R57);
-/// 6. history and alerts (written after every step, so an agent that dies mid-run loses nothing);
-/// 7. the check-in end ping, as soon as the backup's record is committed (Ruling R37);
-/// 8. in the same queue slot, after a successful backup: `forget`, `prune` and a plain `unlock`
-///    followed by `check`, when each is due (`maintenance`).
+/// 5. the items apps mark as not for backup, looked for (bounded, off the cooperative pool) when the plan skips them,
+///    and passed to restic in a file of their own, removed when restic has finished (Task 15c);
+/// 6. the backup, classified (there is no check-in `/start` ping, Ruling R57);
+/// 7. history and alerts (written after every step, so an agent that dies mid-run loses nothing);
+/// 8. the check-in end ping, as soon as the backup's record is committed (Ruling R37);
+/// 9. in the same queue slot, after a successful backup: setup's confirmed removal of earlier snapshots
+///    when one is waiting (PlanRunner+EarlierSnapshots.swift), then `forget`, `prune` (then `stats`, for the
+///    repository size, when it succeeded) and a plain `unlock` followed by `check`, when each is due
+///    (`maintenance`).
 ///
 /// No restic step starts while the agent is winding down (`isWindingDown`: draining, or its executable
 /// replaced), because restic would run the replaced helper, which this agent refuses (Ruling R55). The
@@ -103,7 +145,7 @@ public struct RunnerDependencies: Sendable {
 /// Runs asked for while `recoverAfterStart()` is in progress wait for it to finish.
 public actor PlanRunner {
     static let fullDiskAccessMissing = "Full Disk Access is missing"
-    static let keychainUnreadable = "Couldn't read the backup keys from the Keychain"
+    static let keychainUnreadable = "Couldn’t read the backup keys from the Keychain"
     /// The exit code of a run that restic never ran for (refused, or restic couldn't start).
     static let startFailureExitCode: Int32 = RunOutcome.notStartedExitCode
     static let day: TimeInterval = 86_400
@@ -113,6 +155,16 @@ public actor PlanRunner {
     let logger: Logger
     /// Runs in flight, by plan.
     private var handles: [UUID: RunHandle] = [:]
+    /// Marked items already logged as backed up because restic can't be given their names exactly: each is logged once.
+    private var loggedUnrepresentable: Set<String> = []
+    /// Set once a backup has logged that an earlier Spotlight look is still outstanding; cleared by the next look that
+    /// runs, so a stuck episode is logged once.
+    private var loggedStuckLook = false
+    /// One cloud-only walk at a time (task 18 fix round 1): an `fts` walk stuck in a File Provider call can't be
+    /// stopped, so without it every backup would leave one more blocked thread behind.
+    nonisolated let cloudOnlyWalkGate = OneOutstandingGate()
+    /// Set once a backup has logged that an earlier cloud-only walk is still stuck; cleared by the next walk that runs.
+    private var loggedStuckWalk = false
     /// The latest background run `backUpNow` started, by plan.
     private var background: [UUID: Task<RunRecord, Never>] = [:]
     /// Plans to back up (trigger `.manual`) as soon as their run, being paused, has ended: a Resume that
@@ -126,8 +178,16 @@ public actor PlanRunner {
     private var needsUnlock: Set<String> = []
     /// `recoverAfterStart`, while it runs and after: runs wait for it.
     private var recovery: Task<Void, Never>?
+    /// The backup steps to networked repositories whose restic is uploading now, by record ID: they share
+    /// the Mac-wide upload limit (Ruling P2-7).
+    private var networkedUploads: Set<UUID> = []
     /// When `pruneRunLogsIfDue` last pruned the run logs; nil until it has (Ruling R70).
     var lastRunLogPrune: Date?
+    /// The measurements queued after an adopt (PlanRunner+Actions.swift), waiting or running, by plan, so a
+    /// pause, a delete and a system stop reach them as they reach runs.
+    var measurementHandles: [UUID: [RunHandle]] = [:]
+    /// The latest measurement queued after an adopt, by plan, for `waitForMeasurement`.
+    var measurements: [UUID: Task<Void, Never>] = [:]
 
     public init(dependencies: RunnerDependencies) {
         deps = dependencies
@@ -139,7 +199,7 @@ public actor PlanRunner {
     /// Runs one backup now and returns its record. Throws only when the run can't be registered:
     /// draining, the config-error state, an unknown plan, a plan being deleted or already running.
     public func runBackup(planID: UUID, trigger: RunTrigger) async throws -> RunRecord {
-        let handle = try await begin(planID)
+        let handle = try await begin(planID, isBackup: true)
         let record = await backup(planID: planID, trigger: trigger, handle: handle)
         await end(planID, handle)
         return record
@@ -147,20 +207,29 @@ public actor PlanRunner {
 
     /// Starts a manual backup of one plan (or of every plan that may run, when nil) in the background
     /// and returns the status showing it running. A single plan that is invalid or has no confirmed
-    /// recovery kit is refused with the reason.
+    /// recovery kit is refused with the reason; one already running is reported as such, not refused.
     ///
     /// `afterPausedRun` is Resume's (Ruling R62): when the plan's run is still stopping for a pause, the
     /// backup starts, through this same path, once that run has ended and recorded `.paused`, instead of
     /// being refused as "already backing up". Back Up Now itself doesn't pass it.
-    public func backUpNow(_ planID: UUID?, afterPausedRun: Bool = false) async throws -> AgentStatus {
+    public func backUpNow(_ planID: UUID?, afterPausedRun: Bool = false) async throws -> BackUpNowReply {
         try await deps.state.requireRunnable(planID)
+        var alreadyRunning = false
         if let planID {
             let plan = try await deps.state.runInputs(planID).plan
             if let refusal = Self.refusal(plan) { throw refusal }
             if afterPausedRun, handles[planID]?.intent == .pause {
                 startWhenPausedRunEnds.insert(planID)
             } else {
-                try await startInBackground(planID)
+                // A backup step already under way and carrying on (the scheduler got there first) is the backup
+                // asked for. Anything else holding the plan (a run stopping for a pause, a run's maintenance after
+                // its backup step, an adopt) is refused as before; only Resume queues a backup behind a stopping
+                // run (Ruling R62).
+                if handles[planID]?.isLiveBackup == true {
+                    alreadyRunning = true
+                } else {
+                    try await startInBackground(planID)
+                }
             }
         } else {
             for (plan, _) in await deps.state.allRunInputs() where Self.refusal(plan) == nil {
@@ -176,7 +245,7 @@ public actor PlanRunner {
                 }
             }
         }
-        return await deps.state.status()
+        return BackUpNowReply(status: await deps.state.status(), alreadyRunning: alreadyRunning)
     }
 
     /// On agent start, before the runner is attached to the state: turns every run still marked in
@@ -202,6 +271,8 @@ public actor PlanRunner {
     // MARK: Recovery
 
     private func recover() async {
+        // Lists of marked items left by an agent that died while restic ran: no restic of this plan is running now.
+        try? FileManager.default.removeItem(at: deps.notForBackupDirectory)
         let entries = await deps.state.allRunInputs()
         let now = deps.now()
         var interrupted: Set<UUID> = []
@@ -262,8 +333,10 @@ public actor PlanRunner {
     /// Asks the plan's run in progress, if any, to stop. A request repeated while it is pending is
     /// ignored. `AgentState.pause` is the one way in.
     func interrupt(planID: UUID, intent: InterruptIntent) async {
-        guard let process = handles[planID]?.request(intent) else { return }
-        await process.interrupt(intent, killAfter: deps.interruptGracePeriod)
+        for handle in [handles[planID]].compactMap({ $0 }) + (measurementHandles[planID] ?? []) {
+            guard let process = handle.request(intent) else { continue }
+            await process.interrupt(intent, killAfter: deps.interruptGracePeriod)
+        }
     }
 
     /// Asks every run in flight (recovery's unlocks, backups, maintenance, create, adopt) to stop with
@@ -274,7 +347,7 @@ public actor PlanRunner {
     /// SIGINT would outlive launchd's exit timeout and the next start would record a false failure.
     /// `AgentState.stopForSystem` is the way in.
     func interruptAll(_ intent: InterruptIntent, killAfter: Duration) async {
-        for handle in handles.values {
+        for handle in Array(handles.values) + measurementHandles.values.flatMap({ $0 }) {
             if handle.intent == nil {
                 guard let process = handle.request(intent) else { continue }
                 await process.interrupt(intent, killAfter: killAfter)
@@ -290,7 +363,7 @@ public actor PlanRunner {
     }
 
     private func startInBackground(_ planID: UUID) async throws {
-        let handle = try await begin(planID)
+        let handle = try await begin(planID, isBackup: true)
         background[planID] = Task {
             let record = await backup(planID: planID, trigger: .manual, handle: handle)
             await end(planID, handle)
@@ -301,14 +374,14 @@ public actor PlanRunner {
     /// Waits for recovery (unless this is recovery), then registers the run with `AgentState` (which
     /// refuses while draining, for an unknown plan, a plan being deleted or already running) and gives it
     /// a handle `pause` can reach from that moment on.
-    func begin(_ planID: UUID, waitForRecovery: Bool = true) async throws -> RunHandle {
+    func begin(_ planID: UUID, waitForRecovery: Bool = true, isBackup: Bool = false) async throws -> RunHandle {
         if waitForRecovery { await recovery?.value }
         try await deps.state.requireRunnable(planID)
         if handles[planID] != nil {
             let name = (try? await deps.state.runInputs(planID).plan.name) ?? "This plan"
             throw AgentError.alreadyRunning(name: name)
         }
-        let handle = RunHandle()
+        let handle = RunHandle(isBackup: isBackup)
         handles[planID] = handle
         do {
             try await deps.state.beginRun(planID: planID)
@@ -369,7 +442,9 @@ public actor PlanRunner {
         case nil:
             break
         }
-        switch preflight(plan: plan, env: await deps.preflightEnvironment()) {
+        var environment = await deps.preflightEnvironment()
+        environment.networkSettings = await deps.state.networkSettings
+        switch preflight(plan: plan, env: environment) {
         case .skip(let reason): return await refuse(.skipped(reason))
         case .fail(let message): return await refuse(failed(message), failPing: true)
         case .run: break
@@ -425,12 +500,35 @@ public actor PlanRunner {
             await commit(unlock.record, plan: plan)
         }
 
-        if await isWindingDown() { return await skippedForUpdate() }
-        let backup = await runStep(.backup, trigger: trigger, session: session, handle: handle, progress: true)
+        // Looked for first, so the check for winding down still comes right before restic starts.
+        let marked = await notForBackupList(plan: plan)
+        if await isWindingDown() {
+            removeNotForBackupList(marked.file)
+            return await skippedForUpdate()
+        }
+        var backupSession = session
+        backupSession.context.notForBackupExcludeFile = marked.file
+        var backup = await runStep(.backup, trigger: trigger, session: backupSession, handle: handle, progress: true)
+        // restic has exited (or never started), however the step ended: success, failure, a cancel, a pause or the
+        // system stopping the agent (which waits for the run to end before it exits).
+        removeNotForBackupList(marked.file)
+        handle.backupStepEnded()
+        if Self.savedData(backup.record.outcome) { backup.record.markedNotForBackupSkipped = marked.count }
+        backup.record.cloudOnlySkipped = await countCloudOnly(after: backup.record, plan: plan)
         await commit(backup.record, plan: plan, fda: fda, stoppedReason: backup.stoppedReason)
         queueEndPing(backup, redactor: session.redactor)
 
         guard handle.intent == nil, let history = try? await deps.state.runInputs(plan.id).history else {
+            return backup
+        }
+        // Setup's confirmed removal of the snapshots from before adoption waits for a backup that succeeded (Task 14b):
+        // `.success` or `.unchanged`, not a `.warning` that left files out, which would take the newest retention
+        // buckets in their timeline. It comes first, so a prune due now frees their space. Stopped (a lock held
+        // elsewhere, an interruption, an update) it and the maintenance wait for the next backup; a preview that failed
+        // leaves the choice for the next backup but the maintenance goes on (final review I2).
+        if let pending = history.pendingEarlierRemoval, Self.succeededFully(backup.record.outcome), !(await isWindingDown()),
+            !(await runPendingEarlierRemoval(pending, session: session, handle: handle, trigger: trigger))
+        {
             return backup
         }
         for op in Self.maintenance(plan: plan, history: history, after: backup.record.outcome, now: deps.now()) {
@@ -438,7 +536,12 @@ public actor PlanRunner {
             guard handle.intent == nil, !(await isWindingDown()) else { break }
             let step = await runStep(op, trigger: trigger, session: session, handle: handle)
             await commit(step.record, plan: plan)
-            switch step.record.outcome {
+            var outcome = step.record.outcome
+            // The size changes mostly when a prune frees space, so it is measured then (Ruling P2-9).
+            if op == .prune, case .success = outcome, handle.intent == nil, !(await isWindingDown()) {
+                outcome = await measureRepository(session: session, trigger: trigger, handle: handle)
+            }
+            switch outcome {
             case .paused, .cancelled, .locked, .stoppedBySystem:
                 // Interrupted, or another client holds the lock: try the rest at the next backup.
                 return backup
@@ -447,6 +550,145 @@ public actor PlanRunner {
             }
         }
         return backup
+    }
+
+    /// The cloud-only files `--exclude-cloud-files` skipped, counted after a backup restic finished with a snapshot
+    /// (`success` with a snapshot, or `warning`; `unchanged` made none but the files are still skipped). Information
+    /// only: nil for any other run, and when the count gives up, which is logged at INFO. It runs on a background
+    /// thread and is bounded, so it never blocks or fails the run (Task 15b).
+    ///
+    /// One walk at a time (`cloudOnlyWalkGate`): a count that finds another plan's walk running waits for it within
+    /// its own deadline, and one that finds a walk still stuck past its deadline doesn't walk at all (nil, logged once
+    /// per episode), so a wedged File Provider holds one thread, not one per backup.
+    private func countCloudOnly(after record: RunRecord, plan: Plan) async -> CloudOnlyCount? {
+        guard Self.savedData(record.outcome) else { return nil }
+        let count = deps.cloudOnlySkipped
+        let (sources, exclusions) = (plan.sources, plan.exclusions)
+        let end = ContinuousClock.now.advanced(by: .seconds(deps.cloudOnlyDeadline))
+        let gate = cloudOnlyWalkGate
+        guard await gate.enter(until: end) else {
+            if !loggedStuckWalk {
+                loggedStuckWalk = true
+                deps.agentInfo(
+                    "Not counting cloud-only files for plan \(plan.id.uuidString): an earlier count is still waiting "
+                        + "for the file system to answer")
+            }
+            return nil
+        }
+        loggedStuckWalk = false
+        let remaining = max(0, ContinuousClock.now.duration(to: end) / .seconds(1))
+        // On a thread of its own, neither a Swift concurrency one nor a GCD global queue's (task 18): the walk blocks in
+        // system calls, and a deadline on a global queue waited for a free thread. The first of the walk and the
+        // deadline decides; a walk that finishes later is ignored and touches nothing but its own locals.
+        let result: CloudOnlyCounter.Result? = await OwnThread.run(
+            named: "Restorey cloud-only count", qualityOfService: .utility, deadline: remaining, orElse: .gaveUp
+        ) {
+            let result = count(sources, exclusions)
+            // Only when the walk has really returned: a walk abandoned at the deadline keeps the gate until then.
+            gate.leave()
+            return result
+        }
+        switch result {
+        case .counted(let counted): return counted
+        case .gaveUp:
+            deps.agentInfo("Gave up counting cloud-only files for plan \(plan.id.uuidString): too many files or too slow")
+            return nil
+        case nil: return nil
+        }
+    }
+
+    /// True for a backup restic finished with a snapshot (`success` with one, or `warning`), or found unchanged (no
+    /// snapshot, but its exclusions applied all the same): the runs whose skipped-item counts are recorded.
+    static func savedData(_ outcome: RunOutcome) -> Bool {
+        switch outcome {
+        case .success(snapshotID: .some), .unchanged, .warning: true
+        default: false
+        }
+    }
+
+    /// The items apps mark as not for backup that this backup skips (Task 15c), written for restic's `--exclude-file`,
+    /// and how many: the plan's sources looked up in Spotlight on a thread of its own within the bound
+    /// (`MarkedItemsScan.offPool`: 10 seconds, 100,000 results), each still carrying the attribute, collapsed for the
+    /// plan (`MarkedNotForBackup.collapse`). Never fails or delays the backup beyond the bound: nil file and count when
+    /// the plan doesn't skip them, there is no finder, the look gives up (logged at INFO) or the file can't be written
+    /// (logged at ERROR), so the items are backed up, the safe direction. No file, and a count of 0, when none are found.
+    private func notForBackupList(plan: Plan) async -> (file: URL?, count: Int?) {
+        guard plan.skipsItemsMarkedNotForBackup, let finder = deps.markedItems else { return (nil, nil) }
+        let id = plan.id.uuidString
+        let verified: [String]
+        let result = await MarkedItemsScan.offPool(finder: finder, sources: plan.sources, deadline: deps.markedItemsDeadline)
+        if result != .busy { loggedStuckLook = false }
+        switch result {
+        case .found(let found): verified = found
+        case .busy:
+            // An earlier look is still blocked in Spotlight past its deadline: no new query (review I2). Logged once
+            // per episode, not at every backup; the next look that runs again ends the episode.
+            if !loggedStuckLook {
+                loggedStuckLook = true
+                deps.agentInfo(
+                    "Not looking for items apps mark as not for backup for plan \(id): still waiting for Spotlight to "
+                        + "answer an earlier look, so backups include them until it does")
+            }
+            return (nil, nil)
+        case .gaveUp:
+            deps.agentInfo(
+                "Gave up looking for items apps mark as not for backup for plan \(id) (too many, too slow, or Spotlight "
+                    + "couldn’t answer), so this backup includes them")
+            return (nil, nil)
+        }
+        let collapsed = MarkedNotForBackup.collapse(
+            verified, sources: plan.sources, exclusions: plan.exclusions, backUpAnyway: plan.backUpAnyway)
+        let file = MarkedNotForBackup.excludeFile(collapsed)
+        let unlogged = file.unrepresentable.filter { loggedUnrepresentable.insert($0).inserted }
+        if !unlogged.isEmpty {
+            deps.agentInfo(
+                "Backing up \(unlogged.count) item(s) apps mark as not for backup, because restic can't be given their "
+                    + "names exactly (plan \(id)): " + unlogged.map(\.debugDescription).joined(separator: ", "))
+        }
+        guard !file.written.isEmpty else { return (nil, 0) }
+        let url = deps.notForBackupDirectory.appendingPathComponent("\(id).txt")
+        do {
+            try FileManager.default.createDirectory(
+                at: deps.notForBackupDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try PrivateFile.write(Data(file.text.utf8), to: url, what: "the list of items marked not for backup")
+        } catch {
+            deps.agentLog("\(error), so this backup of plan \(id) includes the items apps mark as not for backup")
+            return (nil, nil)
+        }
+        return (url, file.written.count)
+    }
+
+    private func removeNotForBackupList(_ file: URL?) {
+        guard let file else { return }
+        try? FileManager.default.removeItem(at: file)
+    }
+
+    /// `restic stats --mode raw-data`, recorded, and its total kept as the plan's repository size with the
+    /// time it was measured (Ruling P2-9). Runs inside the caller's turn of the repository's queue. A failure
+    /// fails nothing else and raises no alert (only backups and checks do): the size measured before stays,
+    /// and the reason goes to `agent.log`. Returns the step's outcome, so an interrupted one stops what follows.
+    func measureRepository(session: RunSession, trigger: RunTrigger, handle: RunHandle) async -> RunOutcome {
+        let plan = session.plan
+        let collector = LineCollector(matching: StatsSummary.isStats)
+        let step = await runStep(.stats, trigger: trigger, session: session, handle: handle, collector: collector)
+        await commit(step.record, plan: plan)
+        let problem: String
+        switch step.record.outcome {
+        case .success:
+            do {
+                let stats = try StatsSummary.parse(collector.last ?? "")
+                let size = RepositorySize(bytes: stats.totalSize, measuredAt: step.record.endedAt)
+                await write(plan.id) { $0.repositorySize = size }
+                return step.record.outcome
+            } catch {
+                problem = "restic’s stats reply couldn’t be read"
+            }
+        case let outcome:
+            problem = Self.explain(outcome, stoppedReason: step.stoppedReason)
+        }
+        deps.agentLog(
+            "Couldn't measure the repository size for plan \(plan.id.uuidString), so the last size measured is kept: \(problem)")
+        return step.record.outcome
     }
 
     // MARK: Winding down (Ruling R55)
@@ -476,31 +718,45 @@ public actor PlanRunner {
     /// (`runningRecord`), so an agent that dies mid-step leaves an `.interrupted` record on recovery.
     func runStep(
         _ op: ResticOperation, trigger: RunTrigger, session: RunSession, handle: RunHandle?,
-        progress: Bool = false, collector: LineCollector? = nil
+        progress: Bool = false, collector: LineCollector? = nil, recorded: Bool = true
     ) async -> StepResult {
         let plan = session.plan
         let id = UUID()
         let startedAt = deps.now()
         var writer: RunLogWriter?
-        do {
-            writer = try await deps.logStore.begin(
-                planID: plan.id, operation: op, startedAt: startedAt, redactor: session.redactor)
-        } catch {
-            logger.error("Couldn't create the \(op.logSlug, privacy: .public) run log: \(error.localizedDescription, privacy: .public)")
+        // `recorded` false (a credential check): no run log and no in-progress marker, since no record follows.
+        if recorded {
+            do {
+                writer = try await deps.logStore.begin(
+                    planID: plan.id, operation: op, startedAt: startedAt, redactor: session.redactor)
+            } catch {
+                logger.error("Couldn't create the \(op.logSlug, privacy: .public) run log: \(error.localizedDescription, privacy: .public)")
+            }
         }
         let log = StepLog(writer: writer)
         let logFile = writer.map { "runs/\(plan.id.uuidString)/\($0.fileURL.lastPathComponent)" } ?? ""
 
-        let provisional = RunRecord(
-            id: id, planID: plan.id, operation: op, trigger: trigger, startedAt: startedAt, endedAt: startedAt,
-            outcome: .interrupted, summary: nil, logFile: logFile)
-        await write(plan.id) { history in
-            history.runningRecord = provisional
-            history.runningRecordID = id
-            if op == .backup { Self.noteAttempt(at: startedAt, in: &history) }
+        if recorded {
+            let provisional = RunRecord(
+                id: id, planID: plan.id, operation: op, trigger: trigger, startedAt: startedAt, endedAt: startedAt,
+                outcome: .interrupted, summary: nil, logFile: logFile)
+            await write(plan.id) { history in
+                history.runningRecord = provisional
+                history.runningRecordID = id
+                if op == .backup { Self.noteAttempt(at: startedAt, in: &history) }
+            }
         }
 
-        let invocation = makeInvocation(op, plan: plan, context: session.context)
+        var context = session.context
+        let uploadsToTheNetwork = op == .backup && plan.repository.needsNetwork
+        if uploadsToTheNetwork {
+            context.macWideUploadLimitKiB = await deps.state.networkSettings.uploadLimitKiB
+            // Counted and registered with no suspension in between, so backups starting together each see
+            // the others. restic can't change its limit mid-run, so each keeps the share it started with.
+            context.networkedBackupsRunning = networkedUploads.count + 1
+            networkedUploads.insert(id)
+        }
+        let invocation = makeInvocation(op, plan: plan, context: context)
         log.line("Restorey \(op.logSlug) for \(plan.name), \(trigger.rawValue)")
         log.line(displayCommand(invocation))
         let process = ResticProcess(
@@ -510,6 +766,7 @@ public actor PlanRunner {
             await process.interrupt(intent, killAfter: deps.interruptGracePeriod)
         }
         let feed = progress ? ProgressFeed(state: deps.state, planID: plan.id, redactor: session.redactor) : nil
+        let additions = op == .backup ? BiggestAdditionsCollector(sources: plan.sources) : nil
 
         var outcome: RunOutcome
         var termination: ResticTermination?
@@ -517,9 +774,10 @@ public actor PlanRunner {
         do {
             defer { deps.sleepPrevention?.end() }
             let finished = try await process.run { message in
-                if let text = StepLog.text(for: message) { log.line(text) }
+                for text in StepLog.lines(for: message, operation: op) { log.line(text) }
                 feed?.send(message)
                 collector?.collect(message)
+                additions?.collect(message)
             }
             termination = finished
             // A restic that exits 130 with no request from us, while the system is stopping the agent,
@@ -533,9 +791,11 @@ public actor PlanRunner {
             if finished.terminatedBySignal != nil { needsUnlock.insert(session.key) }
         } catch {
             outcome = .failed(
-                exitCode: Self.startFailureExitCode, reason: "Restorey couldn't start restic: \(error.localizedDescription)")
+                exitCode: Self.startFailureExitCode, reason: "Restorey couldn’t start restic: \(error.localizedDescription)")
         }
         handle?.detach()
+        // restic has exited (or never started): it no longer takes a share of the limit.
+        networkedUploads.remove(id)
         await feed?.finish()
         if op == .unlock, outcome == .success(snapshotID: nil) { needsUnlock.remove(session.key) }
 
@@ -548,16 +808,49 @@ public actor PlanRunner {
             outcome = .failed(exitCode: code, reason: session.redactor.redact(reason))
         }
         let stoppedReason = Self.stoppedReason(for: outcome, helperFailure: helperFailure)
+        let biggestAdditions = Self.biggestAdditions(op, outcome, additions)
+        if additions != nil, Self.madeSnapshot(outcome) {
+            log.line(BiggestAdditionsText.logLine(biggestAdditions))
+            if let shortfall = BiggestAdditionsText.shortfallLogLine(
+                biggestAdditions, dataAddedPacked: termination?.summary?.dataAddedPacked)
+            {
+                log.line(shortfall)
+            }
+        }
         log.line("Finished: \(Self.explain(outcome, stoppedReason: stoppedReason))")
         log.close()
 
         let record = RunRecord(
             id: id, planID: plan.id, operation: op, trigger: trigger, startedAt: startedAt, endedAt: deps.now(),
             outcome: outcome, summary: op == .backup ? termination?.summary : nil, logFile: logFile,
-            droppedLogLines: log.droppedLineCount)
+            droppedLogLines: log.droppedLineCount,
+            unreadableItems: Self.unreadableItems(op, outcome, termination), biggestAdditions: biggestAdditions)
         var tail = termination?.stderrTail ?? []
         if let helperFailure { tail.append(helperFailure) }
         return StepResult(record: record, stoppedReason: stoppedReason, tail: tail)
+    }
+
+    /// The files a backup couldn't read, for its record (Task 16b): only a backup that ended as a warning has any.
+    static func unreadableItems(_ op: ResticOperation, _ outcome: RunOutcome, _ termination: ResticTermination?) -> [UnreadableItem]? {
+        guard case .backup = op, case .warning = outcome, let termination else { return nil }
+        return UnreadableItems.collect(termination.messages)
+    }
+
+    /// What a backup added, biggest first, for its record (Task 16d): only a backup that made a snapshot (`success` with
+    /// one, or `warning`) has any, and only when restic printed its verbose lines.
+    static func biggestAdditions(
+        _ op: ResticOperation, _ outcome: RunOutcome, _ collector: BiggestAdditionsCollector?
+    ) -> BiggestAdditions? {
+        guard case .backup = op, madeSnapshot(outcome), let collector else { return nil }
+        return collector.result()
+    }
+
+    /// restic finished the backup with a snapshot.
+    private static func madeSnapshot(_ outcome: RunOutcome) -> Bool {
+        switch outcome {
+        case .success(snapshotID: .some), .warning: true
+        default: false
+        }
     }
 
     // MARK: History and alerts

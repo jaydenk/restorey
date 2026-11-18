@@ -6,5 +6,7 @@
     <array>
         <string>$(AppIdentifierPrefix)$(RESTOREY_ROOT_ID)</string>
     </array>
+    <key>com.apple.security.personal-information.location</key>
+    <true/>
 </dict>
 </plist>

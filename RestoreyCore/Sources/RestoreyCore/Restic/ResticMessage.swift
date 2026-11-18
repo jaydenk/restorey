@@ -13,8 +13,10 @@ public enum ResticMessage: Sendable, Equatable {
     case exitError(code: Int, message: String)
     /// A `check --json` summary. Its shape differs from the backup summary: see `ResticMessageParser`.
     case checkSummary(CheckSummary)
-    /// Per-file detail printed by `backup --verbose`. Carries nothing the app uses.
-    case verboseStatus
+    /// One file or folder a backup finished with, printed by `backup --json --verbose` (Task 16d). Nil when the line
+    /// couldn't be read: it is still a verbose line, so it is never written to a run log. An unchanged item is
+    /// normally dropped before parsing (`isUnchangedVerboseLine`).
+    case verboseStatus(VerboseItem?)
     /// A well-formed message of a type this version does not model, for example `initialized`.
     case unknown(type: String)
     /// Not JSON, truncated, not an object, or a known type whose fields do not fit. The line is kept
@@ -35,10 +37,17 @@ public struct BackupStatus: Codable, Sendable, Equatable {
     public var secondsRemaining: Int?
     public var errorCount: Int
     public var currentFiles: [String]
+    /// restic has finished counting what there is to back up (its `verbose_status` `scan_finished` line, Task 16e).
+    /// restic counts while it backs up, so until then `totalFiles`, `totalBytes` and so `percentDone` only grow and
+    /// say nothing about how far through the backup is. Not part of a `status` message: the progress feed sets it
+    /// from the scan's own line. False when no such line has arrived (an agent from before it, or restic told to
+    /// print less).
+    public var scanFinished: Bool
 
     public init(
         percentDone: Double = 0, totalFiles: Int = 0, filesDone: Int = 0, totalBytes: Int = 0,
-        bytesDone: Int = 0, secondsRemaining: Int? = nil, errorCount: Int = 0, currentFiles: [String] = []
+        bytesDone: Int = 0, secondsRemaining: Int? = nil, errorCount: Int = 0, currentFiles: [String] = [],
+        scanFinished: Bool = false
     ) {
         self.percentDone = percentDone
         self.totalFiles = totalFiles
@@ -48,6 +57,25 @@ public struct BackupStatus: Codable, Sendable, Equatable {
         self.secondsRemaining = secondsRemaining
         self.errorCount = errorCount
         self.currentFiles = currentFiles
+        self.scanFinished = scanFinished
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case percentDone, totalFiles, filesDone, totalBytes, bytesDone, secondsRemaining, errorCount, currentFiles
+        case scanFinished
+    }
+
+    /// Spelled out only so `scanFinished` may be missing: an agent from before it sends none.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            percentDone: try c.decode(Double.self, forKey: .percentDone), totalFiles: try c.decode(Int.self, forKey: .totalFiles),
+            filesDone: try c.decode(Int.self, forKey: .filesDone), totalBytes: try c.decode(Int.self, forKey: .totalBytes),
+            bytesDone: try c.decode(Int.self, forKey: .bytesDone),
+            secondsRemaining: try c.decodeIfPresent(Int.self, forKey: .secondsRemaining),
+            errorCount: try c.decode(Int.self, forKey: .errorCount),
+            currentFiles: try c.decode([String].self, forKey: .currentFiles),
+            scanFinished: try c.decodeIfPresent(Bool.self, forKey: .scanFinished) ?? false)
     }
 }
 
@@ -135,6 +163,142 @@ public struct CheckSummary: Sendable, Equatable {
     }
 }
 
+/// The result of `stats --mode raw-data --json` (Ruling P2-9). restic 0.19.1 prints one object with no
+/// `message_type`: `{"total_size":62620,"total_uncompressed_size":65889,"compression_ratio":1.05,
+/// "compression_progress":100,"compression_space_saving":4.96,"total_blob_count":12,"snapshots_count":3}`.
+/// `total_size` is the stored (compressed) size of the blobs the snapshots reference. It leaves out packs
+/// no snapshot references (until a prune removes them), the index and other overhead, so the provider's
+/// figure is somewhat larger.
+public struct StatsSummary: Sendable, Equatable {
+    /// Bytes.
+    public var totalSize: Int64
+
+    public init(totalSize: Int64) {
+        self.totalSize = totalSize
+    }
+
+    /// True for the line that carries the result. The stream parser keeps it as `.unparseable`, because it
+    /// has no `message_type`.
+    public static func isStats(_ line: String) -> Bool {
+        line.hasPrefix("{") && line.contains(#""total_size""#)
+    }
+
+    /// Throws unless `line` is a stats object with an integer `total_size`.
+    public static func parse(_ line: String) throws -> StatsSummary {
+        StatsSummary(totalSize: try JSONDecoder().decode(Wire.self, from: Data(line.utf8)).totalSize)
+    }
+
+    private struct Wire: Decodable {
+        let totalSize: Int64
+        private enum CodingKeys: String, CodingKey { case totalSize = "total_size" }
+    }
+}
+
+/// One group of `forget --json`'s reply, reduced to what a run log needs. restic 0.19.1 prints the whole
+/// reply as one JSON array, each group carrying every kept and removed snapshot in full and a reason per
+/// kept one (about 2.35 KB per kept snapshot), which a run log kept 400 days doesn't need.
+public struct ForgetGroup: Sendable, Equatable {
+    public var host: String?
+    public var paths: [String]
+    public var tags: [String]
+    public var kept: Int
+    /// Short snapshot IDs, in restic's order.
+    public var removedIDs: [String]
+
+    public init(host: String?, paths: [String], tags: [String], kept: Int, removedIDs: [String]) {
+        self.host = host
+        self.paths = paths
+        self.tags = tags
+        self.kept = kept
+        self.removedIDs = removedIDs
+    }
+
+    /// The group's run log line: `Group host mac, paths /a, tags restorey:…: kept 3, removed 2 (1a2b3c4d,
+    /// 5e6f7a8b)`, or `… would remove 2 (…)` for a dry run. Parts the grouping doesn't have are left out,
+    /// and so are the brackets when nothing was removed.
+    public func summary(dryRun: Bool = false) -> String {
+        var key: [String] = []
+        if let host { key.append("host \(host)") }
+        if !paths.isEmpty { key.append("paths \(paths.joined(separator: ", "))") }
+        if !tags.isEmpty { key.append("tags \(tags.joined(separator: ", "))") }
+        let group = key.isEmpty ? "Group" : "Group \(key.joined(separator: ", "))"
+        let removed = removedIDs.isEmpty ? "" : " (\(removedIDs.joined(separator: ", ")))"
+        return "\(group): kept \(kept), \(dryRun ? "would remove" : "removed") \(removedIDs.count)\(removed)"
+    }
+}
+
+/// Reads `forget --json`'s reply (one JSON array on one line, on stdout) into its groups.
+public enum ForgetReport {
+    /// True for the line that carries the reply; restic prints nothing else starting with `[`.
+    public static func isReport(_ line: String) -> Bool { line.hasPrefix("[") }
+
+    /// Throws when `line` is not a forget reply.
+    public static func groups(from line: String) throws -> [ForgetGroup] {
+        try JSONDecoder().decode([Group].self, from: Data(line.utf8)).map { group in
+            ForgetGroup(
+                host: group.host, paths: group.paths ?? [], tags: group.tags ?? [], kept: group.keep?.count ?? 0,
+                removedIDs: (group.remove ?? []).map(\.shortID))
+        }
+    }
+
+    private struct Group: Decodable {
+        let host: String?
+        let paths: [String]?
+        let tags: [String]?
+        let keep: [Snapshot]?
+        let remove: [Snapshot]?
+    }
+
+    private struct Snapshot: Decodable {
+        let id: String
+        /// restic's own short form; cut from `id` the same way (eight characters) when it is missing.
+        let short: String?
+        var shortID: String { short ?? String(id.prefix(8)) }
+        private enum CodingKeys: String, CodingKey { case id, short = "short_id" }
+    }
+}
+
+/// One `verbose_status` line of `backup --json --verbose` (Task 16d), reduced to what the biggest additions need.
+/// restic 0.19.1 (`internal/ui/backup/json.go`, `CompleteItem`) prints one per file and folder it finishes, every
+/// field always present (no `omitempty`), in this order: `{"message_type":"verbose_status","action":"new",
+/// "item":"/a/b","duration":0.1,"data_size":5,"data_size_in_repo":90,"metadata_size":0,"metadata_size_in_repo":0,
+/// "total_files":0}`. `action` is `new`, `modified` or `unchanged`, and `scan_finished` once (with an empty item); a
+/// folder's item ends in "/" and its `data_size_in_repo` is 0: restic's tree saver (`internal/archiver/tree_saver.go`)
+/// fills only the tree fields, so a folder's `metadata_size_in_repo` is its own tree (its listing of what it holds)
+/// and never its files' data. An unchanged item's sizes are all 0 (`dir unchanged` prints none).
+public struct VerboseItem: Sendable, Equatable {
+    public var action: String
+    public var item: String
+    /// Bytes this item's new data took in the repository, after compression and encryption.
+    public var dataSizeInRepo: Int64
+    /// Bytes a new or modified folder's own new tree took in the repository, after compression and encryption
+    /// (Task 16f); 0 for a file.
+    public var metadataSizeInRepo: Int64
+
+    public init(action: String, item: String, dataSizeInRepo: Int64, metadataSizeInRepo: Int64 = 0) {
+        self.action = action
+        self.item = item
+        self.dataSizeInRepo = dataSizeInRepo
+        self.metadataSizeInRepo = metadataSizeInRepo
+    }
+
+    /// restic has finished counting what there is to back up (`ReportTotal`: action `scan_finished`, an empty item).
+    /// The status messages' totals are final from here on (Task 16e).
+    public var isScanFinished: Bool { action == "scan_finished" }
+
+    /// A file (not a folder) restic stored new data for.
+    public var isAddedFile: Bool {
+        isNewOrModified && !item.isEmpty && !item.hasSuffix("/") && dataSizeInRepo > 0
+    }
+
+    /// A folder whose listing restic stored anew (Task 16f).
+    public var isAddedFolder: Bool {
+        isNewOrModified && item.hasSuffix("/") && metadataSizeInRepo > 0
+    }
+
+    private var isNewOrModified: Bool { action == "new" || action == "modified" }
+}
+
 /// A non-fatal problem reported on stderr. During a backup it names the file (`during` and `item`
 /// are set). `check` reports a flat message with neither.
 public struct ResticItemError: Sendable, Equatable {
@@ -159,6 +323,14 @@ public enum ResticMessageParser {
     /// A summary with neither, or with a `num_errors` that is not an integer and no backup marker,
     /// is `.unparseable`: it is never turned into an all-zero backup summary.
     public static func parse(_ line: String) -> ResticMessage {
+        // A backup at verbosity 2 prints one of these per file, millions on a home folder, so they skip the decoder.
+        if line.utf8.starts(with: verbosePrefix) {
+            switch VerboseLineReader.read(line) {
+            case .item(let item): return .verboseStatus(item)
+            case .malformed: return .verboseStatus(nil)
+            case .otherLayout: return .verboseStatus(verboseItemDecoded(Data(line.utf8)))
+            }
+        }
         let data = Data(line.utf8)
         guard let probe = try? decoder.decode(Probe.self, from: data) else { return .unparseable(line) }
         do {
@@ -179,12 +351,51 @@ public enum ResticMessageParser {
                 let wire = try decoder.decode(ExitErrorWire.self, from: data)
                 return .exitError(code: wire.code, message: wire.message)
             case "verbose_status":
-                return .verboseStatus
+                return .verboseStatus(verboseItemDecoded(data))
             case let other:
                 return .unknown(type: other)
             }
         } catch {
             return .unparseable(line)
+        }
+    }
+
+    // MARK: Verbose lines
+
+    /// How restic 0.19.1 starts every verbose line (Go's encoder writes a struct's fields in order).
+    static let verbosePrefix = Array(#"{"message_type":"verbose_status","#.utf8)
+    /// How it starts an unchanged item's line: the comma ends the action, so `"unchangedish"` doesn't match.
+    static let unchangedPrefix = Array(#"{"message_type":"verbose_status","action":"unchanged","#.utf8)
+
+    /// True for an unchanged item's line, checked on the raw bytes before anything is decoded: most of a backup's
+    /// verbose lines are these, and they say nothing about what was added (Task 16d). A line in another layout
+    /// isn't matched; it is parsed instead, and the collector ignores it all the same.
+    public static func isUnchangedVerboseLine(_ bytes: ArraySlice<UInt8>) -> Bool {
+        guard bytes.count >= unchangedPrefix.count else { return false }
+        return bytes.withUnsafeBytes { line in
+            unchangedPrefix.withUnsafeBytes { prefix in
+                memcmp(line.baseAddress!, prefix.baseAddress!, prefix.count) == 0
+            }
+        }
+    }
+
+    /// The decoder's reading of a verbose line, for one the fast reader declined. Nil when its fields don't fit.
+    private static func verboseItemDecoded(_ data: Data) -> VerboseItem? {
+        guard let wire = try? decoder.decode(VerboseWire.self, from: data), wire.dataSizeInRepo >= 0,
+            (wire.metadataSizeInRepo ?? 0) >= 0
+        else { return nil }
+        return VerboseItem(
+            action: wire.action, item: wire.item, dataSizeInRepo: wire.dataSizeInRepo,
+            metadataSizeInRepo: wire.metadataSizeInRepo ?? 0)
+    }
+
+    private struct VerboseWire: Decodable {
+        let action: String
+        let item: String
+        let dataSizeInRepo: Int64
+        let metadataSizeInRepo: Int64?
+        private enum CodingKeys: String, CodingKey {
+            case action, item, dataSizeInRepo = "data_size_in_repo", metadataSizeInRepo = "metadata_size_in_repo"
         }
     }
 

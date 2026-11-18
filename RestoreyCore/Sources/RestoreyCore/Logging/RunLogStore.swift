@@ -49,6 +49,19 @@ public actor RunLogStore {
                       userInfo: [NSFilePathErrorKey: planDirectory.path])
     }
 
+    /// Removes `runs/<id>/` and every log in it, for a plan being deleted, rather than leaving it to the
+    /// 400-day prune. Nothing there is not an error. A plan folder that is a symbolic link is removed as a
+    /// link: nothing outside `runs/` is touched.
+    public func removePlan(_ id: UUID) throws {
+        let planDirectory = runsDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
+        do {
+            // Removes a symlink itself, never what it points at.
+            try FileManager.default.removeItem(at: planDirectory)
+        } catch CocoaError.fileNoSuchFile {
+            return
+        }
+    }
+
     /// Removes run logs last modified more than `retention` before `now`, then any empty plan folders.
     /// Touches nothing outside `runs/`. A file that cannot be removed is skipped (and logged once);
     /// the count is of files actually removed.

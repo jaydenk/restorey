@@ -22,10 +22,10 @@ public struct HelperResponder: Sendable {
 
         public var description: String {
             switch self {
-            case .malformedRequest: "the request couldn't be read"
-            case .invalidPlanID: "the plan ID isn't a UUID"
-            case .notSupervised: "the caller wasn't started by a restic run Restorey is supervising for that plan"
-            case .unknownPlan: "there's no plan with that ID"
+            case .malformedRequest: "the request couldn’t be read"
+            case .invalidPlanID: "the plan ID isn’t a UUID"
+            case .notSupervised: "the caller wasn’t started by a restic run Restorey is supervising for that plan"
+            case .unknownPlan: "there’s no plan with that ID"
             case .secretUnavailable(let reason): reason
             }
         }
@@ -58,18 +58,24 @@ public struct HelperResponder: Sendable {
         guard await authoriseHelper(callerPID: callerPID, planID: planID, lookup: lookup, supervised: supervised)
         else { return .failure(.notSupervised) }
         guard await state.isConfiguredPlan(planID) else { return .failure(.unknownPlan) }
+        // Credentials Settings is checking before it saves them, while that check runs (`CandidateSecrets`).
+        let candidates = state.candidates.values(for: planID) ?? [:]
 
         let result = Result { () throws(Refusal) -> Data in
+            func value(_ key: SecretKey) throws(Refusal) -> String {
+                if let typed = candidates[key] { return typed }
+                return try read(key)
+            }
             switch request.kind {
             case .repositoryPassword:
-                return Data(try read(.repositoryPassword(planID)).utf8)
+                return Data(try value(.repositoryPassword(planID)).utf8)
             case .s3Credentials:
-                let keyID = try read(.s3AccessKeyID(planID))
-                let secret = try read(.s3SecretAccessKey(planID))
+                let keyID = try value(.s3AccessKeyID(planID))
+                let secret = try value(.s3SecretAccessKey(planID))
                 do {
                     return try makeCredentialProcessJSON(accessKeyID: keyID, secret: secret, now: now())
                 } catch {
-                    throw .secretUnavailable("Restorey couldn't encode the S3 credentials")
+                    throw .secretUnavailable("Restorey couldn’t encode the S3 credentials")
                 }
             }
         }
@@ -85,9 +91,9 @@ public struct HelperResponder: Sendable {
             value = try secrets.read(key)
         } catch {
             throw .secretUnavailable(
-                "Restorey couldn't read the \(Self.name(of: key)) from the Keychain: \(Self.describe(error))")
+                "Restorey couldn’t read the \(Self.name(of: key)) from the Keychain: \(Self.describe(error))")
         }
-        guard let value else { throw .secretUnavailable("The \(Self.name(of: key)) isn't in the Keychain") }
+        guard let value else { throw .secretUnavailable("The \(Self.name(of: key)) isn’t in the Keychain") }
         return value
     }
 
@@ -105,7 +111,7 @@ public struct HelperResponder: Sendable {
     private static func describe(_ error: any Error) -> String {
         switch error as? SecretStoreError {
         case .keychain(let status, let message)?: "keychain error \(status) (\(message))"
-        case .undecodableValue?: "the stored value isn't valid UTF-8"
+        case .undecodableValue?: "the stored value isn’t valid UTF-8"
         case nil: String(describing: type(of: error))
         }
     }

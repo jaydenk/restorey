@@ -9,19 +9,21 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     private let state: AgentState
     private let log: AppLog
     private let notifier: Notifier
+    private let location: LocationPermission
     /// `ExecutableFingerprint` of the binary at launch, reported in `hello`.
     private let executableFingerprint: String?
     /// Called after a change that can make a plan due now: a save, a recovery kit confirmation, a resume.
     private let plansChanged: @Sendable () -> Void
 
     init(
-        state: AgentState, log: AppLog, notifier: Notifier, executableFingerprint: String?,
-        plansChanged: @escaping @Sendable () -> Void
+        state: AgentState, log: AppLog, notifier: Notifier, location: LocationPermission,
+        executableFingerprint: String?, plansChanged: @escaping @Sendable () -> Void
     ) {
         self.executableFingerprint = executableFingerprint
         self.state = state
         self.log = log
         self.notifier = notifier
+        self.location = location
         self.plansChanged = plansChanged
     }
 
@@ -31,14 +33,19 @@ final class AgentService: NSObject, AgentXPC, Sendable {
         // Not logged: the app's heartbeat sends one every 10 s. Built in process from what the agent holds,
         // never by asking the notification centre (Ruling R68): a hung usernoted must not make the app
         // think the agent is dead and unregister it mid-backup.
-        respond(reply, "hello") { [state, executableFingerprint] in
+        respond(reply, "hello") { [state, location, executableFingerprint] in
             _ = try Self.decode(HelloRequest.self, from: request)
             let info = Bundle.main.infoDictionary ?? [:]
-            return await state.helloReply(
+            var hello = await state.helloReply(
                 agentVersion: info["CFBundleShortVersionString"] as? String ?? "unknown",
                 agentBuild: info["CFBundleVersion"] as? String ?? "unknown",
                 executablePath: Bundle.main.executableURL?.path ?? "unknown",
                 executableFingerprint: executableFingerprint)
+            // The last authorisation Core Location reported, held in process: never a call to it (R68).
+            hello.locationAuthorised = location.knownAuthorised
+            // Held in process too: read again on each change Core Location reports and on each `locationAccess`.
+            hello.locationServicesEnabled = location.knownServicesEnabled
+            return hello
         }
     }
 
@@ -57,6 +64,21 @@ final class AgentService: NSObject, AgentXPC, Sendable {
         }
     }
 
+    func saveNetworkSettings(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "saveNetworkSettings") { [state, log, plansChanged] in
+            let settings = try Self.decode(NetworkSettings.self, from: request)
+            let status = try await state.saveNetworkSettings(settings)
+            // Counts only: Wi-Fi names say where the user goes, which a log doesn't need.
+            log.info(
+                "Saved the network settings: upload limit \(settings.uploadLimitKiB.map { "\($0) KiB/s" } ?? "none"), "
+                    + "skip on a constrained network \(settings.skipOnConstrainedNetwork ? "on" : "off"), "
+                    + "\(settings.skippedWiFiNames.count) Wi-Fi names to skip")
+            // A rule turned off can make a skipped plan due now.
+            plansChanged()
+            return status
+        }
+    }
+
     func deletePlan(_ id: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
         respond(reply, "deletePlan") { [state, log] in
             let status = try await state.deletePlan(try Self.planID(id))
@@ -66,10 +88,19 @@ final class AgentService: NSObject, AgentXPC, Sendable {
     }
 
     func backUpNow(_ planID: String?, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
-        respond(reply, "Back Up Now") { [state, log] in
-            let status = try await state.backUpNow(try planID.map(Self.planID))
-            log.info("Back up now: \(planID.map { "plan \($0)" } ?? "every plan")")
-            return status
+        // `AgentState.backUpNow` logs its own refusals (final review M5), where they are tested; only a
+        // malformed plan ID, refused before the state sees the call, is logged here.
+        respond(reply, "Back Up Now", logsRefusal: false) { [state, log] in
+            let id: UUID?
+            do {
+                id = try planID.map(Self.planID)
+            } catch let error as AgentError {
+                log.info("Refused Back Up Now: \(error.message)")
+                throw error
+            }
+            let reply = try await state.backUpNow(id)
+            log.info("Back up now: \(planID.map { "plan \($0)" } ?? "every plan")\(reply.alreadyRunning ? " (already backing up)" : "")")
+            return reply
         }
     }
 
@@ -106,6 +137,91 @@ final class AgentService: NSObject, AgentXPC, Sendable {
         }
     }
 
+    func probeRepositoryCredentials(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "probeRepositoryCredentials") { [state, log] in
+            let decoded = try Self.decode(CredentialProbeRequest.self, from: request)
+            let probe = try await state.probeRepository(decoded.planID, candidates: decoded.secrets)
+            let found = switch probe.state {
+            case .empty: "nothing at the address"
+            case .existing: "the repository opens with them"
+            case .passwordRejected: "the repository doesn't open with them"
+            }
+            log.info("Checked new credentials for plan \(decoded.planID.uuidString): \(found)")
+            return probe
+        }
+    }
+
+    func probeRepository(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "probeRepository") { [state, log] in
+            let probe = try await state.probeRepository(try Self.planID(planID))
+            switch probe.state {
+            case .empty: log.info("Probed the repository address for plan \(planID): nothing there")
+            case .existing(let report):
+                log.info("Probed the repository address for plan \(planID): a repository with \(report.snapshotCount) snapshots")
+            case .passwordRejected:
+                log.info("Probed the repository address for plan \(planID): a repository its password doesn't open")
+            }
+            return probe
+        }
+    }
+
+    func previewEarlierSnapshots(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "previewEarlierSnapshots") { [state, log] in
+            let preview = try await state.previewEarlierSnapshots(try Self.planID(planID))
+            // Counts only: the IDs are in the reply, and a dry run removed nothing.
+            let counts = preview.groups.map { "\($0.removeIDs.count) of \($0.total)" }.joined(separator: ", ")
+            log.info("Counted earlier snapshots for plan \(planID): \(preview.groups.count) groups, retention would remove [\(counts)]")
+            return preview
+        }
+    }
+
+    func removeEarlierSnapshots(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "removeEarlierSnapshots") { [state, log] in
+            let decoded = try Self.decode(EarlierSnapshotsRequest.self, from: request)
+            let removal = try await state.removeEarlierSnapshots(decoded)
+            log.info(
+                "Removed \(removal.removed) earlier snapshots for plan \(decoded.planID.uuidString) (\(removal.leftAlone) confirmed ones left)")
+            return removal
+        }
+    }
+
+    func removeEarlierSnapshotsAfterNextBackup(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "removeEarlierSnapshotsAfterNextBackup") { [state, log] in
+            let decoded = try Self.decode(EarlierSnapshotsRequest.self, from: request)
+            let status = try await state.removeEarlierSnapshotsAfterNextBackup(decoded)
+            log.info(
+                "Plan \(decoded.planID.uuidString) removes \(decoded.confirmation.snapshotIDs.count) confirmed earlier snapshots after its next backup")
+            return status
+        }
+    }
+
+    func history(_ planID: String?, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        // Not logged: the app reads it whenever a history view is shown.
+        respond(reply, "history") { [state] in try await state.history(try planID.map(Self.planID)) }
+    }
+
+    func recoveryKit(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "recoveryKit") { [state, log] in
+            let kit = try await state.recoveryKit(try Self.planID(planID))
+            // The plan and a count only: the reply itself is never logged.
+            log.info("Sent the recovery kit for plan \(planID) to the app (\(kit.secrets.count) secrets)")
+            return kit
+        }
+    }
+
+    func probeFullDiskAccess(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        // Not logged: setup polls it every 2 s. A change shows in the status.
+        respond(reply, "probeFullDiskAccess") { [state] in try await state.probeFullDiskAccess() }
+    }
+
+    func dismissOffMacNote(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "dismissOffMacNote") { [state, log] in
+            let status = try await state.dismissOffMacNote(try Self.planID(planID))
+            log.info("Dismissed the off-Mac monitoring note for plan \(planID)")
+            return status
+        }
+    }
+
     func confirmRecoveryKit(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
         respond(reply, "confirmRecoveryKit") { [state, log, plansChanged] in
             let status = try await state.confirmRecoveryKit(try Self.planID(planID))
@@ -124,6 +240,27 @@ final class AgentService: NSObject, AgentXPC, Sendable {
             await state.deliverAlerts(waitingAtMost: .seconds(15))
             return NotificationPermissionReply(granted: granted)
         }
+    }
+
+    func requestLocationPermission(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "requestLocationPermission") { [log, location] in
+            let answer = await location.request()
+            let name = WiFiName.current()
+            #if DEBUG
+            let readable = name.map { "readable: \"\($0)\"" } ?? "not readable"
+            #else
+            // A Release log never names the network, which says where the user is.
+            let readable = name == nil ? "not readable" : "readable"
+            #endif
+            let services = answer.servicesEnabled == false ? " (Location Services is off for this Mac)" : ""
+            log.info("Location permission \(answer.status)\(services); the Wi-Fi name is \(readable)")
+            return answer
+        }
+    }
+
+    func locationAccess(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        // Not logged: the Network pane asks each time it appears or Restorey comes to the front.
+        respond(reply, "locationAccess") { [location] in await location.current() }
     }
 
     func prepareForRestart(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
@@ -172,19 +309,22 @@ final class AgentService: NSObject, AgentXPC, Sendable {
 
     // MARK: Helpers
 
-    /// - Parameter call: names the call in `agent.log` when it is refused.
+    /// - Parameters:
+    ///   - call: names the call in `agent.log` when it is refused.
+    ///   - logsRefusal: false when the state already logs the call's refusals.
     private func respond<T: Encodable & SendableMetatype>(
         _ reply: @escaping @Sendable (Data?, String?) -> Void,
         _ call: String,
+        logsRefusal: Bool = true,
         _ work: @escaping @Sendable () async throws -> T
     ) {
         Task { [log] in
             do {
                 reply(try XPCCoding.encode(try await work()), nil)
             } catch let error as AgentError {
-                // A refusal is an answer, not a fault, but it must leave a trace: a Back Up Now that did
-                // nothing is otherwise invisible (final review M5). The message never names a secret.
-                log.info("Refused \(call): \(error.message)")
+                // A refusal is an answer, not a fault, but it must leave a trace (final review M5). The
+                // message never names a secret.
+                if logsRefusal { log.info("Refused \(call): \(error.message)") }
                 reply(nil, error.message)
             } catch {
                 log.error("Unexpected error handling an XPC request: \(error)")

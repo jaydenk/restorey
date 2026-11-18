@@ -24,24 +24,45 @@ public struct ResticContext: Sendable {
     /// Environment values for raw plans, read from the keychain by the caller. Ignored for S3 plans.
     public var rawEnvironment: [String: String]
     public var homeDirectory: URL
+    /// The Mac-wide upload limit (`NetworkSettings.uploadLimitKiB`), KiB/s. A backup to a networked
+    /// repository gets its share (`effectiveUploadLimitKiB`); every other command and repository ignores it.
+    public var macWideUploadLimitKiB: Int?
+    /// The backups to networked repositories uploading as this one starts, counting itself.
+    public var networkedBackupsRunning: Int
+    /// How long the maintenance commands (`forget`, `prune`, `check`, `stats`) wait for a lock another client
+    /// holds, as restic's `--retry-lock` duration. Five minutes in the agent; tests shorten it.
+    public var maintenanceRetryLock: String
+    /// This run's list of items apps mark as not for backup (`MarkedNotForBackup.excludeFile`), passed to `backup` as
+    /// `--exclude-file`. Nil when there is nothing to skip: the flag is then left out.
+    public var notForBackupExcludeFile: URL?
 
     public init(
         cacheDirectory: URL,
         helperExecutable: URL,
         credentialsFile: URL?,
         rawEnvironment: [String: String],
-        homeDirectory: URL
+        homeDirectory: URL,
+        macWideUploadLimitKiB: Int? = nil,
+        networkedBackupsRunning: Int = 1,
+        maintenanceRetryLock: String = "5m",
+        notForBackupExcludeFile: URL? = nil
     ) {
         self.cacheDirectory = cacheDirectory
         self.helperExecutable = helperExecutable
         self.credentialsFile = credentialsFile
         self.rawEnvironment = rawEnvironment
         self.homeDirectory = homeDirectory
+        self.macWideUploadLimitKiB = macWideUploadLimitKiB
+        self.networkedBackupsRunning = networkedBackupsRunning
+        self.maintenanceRetryLock = maintenanceRetryLock
+        self.notForBackupExcludeFile = notForBackupExcludeFile
     }
 }
 
 /// One restic operation. Persisted in run records, so the JSON is explicit:
-/// `{"type":"forget","dryRun":true}`, `{"type":"snapshots","allHosts":false}`, `{"type":"backup"}`.
+/// `{"type":"forget","dryRun":true}`, `{"type":"snapshots","allHosts":false}`, `{"type":"backup"}`,
+/// `{"type":"stats"}`, `{"type":"forgetPreview","of":"beforeAdoption"}`, `{"type":"forgetSnapshots","ids":["…"]}`. A build that doesn't
+/// know a type drops that record rather than the history.
 public enum ResticOperation: Codable, Sendable, Equatable {
     case initRepository
     case backup
@@ -54,6 +75,19 @@ public enum ResticOperation: Codable, Sendable, Equatable {
     /// `cat config`: reads the repository's config, which exists only once a repository has been
     /// initialised. `createRepository` uses it to tell "exists" (0) from "nothing there" (10).
     case catConfig
+    /// `stats --mode raw-data`: the size of the whole repository as stored (Ruling P2-9), every host's
+    /// data included. Run after a successful prune and after an adopt.
+    case stats
+    /// `forget --dry-run --no-lock` with the plan's retention, over a timeline that puts the plan's earlier snapshots
+    /// of one kind with its current ones (Task 14b), so retention treats them as the plan's own: for snapshots from
+    /// before adoption, every snapshot of the host grouped by `host,paths` (no `--tag`); for previous folder lists, the
+    /// plan's own tag grouped by `host,tags` (the folders left out). `EarlierSnapshots` then picks, snapshot by snapshot,
+    /// the ones the action is about. Removes nothing and takes no lock, so it is never recorded.
+    case forgetPreview(EarlierSnapshotKind)
+    /// `forget <ids>`: removes exactly these snapshots, with no policy and no filter (Task 14b). Only ever built from
+    /// IDs the user confirmed that a fresh `forgetPreview` still puts in the action's scope (`EarlierSnapshots`). Its
+    /// record keeps the IDs restic removed, so the history says exactly what went.
+    case forgetSnapshots(ids: [String])
 
     /// A short, stable, file-name-safe name for this operation, used in run log file names.
     /// Never change an existing value: it would orphan the names of logs already on disk.
@@ -67,10 +101,13 @@ public enum ResticOperation: Codable, Sendable, Equatable {
         case .snapshots(let allHosts): allHosts ? "snapshots-all-hosts" : "snapshots"
         case .unlock: "unlock"
         case .catConfig: "cat-config"
+        case .stats: "stats"
+        case .forgetPreview(let kind): "forget-preview-\(kind.rawValue)"
+        case .forgetSnapshots: "forget-snapshots"
         }
     }
 
-    private enum CodingKeys: String, CodingKey { case type, dryRun, allHosts }
+    private enum CodingKeys: String, CodingKey { case type, dryRun, allHosts, ids, of }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -83,6 +120,14 @@ public enum ResticOperation: Codable, Sendable, Equatable {
         case "snapshots": self = .snapshots(allHosts: try c.decode(Bool.self, forKey: .allHosts))
         case "unlock": self = .unlock
         case "catConfig": self = .catConfig
+        case "stats": self = .stats
+        case "forgetPreview":
+            let raw = try c.decode(String.self, forKey: .of)
+            guard let kind = EarlierSnapshotKind(rawValue: raw) else {
+                throw UnknownCase.error(kind: "earlier snapshot kind", name: raw, in: c, forKey: .of)
+            }
+            self = .forgetPreview(kind)
+        case "forgetSnapshots": self = .forgetSnapshots(ids: try c.decode([String].self, forKey: .ids))
         case let other: throw UnknownCase.error(kind: "restic operation", name: other, in: c, forKey: .type)
         }
     }
@@ -102,12 +147,16 @@ public enum ResticOperation: Codable, Sendable, Equatable {
             try c.encode(allHosts, forKey: .allHosts)
         case .unlock: try c.encode("unlock", forKey: .type)
         case .catConfig: try c.encode("catConfig", forKey: .type)
+        case .stats: try c.encode("stats", forKey: .type)
+        case .forgetPreview(let kind):
+            try c.encode("forgetPreview", forKey: .type)
+            try c.encode(kind.rawValue, forKey: .of)
+        case .forgetSnapshots(let ids):
+            try c.encode("forgetSnapshots", forKey: .type)
+            try c.encode(ids, forKey: .ids)
         }
     }
 }
-
-/// How long the maintenance commands wait for a repository lock held by another process.
-private let maintenanceRetryLock = "5m"
 
 /// Builds the restic invocation for `op`.
 ///
@@ -118,7 +167,9 @@ private let maintenanceRetryLock = "5m"
 ///
 /// Safety properties, each covered by a test:
 /// - `forget` is always limited to this plan's host and `restorey:<id>` tag and never prunes, so it
-///   cannot delete snapshots that Restorey did not make.
+///   cannot delete snapshots that Restorey did not make. The two exceptions are the user's own, confirmed
+///   (Task 14b): `forgetPreview` is a dry run that takes no lock and removes nothing, and `forgetSnapshots`
+///   removes only the IDs it is given.
 /// - `unlock` never passes `--remove-all`.
 /// - The repository password is never in the environment, only the command that fetches it.
 /// - S3 plans get a profile in the credentials file and no `AWS_*` key variables.
@@ -130,13 +181,24 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
     case .initRepository:
         args = ["init"] + common(context)
     case .backup:
-        args = ["backup"] + common(context)
+        // `--verbose` once is restic's verbosity 2 (0.19.1 `internal/global/global.go`; `--verbose=2` is 3), at which
+        // `backup --json` prints a `verbose_status` line per file and folder (`internal/ui/backup/json.go`), for the
+        // backup's biggest additions (Task 16d). In JSON mode it prints nothing else.
+        args = ["backup"] + common(context) + ["--verbose"]
             + ["--host=\(plan.hostLabel)", "--tag=\(tag)",
                "--skip-if-unchanged", "--exclude-cloud-files", "--exclude-caches"]
             + packSize(plan)
         if plan.oneFileSystem { args.append("--one-file-system") }
-        if let limit = plan.uploadLimitKiB { args += ["--limit-upload", String(limit)] }
+        // The Mac-wide limit is for the network (Ruling P2-7): a folder or drive gets the plan's own alone.
+        let limit = plan.repository.needsNetwork
+            ? effectiveUploadLimitKiB(
+                plan: plan.uploadLimitKiB, macWide: context.macWideUploadLimitKiB,
+                networkedBackupsRunning: context.networkedBackupsRunning)
+            : plan.uploadLimitKiB
+        if let limit { args += ["--limit-upload", String(limit)] }
         for pattern in plan.exclusions { args.append("--exclude=\(pattern)") }
+        // Items apps mark as not for backup (Task 15c): literal patterns, one per line, written for this run.
+        if let file = context.notForBackupExcludeFile { args.append("--exclude-file=\(file.path)") }
         // A relative pattern matches a whole path component at any depth (restic 0.19.1
         // internal/filter/filter.go), so `*.pvm` also excludes a `.pvm` bundle directory; `--iexclude`
         // lower-cases pattern and path. Invalid entries never get here: the plan fails validation.
@@ -151,11 +213,27 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
                "--keep-hourly", String(r.hourly), "--keep-daily", String(r.daily),
                "--keep-weekly", String(r.weekly), "--keep-monthly", String(r.monthly)]
         if dryRun { args.append("--dry-run") }
-        args += ["--retry-lock", maintenanceRetryLock]
+        args += ["--retry-lock", context.maintenanceRetryLock]
+    case .forgetPreview(let kind):
+        // `--no-lock` is allowed only with `--dry-run` (restic 0.19.1 cmd_forget.go), and then forget opens the
+        // repository without its exclusive lock, so the count can be taken while another client works.
+        let r = plan.retention
+        let timeline: [String] = switch kind {
+        case .beforeAdoption: ["--group-by", "host,paths"]
+        case .previousFolderLists: ["--tag=\(tag)", "--group-by", "host,tags"]
+        }
+        args = ["forget"] + common(context)
+            + ["--no-lock", "--dry-run", "--host=\(plan.hostLabel)"] + timeline
+            + ["--keep-hourly", String(r.hourly), "--keep-daily", String(r.daily),
+               "--keep-weekly", String(r.weekly), "--keep-monthly", String(r.monthly)]
+    case .forgetSnapshots(let ids):
+        // No policy and no filter: given IDs, restic removes those snapshots and ignores (with a warning) any
+        // filter, and skips an ID it can't find ("Ignoring …"), still exiting 0 (restic 0.19.1, verified).
+        args = ["forget"] + common(context) + ["--retry-lock", context.maintenanceRetryLock, "--"] + ids
     case .prune:
-        args = ["prune"] + common(context) + packSize(plan) + ["--retry-lock", maintenanceRetryLock]
+        args = ["prune"] + common(context) + packSize(plan) + ["--retry-lock", context.maintenanceRetryLock]
     case .check:
-        args = ["check"] + common(context) + ["--retry-lock", maintenanceRetryLock]
+        args = ["check"] + common(context) + ["--retry-lock", context.maintenanceRetryLock]
     case .snapshots(let allHosts):
         args = ["snapshots"] + common(context)
         if !allHosts { args.append("--host=\(plan.hostLabel)") }
@@ -163,6 +241,10 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
         args = ["unlock"] + common(context)
     case .catConfig:
         args = ["cat", "config"] + common(context)
+    case .stats:
+        // No `--host`: the size is the repository's, whichever Macs back up to it. A shared lock, so it waits
+        // like the maintenance commands rather than failing at once while another client prunes.
+        args = ["stats"] + common(context) + ["--mode", "raw-data", "--retry-lock", context.maintenanceRetryLock]
     }
 
     return ResticInvocation(arguments: args, environment: environment(plan: plan, context: context))
@@ -207,13 +289,14 @@ public func displayCommand(_ inv: ResticInvocation) -> String {
     return (env + ["restic"] + inv.arguments.map(displayQuoted)).joined(separator: " ")
 }
 
-/// Always single-quoted.
-private func shellQuoted(_ s: String) -> String {
+/// Always single-quoted: `sh` reads every byte between single quotes as it is, newlines included, and a
+/// single quote is written `'\''`. Shared with `RestoreCommands`.
+func shellQuoted(_ s: String) -> String {
     "'" + s.replacing("'", with: "'\\''") + "'"
 }
 
-/// Quoted only when the text has characters the shell would treat specially.
-private func displayQuoted(_ s: String) -> String {
+/// Quoted only when the text has characters the shell would treat specially. Shared with `RestoreCommands`.
+func displayQuoted(_ s: String) -> String {
     let safe = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_@%+=:,./-")
     return !s.isEmpty && s.allSatisfy(safe.contains) ? s : shellQuoted(s)
 }

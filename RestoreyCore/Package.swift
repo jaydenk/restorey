@@ -12,6 +12,8 @@ let package = Package(
     targets: [
         .target(
             name: "RestoreyCore",
+            // EFF's large word list for generated repository passwords (README: third-party material).
+            resources: [.copy("Resources/eff_large_wordlist.txt")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .target(
@@ -19,15 +21,21 @@ let package = Package(
             dependencies: ["RestoreyCore"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
+        // Helpers both test targets share (a test target can't import another). Not a product: the app never links it.
+        .target(
+            name: "TestSupport",
+            path: "Tests/TestSupport",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         .testTarget(
             name: "RestoreyCoreTests",
-            dependencies: ["RestoreyCore"],
+            dependencies: ["RestoreyCore", "TestSupport"],
             exclude: ["Fixtures"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
             name: "AgentCoreTests",
-            dependencies: ["AgentCore", "RestoreyCore"],
+            dependencies: ["AgentCore", "RestoreyCore", "TestSupport"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]

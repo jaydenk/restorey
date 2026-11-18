@@ -1,11 +1,14 @@
 import RestoreyCore
 
-/// The payload of `config.json` (schema `ConfigMigrations.currentVersion`): `{"plans":[…]}`.
+/// The payload of `config.json` (schema `ConfigMigrations.currentVersion`): `{"network":{…},"plans":[…]}`.
 public struct ConfigFile: Codable, Sendable, Equatable {
     public var plans: [Plan]
+    /// The Mac-wide network rules (schema 3, Ruling P2-6).
+    public var network: NetworkSettings
 
-    public init(plans: [Plan] = []) {
+    public init(plans: [Plan] = [], network: NetworkSettings = .defaults) {
         self.plans = plans
+        self.network = network
     }
 }
 

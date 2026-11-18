@@ -35,4 +35,12 @@ for _ in $(seq 1 40); do pgrep -f "$DEST/Contents/MacOS/$APP_NAME" >/dev/null ||
 
 rm -rf "${DEST:?}"
 ditto "$BUILT" "$DEST"
+
+# Xcode registers every app it builds with Launch Services, so the build product and the installed copy share one
+# bundle ID, and lookups by ID can land on the build product inside build/. Keep the installed copy as the only
+# registration. (This isn't what kept the Dock's icon blank: that was the bundle's stale modification date, fixed
+# by the "Re-date bundle" build step in project.yml.)
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+"$LSREGISTER" -u "$BUILT" 2>/dev/null || true
+"$LSREGISTER" -f "$DEST"
 echo "Installed $DEST"

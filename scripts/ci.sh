@@ -28,9 +28,23 @@ scripts/fetch-binaries.sh
 step "Test RestoreyCore"
 swift test --package-path RestoreyCore
 
+# Deadlines under GCD starvation, on their own: these park every constrained global-queue thread in the test process,
+# so they would stall other tests beside them (README: "Building from source"). Skipped in the run above.
+step "Test deadlines under GCD starvation (alone)"
+starvation_log=build/starvation-tests.log
+RESTOREY_STARVATION_TESTS=1 swift test --package-path RestoreyCore --skip-build --no-parallel \
+  --filter GlobalQueueStarvationTests 2>&1 | tee "$starvation_log"
+# A skipped suite or a filter that matches nothing would also exit 0: require both tests to have passed.
+if [[ $(grep -cE "Test [A-Za-z]+WhileGlobalQueuesAreStarved\(\) passed" "$starvation_log") -ne 2 ]]; then
+  echo "error: the two GCD starvation tests didn't both run and pass (log: $starvation_log)" >&2
+  exit 1
+fi
+
 step "Generate the Xcode project"
 xcodegen generate --quiet
 
+# verify-bundle.sh also checks the Developer window: in every Debug build (all its types found, the positive
+# control) and absent from every Release build, so a Release that compiled it in fails here.
 step "Build Debug (unsigned)"
 build Debug build/DerivedData-unsigned CODE_SIGNING_ALLOWED=NO
 scripts/verify-bundle.sh build/DerivedData-unsigned/Build/Products/Debug/RestoreyDev.app --skip-signature

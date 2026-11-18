@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import AgentCore
 import RestoreyCore
 
@@ -87,7 +88,7 @@ struct AgentReplacementTests {
 
     func until(_ condition: () async -> Bool) async throws { try await Self.until(condition) }
 
-    static let refused = "Restorey is finishing the current backup before updating the agent"
+    static let refused = "Restorey is finishing the current backup before updating"
 
     // MARK: Drains
 

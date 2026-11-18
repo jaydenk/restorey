@@ -35,6 +35,15 @@ struct MessagesTests {
         try roundTrip(HelloReply(
             agentVersion: "0.1.0", agentBuild: "8", executablePath: "/x", draining: false,
             notificationsAuthorised: false, executableFingerprint: "16777234:42:59216:1.5"))
+        try roundTrip(HelloReply(
+            agentVersion: "0.1.0", agentBuild: "12", executablePath: "/x", draining: false,
+            notificationsAuthorised: true, executableFingerprint: "1:2:3:4.5", locationAuthorised: false))
+        try roundTrip(HelloReply(
+            agentVersion: "0.1.0", agentBuild: "14", executablePath: "/x", draining: false,
+            notificationsAuthorised: true, locationAuthorised: nil, locationServicesEnabled: false))
+        try roundTrip(HelloReply(
+            agentVersion: "0.1.0", agentBuild: "13", executablePath: "/x", draining: false,
+            notificationsAuthorised: true, agentRun: UUID()))
     }
 
     /// An agent from before fix round 3 sends no fingerprint; its reply must still decode (as nil), so the
@@ -44,6 +53,9 @@ struct MessagesTests {
         let reply = try XPCCoding.decode(HelloReply.self, from: Data(json.utf8))
         #expect(reply.executableFingerprint == nil)
         #expect(reply.agentBuild == "1")
+        #expect(reply.locationAuthorised == nil, "an agent older than Task 3 sends no Location field")
+        #expect(reply.locationServicesEnabled == nil, "an agent older than Task 15 sends no Location Services field")
+        #expect(reply.agentRun == nil, "an agent older than Task 8 sends no run")
     }
 
     @Test func statusRoundTripsWithEveryPhase() throws {
@@ -72,6 +84,102 @@ struct MessagesTests {
         try roundTrip(AgentStatus(
             plans: [], configError: "config.json was written by a newer Restorey", fdaMissing: nil,
             generatedAt: Self.now))
+    }
+
+    @Test func agentStatusRoundTripsNewFields() throws {
+        let backup = RunRecord(
+            id: UUID(), planID: Self.planID, operation: .backup, trigger: .scheduled,
+            startedAt: Self.now, endedAt: Self.now.addingTimeInterval(61), outcome: .unchanged,
+            summary: nil, logFile: "2026/11/x.log")
+        var plan = Self.plan()
+        plan.setupCompletedAt = Self.now
+        plan.offMacNoteDismissed = true
+        let size = RepositorySize(bytes: 9_876_543_210, measuredAt: Self.now)
+        let status = AgentStatus(
+            plans: [PlanSetupState.unfinished, .needsNewKit, .complete].map {
+                PlanStatus(plan: plan, phase: .idle, lastRecord: nil, nextRunAt: nil, alerts: [],
+                           lastBackup: backup, repositorySize: size, setupState: $0)
+            },
+            configError: nil, fdaMissing: false, generatedAt: Self.now, agentRun: UUID(), sequence: 3,
+            network: NetworkSettings(uploadLimitKiB: 2048, skipOnConstrainedNetwork: false, skippedWiFiNames: ["Café"]))
+        try roundTrip(status)
+        try roundTrip(AgentStatus(plans: [], configError: "x", fdaMissing: nil, generatedAt: Self.now))
+    }
+
+    /// Fix round 2: `latestBackupRecord` round-trips; a status from before it decodes it from `lastRecord` when that
+    /// is a backup's record, and as nil otherwise.
+    @Test func theNewestBackupRecordRoundTripsAndDecodesFromAnOlderStatus() throws {
+        func record(_ operation: ResticOperation) -> RunRecord {
+            RunRecord(
+                id: UUID(), planID: Self.planID, operation: operation, trigger: .scheduled, startedAt: Self.now,
+                endedAt: Self.now, outcome: .wrongPassword, summary: nil, logFile: "")
+        }
+        let backup = record(.backup)
+        let forget = record(.forget(dryRun: false))
+        try roundTrip(PlanStatus(
+            plan: Self.plan(), phase: .idle, lastRecord: forget, nextRunAt: nil, alerts: [], latestBackupRecord: backup))
+        for (last, expected) in [(backup, Optional(backup)), (forget, nil)] {
+            var object = try JSONSerialization.jsonObject(with: XPCCoding.encode(PlanStatus(
+                plan: Self.plan(), phase: .idle, lastRecord: last, nextRunAt: nil, alerts: []))) as! [String: Any]
+            object["latestBackupRecord"] = nil
+            object["latestBackupVerdict"] = nil
+            let decoded = try XPCCoding.decode(PlanStatus.self, from: JSONSerialization.data(withJSONObject: object))
+            #expect(decoded.latestBackupRecord == expected)
+            // The verdict falls back the same way, when the record is one (a failure is).
+            #expect(decoded.latestBackupVerdict == expected)
+        }
+        // A skip isn't a verdict: an older status that only had one has no verdict to show.
+        var skip = backup
+        skip.outcome = .skipped(.onBattery)
+        let decodedSkip = try XPCCoding.decode(PlanStatus.self, from: XPCCoding.encode(PlanStatus(
+            plan: Self.plan(), phase: .idle, lastRecord: skip, nextRunAt: nil, alerts: [])))
+        #expect(decodedSkip.latestBackupRecord == skip)
+        #expect(decodedSkip.latestBackupVerdict == nil)
+    }
+
+    @Test func newShapesArePinned() throws {
+        #expect(try json(NetworkSettings.defaults) == #"{"skipOnConstrainedNetwork":true,"skippedWiFiNames":[]}"#)
+        #expect(try json(RepositorySize(bytes: 42, measuredAt: Date(timeIntervalSince1970: 1_800_000_000)))
+            == #"{"bytes":42,"measuredAt":"2027-01-15T08:00:00.000Z"}"#)
+        #expect(try json([PlanSetupState.unfinished, .needsNewKit, .complete])
+            == #"["unfinished","needsNewKit","complete"]"#)
+    }
+
+    /// A status as a v0.1 build 11 agent sent it: plans with `skipOnConstrainedNetwork` in their conditions
+    /// and none of the new keys. It decodes, with the new fields nil or derived from the plan.
+    @Test func aBuild11StatusDecodes() throws {
+        func plan(id: String, confirmed: String?) -> String {
+            #"{"conditions":{"battery":{"percent":20,"type":"minimumPercent"},"skipOnConstrainedNetwork":true},"#
+                + #""createdAt":"2027-01-15T08:00:00.123Z","exclusions":[],"fileTypeExclusions":["dmg"],"#
+                + #""forgetCadence":"afterEachBackup","hasCheckInURL":false,"hostLabel":"mac","id":"\#(id)","#
+                + #""name":"Home","noSuccessAlertDays":3,"oneFileSystem":true,"origin":"created","packSizeMiB":64,"#
+                + #""pruneEnabled":true,"#
+                + (confirmed.map { #""recoveryKitConfirmedAt":"\#($0)","# } ?? "")
+                + #""repository":{"location":{"bucket":"bucket","endpoint":"https://s3.us-west-004.backblazeb2.com","#
+                + #""prefix":"mac","provider":"b2"},"type":"s3"},"#
+                + #""retention":{"daily":30,"hourly":24,"monthly":120,"weekly":52},"#
+                + #""schedule":{"seconds":3600,"type":"interval"},"sources":["/Users/me"]}"#
+        }
+        let unconfirmed = plan(id: "6F1C2E1A-0000-4000-8000-000000000001", confirmed: nil)
+        let confirmed = plan(id: "6F1C2E1A-0000-4000-8000-000000000002", confirmed: "2027-01-15T09:00:00.000Z")
+        let json = #"{"agentRun":"6F1C2E1A-0000-4000-8000-0000000000AA","fdaMissing":false,"#
+            + #""generatedAt":"2027-01-15T10:00:00.000Z","plans":["#
+            + #"{"alerts":[],"nextRunAt":"2027-01-15T11:00:00.000Z","phase":{"type":"idle"},"plan":\#(unconfirmed)},"#
+            + #"{"alerts":[],"phase":{"type":"idle"},"plan":\#(confirmed)}"#
+            + #"],"sequence":4}"#
+        let status = try XPCCoding.decode(AgentStatus.self, from: Data(json.utf8))
+        #expect(status.network == nil)
+        #expect(status.plans.count == 2)
+        for plan in status.plans {
+            #expect(plan.plan.setupCompletedAt == nil)
+            #expect(!plan.plan.offMacNoteDismissed)
+            #expect(plan.lastBackup == nil)
+            #expect(plan.repositorySize == nil)
+        }
+        // Before `latestBackupRecord`, the newest record stands in when it is a backup's.
+        #expect(status.plans.allSatisfy { $0.latestBackupRecord == nil })
+        #expect(status.plans[0].setupState == .unfinished)
+        #expect(status.plans[1].setupState == .complete)
     }
 
     // MARK: Ordering statuses (final review M1)
@@ -110,7 +218,7 @@ struct MessagesTests {
         #expect(try json(PlanPhase.idle) == #"{"type":"idle"}"#)
         #expect(try json(PlanPhase.running(nil, retrying: nil)) == #"{"type":"running"}"#)
         #expect(try json(PlanPhase.running(BackupStatus(percentDone: 0.25), retrying: "retrying"))
-            == #"{"progress":{"bytesDone":0,"currentFiles":[],"errorCount":0,"filesDone":0,"percentDone":0.25,"totalBytes":0,"totalFiles":0},"retrying":"retrying","type":"running"}"#)
+            == #"{"progress":{"bytesDone":0,"currentFiles":[],"errorCount":0,"filesDone":0,"percentDone":0.25,"scanFinished":false,"totalBytes":0,"totalFiles":0},"retrying":"retrying","type":"running"}"#)
         #expect(try json(PlanPhase.paused(until: Date(timeIntervalSince1970: 1_800_000_000)))
             == #"{"type":"paused","until":"2027-01-15T08:00:00.000Z"}"#)
         #expect(try json(PlanPhase.stopped(reason: "r")) == #"{"reason":"r","type":"stopped"}"#)
@@ -150,6 +258,62 @@ struct MessagesTests {
         try roundTrip(DrainReply(drained: true))
         #expect(try json(DrainReply(drained: true)) == #"{"drained":true}"#)
         try roundTrip(NotificationPermissionReply(granted: false))
+        try roundTrip(LocationPermissionReply(authorised: true, status: "authorisedAlways"))
+        #expect(try json(LocationPermissionReply(authorised: false, status: "denied"))
+            == #"{"authorised":false,"status":"denied"}"#)
+        try roundTrip(LocationPermissionReply(authorised: false, status: "notDetermined", servicesEnabled: false))
+        // An agent older than Task 15 sends no servicesEnabled: it decodes as unknown.
+        let old = try XPCCoding.decode(
+            LocationPermissionReply.self, from: Data(#"{"authorised":false,"status":"denied"}"#.utf8))
+        #expect(old.servicesEnabled == nil)
+    }
+
+    @Test func repositoryProbeRoundTripsAndItsShapeIsPinned() throws {
+        let report = AdoptReport(hosts: ["other"], latestPathsForHost: [], snapshotCount: 2)
+        try roundTrip(RepositoryProbe(state: .empty))
+        try roundTrip(RepositoryProbe(state: .existing(report)))
+        try roundTrip(RepositoryProbe(state: .passwordRejected))
+        #expect(try json(RepositoryProbe(state: .empty)) == #"{"state":{"type":"empty"}}"#)
+        #expect(try json(RepositoryProbe(state: .passwordRejected)) == #"{"state":{"type":"passwordRejected"}}"#)
+        #expect(try json(RepositoryProbe(state: .existing(report)))
+            == #"{"state":{"report":{"hosts":["other"],"latestPathsForHost":[],"snapshotCount":2},"type":"existing"}}"#)
+        #expect(throws: DecodingError.self) {
+            try XPCCoding.decode(RepositoryProbe.self, from: Data(#"{"state":{"type":"locked"}}"#.utf8))
+        }
+    }
+
+    @Test func backUpNowReplyRoundTripsAndAnOldStatusReplyStillDecodes() throws {
+        let status = AgentStatus(plans: [], configError: nil, fdaMissing: false, generatedAt: Date(timeIntervalSince1970: 0))
+        try roundTrip(BackUpNowReply(status: status, alreadyRunning: true))
+        try roundTrip(BackUpNowReply(status: status, alreadyRunning: false))
+        #expect(try json(BackUpNowReply(status: status, alreadyRunning: true)).hasPrefix(#"{"alreadyRunning":true,"status":{"#))
+        // An agent from before the reply existed answered with a bare status: started, not already running.
+        let old = try XPCCoding.encode(status)
+        let decoded = try XPCCoding.decode(BackUpNowReply.self, from: old)
+        #expect(decoded == BackUpNowReply(status: status, alreadyRunning: false))
+    }
+
+    @Test func recoveryKitSecretsRoundTrip() throws {
+        try roundTrip(RecoveryKitSecrets(plan: Self.plan(), secrets: [
+            SecretEntry(key: .repositoryPassword(Self.planID), value: "pa ss\"wörd\n"),
+            SecretEntry(key: .checkInURL(Self.planID), value: "https://hc-ping.com/x"),
+        ]))
+    }
+
+    /// `recoveryKit`'s reply carries every secret of a plan, so it must never print one either.
+    @Test func recoveryKitSecretsDescriptionsAreRedacted() {
+        let secret = "hunter2-very-secret"
+        let kit = RecoveryKitSecrets(plan: Self.plan(), secrets: [
+            SecretEntry(key: .repositoryPassword(Self.planID), value: secret),
+            SecretEntry(key: .checkInURL(Self.planID), value: "https://hc-ping.com/\(secret)"),
+        ])
+        var dumped = ""
+        dump(kit, to: &dumped)
+        for text in [String(describing: kit), String(reflecting: kit), "\(kit)", dumped] {
+            #expect(!text.contains("hunter2"), "leaked in: \(text)")
+        }
+        #expect(String(describing: kit).contains("repository-password"))
+        #expect(String(describing: kit).contains(Self.planID.uuidString))
     }
 
     @Test func descriptionsNeverContainSecretValues() {
@@ -171,5 +335,35 @@ struct MessagesTests {
         // The key is still named, so a log line says which secret was involved.
         #expect(String(describing: entry).contains("repository-password"))
         #expect(String(describing: request).contains(Self.planID.uuidString))
+    }
+
+    /// Settings checks typed credentials before saving them (`probeRepositoryCredentials`).
+    @Test func credentialProbeRequestRoundTripsAndNeverPrintsASecret() throws {
+        let request = CredentialProbeRequest(planID: Self.planID, secrets: [
+            SecretEntry(key: .repositoryPassword(Self.planID), value: "hunter2 pa ss\"wörd\n"),
+            SecretEntry(key: .s3SecretAccessKey(Self.planID), value: "hunter2-key"),
+        ])
+        try roundTrip(request)
+        var dumped = ""
+        dump(request, to: &dumped)
+        for text in [String(describing: request), String(reflecting: request), "\(request)", dumped] {
+            #expect(!text.contains("hunter2"), "leaked in: \(text)")
+        }
+        #expect(String(describing: request).contains(Self.planID.uuidString))
+    }
+
+    /// Task 14b: the earlier-snapshots calls carry snapshot IDs, host names, paths and counts, never a secret.
+    @Test func earlierSnapshotsMessagesRoundTripWithExplicitJSON() throws {
+        let id = String(repeating: "a", count: 64)
+        let group = EarlierSnapshotGroup(
+            scope: .previousFolderList(paths: ["/Users/me/Old"]), host: "mac", paths: ["/Users/me/Old"], tags: [],
+            keptCount: 3, removeIDs: [id])
+        try roundTrip(EarlierSnapshotsPreview(groups: [group]))
+        try roundTrip(EarlierSnapshotsRemoval(removed: 12, leftAlone: 1))
+        let request = EarlierSnapshotsRequest(planID: Self.planID, confirmation: EarlierSnapshotsConfirmation(group))
+        try roundTrip(request)
+        #expect(try json(request) == #"{"confirmation":{"scope":{"paths":["/Users/me/Old"],"type":"previousFolderList"},"#
+            + #""snapshotIDs":["\#(id)"]},"planID":"6F1C2E1A-0000-4000-8000-000000000001"}"#)
+        #expect(try json(EarlierSnapshotsRemoval(removed: 12, leftAlone: 1)) == #"{"leftAlone":1,"removed":12}"#)
     }
 }

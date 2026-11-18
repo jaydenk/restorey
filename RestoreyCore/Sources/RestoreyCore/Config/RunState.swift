@@ -44,6 +44,18 @@ public struct AlertNotificationState: Codable, Sendable, Equatable {
     }
 }
 
+/// The repository's size as `restic stats --mode raw-data` last measured it (Ruling P2-9).
+/// JSON: `{"bytes":…,"measuredAt":"…"}`.
+public struct RepositorySize: Codable, Sendable, Equatable {
+    public var bytes: Int64
+    public var measuredAt: Date
+
+    public init(bytes: Int64, measuredAt: Date) {
+        self.bytes = bytes
+        self.measuredAt = measuredAt
+    }
+}
+
 /// What the agent remembers about one plan between launches.
 public struct PlanRunHistory: Codable, Sendable, Equatable {
     public var lastSuccessAt: Date?
@@ -63,13 +75,41 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
     public var activeAlerts: [AlertCondition: AlertNotificationState]
     public var stoppedReason: String?
     public var pausedUntil: Date?
+    /// Nil until the repository has been measured, and in state written before it existed.
+    public var repositorySize: RepositorySize?
+    /// The newest backup that saved the data (`savedData`), kept apart from `recent` so a run of skips or
+    /// failures longer than `recentLimit` can't push it out. Set by `record(_:)`. State written before it
+    /// existed decodes it from `recent`.
+    public var lastBackupRecord: RunRecord?
+    /// Setup's confirmed removal of the snapshots from before adoption (Task 14b), waiting for the plan's next
+    /// successful backup so a setup that fails never deletes anything. The runner clears it once it has run with a
+    /// verdict; a lock held elsewhere or an interruption leaves it for the backup after. Nil in state written before
+    /// it existed.
+    public var pendingEarlierRemoval: EarlierSnapshotsConfirmation?
+    /// Consecutive backups after which `pendingEarlierRemoval`'s preview failed (final review I2), with the newest reason.
+    /// The failure doesn't hold back the backup's maintenance, so this is how a lasting one becomes visible
+    /// (`PendingRemovalFailures.noticeThreshold`). Reset when a removal reaches a verdict or the choice is replaced. Nil in
+    /// state written before it existed.
+    public var pendingEarlierRemovalFailures: PendingRemovalFailures?
 
     public static let recentLimit = 50
 
-    /// Puts `record` at the front of `recent` and drops the oldest beyond `recentLimit`.
+    /// Puts `record` at the front of `recent` and drops the oldest beyond `recentLimit`. A backup that saved
+    /// the data also becomes `lastBackupRecord`.
     public mutating func record(_ record: RunRecord) {
+        if Self.savedData(record) { lastBackupRecord = record }
         recent.insert(record, at: 0)
         if recent.count > Self.recentLimit { recent.removeLast(recent.count - Self.recentLimit) }
+    }
+
+    /// A backup whose outcome is success, unchanged or warning (Ruling P2-4): a skip, failure, pause or
+    /// maintenance step doesn't count.
+    public static func savedData(_ record: RunRecord) -> Bool {
+        guard record.operation == .backup else { return false }
+        switch record.outcome {
+        case .success, .unchanged, .warning: return true
+        default: return false
+        }
     }
 
     public init() {
@@ -79,7 +119,8 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case lastSuccessAt, lastAttemptAt, lastSnapshotAt, lastForgetAt, lastPruneAt, lastCheckAt
-        case runningRecordID, runningRecord, recent, activeAlerts, stoppedReason, pausedUntil
+        case runningRecordID, runningRecord, recent, activeAlerts, stoppedReason, pausedUntil, repositorySize
+        case lastBackupRecord, pendingEarlierRemoval, pendingEarlierRemovalFailures
     }
 
     public init(from decoder: any Decoder) throws {
@@ -108,7 +149,41 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
         })
         stoppedReason = try c.decodeIfPresent(String.self, forKey: .stoppedReason)
         pausedUntil = try c.decodeIfPresent(Date.self, forKey: .pausedUntil)
+        repositorySize = try c.decodeIfPresent(RepositorySize.self, forKey: .repositorySize)
+        // Dropped like `runningRecord` if it names a case this build doesn't know; then, as in state written
+        // before the field existed, the newest such record still in `recent` stands in.
+        var lastBackup: RunRecord?
+        do {
+            lastBackup = try c.decodeIfPresent(RunRecord.self, forKey: .lastBackupRecord)
+        } catch where UnknownCase.isUnknownCase(error) {
+            lastBackup = nil
+        }
+        lastBackupRecord = lastBackup ?? recent.first(where: Self.savedData)
+        // A scope only a newer build knows: dropped, so nothing this build can't classify is ever removed.
+        do {
+            pendingEarlierRemoval = try c.decodeIfPresent(EarlierSnapshotsConfirmation.self, forKey: .pendingEarlierRemoval)
+        } catch where UnknownCase.isUnknownCase(error) {
+            pendingEarlierRemoval = nil
+        }
+        pendingEarlierRemovalFailures = try c.decodeIfPresent(PendingRemovalFailures.self, forKey: .pendingEarlierRemovalFailures)
     }
+}
+
+/// How many backups in a row couldn't finish setup's pending removal because its preview failed, and why the newest did.
+public struct PendingRemovalFailures: Codable, Sendable, Equatable {
+    /// From this many in a row the Overview says so.
+    public static let noticeThreshold = 3
+
+    public var count: Int
+    public var reason: String
+
+    public init(count: Int, reason: String) {
+        self.count = count
+        self.reason = reason
+    }
+
+    /// The reason to show, once the failure has lasted `noticeThreshold` backups.
+    public var noticeReason: String? { count >= Self.noticeThreshold ? reason : nil }
 }
 
 /// A `RunRecord`, or nil when it names a case this build doesn't know (`UnknownCase`).

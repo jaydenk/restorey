@@ -22,6 +22,12 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
     /// iPhone's DeviceFS) are skipped, while every source's own filesystem, such as a USB drive listed as
     /// a source, is still backed up (Ruling R64c).
     public var oneFileSystem: Bool
+    /// Skips items apps mark as not for backup (Time Machine's per-item attribute; `MarkedNotForBackup`, Task 15c).
+    /// True for new plans, and for a plan saved before the field existed.
+    public var skipsItemsMarkedNotForBackup: Bool
+    /// Absolute paths the person chose to back up although they are marked not for backup; an entry also covers
+    /// everything under it. Kept when the switch is off, so turning it back on restores the choices.
+    public var backUpAnyway: [String]
     public var schedule: Schedule
     public var conditions: Conditions
     public var retention: Retention
@@ -33,7 +39,18 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
     /// Whether a check-in URL exists in the keychain. The URL itself is a secret and is not stored here.
     public var hasCheckInURL: Bool
     public var recoveryKitConfirmedAt: Date?
+    /// When the plan's recovery kit was first confirmed, which finishes setup (Ruling P2-3). Set by the
+    /// agent's first `confirmRecoveryKit` and never cleared, so a plan whose kit needs confirming again
+    /// (`recoveryKitConfirmedAt` nil) can be told apart from one whose setup was never finished.
+    public var setupCompletedAt: Date?
+    /// Whether the user has dismissed the "No off-Mac monitoring" note for this plan.
+    public var offMacNoteDismissed: Bool
     public var createdAt: Date
+    /// When setup adopted the plan's repository ("Use This Repository"). It bounds "snapshots from before
+    /// adoption" (product spec §5.6, Task 14b): only snapshots this Mac made by then are offered. Nil for a created
+    /// repository, and for a plan adopted before the field existed (`EarlierSnapshots` then bounds by the plan's
+    /// earliest own snapshot).
+    public var adoptedAt: Date?
 
     public init(
         id: UUID,
@@ -45,6 +62,8 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         exclusions: [String],
         fileTypeExclusions: [String],
         oneFileSystem: Bool,
+        skipsItemsMarkedNotForBackup: Bool = true,
+        backUpAnyway: [String] = [],
         schedule: Schedule,
         conditions: Conditions,
         retention: Retention,
@@ -55,7 +74,10 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         noSuccessAlertDays: Int,
         hasCheckInURL: Bool,
         recoveryKitConfirmedAt: Date?,
-        createdAt: Date
+        setupCompletedAt: Date? = nil,
+        offMacNoteDismissed: Bool = false,
+        createdAt: Date,
+        adoptedAt: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -66,6 +88,8 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         self.exclusions = exclusions
         self.fileTypeExclusions = fileTypeExclusions
         self.oneFileSystem = oneFileSystem
+        self.skipsItemsMarkedNotForBackup = skipsItemsMarkedNotForBackup
+        self.backUpAnyway = backUpAnyway
         self.schedule = schedule
         self.conditions = conditions
         self.retention = retention
@@ -76,7 +100,53 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         self.noSuccessAlertDays = noSuccessAlertDays
         self.hasCheckInURL = hasCheckInURL
         self.recoveryKitConfirmedAt = recoveryKitConfirmedAt
+        self.setupCompletedAt = setupCompletedAt
+        self.offMacNoteDismissed = offMacNoteDismissed
         self.createdAt = createdAt
+        self.adoptedAt = adoptedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, repository, origin, hostLabel, sources, exclusions, fileTypeExclusions, oneFileSystem
+        case skipsItemsMarkedNotForBackup, backUpAnyway
+        case schedule, conditions, retention, pruneEnabled, forgetCadence, uploadLimitKiB, packSizeMiB
+        case noSuccessAlertDays, hasCheckInURL, recoveryKitConfirmedAt, setupCompletedAt, offMacNoteDismissed
+        case createdAt, adoptedAt
+    }
+
+    /// `config.json` always has `offMacNoteDismissed` (schema 3), but a plan in a status or save request from
+    /// a build before it doesn't: it decodes as false.
+    ///
+    /// Hand-written: a new field must be added to the properties, `CodingKeys` and this decoder (encoding is
+    /// synthesised from `CodingKeys`), and `PlanCodingTests.roundTripsThroughJSON` should set it.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        repository = try c.decode(Repository.self, forKey: .repository)
+        origin = try c.decode(RepositoryOrigin.self, forKey: .origin)
+        hostLabel = try c.decode(String.self, forKey: .hostLabel)
+        sources = try c.decode([String].self, forKey: .sources)
+        exclusions = try c.decode([String].self, forKey: .exclusions)
+        fileTypeExclusions = try c.decode([String].self, forKey: .fileTypeExclusions)
+        oneFileSystem = try c.decode(Bool.self, forKey: .oneFileSystem)
+        // Added after schema 3 with no migration (additive, like `adoptedAt`): absent means the defaults.
+        skipsItemsMarkedNotForBackup = try c.decodeIfPresent(Bool.self, forKey: .skipsItemsMarkedNotForBackup) ?? true
+        backUpAnyway = try c.decodeIfPresent([String].self, forKey: .backUpAnyway) ?? []
+        schedule = try c.decode(Schedule.self, forKey: .schedule)
+        conditions = try c.decode(Conditions.self, forKey: .conditions)
+        retention = try c.decode(Retention.self, forKey: .retention)
+        pruneEnabled = try c.decode(Bool.self, forKey: .pruneEnabled)
+        forgetCadence = try c.decode(ForgetCadence.self, forKey: .forgetCadence)
+        uploadLimitKiB = try c.decodeIfPresent(Int.self, forKey: .uploadLimitKiB)
+        packSizeMiB = try c.decodeIfPresent(Int.self, forKey: .packSizeMiB)
+        noSuccessAlertDays = try c.decode(Int.self, forKey: .noSuccessAlertDays)
+        hasCheckInURL = try c.decode(Bool.self, forKey: .hasCheckInURL)
+        recoveryKitConfirmedAt = try c.decodeIfPresent(Date.self, forKey: .recoveryKitConfirmedAt)
+        setupCompletedAt = try c.decodeIfPresent(Date.self, forKey: .setupCompletedAt)
+        offMacNoteDismissed = try c.decodeIfPresent(Bool.self, forKey: .offMacNoteDismissed) ?? false
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        adoptedAt = try c.decodeIfPresent(Date.self, forKey: .adoptedAt)
     }
 
     /// A new plan with every spec default applied. Callers pass the folder exclusion list
@@ -104,7 +174,7 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
             fileTypeExclusions: fileTypeExclusions,
             oneFileSystem: true,
             schedule: .interval(seconds: 3600),
-            conditions: Conditions(battery: .minimumPercent(20), skipOnConstrainedNetwork: true),
+            conditions: Conditions(battery: .minimumPercent(20)),
             retention: Retention(),
             // An adopted repository is someone else's: never prune it, and forget daily rather
             // than after every backup.
@@ -131,6 +201,8 @@ public enum PlanValidationError: Error, Equatable, Sendable {
     /// A file-type exclusion that isn't a bare extension once trimmed and lower-cased: empty, with a
     /// leading dot, a `/`, a glob character (`*?[]\`) or whitespace inside.
     case invalidFileType(String)
+    /// A per-plan upload limit of 0 or less. None is nil, not 0 (the Mac-wide limit has the same rule).
+    case uploadLimitNotPositive(kiB: Int)
 }
 
 extension Plan {
@@ -150,6 +222,7 @@ extension Plan {
         for type in fileTypeExclusions where Self.normalisedFileType(type) == nil {
             errors.append(.invalidFileType(type))
         }
+        if let uploadLimitKiB, uploadLimitKiB <= 0 { errors.append(.uploadLimitNotPositive(kiB: uploadLimitKiB)) }
         return errors
     }
 
@@ -209,7 +282,7 @@ public enum Schedule: Codable, Sendable, Equatable {
 }
 
 /// `{"type":"minimumPercent","percent":20}` or `{"type":"neverOnBattery"}`
-public enum BatteryRule: Codable, Sendable, Equatable {
+public enum BatteryRule: Codable, Sendable, Hashable {
     case minimumPercent(Int)
     case neverOnBattery
 
@@ -237,13 +310,12 @@ public enum BatteryRule: Codable, Sendable, Equatable {
     }
 }
 
+/// The plan's own pre-run conditions. The network rules are Mac-wide (`NetworkSettings`) since schema 3.
 public struct Conditions: Codable, Sendable, Equatable {
     public var battery: BatteryRule
-    public var skipOnConstrainedNetwork: Bool
 
-    public init(battery: BatteryRule = .minimumPercent(20), skipOnConstrainedNetwork: Bool = true) {
+    public init(battery: BatteryRule = .minimumPercent(20)) {
         self.battery = battery
-        self.skipOnConstrainedNetwork = skipOnConstrainedNetwork
     }
 }
 
@@ -342,6 +414,29 @@ public enum Repository: Codable, Sendable, Equatable {
 
     /// restic 0.19.1's registered backends other than `local`.
     static let networkSchemes: Set<String> = ["azure", "b2", "gs", "rclone", "rest", "s3", "sftp", "swift"]
+
+    /// Where the repository is, for the symbol beside its plan in Settings → Plans: a storage service's (S3, B2,
+    /// Azure, Google Cloud Storage, Swift, or rclone's, whose remotes are such services), another machine on the network
+    /// (an SFTP or rest-server host, or a backend restic wouldn't know), or this Mac (a folder or drive).
+    public var place: RepositoryPlace {
+        switch self {
+        case .s3: return .cloud
+        case .raw(let repository, _):
+            guard Self.rawLocationNeedsNetwork(repository) else { return .thisMac }
+            let scheme = repository.split(separator: ":", maxSplits: 1).first.map(String.init) ?? ""
+            return Self.cloudSchemes.contains(scheme) ? .cloud : .server
+        }
+    }
+
+    /// The backends that are storage services rather than a machine of the user's own.
+    static let cloudSchemes: Set<String> = ["azure", "b2", "gs", "rclone", "s3", "swift"]
+}
+
+/// Where a plan's repository is (`Repository.place`).
+public enum RepositoryPlace: Sendable, Equatable {
+    case thisMac
+    case cloud
+    case server
 }
 
 public struct S3Location: Codable, Sendable, Equatable {

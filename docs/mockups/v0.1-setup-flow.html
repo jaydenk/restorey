@@ -1,0 +1,86 @@
+<style>
+  .flow { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:16px; }
+  .win { border:1px solid #c7c7cc; border-radius:10px; background:#fff; color:#1d1d1f; font:13px -apple-system,"SF Pro Text",sans-serif; overflow:hidden; }
+  .bar { background:#ececef; padding:6px 10px; font-weight:600; font-size:12px; display:flex; gap:6px; align-items:center; }
+  .dot { width:9px; height:9px; border-radius:50%; background:#d0d0d4; display:inline-block; }
+  .body { padding:12px; min-height:200px; }
+  .step { font-size:11px; color:#6e6e73; margin-bottom:4px; }
+  .row { display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid #f0f0f2; }
+  .ok { color:#248a3d; font-weight:600; } .todo { color:#0a64d8; font-weight:600; }
+  .btn { display:inline-block; background:#0a84ff; color:#fff; border-radius:6px; padding:3px 10px; font-size:12px; margin-top:10px; }
+  .btn2 { display:inline-block; border:1px solid #c7c7cc; border-radius:6px; padding:3px 10px; font-size:12px; margin-top:10px; }
+  .field { border:1px solid #c7c7cc; border-radius:5px; padding:3px 6px; color:#8e8e93; margin:3px 0 6px; font-size:12px; }
+  .seg { display:flex; border:1px solid #c7c7cc; border-radius:6px; overflow:hidden; font-size:12px; margin:4px 0 8px; }
+  .seg span { flex:1; text-align:center; padding:3px 0; } .seg .on { background:#0a84ff; color:#fff; }
+  .note { font-size:11px; color:#6e6e73; margin-top:6px; }
+  .branch { border-left:3px solid #ff9f0a; padding-left:8px; margin-top:8px; font-size:12px; }
+  .prog { height:6px; background:#e9e9ec; border-radius:3px; margin:8px 0; } .prog i { display:block; height:100%; width:38%; background:#0a84ff; border-radius:3px; }
+</style>
+
+<h2>First-run setup: the steps in order</h2>
+<p class="subtitle">A wireframe of the sequence you described, one window per step. This is about order and content, not looks yet. What's wrong, missing or in the wrong place?</p>
+
+<div class="flow">
+  <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>&nbsp;Set up Restorey</div><div class="body">
+    <div class="step">Step 1 of 6 · Permissions</div>
+    <div class="row"><span>Restorey is in Applications</span><span class="ok">✓</span></div>
+    <div class="row"><span>Full Disk Access</span><span class="todo">Open Settings…</span></div>
+    <div class="row"><span>Notifications</span><span class="todo">Allow…</span></div>
+    <div class="note">Granting Full Disk Access quits Restorey. It reopens here and ticks it off. If the app isn't in Applications, a "Move to Applications" screen comes first.</div>
+    <span class="btn">Continue</span>
+  </div></div>
+
+  <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>&nbsp;Set up Restorey</div><div class="body">
+    <div class="step">Step 2 of 6 · Where backups go</div>
+    <div class="seg"><span class="on">B2</span><span>S3</span><span>Other restic</span></div>
+    <div>Endpoint</div><div class="field">s3.us-west-001.backblazeb2.com</div>
+    <div>Bucket · Folder</div><div class="field">my-backups · macbook</div>
+    <div>Key ID · Application key</div><div class="field">••••••••</div>
+    <div class="note">How to make a bucket and a key in Backblaze ↗</div>
+    <span class="btn">Check</span>
+  </div></div>
+
+  <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>&nbsp;Set up Restorey</div><div class="body">
+    <div class="step">Step 3 of 6 · Repository password</div>
+    <div><b>Nothing here yet.</b></div>
+    <div>New password</div><div class="field">generated · show · copy</div>
+    <span class="btn">Create new repository</span>
+    <div class="branch"><b>Or, a repository is already there:</b> 312 snapshots from 3 Macs. Enter its password to use it. Your folders come from the latest snapshot for this Mac.</div>
+  </div></div>
+
+  <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>&nbsp;Set up Restorey</div><div class="body">
+    <div class="step">Step 4 of 6 · Recovery kit</div>
+    <div>Without this you can't restore if this Mac is lost. It's the address, password and keys, and how to restore without Restorey.</div>
+    <span class="btn2">Save as PDF…</span> <span class="btn2">Print…</span>
+    <div class="note">Store it off this Mac (a password manager, or paper). Restorey never saves a copy on the Mac.</div>
+    <div class="row" style="border:0"><span>☐ I've saved it somewhere other than this Mac</span></div>
+    <span class="btn">Continue</span>
+  </div></div>
+
+  <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>&nbsp;Set up Restorey</div><div class="body">
+    <div class="step">Step 5 of 6 · What to back up</div>
+    <div class="row"><span>📁 Home folder (~)</span><span>505 GB</span></div>
+    <div class="row"><span>+ Add folder or drive…</span><span></span></div>
+    <div class="note">Skipped by default: caches, Trash, node_modules, VM and disk images, iCloud files not on this Mac (Time Machine's list, plus Backblaze's file types). <u>Review exclusions…</u></div>
+    <span class="btn">Continue</span>
+  </div></div>
+
+  <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>&nbsp;Set up Restorey</div><div class="body">
+    <div class="step">Step 6 of 6 · Schedule</div>
+    <div class="row"><span>Back up</span><span>Every hour ▾</span></div>
+    <div class="row"><span>On battery</span><span>Above 20% ▾</span></div>
+    <div class="row"><span>On a hotspot / Low Data Mode</span><span>Skip ▾</span></div>
+    <div class="row"><span>Keep</span><span>24 hourly · 30 daily · 52 weekly · 120 monthly</span></div>
+    <div class="row"><span>Check-in URL (optional)</span><span class="todo">Add…</span></div>
+    <span class="btn">Start first backup</span>
+  </div></div>
+
+  <div class="win"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>&nbsp;Set up Restorey</div><div class="body">
+    <div class="step">Done · First backup running</div>
+    <div><b>Backing up — 38%</b></div>
+    <div class="prog"><i></i></div>
+    <div class="note">191 GB of 505 GB · about 6 h left · 24 MB/s</div>
+    <div class="note">You can close this window. It keeps going in the background, and the menu bar icon shows progress.</div>
+    <span class="btn">Close</span>
+  </div></div>
+</div>

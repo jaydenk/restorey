@@ -1,14 +1,31 @@
+import AppIntents
 import AppKit
 import OSLog
 import RestoreyCore
 
-/// The app is UI only (spec §8): a status item, plus a Debug-only developer window. Its engine job is to
-/// keep the agent installed, current and alive, and only when this copy is the installed one.
+/// The app is UI only (spec §8): a status item, the windows `WindowRouter` opens, plus a Debug-only developer
+/// window. Its engine job is to keep the agent installed, current and alive, and only when this copy is the
+/// installed one.
+///
+/// The entry point drives `NSApplication` directly rather than through SwiftUI's `App`, so `MainMenu` stays the
+/// menu and no SwiftUI scene opens or restores a window of its own.
 @main
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private static let damagedMessage = "This copy of Restorey is damaged. Reinstall it."
+
     private var statusItem: StatusItemController?
     private var supervisor: AgentSupervisor?
+    private let router = WindowRouter()
+    /// What the Shortcuts actions reach the agent through (Task 17e).
+    private let shortcuts = ShortcutGateway()
+    private var mode = ShellMode.running
+    private let setupStore = SetupProgressStore(defaults: .standard)
+    /// Set once the launch has decided whether setup opens (P2-10), so it opens at most once by itself.
+    private var setupDecidedAtLaunch = false
+    /// The windows the launch opens by itself wait for the app's first activation, so a launch that doesn't activate
+    /// it (`open -g`, a Shortcuts action run in the background) shows nothing until the person comes to Restorey.
+    private var launchWindows = LaunchWindowGate()
     #if DEBUG
     private var developerWindow: DeveloperWindowController?
     #endif
@@ -16,39 +33,148 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static func main() {
         let app = NSApplication.shared
         let delegate = AppDelegate()
+        // Before the app runs, so an action that launched Restorey finds it (App Intents' dependency manager).
+        let shortcuts = delegate.shortcuts
+        AppDependencyManager.shared.add(dependency: shortcuts)
         app.delegate = delegate
         app.setActivationPolicy(.accessory)
         withExtendedLifetime(delegate) { app.run() }
     }
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        MainMenu.install(
+            canShowSettings: { [weak self] in self?.mode == .running },
+            showSettings: { [weak self] in self?.router.showSettings() })
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        setUp()
+        guard let statusItem else { return }
+        router.state.statusItemHidden = !statusItem.isVisible
+        statusItem.observeVisibility { [weak self] visible in self?.router.state.statusItemHidden = !visible }
+        // Checked once launch is over, on the next turn of the run loop, so it reads the saved visibility.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let statusItem = self.statusItem else { return }
+            if let opening = shellOpeningAtLaunch(mode: self.mode, statusItemVisible: statusItem.isVisible) {
+                self.openAtLaunch(opening)
+            }
+            // An activation that came before this delegate was listening still counts.
+            if NSApp.isActive { self.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification)) }
+        }
+    }
+
+    /// The first activation opens what the launch asked for (`LaunchWindowGate`); later ones open nothing by themselves.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        for opening in launchWindows.becameActive() { open(opening) }
+    }
+
+    /// A window the launch opens by itself, through the gate.
+    private func openAtLaunch(_ opening: ShellOpening) {
+        for now in launchWindows.request(opening) { open(now) }
+    }
+
+    /// Opening the app again from Finder, Spotlight or `open` while it runs: the only way in for someone who
+    /// can't see the status item.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        open(shellOpeningOnReopen(mode: mode, statusItemVisible: statusItem?.isVisible ?? false))
+        return false
+    }
+
+    /// Nothing is state-restored (every window sets `isRestorable = false`); answering at all keeps macOS 14+'s
+    /// restoration machinery from running undecided.
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
+
+    private func open(_ opening: ShellOpening) {
+        guard opening == .damagedNotice else { return router.show(opening) }
+        let alert = NSAlert()
+        alert.messageText = Self.damagedMessage
+        WindowActivation.runModal(alert)
+    }
+
+    private func setUp() {
         let identity: Identity
         do {
             identity = try Identity.fromBundle(.main)
         } catch {
             Logger(subsystem: Bundle.main.bundleIdentifier ?? "Restorey", category: "app")
                 .fault("Can't read the identity from Info.plist: \(String(describing: error), privacy: .public)")
-            statusItem = StatusItemController(broken: "This copy of Restorey is damaged. Reinstall it.")
+            mode = .broken
+            statusItem = StatusItemController(broken: Self.damagedMessage)
+            shortcuts.copy = .refused(Self.damagedMessage)
             return
         }
         let log = AppLog(identity: identity, kind: .app)
+        WindowActivation.log = log
 
         // The gate: a copy outside /Applications, or translocated, touches nothing of the agent's.
         switch InstallLocation.check() {
         case .refused(let verdict):
             log.info("Not touching the agent: this copy at \(Bundle.main.bundlePath) is \(verdict)")
-            statusItem = StatusItemController(refused: verdict)
+            mode = .refused
+            statusItem = StatusItemController(refused: verdict, router: router)
+            shortcuts.copy = .refused(verdict == .translocated
+                ? "macOS is running this copy of Restorey from a temporary location. Move it to Applications."
+                : "Restorey only runs from the Applications folder.")
+            let mover = AppMover(bundle: .main, identity: identity, translocated: verdict == .translocated)
+            router.makeSetupModel = { [setupStore] _ in
+                // Always the move screen; the saved progress is the installed copy's and is left alone.
+                SetupModel(
+                    context: .refused(mover),
+                    progress: SetupProgress(planID: nil, step: .moveToApplications, addingPlan: false),
+                    store: setupStore)
+            }
+            // A copy outside /Applications can do nothing else, so its one screen opens as soon as the app is active.
+            openAtLaunch(.setup)
         case .installed(let copy):
             let supervisor = AgentSupervisor(installed: copy, identity: identity, log: log)
             self.supervisor = supervisor
-            let statusItem = StatusItemController(supervisor: supervisor)
+            router.supervisor = supervisor
+            let statusItem = StatusItemController(supervisor: supervisor, router: router)
             #if DEBUG
-            let developer = DeveloperWindowController(supervisor: supervisor, identity: identity)
+            let developer = DeveloperWindowController(supervisor: supervisor, identity: identity) { [router] in
+                router.planDeleted($0)
+            }
             developerWindow = developer
             statusItem.setDeveloperAction { developer.show() }
             #endif
             self.statusItem = statusItem
+            let loginItem = LoginItem(installed: copy)
+            router.loginItem = loginItem
+            router.setupStore = setupStore
+            router.makeSetupModel = { [setupStore] progress in
+                SetupModel(
+                    context: .installed(supervisor, loginItem),
+                    progress: progress ?? SetupFlow.opening(
+                        saved: setupStore.load(), plans: supervisor.lastKnownStatus?.plans, installed: true),
+                    store: setupStore)
+            }
+            shortcuts.copy = .installed(supervisor)
+            supervisor.observe { [weak self, weak supervisor] in
+                guard let self, let supervisor else { return }
+                self.openSetupAtLaunchIfNeeded(status: supervisor.status)
+                self.shortcuts.statusChanged(supervisor.lastKnownStatus)
+            }
             supervisor.start()
+        }
+    }
+
+    /// P2-10: setup opens at launch while a plan's setup is unfinished or no plan exists, decided on the agent's
+    /// first status, since only the agent knows the plans.
+    private func openSetupAtLaunchIfNeeded(status: AgentStatus?) {
+        guard !setupDecidedAtLaunch, let status else { return }
+        setupDecidedAtLaunch = true
+        if SetupFlow.resume(saved: setupStore.load(), plans: status.plans, installed: true) != nil {
+            openAtLaunch(.setup)
+        }
+    }
+
+    /// Unsaved plan edits in Settings are asked about first (Save, Don't Save, Cancel), as closing the window asks.
+    /// The save is async, so the answer comes later (`reply(toApplicationShouldTerminate:)`).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        switch router.askBeforeQuitting({ proceed in NSApplication.shared.reply(toApplicationShouldTerminate: proceed) }) {
+        case .none: return .terminateNow
+        case .asked: return .terminateLater
+        case .busy: return .terminateCancel
         }
     }
 

@@ -32,6 +32,8 @@ public actor AgentState {
     private let stateStore: any PayloadStore<RunState>
     private let secrets: any SecretStore
     private let credentialsDirectory: URL
+    /// The plans' run logs, removed with a deleted plan. Nil: nothing to remove (tests without logs).
+    private let runLogs: RunLogStore?
     let now: @Sendable () -> Date
 
     private(set) var config: ConfigFile
@@ -49,6 +51,14 @@ public actor AgentState {
     private var running: [UUID: RunProgress] = [:]
     /// Plans `deletePlan` has started removing. No run may begin on them.
     private var deleting: Set<UUID> = []
+    /// Plans whose repository is being measured after an adopt (`beginMeasurement`). Not a run: the plan
+    /// stays idle and can back up (its backup waits in the repository's queue), but a drain waits for it
+    /// and a delete stops it first.
+    /// Registered measurements and credential checks per plan, counted: an adopt's size measurement and a check
+    /// can overlap, and the first to end mustn't end the other's registration.
+    private var measuring: [UUID: Int] = [:]
+    /// `deletePlan` callers waiting for a measurement they stopped to end.
+    private var measuringWaiters: [CheckedContinuation<Void, Never>] = []
     /// `prepareForRestart` callers, woken whenever the agent may have become idle.
     private var drainWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -67,8 +77,14 @@ public actor AgentState {
     private var writeInFlight = false
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
 
+    /// Writes a line to the agent's own log (`agent.log`) for the run actions it refuses
+    /// (`attach(agentLog:)`), so a Back Up Now that did nothing leaves a trace (final review M5).
+    var agentLog: @Sendable (String) -> Void = { _ in }
+
     /// Per plan, why the last helper request failed to read the keychain (the runner reports it).
     private var helperFailures: [UUID: String] = [:]
+    /// Credentials being checked by `probeRepository(_:candidates:)` (`CandidateSecrets`).
+    public nonisolated let candidates = CandidateSecrets()
 
     /// Runs backups, creates and adopts repositories (`attach(runner:)`). Weak: the runner holds this state.
     weak var runner: PlanRunner?
@@ -96,8 +112,9 @@ public actor AgentState {
     /// An authorisation call was abandoned and no answer has come since: notifications aren't working.
     var authorisationAbandoned = false
 
-    /// This process's statuses, in the order they were built (`AgentStatus.supersedes`).
-    private let statusRun = UUID()
+    /// This process's statuses, in the order they were built (`AgentStatus.supersedes`). The run is also sent in
+    /// every hello, so the app can tell this process from the one before it (Ruling R76).
+    let statusRun = UUID()
     private var statusSequence: UInt64 = 0
 
     private var observer: (@Sendable (AgentStatus) -> Void)?
@@ -121,21 +138,25 @@ public actor AgentState {
     /// Loads both stores. A load failure is kept as the config error rather than thrown.
     /// - Parameters:
     ///   - credentialsDirectory: where `CredentialsFile` keeps the plans' `s3/<id>.ini` files.
+    ///   - runLogs: the run logs `deletePlan` removes with a plan; the runner's store.
     public init(
         configStore: any PayloadStore<ConfigFile>,
         stateStore: any PayloadStore<RunState>,
         secrets: any SecretStore,
         credentialsDirectory: URL,
+        runLogs: RunLogStore? = nil,
         now: @escaping @Sendable () -> Date
     ) async {
         await self.init(
             configStore: configStore, stateStore: stateStore, secrets: secrets,
-            credentialsDirectory: credentialsDirectory, now: now, startupError: nil)
+            credentialsDirectory: credentialsDirectory, runLogs: runLogs, now: now, startupError: nil)
     }
 
     /// The agent's layout: `config.json`, `state.json` and the credentials files all in `directory`
     /// (`Identity.applicationSupportDirectory()`), which is created with mode 0700.
-    public init(directory: URL, secrets: any SecretStore, now: @escaping @Sendable () -> Date) async {
+    public init(
+        directory: URL, secrets: any SecretStore, runLogs: RunLogStore? = nil, now: @escaping @Sendable () -> Date
+    ) async {
         var startupError: String?
         do {
             try FileManager.default.createDirectory(
@@ -143,11 +164,12 @@ public actor AgentState {
             // createDirectory leaves the mode of an existing folder alone.
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         } catch {
-            startupError = "Restorey can't create its settings folder \(directory.path): \(error.localizedDescription)"
+            startupError = "Restorey can’t create its settings folder \(directory.path): \(error.localizedDescription)"
         }
         await self.init(
             configStore: Self.configStore(in: directory), stateStore: Self.stateStore(in: directory),
-            secrets: secrets, credentialsDirectory: directory, now: now, startupError: startupError)
+            secrets: secrets, credentialsDirectory: directory, runLogs: runLogs, now: now,
+            startupError: startupError)
     }
 
     public static func configStore(in directory: URL) -> VersionedStore<ConfigFile> {
@@ -167,6 +189,7 @@ public actor AgentState {
         stateStore: any PayloadStore<RunState>,
         secrets: any SecretStore,
         credentialsDirectory: URL,
+        runLogs: RunLogStore?,
         now: @escaping @Sendable () -> Date,
         startupError: String?
     ) async {
@@ -191,6 +214,7 @@ public actor AgentState {
         self.stateStore = stateStore
         self.secrets = secrets
         self.credentialsDirectory = credentialsDirectory
+        self.runLogs = runLogs
         self.now = now
         self.config = config ?? ConfigFile()
         self.runState = runState ?? RunState()
@@ -204,13 +228,13 @@ public actor AgentState {
         case .newerSchema(let found, let supported)?:
             return "\(file) was written by a newer version of Restorey (schema \(found); this version reads up to \(supported)). Update Restorey. \(leftAlone)"
         case .corrupt(let underlying)?:
-            return "\(file) can't be read: \(underlying). \(leftAlone)"
+            return "\(file) can’t be read: \(underlying). \(leftAlone)"
         case .missingMigration(let from)?:
-            return "\(file) uses schema \(from), which this version of Restorey can't upgrade. \(leftAlone)"
+            return "\(file) uses schema \(from), which this version of Restorey can’t upgrade. \(leftAlone)"
         case .migrationFailed(let from, let underlying)?:
-            return "\(file) couldn't be upgraded from schema \(from): \(underlying). \(leftAlone)"
+            return "\(file) couldn’t be upgraded from schema \(from): \(underlying). \(leftAlone)"
         case nil:
-            return "\(file) can't be read: \(error.localizedDescription). \(leftAlone)"
+            return "\(file) can’t be read: \(error.localizedDescription). \(leftAlone)"
         }
     }
 
@@ -235,12 +259,15 @@ public actor AgentState {
                 : []
             return AgentStatus(
                 plans: plans, configError: loadError, fdaMissing: nil, generatedAt: now,
-                agentRun: statusRun, sequence: statusSequence)
+                agentRun: statusRun, sequence: statusSequence, network: onlyStateUnreadable ? config.network : nil)
         }
         return AgentStatus(
             plans: config.plans.map { planStatus($0, now: now) }, configError: nil, fdaMissing: fdaMissing,
-            generatedAt: now, agentRun: statusRun, sequence: statusSequence)
+            generatedAt: now, agentRun: statusRun, sequence: statusSequence, network: config.network)
     }
+
+    /// The Mac-wide network rules the preflight applies (Ruling P2-6).
+    var networkSettings: NetworkSettings { config.network }
 
     private func planStatus(_ plan: Plan, now: Date) -> PlanStatus {
         let history = runState.plans[plan.id] ?? PlanRunHistory()
@@ -257,12 +284,22 @@ public actor AgentState {
             phase = .idle
         }
         let next = nextRunDate(plan: plan, history: history, now: now)
-        let alerts = activeConditions(history: history, plan: plan, now: now)
-            .union(history.activeAlerts.keys)
-            .sorted { $0.rawValue < $1.rawValue }
+        var raised = activeConditions(history: history, plan: plan, now: now).union(history.activeAlerts.keys)
+        // A probe since the run that raised it found access granted: the alert is gone now, not after the
+        // next delivery round clears it from `activeAlerts` (or never, with no notifier attached).
+        if !fullDiskAccessAlertStands(history: history, fullDiskAccessMissing: fdaMissing) {
+            raised.remove(.fullDiskAccessMissing)
+        }
+        let alerts = raised.sorted { $0.rawValue < $1.rawValue }
         return PlanStatus(
             plan: plan, phase: phase, lastRecord: history.recent.first,
-            nextRunAt: next == .distantFuture ? nil : next, alerts: alerts)
+            nextRunAt: next == .distantFuture ? nil : next, alerts: alerts,
+            lastBackup: history.lastBackupRecord, repositorySize: history.repositorySize,
+            setupState: PlanSetupState(plan: plan),
+            latestBackupRecord: history.recent.first { $0.operation == .backup },
+            latestBackupVerdict: history.recent.first { $0.operation == .backup && $0.outcome.isVerdict },
+            earlierRemovalProblem: history.pendingEarlierRemoval == nil
+                ? nil : history.pendingEarlierRemovalFailures?.noticeReason)
     }
 
     /// Pushes the status and, unless `deliveringAlerts` is false, has the alerts delivered for it: every
@@ -312,6 +349,9 @@ public actor AgentState {
     /// `recoveryKitConfirmedAt` is agent-owned. A new plan starts unconfirmed. An existing plan keeps its
     /// confirmation only if the repository is the same and every submitted secret equals the keychain's
     /// current value; otherwise the recovery details the user saved no longer match, so it is cleared.
+    /// `setupCompletedAt` and `offMacNoteDismissed` are agent-owned too: a new plan starts without them and
+    /// an existing plan keeps the stored values, whatever the request says (Ruling P2-3). Only
+    /// `confirmRecoveryKit` and `dismissOffMacNote` set them.
     ///
     /// The same change also clears a stop (`stoppedReason`, e.g. after a wrong password) and refreshes the
     /// plan's alerts: the user has changed what restic opens the repository with, so the next run tries it
@@ -346,12 +386,23 @@ public actor AgentState {
             let checkInChanged = !plan.hasCheckInURL || planSecrets.changesValue(of: .checkInURL(plan.id))
             if let index = updated.plans.firstIndex(where: { $0.id == plan.id }) {
                 let stored = updated.plans[index]
-                let unchanged = stored.repository == plan.repository && !planSecrets.changesAnyValue
-                credentialsChanged = !unchanged
-                plan.recoveryKitConfirmedAt = unchanged ? stored.recoveryKitConfirmedAt : nil
+                // The recovery kit holds the address, the password, the backend keys and the host label its
+                // restore commands pass as `--host`: a change to any of them needs a new kit before backups carry
+                // on. The check-in URL isn't needed to restore (product spec §7), so changing it from the Alerts
+                // tab doesn't pause backups.
+                // Only a new address or secret can cure a stop (a wrong password, a missing repository); a new
+                // label can't, so it doesn't clear one.
+                credentialsChanged = stored.repository != plan.repository
+                    || planSecrets.changesAnyValue(excluding: [checkInKey])
+                let kitStillHolds = !credentialsChanged && stored.hostLabel == plan.hostLabel
+                plan.recoveryKitConfirmedAt = kitStillHolds ? stored.recoveryKitConfirmedAt : nil
+                plan.setupCompletedAt = stored.setupCompletedAt
+                plan.offMacNoteDismissed = stored.offMacNoteDismissed
                 updated.plans[index] = plan
             } else {
                 plan.recoveryKitConfirmedAt = nil
+                plan.setupCompletedAt = nil
+                plan.offMacNoteDismissed = false
                 updated.plans.append(plan)
             }
 
@@ -377,14 +428,14 @@ public actor AgentState {
                 } catch {
                     let detail = (error as? AgentError)?.message ?? "\(error)"
                     let what = clearStop ? "its stop" : "its check-in alert"
-                    throw AgentError.storage("\(plan.name) was saved, but Restorey couldn't clear \(what): \(detail)")
+                    throw AgentError.storage("\(plan.name) was saved, but Restorey couldn’t clear \(what): \(detail)")
                 }
             }
             return pushStatus()
         }
     }
 
-    /// Removes the plan from the config, then its secrets, credentials file and history. The
+    /// Removes the plan from the config, then its secrets, credentials file, history and run logs. The
     /// repository is never touched. A running plan cannot be deleted, and from the moment this is called
     /// no run can begin on the plan.
     public func deletePlan(_ id: UUID) async throws -> AgentStatus {
@@ -395,6 +446,13 @@ public actor AgentState {
         // Marked before the first await, so beginRun can't slip in while this waits on the stores.
         deleting.insert(id)
         defer { deleting.remove(id) }
+        // A measurement after an adopt is stopped rather than refusing the delete (setup's Cancel deletes the
+        // plan it just adopted). restic has `interruptGracePeriod` to stop; its record is written before the
+        // plan goes. One still waiting in the queue finds the plan gone and doesn't start.
+        if measuring[id] != nil {
+            await runner?.stopMeasurement(planID: id)
+            while measuring[id] != nil { await withCheckedContinuation { measuringWaiters.append($0) } }
+        }
 
         return try await serialisedWrite {
             var updated = config
@@ -414,24 +472,114 @@ public actor AgentState {
                 state.plans[id] = nil
                 do { try await saveState(state) } catch { failures.append("its history (\(error))") }
             }
+            // Gone now rather than at the 400-day prune: they would only be found by browsing the folder.
+            if let runLogs {
+                do { try await runLogs.removePlan(id) } catch { failures.append("its run logs (\(error.localizedDescription))") }
+            }
             let status = pushStatus()
             if !failures.isEmpty {
                 throw AgentError.storage(
-                    "\(plan.name) was deleted, but Restorey couldn't remove \(failures.joined(separator: " or "))")
+                    "\(plan.name) was deleted, but Restorey couldn’t remove \(failures.joined(separator: " or "))")
             }
             return status
         }
     }
 
     /// Records that the user has saved the plan's recovery details. Until then the plan never runs
-    /// on its own.
+    /// on its own. The first confirmation also finishes setup (`setupCompletedAt`, Ruling P2-3).
     public func confirmRecoveryKit(_ id: UUID) async throws -> AgentStatus {
         try requireMutable()
         _ = try requirePlan(id)
         return try await serialisedWrite {
             var updated = config
             guard let index = updated.plans.firstIndex(where: { $0.id == id }) else { throw AgentError.unknownPlan }
-            updated.plans[index].recoveryKitConfirmedAt = now()
+            let now = now()
+            updated.plans[index].recoveryKitConfirmedAt = now
+            if updated.plans[index].setupCompletedAt == nil { updated.plans[index].setupCompletedAt = now }
+            try await saveConfig(updated)
+            return pushStatus()
+        }
+    }
+
+    /// Records that the user dismissed the plan's "No off-Mac monitoring" note. It stays dismissed: no saved
+    /// plan can bring it back.
+    public func dismissOffMacNote(_ id: UUID) async throws -> AgentStatus {
+        try requireMutable()
+        _ = try requirePlan(id)
+        return try await serialisedWrite {
+            var updated = config
+            guard let index = updated.plans.firstIndex(where: { $0.id == id }) else { throw AgentError.unknownPlan }
+            updated.plans[index].offMacNoteDismissed = true
+            try await saveConfig(updated)
+            return pushStatus()
+        }
+    }
+
+    /// The run records of one plan, or of every plan when `id` is nil, newest (by end) first (Ruling P2-4):
+    /// each plan's `recent`, and its `lastBackupRecord` when that has fallen out of `recent`. Answered while
+    /// draining; refused in the config-error state.
+    public func history(_ id: UUID?) throws -> [RunRecord] {
+        try requireLoaded()
+        let plans = try id.map { [try requirePlan($0)] } ?? config.plans
+        let records = plans.flatMap { plan -> [RunRecord] in
+            let history = runState.plans[plan.id] ?? PlanRunHistory()
+            guard let last = history.lastBackupRecord, !history.recent.contains(where: { $0.id == last.id }) else {
+                return history.recent
+            }
+            return history.recent + [last]
+        }
+        // Stable: records that ended together keep their plan's order.
+        return records.enumerated()
+            .sorted { a, b in
+                a.element.endedAt != b.element.endedAt ? a.element.endedAt > b.element.endedAt : a.offset < b.offset
+            }
+            .map(\.element)
+    }
+
+    /// The plan and every secret the agent holds for it, for the recovery kit (Ruling P2-5): the repository
+    /// password; an S3 plan's two keys or a raw plan's environment values, in the plan's order; and the
+    /// check-in URL when the plan has one. The XPC listener serves only the signed app, which holds the
+    /// reply only while the kit is open. A secret that can't be read, or is missing, refuses the kit (a kit
+    /// without it would fail the user in a disaster); the error names the Keychain account, never a value.
+    /// Read inside the write gate, so a save in progress can't pair one plan's secrets with another version.
+    public func recoveryKit(_ id: UUID) async throws -> RecoveryKitSecrets {
+        try requireLoaded()
+        _ = try requirePlan(id)
+        return try await serialisedWrite {
+            let plan = try requirePlan(id)
+            var keys: [SecretKey] = [.repositoryPassword(id)]
+            switch plan.repository {
+            case .s3: keys += [.s3AccessKeyID(id), .s3SecretAccessKey(id)]
+            case .raw(_, let names): keys += names.map { .environment(id, name: $0) }
+            }
+            if plan.hasCheckInURL { keys.append(.checkInURL(id)) }
+            let entries = try keys.map { key in
+                let value: String?
+                do {
+                    value = try secrets.read(key)
+                } catch {
+                    throw AgentError.storage("Restorey couldn’t read \(key.account) from the Keychain: \(error)")
+                }
+                guard let value else {
+                    throw AgentError.storage("\(key.account) isn’t in the Keychain, so the recovery kit would be incomplete")
+                }
+                return SecretEntry(key: key, value: value)
+            }
+            return RecoveryKitSecrets(plan: plan, secrets: entries)
+        }
+    }
+
+    /// Saves the Mac-wide network rules (Ruling P2-6) beside the plans in `config.json`, Wi-Fi names
+    /// trimmed, and pushes the status. Settings with any problem are refused with every reason and nothing
+    /// is saved (Review Focus 5). They apply from the next restic step: a backup already uploading keeps
+    /// the limit it started with, since restic can't change it mid-run (Ruling P2-7).
+    public func saveNetworkSettings(_ settings: NetworkSettings) async throws -> AgentStatus {
+        try requireMutable()
+        let errors = settings.validationErrors()
+        guard errors.isEmpty else { throw AgentError.invalidNetworkSettings(errors) }
+        return try await serialisedWrite {
+            var updated = config
+            updated.network = settings.normalised()
             try await saveConfig(updated)
             return pushStatus()
         }
@@ -469,7 +617,7 @@ public actor AgentState {
         }
         guard start else { return status() }
         try requireRunnable(id)
-        return try await requireRunner().backUpNow(id, afterPausedRun: true)
+        return try await requireRunner().backUpNow(id, afterPausedRun: true).status
     }
 
     /// Changes one plan's history and saves `state.json`, through the write gate. The runner records
@@ -520,6 +668,28 @@ public actor AgentState {
         pushStatus(deliveringAlerts: false)
     }
 
+    /// Registers the measurement after an adopt (`PlanRunner`), as it reaches its turn in the queue.
+    /// Refused while draining, in the config-error state, for an unknown plan or one being deleted.
+    func beginMeasurement(planID: UUID) throws {
+        try requireRunnable(planID)
+        let plan = try requirePlan(planID)
+        guard !deleting.contains(planID) else { throw AgentError.planDeleting(name: plan.name) }
+        measuring[planID, default: 0] += 1
+    }
+
+    func isMeasuring(_ planID: UUID) -> Bool { measuring[planID] != nil }
+
+    /// Ends one registration; the plan counts as measuring until the last ends.
+    func endMeasurement(planID: UUID) {
+        guard let count = measuring[planID] else { return }
+        measuring[planID] = count > 1 ? count - 1 : nil
+        guard count == 1 else { return }
+        let waiters = measuringWaiters
+        measuringWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+        wakeDrainersIfIdle()
+    }
+
     public func endRun(planID: UUID) {
         guard running.removeValue(forKey: planID) != nil else { return }
         pushStatus()
@@ -547,6 +717,11 @@ public actor AgentState {
         restartRepliesOwed -= 1
         exitWanted = true
         exitIfDone()
+    }
+
+    /// Called once at startup with where the refused run actions are logged (`agent.log`).
+    public func attach(agentLog: @escaping @Sendable (String) -> Void) {
+        self.agentLog = agentLog
     }
 
     /// Called once at startup with how the agent exits for a restart and where it logs why.
@@ -706,7 +881,7 @@ public actor AgentState {
         }
     }
 
-    private var isIdle: Bool { running.isEmpty && !writeInFlight && writeWaiters.isEmpty }
+    private var isIdle: Bool { running.isEmpty && measuring.isEmpty && !writeInFlight && writeWaiters.isEmpty }
 
     /// Wakes every drainer; each re-checks `isIdle` and waits again if something is still going on.
     private func wakeDrainersIfIdle() {
@@ -756,7 +931,7 @@ public actor AgentState {
         do {
             try await configStore.save(updated)
         } catch {
-            throw AgentError.storage("Restorey couldn't save config.json: \(error)")
+            throw AgentError.storage("Restorey couldn’t save config.json: \(error)")
         }
         config = updated
     }
@@ -777,7 +952,7 @@ public actor AgentState {
         do {
             try await stateStore.save(updated)
         } catch {
-            throw AgentError.storage("Restorey couldn't save state.json: \(error)")
+            throw AgentError.storage("Restorey couldn’t save state.json: \(error)")
         }
         runState = updated
     }

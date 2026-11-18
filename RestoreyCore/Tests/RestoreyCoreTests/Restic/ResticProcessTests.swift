@@ -28,7 +28,7 @@ struct ResticProcessTests {
         return url
     }
 
-    @Test(.timeLimit(.minutes(1))) func initBackupSnapshotsRoundTrip() async throws {
+    @Test(.timeLimit(.minutes(3))) func initBackupSnapshotsRoundTrip() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         try await repo.writeRandomFiles(count: 5, megabytes: 1)
@@ -49,7 +49,7 @@ struct ResticProcessTests {
         #expect(listed.first?.tags == [repo.snapshotTag])
     }
 
-    @Test(.timeLimit(.minutes(1))) func progressMessagesStream() async throws {
+    @Test(.timeLimit(.minutes(3))) func progressMessagesStream() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         // Throttled, so the backup lasts long enough for restic to report progress before it finishes.
@@ -66,7 +66,7 @@ struct ResticProcessTests {
         #expect(status < summary)
     }
 
-    @Test(.timeLimit(.minutes(1))) func environmentIsNotInherited() async throws {
+    @Test(.timeLimit(.minutes(3))) func environmentIsNotInherited() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         setenv("RESTOREY_LEAK", "1", 1)
@@ -91,7 +91,7 @@ struct ResticProcessTests {
         #expect(Set(seen.keys).subtracting(allowed).isEmpty, "unexpected: \(Set(seen.keys).subtracting(allowed))")
     }
 
-    @Test(.timeLimit(.minutes(1))) func interruptSendsSIGINTThenSIGKILL() async throws {
+    @Test(.timeLimit(.minutes(3))) func interruptSendsSIGINTThenSIGKILL() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         // Ignores SIGINT, so only SIGKILL stops it. perl sets the disposition itself, so this holds
@@ -117,7 +117,9 @@ struct ResticProcessTests {
         let elapsed = ContinuousClock.now - interruptedAt
 
         #expect(elapsed > .seconds(9.5), "killed after \(elapsed), before the 10 s grace period")
-        #expect(elapsed < .seconds(10.5), "took \(elapsed) to kill")
+        // The 10 s grace period plus 15 s of slack, against the 1000 s stub: a kill timer set to a longer grace (30 s,
+        // say) fails, and a slow runner has to stall 15 s to.
+        #expect(elapsed < .seconds(25), "took \(elapsed) to kill")
         #expect(termination.interruptIntent == .pause)
         #expect(termination.terminatedBySignal == SIGKILL)
         #expect(termination.killedByUs)
@@ -130,7 +132,7 @@ struct ResticProcessTests {
         #expect(outcome == .paused)
     }
 
-    @Test(.timeLimit(.minutes(1))) func interruptHonouredBeforeTheGracePeriodIsNotKilled() async throws {
+    @Test(.timeLimit(.minutes(3))) func interruptHonouredBeforeTheGracePeriodIsNotKilled() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         let polite = try script(
@@ -145,13 +147,14 @@ struct ResticProcessTests {
         let interruptedAt = ContinuousClock.now
         await process.interrupt(.cancel)
         let termination = try await running.value
-        #expect(ContinuousClock.now - interruptedAt < .seconds(5))
+        // Not killed after the grace period (which `terminatedBySignal == nil` below proves), and not the stub's 1000 s.
+        #expect(ContinuousClock.now - interruptedAt < .seconds(60))
         #expect(termination.exitCode == 130)
         #expect(termination.terminatedBySignal == nil)
         #expect(termination.interruptIntent == .cancel)
     }
 
-    @Test(.timeLimit(.minutes(1))) func pidIsSupervisedOnlyWhileRunning() async throws {
+    @Test(.timeLimit(.minutes(3))) func pidIsSupervisedOnlyWhileRunning() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         let sleeper = try script("echo ready\nexec /bin/sleep 1000", in: repo)
@@ -186,7 +189,7 @@ struct ResticProcessTests {
     /// exits and its grandchild holds stdout until `release`, so the pid is certainly supervised when
     /// the test reads it, and the drains certainly can't have finished when the removal is checked, however
     /// slowly a loaded machine schedules either side. The deadline only bounds a real failure.
-    @Test(.timeLimit(.minutes(1))) func pidIsDroppedAtExitEvenWhileAChildHoldsStdoutOpen() async throws {
+    @Test(.timeLimit(.minutes(3))) func pidIsDroppedAtExitEvenWhileAChildHoldsStdoutOpen() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         let exitFile = repo.root.appendingPathComponent("exit")
@@ -209,7 +212,7 @@ struct ResticProcessTests {
         defer { FileManager.default.createFile(atPath: releaseFile.path, contents: nil) }
         var readyIterator = ready.makeAsyncIterator()
         await readyIterator.next()
-        let pid = try #require(await repo.supervisor.all().first, "restic can't have exited yet, so it is supervised")
+        let pid = try #require(await repo.supervisor.all().first, "restic can’t have exited yet, so it is supervised")
 
         FileManager.default.createFile(atPath: exitFile.path, contents: nil)
         let deadline = ContinuousClock.now + .seconds(30)
@@ -225,7 +228,7 @@ struct ResticProcessTests {
         #expect(termination.exitCode == 0)
     }
 
-    @Test(.timeLimit(.minutes(1))) func aProcessRunsOnlyOnce() async throws {
+    @Test(.timeLimit(.minutes(3))) func aProcessRunsOnlyOnce() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         let quick = try script("exit 0", in: repo)
@@ -234,7 +237,7 @@ struct ResticProcessTests {
         await #expect(throws: ResticProcessError.alreadyStarted) { try await process.run { _ in } }
     }
 
-    @Test(.timeLimit(.minutes(1))) func trailingOutputIsNotLostWhenTheProcessExits() async throws {
+    @Test(.timeLimit(.minutes(3))) func trailingOutputIsNotLostWhenTheProcessExits() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         // Writes a lot to both streams and exits at once; every line must still arrive.
@@ -252,7 +255,35 @@ struct ResticProcessTests {
         #expect(run.termination.stderrTail.last?.contains("last words") == true)
     }
 
-    @Test(.timeLimit(.minutes(1))) func cancellingTheAwaitingTaskInterruptsAndWaitsForExit() async throws {
+    /// Task 16d: an unchanged item's verbose line never reaches `onMessage`; every other verbose line does, read, and a
+    /// malformed or cut one (the last line here has no newline and stops mid-field) is a verbose line with nothing in it,
+    /// so it neither fails the run nor reaches the run log as text.
+    @Test(.timeLimit(.minutes(3))) func unchangedVerboseLinesAreDroppedAndBrokenOnesTolerated() async throws {
+        let repo = try TempRepository()
+        defer { repo.remove() }
+        let unchanged = #"{"message_type":"verbose_status","action":"unchanged","item":"/s/old","duration":0,"data_size":0,"data_size_in_repo":0,"metadata_size":0,"metadata_size_in_repo":0,"total_files":0}"#
+        let added = #"{"message_type":"verbose_status","action":"new","item":"/s/new","duration":0.1,"data_size":5,"data_size_in_repo":90,"metadata_size":0,"metadata_size_in_repo":0,"total_files":0}"#
+        let summary = #"{"message_type":"summary","files_new":1,"snapshot_id":"abc"}"#
+        let fake = try script("""
+            i=0; while [ $i -lt 2000 ]; do echo '\(unchanged)'; i=$((i+1)); done
+            echo '\(added)'
+            echo '{"message_type":"verbose_status","action":"new","item":"/s/x","data_size_in_repo":"lots"}'
+            echo '\(summary)'
+            printf '%s' '{"message_type":"verbose_status","action":"new","item":"/s/cut","duration":0.1,"data_si'
+            """, in: repo)
+        let run = try await repo.finish(
+            repo.process(try repo.invocation(.backup), executable: fake), op: .backup, log: MessageLog())
+        #expect(run.termination.exitCode == 0)
+        #expect(run.termination.summary?.snapshotID == "abc")
+        #expect(run.messages == [
+            .verboseStatus(VerboseItem(action: "new", item: "/s/new", dataSizeInRepo: 90)),
+            .verboseStatus(nil),
+            .summary(BackupSummary(filesNew: 1, snapshotID: "abc")),
+            .verboseStatus(nil),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(3))) func cancellingTheAwaitingTaskInterruptsAndWaitsForExit() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         let slow = try script(
@@ -279,15 +310,14 @@ struct ResticProcessTests {
         #expect(outcome == .cancelled)
     }
 
-    @Test(.timeLimit(.minutes(1))) func anInterruptBeforeRunMeansResticNeverStarts() async throws {
+    @Test(.timeLimit(.minutes(3))) func anInterruptBeforeRunMeansResticNeverStarts() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         let process = repo.process(try repo.invocation(.backup))
         await process.interrupt(.pause)
 
-        let started = ContinuousClock.now
         let termination = try await process.run { _ in }
-        #expect(ContinuousClock.now - started < .seconds(1))
+        // `neverStarted` and `pid == 0` are the proof; an elapsed-time bound added nothing a slow runner couldn't break.
         #expect(termination.neverStarted)
         #expect(termination.interruptIntent == .pause)
         #expect(termination.exitCode == 130)

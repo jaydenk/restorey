@@ -26,6 +26,14 @@ struct RunOutcomeTests {
             summary: summary, errors: errors, exitErrorMessage: message)
     }
 
+    /// restic 0.19.1's exit_error for an unreadable repository: the error, then the location on its own line.
+    @Test func aFailuresReasonIsTheFirstLineOfResticsError() {
+        let message = "Fatal: unable to open config file: stat /r/config: permission denied\n/r"
+        #expect(outcome(1, op: .catConfig, message: message)
+            == .failed(exitCode: 1, reason: "Fatal: unable to open config file: stat /r/config: permission denied"))
+        #expect(outcome(1, message: "\n  one line  \n") == .failed(exitCode: 1, reason: "one line"))
+    }
+
     // MARK: The system stopping the agent (Ruling R67)
 
     @Test func exit130AfterASystemStopIsStoppedBySystem() {
@@ -80,7 +88,7 @@ struct RunOutcomeTests {
 
     @Test(arguments: [
         ResticOperation.initRepository, .forget(dryRun: false), .forget(dryRun: true), .prune, .check,
-        .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig,
+        .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig, .stats,
     ])
     func nonBackupExitZeroIsSuccess(op: ResticOperation) {
         #expect(outcome(0, op: op) == .success(snapshotID: nil))
@@ -91,10 +99,37 @@ struct RunOutcomeTests {
             == .warning(unreadable: 2))
     }
 
+    private func scan(_ name: String) -> ResticItemError {
+        ResticItemError(message: "lstat \(name): no such file or directory", during: "scan", item: name)
+    }
+
+    /// Final review I1: only the archiver's errors mean a file is missing from the snapshot.
+    @Test func scannerErrorsAreNotCounted() {
+        #expect(outcome(3, summary: summary(snapshotID: "abc"), errors: [scan("/gone1"), scan("/gone2"), item("/real")])
+            == .warning(unreadable: 1))
+    }
+
+    @Test func theSameItemInScanAndArchivalCountsOnce() {
+        #expect(outcome(3, errors: [scan("/a"), item("/a")]) == .warning(unreadable: 1))
+    }
+
+    @Test func twoArchivalErrorsOnOneItemCountOnce() {
+        #expect(outcome(3, errors: [item("/a"), item("/a"), item("/b")]) == .warning(unreadable: 2))
+    }
+
+    @Test func exitThreeWithOnlyScanErrorsStillReportsOne() {
+        #expect(outcome(3, errors: [scan("/a"), scan("/b")]) == .warning(unreadable: 1))
+        #expect(outcome(3, errors: []) == .warning(unreadable: 1))
+    }
+
+    @Test func exitZeroWithScanErrorsIsStillSuccess() {
+        #expect(outcome(0, summary: summary(snapshotID: "abc"), errors: [scan("/a")]) == .success(snapshotID: "abc"))
+    }
+
     /// Final review M9: exit 3 is "files couldn't be read" only for a backup.
     @Test func forgetExitThreeIsAFailureToRemoveSnapshots() {
         #expect(outcome(3, op: .forget(dryRun: false))
-            == .failed(exitCode: 3, reason: "restic couldn't remove every snapshot it was asked to forget"))
+            == .failed(exitCode: 3, reason: "restic couldn’t remove every snapshot it was asked to forget"))
         #expect(outcome(3, op: .forget(dryRun: false), message: "Fatal: unable to remove snapshot abc")
             == .failed(exitCode: 3, reason: "Fatal: unable to remove snapshot abc"))
         #expect(outcome(3, op: .check) == .failed(exitCode: 3, reason: "restic exited with status 3."))
@@ -235,6 +270,7 @@ struct RunOutcomeTests {
         try roundTrip(SkipReason.noNetwork, #"{"type":"noNetwork"}"#)
         try roundTrip(SkipReason.volumeNotMounted("Backup"), #"{"type":"volumeNotMounted","volume":"Backup"}"#)
         try roundTrip(SkipReason.agentUpdating, #"{"type":"agentUpdating"}"#)
+        try roundTrip(SkipReason.skippedWiFi("Home"), #"{"name":"Home","type":"skippedWiFi"}"#)
     }
 
     /// The one wording of each skip, shared by the menu and the run log and alerts.
@@ -243,8 +279,9 @@ struct RunOutcomeTests {
         #expect(SkipReason.batteryBelow(20).summary == "Skipped: battery below 20%")
         #expect(SkipReason.constrainedNetwork.summary == "Skipped on a low data network")
         #expect(SkipReason.noNetwork.summary == "Skipped: no network")
-        #expect(SkipReason.volumeNotMounted("Backup").summary == "Skipped: Backup isn't connected")
+        #expect(SkipReason.volumeNotMounted("Backup").summary == "Skipped: Backup isn’t connected")
         #expect(SkipReason.agentUpdating.summary == "Skipped: Restorey was updating")
+        #expect(SkipReason.skippedWiFi("Café").summary == "Skipped on Wi-Fi “Café”")
     }
 
     @Test func triggerJSONIsAString() throws {

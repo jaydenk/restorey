@@ -41,12 +41,45 @@ struct ResticInvocationTests {
     @Test func backupArguments() {
         let p = plan()
         #expect(inv(.backup, p).arguments == [
-            "backup", "--json", "--cache-dir", Self.cache, "--host=pepper", "--tag=\(tag)",
+            "backup", "--json", "--cache-dir", Self.cache, "--verbose", "--host=pepper", "--tag=\(tag)",
             "--skip-if-unchanged", "--exclude-cloud-files", "--exclude-caches", "--pack-size", "64",
             "--one-file-system", "--exclude=/Users/x/Library/Caches", "--exclude=**/node_modules",
         ] + DefaultExclusions.fileTypes.map { "--iexclude=*.\($0)" } + [
             "--", "/Users/x/Documents", "/Users/x/-drafts", "/Users/x/Café Notes",
         ])
+    }
+
+    /// Task 16d: backups run at restic's verbosity 2 (`--verbose` once; `--verbose=2` is 3, restic 0.19.1
+    /// `internal/global/global.go`), the level at which `backup --json` prints a `verbose_status` line per item
+    /// (`internal/ui/backup/json.go`). Nothing else is made verbose.
+    @Test func onlyBackupsAreVerbose() {
+        let p = plan()
+        #expect(inv(.backup, p).arguments.filter { $0.hasPrefix("-v") || $0.hasPrefix("--verbose") } == ["--verbose"])
+        let others: [ResticOperation] = [
+            .initRepository, .forget(dryRun: false), .forget(dryRun: true), .prune, .check, .snapshots(allHosts: true),
+            .snapshots(allHosts: false), .unlock, .catConfig, .stats, .forgetPreview(.beforeAdoption),
+            .forgetPreview(.previousFolderLists), .forgetSnapshots(ids: ["a"]),
+        ]
+        for op in others {
+            #expect(!inv(op, p).arguments.contains { $0.hasPrefix("-v") || $0.hasPrefix("--verbose") }, "\(op)")
+        }
+    }
+
+    /// Task 15c: the list of items apps mark as not for backup goes in a file, only when there is one.
+    @Test func theNotForBackupListIsPassedAsAnExcludeFileOnlyWhenThereIsOne() {
+        let p = plan()
+        #expect(!inv(.backup, p).arguments.contains { $0.hasPrefix("--exclude-file") })
+        var ctx = Self.context
+        ctx.notForBackupExcludeFile = URL(fileURLWithPath: "/Users/x/Library/Application Support/Restorey/not-for-backup/a.txt")
+        let args = inv(.backup, p, ctx).arguments
+        let flag = "--exclude-file=/Users/x/Library/Application Support/Restorey/not-for-backup/a.txt"
+        #expect(args.filter { $0.hasPrefix("--exclude-file") } == [flag])
+        // Before the sources, with the other exclusions.
+        #expect(args.firstIndex(of: flag)! < args.firstIndex(of: "--")!)
+        // Only the backup reads it.
+        for op in [ResticOperation.forget(dryRun: false), .prune, .check, .snapshots(allHosts: false), .stats] {
+            #expect(!inv(op, p, ctx).arguments.contains { $0.hasPrefix("--exclude-file") }, "\(op)")
+        }
     }
 
     @Test func adoptedBackupOmitsPackSize() {
@@ -66,6 +99,51 @@ struct ResticInvocationTests {
         #expect(!inv(.backup, plan()).arguments.contains("--limit-upload"))
     }
 
+    private func limitUpload(_ args: [String]) -> String? {
+        args.firstIndex(of: "--limit-upload").map { args[$0 + 1] }
+    }
+
+    private func sharing(_ macWide: Int?, running: Int) -> ResticContext {
+        var context = Self.context
+        context.macWideUploadLimitKiB = macWide
+        context.networkedBackupsRunning = running
+        return context
+    }
+
+    /// Ruling P2-7: a backup to a networked repository gets the smaller of the plan's limit and its share
+    /// of the Mac-wide one.
+    @Test func backupPassesEffectiveLimit() {
+        var p = plan()
+        #expect(limitUpload(inv(.backup, p, sharing(1000, running: 2)).arguments) == "500")
+        p.uploadLimitKiB = 300
+        #expect(limitUpload(inv(.backup, p, sharing(1000, running: 2)).arguments) == "300")
+        #expect(limitUpload(inv(.backup, p, sharing(nil, running: 1)).arguments) == "300")
+        let raw = plan(.raw(repository: "sftp:me@nas:/srv/restic", environmentNames: []))
+        #expect(limitUpload(inv(.backup, raw, sharing(1000, running: 3)).arguments) == "333")
+    }
+
+    /// The Mac-wide limit is for the network: a folder or drive repository gets only the plan's own.
+    @Test func aLocalRepositoryGetsOnlyThePlansOwnLimit() {
+        for location in ["/Volumes/Backup/restic", "local:/Volumes/Backup/restic"] {
+            var p = plan(.raw(repository: location, environmentNames: []))
+            #expect(limitUpload(inv(.backup, p, sharing(1000, running: 1)).arguments) == nil)
+            p.uploadLimitKiB = 2000
+            #expect(limitUpload(inv(.backup, p, sharing(1000, running: 2)).arguments) == "2000")
+        }
+    }
+
+    /// Only `backup` uploads: no other command takes the limit.
+    @Test func onlyBackupGetsTheMacWideLimit() {
+        for op in [ResticOperation.prune, .check, .forget(dryRun: false), .initRepository] {
+            #expect(limitUpload(inv(op, plan(), sharing(1000, running: 1)).arguments) == nil)
+        }
+    }
+
+    @Test func theContextDefaultsToNoMacWideLimitAndOneBackup() {
+        #expect(Self.context.macWideUploadLimitKiB == nil)
+        #expect(Self.context.networkedBackupsRunning == 1)
+    }
+
     @Test func sourcesAfterSeparatorEvenWhenTheyLookLikeFlags() {
         let args = inv(.backup).arguments
         let sep = args.firstIndex(of: "--")!
@@ -79,7 +157,7 @@ struct ResticInvocationTests {
         p.hostLabel = "-host"
         p.sources = ["-drafts"] // not a valid plan; builder-only check
         #expect(inv(.backup, p).arguments == [
-            "backup", "--json", "--cache-dir", Self.cache, "--host=-host", "--tag=\(tag)",
+            "backup", "--json", "--cache-dir", Self.cache, "--verbose", "--host=-host", "--tag=\(tag)",
             "--skip-if-unchanged", "--exclude-cloud-files", "--exclude-caches", "--pack-size", "64",
             "--one-file-system", "--exclude=-foo", "--", "-drafts",
         ])
@@ -128,10 +206,58 @@ struct ResticInvocationTests {
         #expect(!args.contains("--prune"))
     }
 
+    /// Task 14b: the earlier-snapshots previews are dry runs that take no lock (restic 0.19.1 allows `--no-lock` with
+    /// `forget --dry-run` only), each over a timeline that puts the earlier snapshots with the plan's current ones:
+    /// before adoption, every snapshot of the host by `host,paths` (no `--tag`, so untagged ones are in it); previous
+    /// folder lists, the plan's own tag by `host,tags`, folders left out.
+    @Test func forgetPreviewsAreDryRunsWithoutALock() {
+        var p = plan()
+        p.retention = Retention(hourly: 1, daily: 2, weekly: 3, monthly: 4)
+        let keep = ["--keep-hourly", "1", "--keep-daily", "2", "--keep-weekly", "3", "--keep-monthly", "4"]
+        let before = inv(.forgetPreview(.beforeAdoption), p).arguments
+        #expect(before == ["forget", "--json", "--cache-dir", Self.cache, "--no-lock", "--dry-run", "--host=pepper",
+                           "--group-by", "host,paths"] + keep)
+        #expect(!before.contains { $0.hasPrefix("--tag") })
+        let previous = inv(.forgetPreview(.previousFolderLists), p).arguments
+        #expect(previous == ["forget", "--json", "--cache-dir", Self.cache, "--no-lock", "--dry-run", "--host=pepper",
+                             "--tag=\(tag)", "--group-by", "host,tags"] + keep)
+        #expect(!(before + previous).contains("--prune"))
+    }
+
+    /// Task 14b: the confirmed removal names the snapshots and nothing else: no policy, no filter (restic ignores
+    /// filters given with IDs, and says so), after `--` so an ID can never be read as a flag, and with the
+    /// maintenance lock wait.
+    @Test func forgetSnapshotsNamesOnlyTheConfirmedIDs() {
+        let ids = [String(repeating: "a", count: 64), String(repeating: "b", count: 64)]
+        let args = inv(.forgetSnapshots(ids: ids)).arguments
+        #expect(args == ["forget", "--json", "--cache-dir", Self.cache, "--retry-lock", "5m", "--"] + ids)
+        #expect(!args.contains { $0.hasPrefix("--keep") || $0.hasPrefix("--host") || $0.hasPrefix("--tag") })
+        #expect(!args.contains("--prune") && !args.contains("--dry-run"))
+    }
+
+    /// Tests shorten the lock wait; the agent keeps restic's five minutes.
+    @Test func theMaintenanceLockWaitComesFromTheContext() {
+        var context = Self.context
+        #expect(context.maintenanceRetryLock == "5m")
+        context.maintenanceRetryLock = "2s"
+        for op in [ResticOperation.forget(dryRun: false), .forgetSnapshots(ids: ["x"]), .prune, .check, .stats] {
+            let args = inv(op, nil, context).arguments
+            let i = args.firstIndex(of: "--retry-lock")
+            #expect(i.map { args[$0 + 1] } == "2s", "\(op)")
+        }
+    }
+
     @Test func pruneAndCheckRetryLock() {
         #expect(inv(.prune).arguments.starts(with: ["prune", "--json", "--cache-dir", Self.cache]))
         #expect(inv(.prune).arguments.contains("--retry-lock"))
         #expect(inv(.check).arguments == ["check", "--json", "--cache-dir", Self.cache, "--retry-lock", "5m"])
+    }
+
+    /// Ruling P2-9: the repository's size, repository-wide (no `--host`), waiting for a lock like maintenance.
+    @Test func statsArguments() {
+        let args = inv(.stats).arguments
+        #expect(args == ["stats", "--json", "--cache-dir", Self.cache, "--mode", "raw-data", "--retry-lock", "5m"])
+        #expect(!args.contains { $0.hasPrefix("--host") })
     }
 
     @Test func pruneUsesPackSizeWhenSet() {
@@ -142,7 +268,10 @@ struct ResticInvocationTests {
     }
 
     @Test func retryLockOnlyOnMaintenanceCommands() {
-        for op in [ResticOperation.backup, .initRepository, .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig] {
+        for op in [
+            ResticOperation.backup, .initRepository, .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock,
+            .catConfig, .forgetPreview(.beforeAdoption), .forgetPreview(.previousFolderLists),
+        ] {
             #expect(!inv(op).arguments.contains("--retry-lock"), "\(op)")
         }
     }
@@ -150,7 +279,8 @@ struct ResticInvocationTests {
     @Test func everyOperationPassesJSONAndCacheDirectory() {
         let ops: [ResticOperation] = [
             .initRepository, .backup, .forget(dryRun: false), .forget(dryRun: true), .prune, .check,
-            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig,
+            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig, .stats, .forgetPreview(.beforeAdoption),
+            .forgetPreview(.previousFolderLists), .forgetSnapshots(ids: ["x"]),
         ]
         for op in ops {
             let args = inv(op).arguments
@@ -264,12 +394,17 @@ struct ResticInvocationTests {
         #expect(try json(.snapshots(allHosts: false)) == #"{"allHosts":false,"type":"snapshots"}"#)
         #expect(try json(.unlock) == #"{"type":"unlock"}"#)
         #expect(try json(.catConfig) == #"{"type":"catConfig"}"#)
+        #expect(try json(.stats) == #"{"type":"stats"}"#)
+        #expect(try json(.forgetPreview(.beforeAdoption)) == #"{"of":"beforeAdoption","type":"forgetPreview"}"#)
+        #expect(try json(.forgetPreview(.previousFolderLists)) == #"{"of":"previousFolderLists","type":"forgetPreview"}"#)
+        #expect(try json(.forgetSnapshots(ids: ["a1", "b2"])) == #"{"ids":["a1","b2"],"type":"forgetSnapshots"}"#)
     }
 
     @Test func operationRoundTripsAndRejectsUnknown() throws {
         let ops: [ResticOperation] = [
             .initRepository, .backup, .forget(dryRun: false), .forget(dryRun: true), .prune, .check,
-            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig,
+            .snapshots(allHosts: false), .snapshots(allHosts: true), .unlock, .catConfig, .stats, .forgetPreview(.beforeAdoption),
+            .forgetPreview(.previousFolderLists), .forgetSnapshots(ids: []), .forgetSnapshots(ids: ["a1", "b2"]),
         ]
         for op in ops {
             let data = try JSONEncoder().encode(op)
@@ -280,6 +415,9 @@ struct ResticInvocationTests {
         }
         #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(ResticOperation.self, from: Data(#"{"type":"forget"}"#.utf8))
+        }
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(ResticOperation.self, from: Data(#"{"type":"forgetSnapshots"}"#.utf8))
         }
     }
 
@@ -302,6 +440,7 @@ struct ResticInvocationTests {
             "\(h)/Library/Containers/*/Data/Library/Caches", "\(h)/Library/Group Containers/*/Library/Caches",
             "\(h)/Library/Application Support/FileProvider/*/wharf",
             "\(h)/Library/Group Containers/group.com.apple.secure-control-center-preferences",
+            "\(h)/Library/Group Containers/group.com.apple.CoreSpeech/Caches",
         ])
         // The owner keeps logs and project build folders: none of these become defaults.
         for unwanted in ["*.log", "**/.venv", "**/Pods", "**/target", "**/.build"] {

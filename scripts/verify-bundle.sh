@@ -65,6 +65,81 @@ agent_display=$(plist_get "$AGENT/Contents/Info.plist" CFBundleDisplayName)
 [[ "$app_display" == "$display" ]] || fail "app CFBundleDisplayName is '$app_display', expected '$display'"
 [[ "$agent_display" == "$app_display" ]] || fail "agent CFBundleDisplayName is '$agent_display', the app's is '$app_display'"
 
+# The agent reads the Wi-Fi name, which needs Location permission: requestWhenInUseAuthorization fails at once
+# without the usage description (NSLocationUsageDescription on macOS, and the When In Use key it documents).
+location_text="Restorey checks the Wi-Fi network's name so it can skip backups on networks you've listed."
+for key in NSLocationUsageDescription NSLocationWhenInUseUsageDescription; do
+  [[ "$(plist_get "$AGENT/Contents/Info.plist" "$key")" == "$location_text" ]] || fail "agent $key is not the Location usage text"
+done
+
+# RestoreyCore's resource bundle carries the EFF word list that setup's "suggest a password" reads. A missing resource
+# is a precondition failure the moment setup suggests a password, so the built app (Debug and Release alike) must hold
+# it, whole: the EFF large list is 7,776 words, one per line. The path is where SwiftPM's resource bundle lands in a
+# built app: Contents/Resources/RestoreyCore_RestoreyCore.bundle/Contents/Resources/.
+wordlist="$APP/Contents/Resources/RestoreyCore_RestoreyCore.bundle/Contents/Resources/eff_large_wordlist.txt"
+[[ -f "$wordlist" ]] || fail "the password word list is missing from the app ($wordlist)"
+wordlist_lines=$(wc -l <"$wordlist" | tr -d ' ')
+[[ "$wordlist_lines" == "7776" ]] || fail "the password word list has $wordlist_lines lines, expected 7776"
+
+# The app icon (Resources/AppIcon.icon, from Icon Composer), in the app and in the agent, whose bundle icon is the one
+# notifications show. actool compiles the layered icon into Assets.car (macOS 26 and later) plus AppIcon.icns, and
+# names it in the built Info.plist. Then the menu bar glyphs, which must be template images (tinted from their alpha).
+assets_info() { xcrun assetutil --info "$1" 2>/dev/null || true; }
+for part in "$APP" "$AGENT"; do
+  part_name=$(basename "$part")
+  [[ "$(plist_get "$part/Contents/Info.plist" CFBundleIconName)" == "AppIcon" ]] || fail "$part_name has no CFBundleIconName AppIcon"
+  [[ "$(plist_get "$part/Contents/Info.plist" CFBundleIconFile)" == "AppIcon" ]] || fail "$part_name has no CFBundleIconFile AppIcon"
+  [[ -s "$part/Contents/Resources/AppIcon.icns" ]] || fail "$part_name has no Contents/Resources/AppIcon.icns"
+  car="$part/Contents/Resources/Assets.car"
+  [[ -f "$car" ]] || fail "$part_name has no Assets.car"
+  [[ "$(assets_info "$car")" == *'"Name" : "AppIcon"'* ]] || fail "$part_name's Assets.car has no AppIcon"
+done
+app_assets=$(assets_info "$APP/Contents/Resources/Assets.car")
+for glyph in StatusIdle StatusBackingUp StatusPaused StatusAttention StatusError; do
+  [[ "$app_assets" == *"\"Name\" : \"$glyph\""* ]] || fail "the app's Assets.car has no $glyph"
+  # Capture before matching (pipefail and an early-exiting grep -q, as for restic below).
+  glyph_entries=$(grep -A12 "\"Name\" : \"$glyph\"" <<<"$app_assets" || true)
+  [[ "$glyph_entries" == *'"Template Mode" : "template"'* ]] || fail "$glyph is not a template image"
+done
+
+# The About panel's copyright line and credits (restic's BSD 2-Clause licence, which binary redistribution must
+# reproduce, and the EFF word list's attribution). AppKit's standard About panel shows Credits.rtf by itself.
+[[ "$(plist_get "$INFO" NSHumanReadableCopyright)" == "Copyright © "*" Jayden Kerr" ]] \
+  || fail "NSHumanReadableCopyright is missing or isn't the copyright line"
+credits="$APP/Contents/Resources/Credits.rtf"
+[[ -f "$credits" ]] || fail "Credits.rtf is missing from the app ($credits)"
+credits_text=$(textutil -convert txt -stdout "$credits" | tr -s '[:space:]' ' ')
+for needle in "restic 0.19.1" "BSD 2-Clause License" "Copyright (c) 2014, Alexander Neumann" \
+              "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS" \
+              "EFF Large Wordlist" "Creative Commons Attribution"; do
+  [[ "$credits_text" == *"$needle"* ]] || fail "Credits.rtf lacks '$needle'"
+done
+
+# The Developer window is Debug-only (project.yml excludes App/Developer from Release, and its uses are behind
+# #if DEBUG). Its Swift types' names are in a binary's metadata whenever it is compiled in, stripped or not, so a
+# Release bundle must have none of them, and a Debug one all three: the positive control that shows the check looks
+# in the right binaries (a Debug app's code is in Contents/MacOS/*.debug.dylib, not the main executable). Every
+# Mach-O file under Contents is read, so an embedded framework or helper added later is covered too.
+developer_types='DeveloperModel|DeveloperWindowController|DeveloperView'
+developer_found=""
+developer_scanned=0
+while IFS= read -r -d '' file; do
+  [[ "$(file -b "$file")" == Mach-O* ]] || continue
+  developer_scanned=$((developer_scanned + 1))
+  found=$(strings -a "$file" | grep -oE "$developer_types" | sort -u | tr '\n' ' ' || true)
+  developer_found+="$found"
+done < <(find "$APP/Contents" -type f -print0)
+# The app, the agent and restic at least.
+(( developer_scanned >= 3 )) || fail "only $developer_scanned Mach-O files found under $APP/Contents"
+developer_found=$(tr ' ' '\n' <<<"$developer_found" | grep -v '^$' | sort -u | tr '\n' ' ' || true)
+case "$root" in
+  com.jaydenkerr.restorey)
+    [[ -z "$developer_found" ]] || fail "the Release app contains the Developer window ($developer_found)" ;;
+  com.jaydenkerr.restorey.dev)
+    [[ "$developer_found" == "DeveloperModel DeveloperView DeveloperWindowController " ]] \
+      || fail "the Debug app's Developer window types weren't all found ('$developer_found'): the check would miss them" ;;
+esac
+
 # Launch agent plist.
 [[ "$(plist_get "$PLIST" Label)" == "$label" ]] || fail "plist Label differs from $label"
 prog=$(plist_get "$PLIST" BundleProgram)
@@ -105,6 +180,11 @@ for part in "$APP" "$AGENT"; do
   [[ "$ent" == *"keychain-access-groups"*"$app_team.$root"* ]] \
     || fail "$(basename "$part") lacks the keychain access group $app_team.$root"
 done
+
+# Under the hardened runtime, Location Services also needs the resource-access entitlement.
+agent_ent=$(codesign -d --entitlements - --xml "$AGENT" 2>/dev/null || true)
+[[ "$agent_ent" == *"<key>com.apple.security.personal-information.location</key><true/>"* ]] \
+  || fail "agent lacks com.apple.security.personal-information.location"
 
 echo "team: $app_team"
 echo "verify-bundle: OK $APP"

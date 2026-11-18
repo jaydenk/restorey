@@ -8,8 +8,7 @@ struct ResticInvocationAcceptanceTests {
     private struct Result { let status: Int32; let stdout: String; let stderr: String }
 
     /// Runs restic and waits for it without blocking a thread: `waitUntilExit()` would hold one of the
-    /// cooperative pool's few threads for the whole run and starve tests that need a free one
-    /// (`RepositoryQueuesTests.longSynchronousJobDoesNotBlockAnotherKey`).
+    /// cooperative pool's few threads for the whole run and starve tests that need a free one (task 18).
     private func run(_ restic: URL, _ inv: ResticInvocation, dir: URL, tag: String) async throws -> Result {
         let process = Process()
         process.executableURL = restic
@@ -100,8 +99,13 @@ struct ResticInvocationAcceptanceTests {
             ("snapshots-all", .snapshots(allHosts: true)),
             ("forget-dry", .forget(dryRun: true)),
             ("forget", .forget(dryRun: false)),
+            ("forget-preview", .forgetPreview(.beforeAdoption)),
+            ("forget-preview-previous", .forgetPreview(.previousFolderLists)),
+            // An ID no snapshot has: restic skips it ("Ignoring …") and still exits 0 (Task 14b).
+            ("forget-snapshots", .forgetSnapshots(ids: [String(repeating: "0", count: 64)])),
             ("prune", .prune),
             ("check", .check),
+            ("stats", .stats),
             ("unlock", .unlock),
         ]
         for (name, op) in sequence {
@@ -127,6 +131,27 @@ struct ResticInvocationAcceptanceTests {
                 #expect(snaps.contains { $0.hostname == "testhost" && ($0.tags ?? []) == [otherTag] }, "(c) lost")
                 #expect(snaps.filter { $0.hostname == "testhost" && ($0.tags ?? []) == [own] }.count == 1,
                         "own group should be reduced to one snapshot")
+            }
+            if name == "forget-preview" {
+                // One timeline per host and folder list, every tag in it (so untagged snapshots are there), and
+                // nothing from the other host.
+                let line = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                #expect(ForgetReport.isReport(line), "\(r.stdout)")
+                let groups = try ForgetReport.groups(from: line)
+                #expect(groups.map(\.host) == ["testhost"])
+                #expect(groups.allSatisfy { $0.tags.isEmpty && $0.paths == [sourcePath] })
+            }
+            if name == "forget-preview-previous" {
+                let line = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                let groups = try ForgetReport.groups(from: line)
+                #expect(groups.map(\.tags) == [["restorey:\(plan.id.uuidString)"]], "\(r.stdout)")
+                #expect(groups.allSatisfy { $0.paths.isEmpty && $0.host == "testhost" })
+            }
+            if name == "forget-snapshots" {
+                #expect(r.stderr.contains("Ignoring \""), "\(r.stderr)")
+            }
+            if name == "stats" {
+                #expect(try StatsSummary.parse(r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)).totalSize > 0)
             }
             if name == "snapshots" || name == "snapshots-all" {
                 #expect(r.stdout.contains("\"hostname\":\"testhost\""), "\(name): \(r.stdout)")
@@ -194,5 +219,62 @@ struct ResticInvocationAcceptanceTests {
         for relative in kept { #expect(paths.contains(relative), "\(relative) should be backed up") }
         for relative in excluded { #expect(!paths.contains(relative), "\(relative) should be excluded") }
         #expect(!paths.contains("VMs/Windows.pvm"), "a .pvm bundle directory is excluded whole")
+    }
+
+    /// Task 15c: the exclude file `MarkedNotForBackup.excludeFile` writes means exactly its paths under real restic
+    /// 0.19.1 (readPatternsFromFiles trims, skips `#` lines and expands `$VAR`): names with `$`, glob characters, a
+    /// backslash and `#` are excluded, and their look-alike siblings are kept. `HOME` is set, so an unescaped `$HOME`
+    /// would have expanded.
+    @Test func theNotForBackupExcludeFileMatchesExactlyUnderRealRestic() async throws {
+        let restic = try TestBinaries.requireRestic()
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("restorey-marked-\(UUID().uuidString)")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let helper = dir.appendingPathComponent("fake-helper.sh")
+        try "#!/bin/sh\necho test-password-not-a-secret\n".write(to: helper, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+
+        let source = dir.appendingPathComponent("source")
+        // Review I1: a glob character followed by a combining mark (one Swift Character, two runes to restic). Unescaped,
+        // `br[\u{301}` would be an invalid pattern that fails the backup, and `st*\u{301}` would also take `stXY\u{301}`.
+        let marked = [
+            "$HOME", "a$b", "x[1]", "star*", "back\\slash", "#hash", "sp ace", "deep/inner$", "ends$",
+            "br[\u{301}", "st*\u{301}",
+        ]
+        let kept = ["HOMEx", "ab", "x1", "starry", "backslash", "hash", "space", "deep/keep", "ends", "br", "stXY\u{301}"]
+        for relative in marked + kept {
+            let url = source.appendingPathComponent(relative).appendingPathComponent("f.txt")
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try relative.write(to: url, atomically: true, encoding: .utf8)
+        }
+        let file = MarkedNotForBackup.excludeFile(marked.map { source.appendingPathComponent($0).path })
+        #expect(file.unrepresentable.isEmpty)
+        let list = dir.appendingPathComponent("not-for-backup.txt")
+        try file.text.write(to: list, atomically: true, encoding: .utf8)
+
+        let plan = Plan.newHotPlan(
+            name: "T", repository: .raw(repository: dir.appendingPathComponent("repo").path, environmentNames: []),
+            origin: .created, hostLabel: "testhost", sources: [source.path], exclusions: [], now: Date())
+        var context = ResticContext(
+            cacheDirectory: dir.appendingPathComponent("cache"), helperExecutable: helper,
+            credentialsFile: nil, rawEnvironment: [:], homeDirectory: dir)
+        context.notForBackupExcludeFile = list
+        for (name, op) in [("init", ResticOperation.initRepository), ("backup", .backup)] {
+            let r = try await run(restic, makeInvocation(op, plan: plan, context: context), dir: dir, tag: name)
+            #expect(r.status == 0, "\(name) exited \(r.status): \(r.stderr)")
+        }
+        var ls = makeInvocation(.check, plan: plan, context: context)
+        ls.arguments = ["ls", "--json", "latest"]
+        let listed = try await run(restic, ls, dir: dir, tag: "ls")
+        #expect(listed.status == 0, "\(listed.stderr)")
+        let paths = Set(listed.stdout.split(separator: "\n").compactMap { line -> String? in
+            guard let node = try? JSONDecoder().decode(Node.self, from: Data(line.utf8)),
+                node.struct_type == "node", let path = node.path, path.hasPrefix(source.path + "/")
+            else { return nil }
+            return String(path.dropFirst(source.path.count + 1))
+        })
+        for relative in kept { #expect(paths.contains(relative + "/f.txt"), "\(relative) should be backed up") }
+        for relative in marked { #expect(!paths.contains(relative), "\(relative) should be excluded") }
     }
 }

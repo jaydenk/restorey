@@ -6,7 +6,7 @@ extension PlanRunner {
     /// What a step needs that comes from the plan and the keychain.
     struct RunSession: Sendable {
         let plan: Plan
-        let context: ResticContext
+        var context: ResticContext
         let redactor: Redactor
         /// `RepositoryQueues.key(for:)` of the plan's repository.
         let key: String
@@ -27,8 +27,11 @@ extension PlanRunner {
     /// Reads the plan's secrets for the redactor (and a raw plan's environment), and writes an S3 plan's
     /// credentials file with the agent as the helper. Only the raw environment is required here: the
     /// password and S3 keys are fetched by restic through the helper, which reports its own failures.
-    func prepare(_ plan: Plan) -> Preparation {
-        let (redactor, environment, problems) = redactorAndEnvironment(for: plan)
+    /// `overrides`: typed credentials being checked, used in place of the keychain's (a raw plan's environment
+    /// value) and redacted like them. The password and S3 keys reach restic through the helper, which serves the
+    /// same values (`AgentState.candidates`).
+    func prepare(_ plan: Plan, overrides: [SecretKey: String] = [:]) -> Preparation {
+        let (redactor, environment, problems) = redactorAndEnvironment(for: plan, overrides: overrides)
         if !problems.isEmpty {
             let reason = ([Self.keychainUnreadable] + problems).joined(separator: ". ")
             return .failed(.credentialsUnavailable, reason: reason, redactor: redactor)
@@ -40,21 +43,22 @@ extension PlanRunner {
                 credentialsFile = try CredentialsFile.write(
                     planID: plan.id, helper: deps.helperExecutable, directory: deps.credentialsDirectory)
             } catch {
-                let reason = "Restorey couldn't write the S3 credentials file: \(error)"
+                let reason = "Restorey couldn’t write the S3 credentials file: \(error)"
                 return .failed(.failed(exitCode: Self.startFailureExitCode, reason: reason), reason: reason, redactor: redactor)
             }
         }
         let context = ResticContext(
             cacheDirectory: deps.cacheDirectory, helperExecutable: deps.helperExecutable,
-            credentialsFile: credentialsFile, rawEnvironment: environment, homeDirectory: deps.homeDirectory)
+            credentialsFile: credentialsFile, rawEnvironment: environment, homeDirectory: deps.homeDirectory,
+            maintenanceRetryLock: deps.maintenanceRetryLock)
         return .ready(RunSession(
             plan: plan, context: context, redactor: redactor, key: RepositoryQueues.key(for: plan.repository)))
     }
 
     private func redactorAndEnvironment(
-        for plan: Plan
+        for plan: Plan, overrides: [SecretKey: String] = [:]
     ) -> (redactor: Redactor, environment: [String: String], problems: [String]) {
-        var known: [String] = []
+        var known: [String] = Array(overrides.values)
         for key in [SecretKey.repositoryPassword(plan.id), .s3AccessKeyID(plan.id), .s3SecretAccessKey(plan.id)] {
             if let value = try? deps.secrets.read(key) { known.append(value) }
         }
@@ -64,15 +68,19 @@ extension PlanRunner {
         var problems: [String] = []
         if case .raw(_, let names) = plan.repository {
             for name in names {
+                if let typed = overrides[.environment(plan.id, name: name)] {
+                    environment[name] = typed
+                    continue
+                }
                 do {
                     if let value = try deps.secrets.read(.environment(plan.id, name: name)) {
                         environment[name] = value
                         known.append(value)
                     } else {
-                        problems.append("The environment value \(name) isn't in the Keychain")
+                        problems.append("The environment value \(name) isn’t in the Keychain")
                     }
                 } catch {
-                    problems.append("Restorey couldn't read the environment value \(name): \(error)")
+                    problems.append("Restorey couldn’t read the environment value \(name): \(error)")
                 }
             }
         }

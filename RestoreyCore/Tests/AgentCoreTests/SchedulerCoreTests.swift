@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TestSupport
 @testable import AgentCore
 import RestoreyCore
 
@@ -545,6 +546,84 @@ struct SchedulerCoreTests {
         w.clock.advance(by: .seconds(1))
         #expect(await eventually { await ticks() == 2 })
         #expect(await eventually { w.clock.sleeperCount == 1 })
+        loop.cancel()
+        await loop.value
+    }
+
+    /// Hourly starts drifted about 12 s a run because the loop only looked every 60 s: it now sleeps until
+    /// the earliest due time, but never more than a minute.
+    @Test func nextWakeIsEarliestDue() async throws {
+        let w = World()
+        let now = w.now.value
+        let soon = Self.plan("Soon", now: now)
+        let later = Self.plan("Later", now: now)
+        guard case .interval(let seconds) = soon.schedule else { return }
+        let interval = TimeInterval(seconds)
+        await w.runner.set([
+            (later, Self.history(attempted: interval - 40, before: now, planID: later.id)),
+            (soon, Self.history(attempted: interval - 13, before: now, planID: soon.id)),
+        ])
+        #expect(await w.core.nextWake(after: now) == now.addingTimeInterval(13))
+
+        // None due within the minute (or none at all): a minute.
+        await w.runner.set([(later, Self.history(attempted: 10, before: now, planID: later.id))])
+        #expect(await w.core.nextWake(after: now) == now.addingTimeInterval(60))
+        await w.runner.set([])
+        #expect(await w.core.nextWake(after: now) == now.addingTimeInterval(60))
+
+        // A plan due already (its run couldn't start, or is starting) isn't looked at again before a minute.
+        await w.runner.set([(soon, PlanRunHistory())])
+        #expect(await w.core.nextWake(after: now) == now.addingTimeInterval(60))
+    }
+
+    @Test func runSleepsUntilThePlanIsDue() async throws {
+        let w = World()
+        let now = w.now.value
+        let plan = Self.plan("Home", now: now)
+        guard case .interval(let seconds) = plan.schedule else { return }
+        await w.runner.set([(plan, Self.history(attempted: TimeInterval(seconds) - 13, before: now, planID: plan.id))])
+        w.network.open()
+        let loop = Task { await w.core.run() }
+        @Sendable func ticks() async -> Int { await w.runner.events.filter { $0 == "refresh" }.count }
+        #expect(await eventually { await ticks() == 1 && w.clock.sleeperCount == 1 })
+
+        w.clock.advance(by: .seconds(12))
+        for _ in 0..<20 { await Task.yield() }
+        #expect(await ticks() == 1)
+
+        w.now.set(now.addingTimeInterval(13))
+        w.clock.advance(by: .seconds(1))
+        #expect(await eventually { await w.runner.runCount == 1 })
+        #expect(await w.runner.starts.first?.trigger == .scheduled)
+        loop.cancel()
+        await loop.value
+    }
+
+    /// A nudge (a plan saved, say) ends the loop's sleep so it works out `nextWake` again: a plan made due in
+    /// 20 s during a minute's sleep runs after 20 s.
+    @Test func aNudgeShortensTheSleep() async throws {
+        let w = World()
+        let now = w.now.value
+        w.network.open()
+        let loop = Task { await w.core.run() }
+        @Sendable func reads() async -> Int { await w.runner.events.filter { $0 == "entries" }.count }
+        #expect(await eventually { await reads() >= 2 && w.clock.sleeperCount == 1 })  // tick, then nextWake
+
+        let plan = Self.plan("Home", now: now)
+        guard case .interval(let seconds) = plan.schedule else { return }
+        await w.runner.set([(plan, Self.history(attempted: TimeInterval(seconds) - 20, before: now, planID: plan.id))])
+        let before = await reads()
+        await w.core.nudge(reason: .configChanged)
+        // The nudge's tick and the loop's fresh nextWake, and a new sleep in place of the old one.
+        #expect(await eventually { await reads() >= before + 2 && w.clock.sleeperCount == 1 })
+        #expect(await w.runner.events.filter { $0 == "refresh" }.count == 2)
+
+        w.clock.advance(by: .seconds(19))
+        for _ in 0..<20 { await Task.yield() }
+        #expect(await w.runner.runCount == 0)
+        w.now.set(now.addingTimeInterval(20))
+        w.clock.advance(by: .seconds(1))
+        #expect(await eventually { await w.runner.runCount == 1 })
         loop.cancel()
         await loop.value
     }

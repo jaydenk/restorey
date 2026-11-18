@@ -100,21 +100,31 @@ struct RepositoryQueuesTests {
         #expect(await queues.pendingKeyCount == 0)
     }
 
-    @Test(.timeLimit(.minutes(1))) func longSynchronousJobDoesNotBlockAnotherKey() async {
+    /// Ruling R18: a job's work runs off the queue's actor, and a job still running doesn't hold up another key's.
+    ///
+    /// The original test held A in a synchronous loop, which proved the first half only by blocking a cooperative
+    /// thread, the fault task 18 removes. A held job that suspends leaves any actor free, so it proves the second
+    /// half only. The first half is checked through `#isolation` in the work instead: the actor the work runs isolated
+    /// to, read without blocking anything. `Task.detached` in `enqueue` is what guarantees it; the check fails if the
+    /// work comes to run on the actor (a `nonisolated(nonsending)` work closure, whose `#isolation` is its caller's,
+    /// awaited from the actor).
+    @Test(.timeLimit(.minutes(1))) func aJobRunsOffTheActorAndDoesNotHoldUpAnotherKey() async {
         let queues = RepositoryQueues()
         let log = Log()
-        let aStarted = Gate()
+        let aStarted = Gate(), releaseA = Gate()
         let a = await queues.enqueue(repository: "A") {
+            let isolation = #isolation
+            await log.add(isolation.map { $0 === queues } == true ? "A on the actor" : "A off the actor")
             await aStarted.open()
-            for _ in 0..<30 { usleep(10_000) }  // ~300 ms of blocking, synchronous work
+            await releaseA.wait()
             await log.add("A end")
         }
         await aStarted.wait()
-        // Were A's work on the actor, this call would not return until A had finished.
         let b = await queues.enqueue(repository: "B") { await log.add("B start") }
         await b.value()
+        await releaseA.open()
         await a.value()
-        #expect(await log.events == ["B start", "A end"])
+        #expect(await log.events == ["A off the actor", "B start", "A end"])
     }
 
     // MARK: Cancellation

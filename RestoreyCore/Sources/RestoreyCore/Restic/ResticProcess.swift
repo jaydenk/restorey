@@ -59,6 +59,7 @@ public enum ResticProcessError: Error, Equatable {
 ///   summary line is never lost.
 /// - Cancelling the task that awaits `run` means `interrupt(.cancel)`: `run` still waits for the real
 ///   exit and returns a termination with `interruptIntent == .cancel`.
+/// - An unchanged item's verbose line (`backup --verbose`) is dropped unread and never reaches `onMessage`.
 /// - `onMessage` is called from the two reader tasks, in order within a stream but with no ordering
 ///   between the streams, and may be called concurrently. It runs synchronously on a drain thread, so
 ///   it must be cheap and must never block: a slow callback stalls that stream, and restic with it.
@@ -238,6 +239,10 @@ public actor ResticProcess {
             DispatchQueue(label: "restorey.restic.drain", qos: .utility).async {
                 var result = Drained()
                 func consume(_ bytes: ArraySlice<UInt8>) {
+                    // A backup's verbose output is mostly unchanged items (millions on a home folder), which say nothing
+                    // the app keeps: dropped here, before any decoding (Task 16d). They are never on stderr, so the
+                    // tail a `/fail` ping uses is unaffected.
+                    if ResticMessageParser.isUnchangedVerboseLine(bytes) { return }
                     var line = String(decoding: bytes, as: UTF8.self)
                     if line.hasSuffix("\r") { line.removeLast() }
                     guard !line.isEmpty else { return }
