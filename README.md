@@ -130,7 +130,9 @@ xcodegen`; CI installs exactly 2.46.0 from its release, checked against the publ
 
    `BUILD_NUMBER=2 scripts/install-dev.sh` installs it with a different build number, so the running agent sees
    an update and is restarted. Reinstalling the same build within an hour of a repair leaves the old agent
-   running until you choose "Restart Backups".
+   running until you choose "Restart Backups". The script also removes the build product from Launch Services
+   (Xcode registers every app it builds), so the installed copy is the only app with the dev bundle ID and the
+   Dock, About and System Settings show its icon rather than a stale build's.
 
 Debug builds use a separate identity (`com.jaydenkerr.restorey.dev`, `RestoreyDev`), so they can sit beside a
 Release install without sharing a launchd label, keychain group or on-disk state. GitHub Actions runs the

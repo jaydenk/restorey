@@ -35,4 +35,11 @@ for _ in $(seq 1 40); do pgrep -f "$DEST/Contents/MacOS/$APP_NAME" >/dev/null ||
 
 rm -rf "${DEST:?}"
 ditto "$BUILT" "$DEST"
+
+# Xcode registers every app it builds with Launch Services, so the build product and the installed copy share one
+# bundle ID. Lookups by ID (the Dock, About, System Settings' lists) can then pick the build product, which showed an
+# old generic icon after the icon landed. Keep the installed copy as the only registration.
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+"$LSREGISTER" -u "$BUILT" 2>/dev/null || true
+"$LSREGISTER" -f "$DEST"
 echo "Installed $DEST"
