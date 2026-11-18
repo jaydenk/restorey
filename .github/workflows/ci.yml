@@ -5,6 +5,9 @@ on:
 jobs:
   build-and-test:
     runs-on: xcode-27
+    # Runs take 9 to 14 minutes. 45 leaves room for a slow runner or a cold cache yet stops a hung test (the suites'
+    # own limits are 3 minutes each) long before GitHub's 6 hour default.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - name: Select Xcode 27

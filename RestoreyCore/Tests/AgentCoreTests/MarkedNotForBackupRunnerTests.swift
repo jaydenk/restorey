@@ -6,6 +6,7 @@ import RestoreyCore
 
 /// Task 15c in the runner: items apps mark as not for backup are looked for before each backup, passed to real restic
 /// 0.19.1 as an exclude file that is removed however the step ends, and counted in the record. Spotlight is faked.
+@Suite(.timeLimit(.minutes(3)))
 struct MarkedNotForBackupRunnerTests {
     /// Answers with `paths` and says each in `stillMarked` still carries the attribute.
     final class FakeIndex: MarkedItemsFinding, Sendable {

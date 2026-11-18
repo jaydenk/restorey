@@ -117,8 +117,9 @@ struct ResticProcessTests {
         let elapsed = ContinuousClock.now - interruptedAt
 
         #expect(elapsed > .seconds(9.5), "killed after \(elapsed), before the 10 s grace period")
-        // Against the stub's 1000 s sleep, not a tight absolute: only the grace period (the lower bound) is the subject.
-        #expect(elapsed < .seconds(60), "took \(elapsed) to kill")
+        // The 10 s grace period plus 15 s of slack, against the 1000 s stub: a kill timer set to a longer grace (30 s,
+        // say) fails, and a slow runner has to stall 15 s to.
+        #expect(elapsed < .seconds(25), "took \(elapsed) to kill")
         #expect(termination.interruptIntent == .pause)
         #expect(termination.terminatedBySignal == SIGKILL)
         #expect(termination.killedByUs)

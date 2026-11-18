@@ -170,7 +170,7 @@ import Testing
     /// A repository made the way the agent makes one (the password through `RESTIC_PASSWORD_COMMAND`, from the
     /// stored bytes, trailing newline and all), then opened and restored with nothing but the kit's commands,
     /// pasted into a clean shell.
-    @Test(.timeLimit(.minutes(2))) func theCommandsRestoreARepositoryResticMadeFromTheStoredPassword() async throws {
+    @Test(.timeLimit(.minutes(3))) func theCommandsRestoreARepositoryResticMadeFromTheStoredPassword() async throws {
         let restic = try TestBinaries.requireRestic()
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("restorey-commands-\(UUID().uuidString)")

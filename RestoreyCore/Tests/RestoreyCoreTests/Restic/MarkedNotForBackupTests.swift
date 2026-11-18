@@ -6,6 +6,7 @@ import Testing
 
 /// Task 15c: items apps mark as not for backup (Time Machine's per-item attribute). The collapse, the exclude-file
 /// text, the scan over a fake index, the stored fields, the words, and the real `getxattr` check on a temp folder.
+@Suite(.timeLimit(.minutes(3)))
 struct MarkedNotForBackupTests {
     private static let home = "/Users/me"
     private static let en = Locale(identifier: "en_AU")
@@ -230,7 +231,7 @@ struct MarkedNotForBackupTests {
 
         held.release.signal()
         // No time bound here: the stuck look returns as soon as it is released, and a wait that never ends is caught
-        // by the test run's own limit.
+        // by the suite's 3 minute limit.
         while held.gate.isBusy { try? await Task.sleep(for: .milliseconds(20)) }
         held.release.signal() // for the next look
         #expect(await MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: Self.unreachable) == .found(["/Users/me/a"]))

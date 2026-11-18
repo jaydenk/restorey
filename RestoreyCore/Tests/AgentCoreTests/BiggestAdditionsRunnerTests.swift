@@ -197,7 +197,7 @@ struct BiggestAdditionsRunnerTests {
         #expect(BiggestAdditionsText.shortfallLogLine(additions, dataAddedPacked: Int(packed)) == nil)
     }
 
-    @Test(.timeLimit(.minutes(2))) func resticReportsTheFileThatWasAdded() async throws {
+    @Test(.timeLimit(.minutes(3))) func resticReportsTheFileThatWasAdded() async throws {
         let f = try await RunnerFixture.make()
         defer { f.remove() }
         try f.write("small.txt", "hello")

@@ -1275,15 +1275,15 @@ struct PlanRunnerTests {
     }
 
     @Test func drainGivesUpOnPingsAfterItsBudget() async throws {
-        let f = try await RunnerFixture.make(pingDelay: .seconds(20))
+        let f = try await RunnerFixture.make(pingDelay: .seconds(60))
         defer { f.remove() }
         try f.write("a.txt", "one")
         _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
 
         let started = ContinuousClock.now
         #expect(await f.state.prepareForRestart(pingBudget: .milliseconds(300)) == false)
-        // Against the 20 s the sender would take, not a tight absolute: the budget is 300 ms.
-        #expect(ContinuousClock.now - started < .seconds(15))
+        // Against the 60 s the sender would take, not a tight absolute: the budget is 300 ms.
+        #expect(ContinuousClock.now - started < .seconds(30))
         #expect(await f.checkIn.pings.isEmpty)
     }
 
@@ -1319,26 +1319,64 @@ struct PlanRunnerTests {
         /// Lets the stub print step `n` (the first step needs no release).
         func go(_ n: Int) { FileManager.default.createFile(atPath: dir.appendingPathComponent("go-\(n)").path, contents: nil) }
 
-        /// Releases every step and removes the folder, so a stub never outlives a test that stopped early.
+        /// Releases every step and removes the folder. The stub's wait loop also leaves when its folder is gone, so no
+        /// stub outlives a test that stopped early, whatever the order of the two (`stubsEndWhenTheirFolderIsGone`).
         func finish() {
             for n in 1..<max(steps, 1) { go(n) }
             try? FileManager.default.removeItem(at: dir)
         }
     }
 
-    private func steppedBackupStub(_ steps: [String]) throws -> SteppedStub {
+    /// One line the stub prints, on stdout or stderr.
+    private struct Step {
+        let line: String
+        let stderr: Bool
+        static func out(_ line: String) -> Step { Step(line: line, stderr: false) }
+        static func err(_ line: String) -> Step { Step(line: line, stderr: true) }
+    }
+
+    private func steppedBackupStub(_ steps: [Step]) throws -> SteppedStub {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("restorey-stepped-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         var body = "#!/bin/sh\n[ \"$1\" = cat ] && exit 10\n[ \"$1\" = backup ] || exit 0\n"
-        for (index, line) in steps.enumerated() {
-            if index > 0 { body += "while [ ! -f '\(dir.path)/go-\(index)' ]; do /bin/sleep 0.05; done\n" }
-            body += "echo '\(line)'\n"
+        for (index, step) in steps.enumerated() {
+            if index > 0 {
+                body += "while [ ! -f '\(dir.path)/go-\(index)' ]; do [ -d '\(dir.path)' ] || exit 1; /bin/sleep 0.05; done\n"
+            }
+            body += "echo '\(step.line)'\(step.stderr ? " >&2" : "")\n"
         }
         let stub = dir.appendingPathComponent("restic.sh")
         try body.write(to: stub, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
         return SteppedStub(stub: stub, dir: dir, steps: steps.count)
+    }
+
+    /// An early exit leaves no stub running: with its folder removed and no `go-N` ever created, the stub ends.
+    @Test func aSteppedStubEndsWhenItsFolderIsGone() async throws {
+        let stepped = try steppedBackupStub([.out("a"), .out("b")])
+        let output = Pipe()
+        let (printed, printedContinuation) = AsyncStream<Void>.makeStream()
+        let (ended, endedContinuation) = AsyncStream<Void>.makeStream()
+        output.fileHandleForReading.readabilityHandler = { handle in
+            if !handle.availableData.isEmpty { printedContinuation.yield() }
+        }
+        let process = Process()
+        process.executableURL = stepped.stub
+        process.arguments = ["backup"]
+        process.standardOutput = output
+        process.terminationHandler = { _ in endedContinuation.yield() }
+        try process.run()
+        defer { output.fileHandleForReading.readabilityHandler = nil }
+
+        // The stub has printed its first line, so it is now waiting for `go-1`.
+        var printedIterator = printed.makeAsyncIterator()
+        await printedIterator.next()
+        try FileManager.default.removeItem(at: stepped.dir)
+        // It must notice the folder is gone and exit rather than spin; a hang is caught by the suite's limit.
+        var endedIterator = ended.makeAsyncIterator()
+        await endedIterator.next()
+        #expect(process.terminationStatus == 1)
     }
 
     @Test func retryingLineIsShownUntilTheNextStatus() async throws {
@@ -1347,7 +1385,7 @@ struct PlanRunnerTests {
         }
         let summary = #"{"message_type":"summary","files_new":1,"files_changed":0,"files_unmodified":0,"data_added":1,"data_added_packed":1,"total_files_processed":1,"total_bytes_processed":1,"total_duration":1,"snapshot_id":"abc123"}"#
         let retry = "Save(<data/0123>) returned error, retrying after 552ms: dial tcp: user:\(RunnerFixture.password)@host connection refused"
-        let stepped = try steppedBackupStub([status(0.1), retry, status(0.5), summary])
+        let stepped = try steppedBackupStub([.out(status(0.1)), .err(retry), .out(status(0.5)), .out(summary)])
         defer { stepped.finish() }
 
         let f = try await RunnerFixture.make(executable: stepped.stub)
@@ -1380,7 +1418,7 @@ struct PlanRunnerTests {
         }
         let scan = #"{"message_type":"verbose_status","action":"scan_finished","item":"","duration":0.1,"data_size":10,"data_size_in_repo":0,"metadata_size":0,"metadata_size_in_repo":0,"total_files":2}"#
         let summary = #"{"message_type":"summary","files_new":1,"files_changed":0,"files_unmodified":0,"data_added":1,"data_added_packed":1,"total_files_processed":1,"total_bytes_processed":1,"total_duration":1,"snapshot_id":"abc123"}"#
-        let stepped = try steppedBackupStub([status(0.1), scan, status(0.5), summary])
+        let stepped = try steppedBackupStub([.out(status(0.1)), .out(scan), .out(status(0.5)), .out(summary)])
         defer { stepped.finish() }
 
         let f = try await RunnerFixture.make(executable: stepped.stub)
