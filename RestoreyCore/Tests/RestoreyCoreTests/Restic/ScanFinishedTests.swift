@@ -56,7 +56,7 @@ struct ScanFinishedTests {
 
     /// Under the vendored restic: a small backup of a temporary tree into a temporary repository reports the scan as
     /// finished, before its summary, and the line is the one the reader expects.
-    @Test(.timeLimit(.minutes(1))) func realResticReportsTheScanFinishingBeforeTheSummary() async throws {
+    @Test(.timeLimit(.minutes(3))) func realResticReportsTheScanFinishingBeforeTheSummary() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }
         for name in ["a.txt", "b.txt", "c.txt"] {

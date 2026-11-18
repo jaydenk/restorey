@@ -1207,7 +1207,8 @@ struct AgentStateTests {
         let state = await Self.makeState(dir)
         let start = ContinuousClock.now
         await state.prepareForRestart()
-        #expect(ContinuousClock.now - start < .seconds(1))
+        // Replies without waiting on anything: well under the ping budget the drain would otherwise be held to.
+        #expect(ContinuousClock.now - start < AgentState.drainPingBudget / 2)
         #expect(await state.isDraining)
         await #expect(throws: AgentError.draining) { try await state.backUpNow(nil) }
     }

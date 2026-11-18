@@ -143,6 +143,10 @@ final class RunnerFixture: Sendable {
         self.planID = planID
     }
 
+    /// The default for `cloudOnlyDeadline` and `markedItemsDeadline`: no test that isn't about a deadline can reach it,
+    /// however slow the runner. A test whose subject is the deadline passes a tiny one and holds the work past it.
+    static let unreachableDeadline: TimeInterval = 3600
+
     /// - Parameters:
     ///   - executable: restic, or a stand-in script; defaults to the vendored restic.
     ///   - createRepository: runs `createRepository` (restic init) before returning.
@@ -162,9 +166,9 @@ final class RunnerFixture: Sendable {
         retryLock: String = "5m",
         change: (inout Plan) -> Void = { _ in },
         cloudOnlySkipped: @escaping @Sendable ([String], [String]) -> CloudOnlyCounter.Result? = { _, _ in nil },
-        cloudOnlyDeadline: TimeInterval = 10,
+        cloudOnlyDeadline: TimeInterval = RunnerFixture.unreachableDeadline,
         markedItems: (any MarkedItemsFinding)? = nil,
-        markedItemsDeadline: TimeInterval = 10
+        markedItemsDeadline: TimeInterval = RunnerFixture.unreachableDeadline
     ) async throws -> RunnerFixture {
         let fm = FileManager.default
         let base = stableAncestors ? URL(fileURLWithPath: "/Users/Shared", isDirectory: true) : fm.temporaryDirectory

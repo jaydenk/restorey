@@ -197,6 +197,10 @@ struct MarkedNotForBackupTests {
         held.release.signal()
     }
 
+    /// A deadline these tests can't reach: they are not about the deadline, so a slow runner must not be able to pass it.
+    /// The tests that are about it pass a tiny one and hold the query past it.
+    static let unreachable: TimeInterval = 3600
+
     /// A query that blocks until the test lets it go, counting how often it was asked.
     final class Held: MarkedItemsFinding, Sendable {
         let gate = OneOutstandingGate()
@@ -225,10 +229,11 @@ struct MarkedNotForBackupTests {
         #expect(held.asked.withLock { $0 } == 1)
 
         held.release.signal()
-        let deadline = ContinuousClock.now + .seconds(5)
-        while held.gate.isBusy, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(20)) }
+        // No time bound here: the stuck look returns as soon as it is released, and a wait that never ends is caught
+        // by the test run's own limit.
+        while held.gate.isBusy { try? await Task.sleep(for: .milliseconds(20)) }
         held.release.signal() // for the next look
-        #expect(await MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: 5) == .found(["/Users/me/a"]))
+        #expect(await MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: Self.unreachable) == .found(["/Users/me/a"]))
         #expect(held.asked.withLock { $0 } == 2)
     }
 
@@ -236,9 +241,9 @@ struct MarkedNotForBackupTests {
     /// giving up or starting a second query at the same time.
     @Test func aLiveLookIsWaitedForThenRunAgain() async {
         let held = Held()
-        async let first = MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: 5)
+        async let first = MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: Self.unreachable)
         while held.asked.withLock({ $0 }) == 0 { try? await Task.sleep(for: .milliseconds(10)) }
-        async let second = MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: 5)
+        async let second = MarkedItemsScan.offPool(finder: held, sources: ["/Users/me"], deadline: Self.unreachable)
         try? await Task.sleep(for: .milliseconds(200))
         #expect(held.asked.withLock { $0 } == 1, "never two queries at once")
         held.release.signal()
@@ -250,7 +255,7 @@ struct MarkedNotForBackupTests {
 
     @Test func offPoolReturnsTheVerifiedItems() async {
         let index = FakeIndex(.found(["/Users/me/a", "/Users/me/b"]), stillMarked: ["/Users/me/b"])
-        #expect(await MarkedItemsScan.offPool(finder: index, sources: ["/Users/me"], deadline: 10) == .found(["/Users/me/b"]))
+        #expect(await MarkedItemsScan.offPool(finder: index, sources: ["/Users/me"], deadline: Self.unreachable) == .found(["/Users/me/b"]))
     }
 
     // MARK: The real attribute check (Spotlight may not index temp folders, so the query itself is faked above)

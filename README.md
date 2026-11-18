@@ -125,7 +125,9 @@ xcodegen`; CI installs exactly 2.46.0 from its release, checked against the publ
    queues fill up there long before they do on a desktop Mac. Neither the code nor the tests may block a Swift
    concurrency thread (a semaphore wait, `waitUntilExit`, a synchronous call that can hang): blocking work runs
    on a thread of its own (`OwnThread`), deadlines included, never on a global queue. Tests of timeouts move a
-   `ManualClock` rather than measuring wall-clock time. To check a change for pool blockers on any Mac, run the
+   `ManualClock` rather than measuring wall-clock time. A deadline or time bound in a test is either the subject of
+   the test (tiny, with the work held past it by a semaphore or file) or unreachable (3600 s); waiting for an event uses
+   a handshake, never a fixed sleep or an elapsed-time bound a slow runner can outlast. To check a change for pool blockers on any Mac, run the
    tests with the pool cut to one thread:
 
    ```sh

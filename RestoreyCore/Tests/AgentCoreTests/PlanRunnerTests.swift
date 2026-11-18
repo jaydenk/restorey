@@ -1282,7 +1282,8 @@ struct PlanRunnerTests {
 
         let started = ContinuousClock.now
         #expect(await f.state.prepareForRestart(pingBudget: .milliseconds(300)) == false)
-        #expect(ContinuousClock.now - started < .seconds(5))
+        // Against the 20 s the sender would take, not a tight absolute: the budget is 300 ms.
+        #expect(ContinuousClock.now - started < .seconds(15))
         #expect(await f.checkIn.pings.isEmpty)
     }
 
@@ -1297,8 +1298,8 @@ struct PlanRunnerTests {
         _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
 
         await f.state.restartForReplacedBinary(pingBudget: .seconds(1))
-        let deadline = ContinuousClock.now + .seconds(10)
-        while !exited.value, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        // No time bound: the exit follows the drain, and a hang is caught by the suite's limit.
+        while !exited.value { try await Task.sleep(for: .milliseconds(20)) }
         #expect(lines.value.contains("Gave up waiting for check-in pings after 1 second; some may not have been sent"))
         #expect(AgentState.pingsGivenUp(after: .seconds(180)).contains("after 3 minutes;"))
         #expect(AgentState.pingsGivenUp(after: .seconds(90)).contains("after 90 seconds;"))
@@ -1306,42 +1307,66 @@ struct PlanRunnerTests {
 
     // MARK: Progress (Ruling R14)
 
+    /// A stand-in restic whose `backup` prints one line, then waits for the test to create the next `go-N` file before
+    /// printing the following, so each state the test asserts on lasts until the test moves on, however slow the runner
+    /// is (task 18b: the stub used `/bin/sleep`, which a busy runner can outlast). `steps` are the lines to print, each
+    /// after the first preceded by its wait; the last is followed by no wait.
+    private struct SteppedStub: Sendable {
+        let stub: URL
+        let dir: URL
+        let steps: Int
+
+        /// Lets the stub print step `n` (the first step needs no release).
+        func go(_ n: Int) { FileManager.default.createFile(atPath: dir.appendingPathComponent("go-\(n)").path, contents: nil) }
+
+        /// Releases every step and removes the folder, so a stub never outlives a test that stopped early.
+        func finish() {
+            for n in 1..<max(steps, 1) { go(n) }
+            try? FileManager.default.removeItem(at: dir)
+        }
+    }
+
+    private func steppedBackupStub(_ steps: [String]) throws -> SteppedStub {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restorey-stepped-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var body = "#!/bin/sh\n[ \"$1\" = cat ] && exit 10\n[ \"$1\" = backup ] || exit 0\n"
+        for (index, line) in steps.enumerated() {
+            if index > 0 { body += "while [ ! -f '\(dir.path)/go-\(index)' ]; do /bin/sleep 0.05; done\n" }
+            body += "echo '\(line)'\n"
+        }
+        let stub = dir.appendingPathComponent("restic.sh")
+        try body.write(to: stub, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+        return SteppedStub(stub: stub, dir: dir, steps: steps.count)
+    }
+
     @Test func retryingLineIsShownUntilTheNextStatus() async throws {
-        let stub = FileManager.default.temporaryDirectory
-            .appendingPathComponent("restorey-retrying-\(UUID().uuidString).sh")
         let status = { (percent: Double) in
             #"{"message_type":"status","percent_done":\#(percent),"total_files":2,"files_done":1,"total_bytes":10,"bytes_done":5}"#
         }
         let summary = #"{"message_type":"summary","files_new":1,"files_changed":0,"files_unmodified":0,"data_added":1,"data_added_packed":1,"total_files_processed":1,"total_bytes_processed":1,"total_duration":1,"snapshot_id":"abc123"}"#
-        try """
-            #!/bin/sh
-            [ "$1" = cat ] && exit 10
-            [ "$1" = backup ] || exit 0
-            echo '\(status(0.1))'
-            /bin/sleep 1
-            echo 'Save(<data/0123>) returned error, retrying after 552ms: dial tcp: user:\(RunnerFixture.password)@host connection refused' >&2
-            /bin/sleep 2
-            echo '\(status(0.5))'
-            /bin/sleep 2
-            echo '\(summary)'
+        let retry = "Save(<data/0123>) returned error, retrying after 552ms: dial tcp: user:\(RunnerFixture.password)@host connection refused"
+        let stepped = try steppedBackupStub([status(0.1), retry, status(0.5), summary])
+        defer { stepped.finish() }
 
-            """.write(to: stub, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
-        defer { try? FileManager.default.removeItem(at: stub) }
-
-        let f = try await RunnerFixture.make(executable: stub)
+        let f = try await RunnerFixture.make(executable: stepped.stub)
         defer { f.remove() }
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
 
+        try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
+        stepped.go(1)
         try await f.waitForPhase { $0.retrying != nil }
         let retrying = try #require(await f.status().phase.retrying)
         #expect(retrying.contains("retrying after"))
         #expect(!retrying.contains(RunnerFixture.password))
         #expect(await f.status().phase.progress?.percentDone == 0.1)
 
+        stepped.go(2)
         try await f.waitForPhase { $0.progress?.percentDone == 0.5 }
         #expect(await f.status().phase.retrying == nil)
 
+        stepped.go(3)
         let record = try await run.value
         #expect(record.outcome == .success(snapshotID: "abc123"))
         #expect(await f.status().phase == .idle)
@@ -1350,39 +1375,28 @@ struct PlanRunnerTests {
     /// Task 16e: the progress carries whether restic has finished counting. A status before the `scan_finished` line
     /// says no; the line itself says yes at once, and so does every status after it.
     @Test func theScanFinishingReachesTheProgress() async throws {
-        let stub = FileManager.default.temporaryDirectory
-            .appendingPathComponent("restorey-scan-\(UUID().uuidString).sh")
         let status = { (percent: Double) in
             #"{"message_type":"status","percent_done":\#(percent),"total_files":2,"files_done":1,"total_bytes":10,"bytes_done":5}"#
         }
         let scan = #"{"message_type":"verbose_status","action":"scan_finished","item":"","duration":0.1,"data_size":10,"data_size_in_repo":0,"metadata_size":0,"metadata_size_in_repo":0,"total_files":2}"#
         let summary = #"{"message_type":"summary","files_new":1,"files_changed":0,"files_unmodified":0,"data_added":1,"data_added_packed":1,"total_files_processed":1,"total_bytes_processed":1,"total_duration":1,"snapshot_id":"abc123"}"#
-        try """
-            #!/bin/sh
-            [ "$1" = cat ] && exit 10
-            [ "$1" = backup ] || exit 0
-            echo '\(status(0.1))'
-            /bin/sleep 1.5
-            echo '\(scan)'
-            /bin/sleep 1.5
-            echo '\(status(0.5))'
-            /bin/sleep 1.5
-            echo '\(summary)'
+        let stepped = try steppedBackupStub([status(0.1), scan, status(0.5), summary])
+        defer { stepped.finish() }
 
-            """.write(to: stub, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
-        defer { try? FileManager.default.removeItem(at: stub) }
-
-        let f = try await RunnerFixture.make(executable: stub)
+        let f = try await RunnerFixture.make(executable: stepped.stub)
         defer { f.remove() }
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
 
+        // The stub prints nothing more until released, so each read below sees exactly the state it names.
         try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
         #expect(await f.status().phase.progress?.scanFinished == false)
+        stepped.go(1)
         try await f.waitForPhase { $0.progress?.scanFinished == true }
         #expect(await f.status().phase.progress?.percentDone == 0.1)
+        stepped.go(2)
         try await f.waitForPhase { $0.progress?.percentDone == 0.5 }
         #expect(await f.status().phase.progress?.scanFinished == true)
+        stepped.go(3)
         _ = try await run.value
     }
 
