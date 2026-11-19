@@ -79,8 +79,10 @@ lid. Siri can't run them by voice on the Mac: Apple says voice invocation of App
   keeps three rules (`FolderDrop`, paths compared by whole components and by where a link leads): a folder inside one
   already listed is refused (“Downloads” is already included in your home folder), a folder holding listed ones is added
   and takes them off the list (and says so), and when the plan's repository is a local folder, that folder and anything
-  inside it is refused (a plan with such a source is invalid), while a folder holding it is added with a note. Every
-  backup to a local repository excludes the repository's own folder, whatever the list holds; **Schedule**
+  inside it is refused (a plan with such a source is invalid), while a folder holding it is added with a note (shown
+  under the list, and cleared by the next change). Every backup to a local repository excludes the repository's own
+  folder, whatever the list holds, so when it is inside a source the Exclusions sheet shows it as a fixed first row,
+  “This plan’s backups”, that can't be selected or removed; **Schedule**
   (how often, the battery rule, the plan's own upload limit, and its alerts: the check-in URL and "no successful backup in N days");
   **Storage** (the address, read-only, the password and keys, the host label, and "Show Recovery Kit…");
   **Retention** (how many hourly, daily, weekly and monthly snapshots to keep, prune, and **Earlier snapshots**:

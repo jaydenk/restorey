@@ -12,6 +12,9 @@ struct ExclusionsSheet: View {
     @Binding var oneFileSystem: Bool
     let home: URL
     let identity: Identity
+    /// The plan's repository and sources, for the fixed row naming the repository when it is inside a source.
+    let repository: Repository?
+    let sources: [String]
     @State private var selection: Set<String> = []
     /// Why the last add (button or drop) left something out; cleared by the next change to the list.
     @State private var addProblem: String?
@@ -23,6 +26,9 @@ struct ExclusionsSheet: View {
             Text("Exclusions").pageTitle()
             Text("Folders").font(.headline)
             List(selection: $selection) {
+                if let repositoryPath = ExclusionsSummary.repositoryRow(repository: repository, sources: sources) {
+                    repositoryRow(repositoryPath)
+                }
                 ForEach(exclusions, id: \.self) { pattern in
                     HStack {
                         Text(DefaultExclusions.displayPattern(pattern, home: home))
@@ -64,6 +70,21 @@ struct ExclusionsSheet: View {
         .padding(20)
         .dismissesOnEscape()
         .frame(width: 520)
+    }
+
+    /// The plan's repository, always left out by the agent (so it isn't in `exclusions`): first, with no tag so it can't
+    /// be selected, and so Remove and Delete never reach it.
+    private func repositoryRow(_ path: String) -> some View {
+        HStack {
+            Text(FormValidation.displayPath(path, home: home.path))
+                .lineLimit(1).truncationMode(.middle)
+            Spacer()
+            Text("This plan’s backups").font(.caption).foregroundStyle(.secondary)
+        }
+        .help(path)
+        .selectionDisabled()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(FormValidation.displayPath(path, home: home.path)), this plan’s backups, always left out")
     }
 
     private func addFolder() {

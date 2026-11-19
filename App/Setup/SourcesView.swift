@@ -11,7 +11,7 @@ struct SourcesView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SourcesEditor(sources: $model.sources)
+            SourcesEditor(sources: $model.sources, repository: model.plan?.repository)
                 .disabled(model.working)
             if let problem = model.sourcesProblem {
                 SeverityText(problem)
@@ -41,7 +41,8 @@ struct SourcesView: View {
             if let identity = model.identity {
                 ExclusionsSheet(
                     exclusions: $model.exclusions, fileTypes: $model.fileTypeExclusions,
-                    oneFileSystem: $model.oneFileSystem, home: Self.home, identity: identity)
+                    oneFileSystem: $model.oneFileSystem, home: Self.home, identity: identity,
+                    repository: model.plan?.repository, sources: model.sources)
             }
         }
     }

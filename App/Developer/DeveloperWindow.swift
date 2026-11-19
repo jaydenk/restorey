@@ -97,7 +97,7 @@ struct DeveloperView: View {
                 if model.selectedPlan?.hasCheckInURL == true {
                     Toggle("Remove check-in URL", isOn: $model.removeCheckInURL)
                 }
-                LabeledContent("Sources") { SourcesEditor(sources: $model.sources) }
+                LabeledContent("Sources") { SourcesEditor(sources: $model.sources, repository: model.selectedPlan?.repository) }
                 LabeledContent("Excluded file types") { FileTypesEditor(types: $model.fileTypes) }
             }
             if model.selectedPlanID != nil {

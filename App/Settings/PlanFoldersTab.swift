@@ -27,7 +27,7 @@ struct PlanFoldersTab: View {
                 if let problem = model.edit.nameProblem { SeverityText(problem) }
             }
             Section("Folders and drives") {
-                SourcesEditor(sources: $model.fields.sources)
+                SourcesEditor(sources: $model.fields.sources, repository: model.saved.repository)
                 if let problem = model.edit.sourcesProblem { SeverityText(problem) }
                 if let warning = model.edit.sourcesWarning {
                     SeverityText(warning, severity: .warning)
@@ -70,7 +70,8 @@ struct PlanFoldersTab: View {
         .sheet(isPresented: $reviewing) {
             ExclusionsSheet(
                 exclusions: $model.fields.exclusions, fileTypes: $model.fields.fileTypeExclusions,
-                oneFileSystem: $model.fields.oneFileSystem, home: Self.home, identity: identity)
+                oneFileSystem: $model.fields.oneFileSystem, home: Self.home, identity: identity,
+                repository: model.saved.repository, sources: model.fields.sources)
         }
     }
 

@@ -25,6 +25,14 @@ public enum ExclusionsSummary {
         return "Skipped: " + parts.dropLast().joined(separator: ", ") + " and " + parts.last! + "."
     }
 
+    /// The folder the Exclusions sheet shows as a fixed first row, "This plan’s backups": the plan's repository when it is
+    /// a local folder inside one of the sources (v0.1.1, Task 2). The agent leaves it out of every backup itself, so it is
+    /// never in the plan's `exclusions`; this only decides whether the sheet says so. Nil when there is nothing to show.
+    public static func repositoryRow(repository: Repository?, sources: [String]) -> String? {
+        guard let path = repository?.localFolderPath else { return nil }
+        return sources.contains { SourcePaths.contains($0, path) } ? path : nil
+    }
+
     private static func count(_ n: Int, _ one: String, _ many: String) -> String {
         "\(n) \(n == 1 ? one : many)"
     }

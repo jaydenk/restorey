@@ -66,4 +66,22 @@ import Testing
         #expect(DefaultExclusions.displayPattern("**/node_modules", home: Self.home) == "**/node_modules")
         #expect(DefaultExclusions.displayPattern("/Users/te\\[s\\]t", home: Self.home) == "~")
     }
+
+    // v0.1.1, Task 2: the Exclusions sheet's fixed row for the plan's own repository.
+
+    @Test func aLocalRepositoryInsideASourceGetsTheFixedRow() {
+        let repository = Repository.raw(repository: "/Volumes/Disk/repo", environmentNames: [])
+        #expect(ExclusionsSummary.repositoryRow(repository: repository, sources: ["/Volumes/Disk"]) == "/Volumes/Disk/repo")
+    }
+
+    @Test func aRepositoryOutsideEverySourceGetsNoRow() {
+        let repository = Repository.raw(repository: "/Volumes/Backups/repo", environmentNames: [])
+        #expect(ExclusionsSummary.repositoryRow(repository: repository, sources: ["/Volumes/Backup", "/Users/me"]) == nil)
+    }
+
+    @Test func aRepositoryThatIsNotALocalFolderOrNotYetChosenGetsNoRow() {
+        let remote = Repository.raw(repository: "sftp:host:/repo", environmentNames: [])
+        #expect(ExclusionsSummary.repositoryRow(repository: remote, sources: ["/"]) == nil)
+        #expect(ExclusionsSummary.repositoryRow(repository: nil, sources: ["/"]) == nil)
+    }
 }
