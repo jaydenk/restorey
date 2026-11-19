@@ -992,6 +992,7 @@ struct AgentStateTests {
         await #expect { try await state.savePlan(Self.request(plan)) } throws: { Self.message($0) == refused }
         await #expect { try await state.deletePlan(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.pause(plan.id, for: .oneHour) } throws: { Self.message($0) == refused }
+        await #expect { try await state.cancel(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.resume(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.confirmRecoveryKit(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.backUpNow(plan.id) } throws: { Self.message($0) == refused }
@@ -1183,6 +1184,33 @@ struct AgentStateTests {
 
     private static func waitUntilDraining(_ state: AgentState) async throws {
         while !(await state.isDraining) { try await Task.sleep(for: .milliseconds(10)) }
+    }
+
+    /// Cancel only stops work, so a drain doesn't refuse it (like Pause), and it changes no pause.
+    @Test func cancelIsAllowedWhileDraining() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        try await state.beginRun(planID: plan.id)
+        let drain = Task { await state.prepareForRestart() }
+        try await Self.waitUntilDraining(state)
+
+        let status = try await state.cancel(plan.id)
+        #expect(status.plans.first?.phase != nil)
+        #expect(try await state.runInputs(plan.id).history.pausedUntil == nil)
+
+        await state.endRun(planID: plan.id)
+        await drain.value
+    }
+
+    /// Like Pause, Cancel is refused when the settings can't be read, and for a plan that doesn't exist.
+    @Test func cancelIsRefusedForAnUnknownPlan() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        await #expect { _ = try await state.cancel(UUID()) } throws: { ($0 as? AgentError) == .unknownPlan }
     }
 
     @Test func drainWaitsForInFlightRun() async throws {

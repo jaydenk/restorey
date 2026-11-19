@@ -113,6 +113,14 @@ final class AgentService: NSObject, AgentXPC, Sendable {
         }
     }
 
+    func cancel(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "cancel") { [state, log] in
+            let status = try await state.cancel(try Self.planID(planID))
+            log.info("Cancelled the run of plan \(planID)")
+            return status
+        }
+    }
+
     func resume(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
         respond(reply, "resume") { [state, log, plansChanged] in
             let status = try await state.resume(try Self.planID(planID))

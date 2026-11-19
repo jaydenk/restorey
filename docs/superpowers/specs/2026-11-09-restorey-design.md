@@ -125,6 +125,7 @@ Mockup: `docs/mockups/menubar-and-restore.html` (copied from the AGENT brainstor
 - Deduplication means data already uploaded is not uploaded again.
 - The UI should say "Paused" (not "Failed"), and must not count a paused run as a failure for alerting.
 - Auto-resume after a set time is my call. Without it, a forgotten pause becomes anti-goal 1. **(v0.1.1)** The length is one of three, chosen when pausing: 1 hour, 4 hours or until tomorrow (24 hours). The agent enforces the set: a request for any other length is refused with “Restorey can’t pause for that long. Choose 1 hour, 4 hours or until tomorrow.” and pauses nothing, and a stored pause is never more than 24 hours after now, even if the clock went backwards. Pausing is still allowed while the agent is draining for an update.
+- **Cancel Backup (v0.1.1).** Stops the run in progress and nothing else: no pause is set and the schedule carries on. The run ends **cancelled** (SIGINT, then SIGKILL, as for a pause): no check-in ping, no “Backup failed” notification and no maintenance after it, and the next backup falls at its normal time, not the 15-minute short retry. With no run in progress, Cancel does nothing and changes nothing, and a run a pause is already stopping stays paused (the first stop wins). Like Pause it is allowed while the agent is draining for an update, since it only stops work; it is refused when the settings can’t be read and for a plan that doesn’t exist.
 
 ### 5.2 Restore window (decided, mockup approved)
 

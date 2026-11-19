@@ -1410,6 +1410,98 @@ struct PlanRunnerTests {
         #expect(await f.status().phase == .idle)
     }
 
+    // MARK: Cancel Backup (v0.1.1)
+
+    private static let cancelStatus =
+        #"{"message_type":"status","percent_done":0.1,"total_files":2,"files_done":1,"total_bytes":10,"bytes_done":5}"#
+    private static let cancelSummary =
+        #"{"message_type":"summary","files_new":1,"files_changed":0,"files_unmodified":0,"data_added":1,"data_added_packed":1,"total_files_processed":1,"total_bytes_processed":1,"total_duration":1,"snapshot_id":"abc123"}"#
+
+    /// A backup held mid-run by a stepped stub: Cancel ends it `.cancelled`, with no ping, no alert and no
+    /// maintenance after it, and never touches the pause.
+    @Test func cancelStopsTheRunAsCancelled() async throws {
+        let stepped = try steppedBackupStub([.out(Self.cancelStatus), .out(Self.cancelSummary)])
+        defer { stepped.finish() }
+        let f = try await RunnerFixture.make(executable: stepped.stub)
+        defer { f.remove() }
+        let notifier = AgentStateAlertTests.FakeNotifier(authorised: true)
+        await f.state.attach(notifier: notifier, log: { _ in })
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
+
+        _ = try await f.state.cancel(f.planID)
+        let record = try await run.value
+
+        #expect(record.outcome == .cancelled)
+        #expect(await f.pings() == [], "neither a /fail nor a success ping")
+        await f.state.alertsDelivered()
+        #expect(await notifier.titles == [], "no Backup failed notification")
+        #expect(await f.operations() == [.catConfig, .initRepository, .backup], "no maintenance after a cancel")
+        let history = await f.history()
+        #expect(history.pausedUntil == nil)
+        #expect(history.runningRecordID == nil)
+        #expect(await f.status().phase == .idle)
+    }
+
+    /// Cancel isn't a failure and isn't a short retry: the plan runs again at its normal time.
+    @Test func aCancelledBackupRunsAgainAtItsNormalTime() async throws {
+        let stepped = try steppedBackupStub([.out(Self.cancelStatus), .out(Self.cancelSummary)])
+        defer { stepped.finish() }
+        let f = try await RunnerFixture.make(executable: stepped.stub)
+        defer { f.remove() }
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
+        _ = try await f.state.cancel(f.planID)
+        #expect(try await run.value.outcome == .cancelled)
+
+        let history = await f.history()
+        let plan = await f.plan()
+        let lastAttemptAt = try #require(history.lastAttemptAt)
+        guard case .interval(let seconds) = plan.schedule else { Issue.record("expected an interval schedule"); return }
+        #expect(!isShortRetry(history))
+        #expect(nextRunDate(plan: plan, history: history, now: f.clock.now)
+            == max(lastAttemptAt.addingTimeInterval(TimeInterval(seconds)), f.clock.now))
+    }
+
+    /// Review focus 4: a Cancel that arrives after the run ended changes nothing and records nothing.
+    @Test func cancelAfterTheRunEndedDoesNothing() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        let ended = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        guard case .success = ended.outcome else { Issue.record("expected a success, got \(ended.outcome)"); return }
+        let before = await f.state.status()
+        let recordsBefore = await f.history().recent.count
+
+        let after = try await f.state.cancel(f.planID)
+
+        // `generatedAt` and `sequence` move with every status built; everything else must stay as it was.
+        #expect(after.plans == before.plans)
+        #expect(await f.state.status().plans == before.plans)
+        #expect(await f.history().recent.count == recordsBefore, "no new record")
+        #expect(await f.pings() == [.success], "only the finished run’s ping")
+    }
+
+    /// Review focus 4: a pause already stopping the run wins; Cancel keeps its outcome and its `pausedUntil`.
+    @Test func cancelWhileAPauseIsStoppingTheRunKeepsThePause() async throws {
+        let stepped = try steppedBackupStub([.out(Self.cancelStatus), .out(Self.cancelSummary)])
+        defer { stepped.finish() }
+        let f = try await RunnerFixture.make(executable: stepped.stub)
+        defer { f.remove() }
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
+
+        _ = try await f.state.pause(f.planID, for: .oneHour)
+        let until = try #require(await f.history().pausedUntil)
+        _ = try await f.state.cancel(f.planID)
+        let record = try await run.value
+
+        #expect(record.outcome == .paused)
+        #expect(await f.history().pausedUntil == until)
+        #expect(await f.status().phase == .paused(until: until))
+        #expect(await f.pings() == [])
+    }
+
     /// Task 16e: the progress carries whether restic has finished counting. A status before the `scan_finished` line
     /// says no; the line itself says yes at once, and so does every status after it.
     @Test func theScanFinishingReachesTheProgress() async throws {

@@ -7,6 +7,7 @@ import RestoreyCore
 enum AgentActions {
     static let backUpFailed = "Restorey couldn’t start the backup"
     static let pauseFailed = "Restorey couldn’t pause the backup"
+    static let cancelFailed = "Restorey couldn’t cancel the backup"
     static let resumeFailed = "Restorey couldn’t resume the backup"
 
     /// `planID` nil: every plan (the menu's "All Plans").
@@ -16,6 +17,10 @@ enum AgentActions {
 
     static func pause(_ plans: [UUID], for length: PauseLength, _ connection: AgentConnection) {
         run(pauseFailed) { await each(plans) { await connection.pause($0, for: length) } }
+    }
+
+    static func cancel(_ plans: [UUID], _ connection: AgentConnection) {
+        run(cancelFailed) { await each(plans, connection.cancel) }
     }
 
     static func resume(_ plans: [UUID], _ connection: AgentConnection) {

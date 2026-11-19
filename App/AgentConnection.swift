@@ -94,6 +94,10 @@ final class AgentConnection {
         }
     }
 
+    func cancel(_ planID: UUID) async -> Result<AgentStatus, AgentCallError> {
+        await statusCall(timeout: .seconds(60)) { $0.cancel(planID.uuidString, withReply: $1) }
+    }
+
     func resume(_ planID: UUID) async -> Result<AgentStatus, AgentCallError> {
         await statusCall(timeout: .seconds(60)) { $0.resume(planID.uuidString, withReply: $1) }
     }

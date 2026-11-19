@@ -331,7 +331,8 @@ public actor PlanRunner {
     // MARK: Interrupts and background runs
 
     /// Asks the plan's run in progress, if any, to stop. A request repeated while it is pending is
-    /// ignored. `AgentState.pause` is the one way in.
+    /// ignored, and so is any request once one is pending: a Cancel after a pause leaves the run paused.
+    /// `AgentState.pause` and `AgentState.cancel` are the ways in.
     func interrupt(planID: UUID, intent: InterruptIntent) async {
         for handle in [handles[planID]].compactMap({ $0 }) + (measurementHandles[planID] ?? []) {
             guard let process = handle.request(intent) else { continue }

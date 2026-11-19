@@ -14,7 +14,7 @@ import Synchronization
 /// XPC can never interleave across the stores' `await`s and lose an update.
 ///
 /// While draining (`prepareForRestart`, or `restartForReplacedBinary` when the agent finds its own
-/// executable replaced), every mutating call except `pause` is refused. Pause stays allowed so the user
+/// executable replaced), every mutating call except `pause` and `cancel` is refused. Both stay allowed so the user
 /// can still stop a long first backup; the next agent honours `pausedUntil`. The runner starts no new
 /// restic step while draining: the step in flight finishes, nothing after it (Ruling R55).
 public actor AgentState {
@@ -594,6 +594,18 @@ public actor AgentState {
         return status
     }
 
+    /// Stops the plan's run in progress, this run only: the schedule carries on, so nothing is saved and
+    /// `pausedUntil` is left alone. The run ends `.cancelled`: no ping, no failure alert, no maintenance
+    /// after it, and the next backup falls at its normal time (not the short retry). With no run in progress
+    /// the status comes back unchanged. A run a pause is already stopping keeps the pause (`handle.request`
+    /// returns nil once an intent is set). Allowed while draining, like `pause`, since it only stops work.
+    public func cancel(_ id: UUID) async throws -> AgentStatus {
+        try requireLoaded()
+        _ = try requirePlan(id)
+        await runner?.interrupt(planID: id, intent: .cancel)
+        return status()
+    }
+
     /// Clears the plan's pause. When it was paused (`pausedUntil` still in the future), Resume also starts
     /// a fresh backup at once (spec §3, Ruling R59), through Back Up Now, so the pre-run conditions and
     /// the recovery-kit refusal are exactly Back Up Now's: a skip for battery or network is a fine
@@ -770,7 +782,7 @@ public actor AgentState {
     }
 
     /// The same drain, for the app's `unregister()` then `register()`: the agent stays up, drained and
-    /// refusing every mutating call but `pause`, until `unregister()` stops it. Exiting instead would let
+    /// refusing every mutating call but `pause` and `cancel`, until `unregister()` stops it. Exiting instead would let
     /// launchd's `KeepAlive` start a fresh agent that `unregister()` could then kill mid-run.
     ///
     /// Refused with `restarting` while a restart drain is under way (the app's, or the agent's own for a
@@ -914,7 +926,7 @@ public actor AgentState {
         if loadError != nil { throw AgentError.configUnavailable }
     }
 
-    /// Loaded and not draining: the gate for every mutating call except `pause`.
+    /// Loaded and not draining: the gate for every mutating call except `pause` and `cancel`.
     func requireMutable() throws {
         try requireLoaded()
         guard !isDraining else { throw AgentError.draining }

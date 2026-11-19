@@ -360,7 +360,7 @@ saves anything left, confirms the kit, then backs up: confirming makes the plan 
 first. `backUpNow` answers with a `BackUpNowReply` whose `alreadyRunning` says so for the plan asked for, instead
 of refusing (an agent from before it answered with a bare status, which still decodes). Only a backup step still under way
 and carrying on counts: a run stopping for a pause (or any other stop), a run in its maintenance after the backup step
-(forget, prune, check), or a one-off action such as an adopt, still gets the "is already backing up" refusal, as before; only Resume queues a backup behind a stopping run (Ruling R62). The progress line
+(forget, prune, check), or a one-off action such as an adopt, still gets the "is already backing up" refusal, as before; only Resume queues a backup behind a stopping run (Ruling R62). The agent’s `cancel` call (v0.1.1) stops only the run in progress: it ends cancelled with no ping, alert or maintenance, sets no pause, and the next backup falls at its normal time; with no run in progress it changes nothing, a run a pause is already stopping stays paused, and, like Pause, it is allowed while the agent is draining. The progress line
 (`FirstBackupProgress`) is the menu's wording, plus "Waiting to start" while the run has no progress yet (queued behind
 an adopt's size measurement, say). Closing the window leaves the backup running. Every agent sentence shown in setup
 gets a closing full stop (`FormValidation.sentence`), as the form's own sentences have. An environment row's value

@@ -6,11 +6,11 @@ import Foundation
 /// Every reply is `(payload, error)`: exactly one is non-nil. The payload is JSON (`XPCCoding`), the
 /// error a sentence in Australian English to show as is. Plan IDs are UUID strings.
 ///
-/// Mutating calls (`savePlan`, `deletePlan`, `pause`, `resume`, `confirmRecoveryKit`, `backUpNow`,
+/// Mutating calls (`savePlan`, `deletePlan`, `pause`, `cancel`, `resume`, `confirmRecoveryKit`, `backUpNow`,
 /// `createRepository`, `saveNetworkSettings`, `dismissOffMacNote`, `removeEarlierSnapshotsAfterNextBackup`) reply with
 /// the new `AgentStatus`. While a config error is reported, all of them are refused, and so are `history`, `recoveryKit`
 /// and the earlier-snapshots calls. While draining, all of them, `adopt`, `probeRepository` and the earlier-snapshots
-/// calls are refused, except `pause`: the user can still pause a long first backup,
+/// calls are refused, except `pause` and `cancel`: the user can still stop a long first backup,
 /// the run then ends paused, the drain completes and the next agent honours `pausedUntil`.
 ///
 /// Only `recoveryKit` replies with secrets, and only to this connection, which the listener accepts from
@@ -34,6 +34,10 @@ import Foundation
     /// `PauseRequest` → `AgentStatus`. Pauses for 1 hour, 4 hours or until tomorrow (`PauseLength`), then resumes
     /// on its own. Any other length is refused and pauses nothing.
     func pause(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
+    /// Stops the plan's run in progress and nothing else: the schedule carries on and no pause is set. The run
+    /// ends cancelled, which is neither a failure nor a short retry. With no run in progress the status is
+    /// returned unchanged.
+    func cancel(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// Clears the pause and, if the plan was paused and isn't stopped, starts a backup at once as Back Up
     /// Now does (Ruling R59); its refusals come back as the error.
     func resume(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
@@ -82,7 +86,7 @@ import Foundation
     /// new run starts meanwhile. The agent then exits and launchd starts the new binary.
     func prepareForRestart(withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// → `DrainReply`, like `prepareForRestart`, but the agent does not exit: it stays up, drained and
-    /// refusing every mutating call but `pause`, so the app's `unregister()` stops this drained process
+    /// refusing every mutating call but `pause` and `cancel`, so the app's `unregister()` stops this drained process
     /// rather than a fresh one launchd's `KeepAlive` started. Used before `unregister()` then `register()`.
     func prepareForReregistration(withReply reply: @escaping @Sendable (Data?, String?) -> Void)
 }
