@@ -124,7 +124,7 @@ Mockup: `docs/mockups/menubar-and-restore.html` (copied from the AGENT brainstor
 - Resume starts a fresh `restic backup`, at once (Ruling R59): through the same path as Back Up Now (trigger "manual"), so the pre-run conditions, the recovery-kit gate and "already backing up" apply as they do there. A run still stopping for the pause (SIGINT, then SIGKILL after 10 s) doesn't make Resume fail as "already backing up": the fresh backup starts as soon as that run has ended (Ruling R62). A stopped plan has its pause cleared and starts nothing. Resume on a plan that isn't paused does nothing.
 - Deduplication means data already uploaded is not uploaded again.
 - The UI should say "Paused" (not "Failed"), and must not count a paused run as a failure for alerting.
-- Auto-resume after a set time (e.g. 1 hour) is my call. Without it, a forgotten pause becomes anti-goal 1.
+- Auto-resume after a set time is my call. Without it, a forgotten pause becomes anti-goal 1. **(v0.1.1)** The length is one of three, chosen when pausing: 1 hour, 4 hours or until tomorrow (24 hours). The agent enforces the set: a request for any other length is refused with “Restorey can’t pause for that long. Choose 1 hour, 4 hours or until tomorrow.” and pauses nothing, and a stored pause is never more than 24 hours after now, even if the clock went backwards. Pausing is still allowed while the agent is draining for an update.
 
 ### 5.2 Restore window (decided, mockup approved)
 

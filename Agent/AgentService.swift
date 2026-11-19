@@ -104,10 +104,11 @@ final class AgentService: NSObject, AgentXPC, Sendable {
         }
     }
 
-    func pause(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+    func pause(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
         respond(reply, "pause") { [state, log] in
-            let status = try await state.pause(try Self.planID(planID))
-            log.info("Paused plan \(planID)")
+            let request = try PauseRequest.decoded(from: request)
+            let status = try await state.pause(request.planID, for: request.length)
+            log.info("Paused plan \(request.planID.uuidString) (\(request.length.rawValue))")
             return status
         }
     }

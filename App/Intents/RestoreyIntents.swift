@@ -79,7 +79,7 @@ struct BackUpNowIntent: AppIntent {
     }
 }
 
-/// The menu's Pause has one length, an hour (`planPauseDuration`), so this has no duration to choose.
+/// The menu's Pause is one hour here (`PauseLength.oneHour`), so this has no duration to choose.
 struct PauseBackupsIntent: AppIntent {
     static let title: LocalizedStringResource = "Pause Backups"
     static let description = IntentDescription(
@@ -101,7 +101,7 @@ struct PauseBackupsIntent: AppIntent {
             planID: plan?.id, health: ready.health, content: ready.content, status: ready.status
         ).get(orThrow: ShortcutError.init)
         guard case .pause(let plans) = call.kind else { return .result(dialog: "\(call.dialog)") }
-        try await perPlan(.pause, plans, ready, ready.connection.pause)
+        try await perPlan(.pause, plans, ready) { await ready.connection.pause($0, for: .oneHour) }
         return .result(dialog: "\(call.dialog)")
     }
 }

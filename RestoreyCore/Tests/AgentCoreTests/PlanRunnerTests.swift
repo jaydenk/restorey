@@ -811,7 +811,7 @@ struct PlanRunnerTests {
         let f = try await RunnerFixture.make()
         defer { f.remove() }
         try f.write("a.txt", "one")
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
         #expect(await f.history().pausedUntil != nil)
 
         let status = try await f.state.resume(f.planID)
@@ -859,7 +859,7 @@ struct PlanRunnerTests {
 
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
         try await f.waitForPhase { $0.progress != nil }
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
         // The paused run is still stopping (SIGKILL comes after 2 s): Resume returns without an error.
         _ = try await f.state.resume(f.planID)
 
@@ -912,7 +912,7 @@ struct PlanRunnerTests {
         // Running and carrying on: reported, not refused.
         let live = try await f.state.backUpNow(f.planID)
         #expect(live.alreadyRunning)
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
         await #expect { try await f.state.backUpNow(f.planID) } throws: {
             ($0 as? AgentError)?.message == "Fixture is already backing up"
         }
@@ -989,7 +989,7 @@ struct PlanRunnerTests {
         defer { f.remove() }
         try f.write("a.txt", "one")
         try await f.state.updateHistory(f.planID) { $0.stoppedReason = "The repository password is wrong" }
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
 
         _ = try await f.state.resume(f.planID)
         #expect(await f.runner.waitForBackgroundRun(planID: f.planID) == nil)
@@ -1007,7 +1007,7 @@ struct PlanRunnerTests {
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
         try await f.waitForPhase { $0.progress != nil }
         let pausedAt = f.clock.now
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
         let record = try await run.value
 
         #expect(record.outcome == .paused)
@@ -1033,15 +1033,15 @@ struct PlanRunnerTests {
         #expect(await f.pings() == [.success])
     }
 
-    /// Final review M2: the scheduler's tick cuts a pause the clock stretched back to an hour from now and
-    /// saves it, so it runs out an hour later instead of sliding along with the clock.
+    /// Final review M2: the scheduler's tick cuts a pause the clock stretched back to a day from now and
+    /// saves it, so it runs out a day later instead of sliding along with the clock.
     @Test func theTickCutsBackAPauseTheClockStretched() async throws {
         let f = try await RunnerFixture.make(createRepository: false)
         defer { f.remove() }
-        try await f.state.updateHistory(f.planID) { [now = f.clock.now] in $0.pausedUntil = now.addingTimeInterval(5 * 3600) }
+        try await f.state.updateHistory(f.planID) { [now = f.clock.now] in $0.pausedUntil = now.addingTimeInterval(5 * 86400) }
 
         await f.runner.refreshStatus()
-        let limit = f.clock.now.addingTimeInterval(3600)
+        let limit = f.clock.now.addingTimeInterval(86400)
         #expect(await f.history().pausedUntil == limit)
         #expect(await f.status().phase == .paused(until: limit))
         let saved = try await AgentState.stateStore(in: f.support).load()
@@ -1049,7 +1049,7 @@ struct PlanRunnerTests {
 
         f.clock.advance(1800)
         await f.runner.refreshStatus()
-        #expect(await f.history().pausedUntil == limit, "a pause within the hour is left alone")
+        #expect(await f.history().pausedUntil == limit, "a pause within the day is left alone")
     }
 
     /// restic ignores SIGINT here, so our SIGKILL ends it: still a pause, but its lock is left behind,
@@ -1081,7 +1081,7 @@ struct PlanRunnerTests {
 
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
         try await f.waitForPhase { $0.progress != nil }
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
         #expect(try await run.value.outcome == .paused)
 
         try FileManager.default.removeItem(at: marker)
@@ -1739,7 +1739,7 @@ struct PlanRunnerTests {
                 #expect(await f.state.status().plans.isEmpty)
                 #expect(!FileManager.default.fileExists(atPath: f.logs.appendingPathComponent("runs/\(f.planID.uuidString)").path))
             } else {
-                _ = try await f.state.pause(f.planID)
+                _ = try await f.state.pause(f.planID, for: .oneHour)
                 await f.runner.waitForMeasurement(planID: f.planID)
                 let stats = try #require(await f.history().recent.first { $0.operation == .stats })
                 #expect(stats.outcome == .paused)
@@ -1775,7 +1775,7 @@ struct PlanRunnerTests {
             if deleting {
                 _ = try await f.state.deletePlan(f.planID)
             } else {
-                _ = try await f.state.pause(f.planID)
+                _ = try await f.state.pause(f.planID, for: .oneHour)
             }
             gate.open()
             await blocker.value()
@@ -2032,7 +2032,7 @@ struct PlanRunnerTests {
         await #expect { try await f.state.createRepository(f.planID) } throws: { ($0 as? AgentError)?.message == refused }
         await #expect { _ = try await f.state.adopt(f.planID) } throws: { ($0 as? AgentError)?.message == refused }
         // Pause stays allowed (Ruling R27).
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
     }
 
     // MARK: Maintenance schedule (pure)

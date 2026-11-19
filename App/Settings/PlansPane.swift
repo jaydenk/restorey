@@ -133,7 +133,7 @@ struct PlansPane: View {
         if choice?.canResume == true {
             Button("Resume") { AgentActions.resume([id], connection) }
         } else {
-            Button("Pause") { AgentActions.pause([id], connection) }
+            Button("Pause") { AgentActions.pause([id], for: .oneHour, connection) }
                 .disabled(choice?.canPause != true)
         }
         Button("Restore Files…") { context.showRestoreFiles(id) }

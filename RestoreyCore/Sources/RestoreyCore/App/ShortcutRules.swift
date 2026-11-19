@@ -108,7 +108,7 @@ public enum ShortcutRules {
         return .success(ShortcutCall(kind: .backUp(planID), dialog: "Backing up “\(choice.name)”."))
     }
 
-    /// The menu's Pause: one hour (`planPauseDuration`), after which the plan backs up by itself. `planID` nil: every
+    /// The menu's Pause: one hour (`PauseLength.oneHour`), after which the plan backs up by itself. `planID` nil: every
     /// plan the menu could pause, as its "All Plans" does.
     public static func pause(
         planID: UUID?, health: AgentHealthState, content: MenuContent, status: AgentStatus?

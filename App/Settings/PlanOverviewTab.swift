@@ -136,7 +136,7 @@ struct PlanOverviewTab: View {
         let connection = supervisor.connection
         switch kind {
         case .backUpNow: AgentActions.backUpNow(planID, connection)
-        case .pause: AgentActions.pause([planID], connection)
+        case .pause: AgentActions.pause([planID], for: .oneHour, connection)
         case .resume: AgentActions.resume([planID], connection)
         case .restoreFiles: context.showRestoreFiles(planID)
         }

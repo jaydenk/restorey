@@ -672,7 +672,8 @@ private enum Words {
     }
 
     static func resumes(_ until: Date, _ format: TextContext) -> String {
-        "Resumes by itself at \(format.time(until))"
+        let day = format.isTomorrow(until) ? " tomorrow" : ""
+        return "Resumes by itself\(day) at \(format.time(until))"
     }
 
     static func next(_ date: Date, _ format: TextContext) -> String {
@@ -945,6 +946,12 @@ struct TextContext {
     var now: Date
     var calendar: Calendar
     var locale: Locale
+
+    /// Whether `date` falls on the calendar day after `now`'s, in this context's calendar and time zone.
+    func isTomorrow(_ date: Date) -> Bool {
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: now) else { return false }
+        return calendar.isDate(date, inSameDayAs: tomorrow)
+    }
 
     func time(_ date: Date) -> String {
         DisplayFormat.time(date, calendar: calendar, locale: locale)

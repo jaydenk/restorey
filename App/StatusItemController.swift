@@ -226,9 +226,9 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
             AgentActions.backUpNow(planID, connection)
         case .pauseAll:
             let plans = choices(supervisor).filter(\.canPause).map(\.id)
-            AgentActions.pause(plans, connection)
+            AgentActions.pause(plans, for: .oneHour, connection)
         case .pause(let planID):
-            AgentActions.pause([planID], connection)
+            AgentActions.pause([planID], for: .oneHour, connection)
         case .resumeAll:
             let plans = choices(supervisor).filter(\.canResume).map(\.id)
             AgentActions.resume(plans, connection)

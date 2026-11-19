@@ -12,6 +12,20 @@ public enum XPCCoding {
     }
 }
 
+// MARK: Pause
+
+/// `pause`'s request: which plan, and for how long. `length` is one of `PauseLength`'s cases; the agent refuses
+/// any other (an app and agent from different builds, or a malformed request).
+public struct PauseRequest: Codable, Sendable, Equatable {
+    public var planID: UUID
+    public var length: PauseLength
+
+    public init(planID: UUID, length: PauseLength) {
+        self.planID = planID
+        self.length = length
+    }
+}
+
 // MARK: Handshake
 
 /// The app's half of the version handshake (spec §8).

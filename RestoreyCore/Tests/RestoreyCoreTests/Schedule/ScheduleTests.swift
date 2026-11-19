@@ -70,13 +70,22 @@ struct ScheduleTests {
         #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == until)
     }
 
-    /// Final review M2: a pause set before the clock went back 5 hours ends within an hour, not 6.
-    @Test func aBackwardClockDoesNotStretchAPause() {
+    /// Review focus 3: a stored `pausedUntil` never holds a plan more than a day after now.
+    @Test func aPauseIsNeverLongerThanADayEvenIfTheClockWentBack() {
         var h = history(lastAttempt: Self.now)
-        h.pausedUntil = Self.now.addingTimeInterval(6 * Self.hour)
-        #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == Self.now.addingTimeInterval(Self.hour))
-        h.pausedUntil = Self.now.addingTimeInterval(Self.hour)
-        #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == Self.now.addingTimeInterval(Self.hour))
+        h.pausedUntil = Self.now.addingTimeInterval(3 * 86400)
+        #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == Self.now.addingTimeInterval(86400))
+        // Each length is kept as it is.
+        for length in PauseLength.allCases {
+            h.pausedUntil = Self.now.addingTimeInterval(length.seconds)
+            #expect(nextRunDate(plan: plan(), history: h, now: Self.now) == Self.now.addingTimeInterval(length.seconds))
+        }
+    }
+
+    @Test func theLengthsAreOneHourFourHoursAndADay() {
+        #expect(PauseLength.allCases.map(\.seconds) == [3600, 14400, 86400])
+        #expect(PauseLength.allCases.map(\.menuTitle) == ["For 1 Hour", "For 4 Hours", "Until Tomorrow"])
+        #expect(PauseLength.longest == .oneDay)
     }
 
     @Test func pausedUntilBeatsFirstRun() {

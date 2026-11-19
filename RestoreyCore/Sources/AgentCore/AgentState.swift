@@ -18,7 +18,6 @@ import Synchronization
 /// can still stop a long first backup; the next agent honours `pausedUntil`. The runner starts no new
 /// restic step while draining: the step in flight finishes, nothing after it (Ruling R55).
 public actor AgentState {
-    public static let pauseDuration: TimeInterval = planPauseDuration
     /// Progress pushes are at most this often; phase changes are always pushed.
     public static let progressPushInterval: TimeInterval = 0.5
     static let stateSchemaVersion = 1
@@ -277,7 +276,7 @@ public actor AgentState {
         } else if let reason = history.stoppedReason {
             phase = .stopped(reason: reason)
         } else if let until = history.pausedUntil, until > now {
-            phase = .paused(until: min(until, now.addingTimeInterval(Self.pauseDuration)))
+            phase = .paused(until: min(until, now.addingTimeInterval(PauseLength.longest.seconds)))
         } else if case .skipped(let reason)? = history.recent.first?.outcome {
             phase = .skipped(reason)
         } else {
@@ -325,19 +324,19 @@ public actor AgentState {
         Dictionary(status.plans.map { ($0.plan.id, PushedPlan($0, now: status.generatedAt)) }) { first, _ in first }
     }
 
-    /// A pause can only be `pauseDuration` long. One that ends later than that from now was set before
+    /// A pause can only be `PauseLength.longest` (a day). One that ends later than that from now was set before
     /// the clock went backwards, and would last as long again as the clock moved: it is cut back to
-    /// `pauseDuration` from now and saved, so it then runs out normally (final review M2). The scheduler's
+    /// a day from now and saved, so it then runs out normally (final review M2). The scheduler's
     /// tick calls this. A save that fails is tried again at the next tick.
     public func clampStretchedPauses() async {
         let now = now()
-        let limit = now.addingTimeInterval(Self.pauseDuration)
+        let limit = now.addingTimeInterval(PauseLength.longest.seconds)
         let stretched = runState.plans.filter { _, history in (history.pausedUntil ?? .distantPast) > limit }.map(\.key)
         for id in stretched where config.plans.contains(where: { $0.id == id }) {
             _ = try? await updateHistory(id) { history in
                 if let until = history.pausedUntil, until > limit { history.pausedUntil = limit }
             }
-            restartLog("The clock went backwards during a pause, so plan \(id.uuidString) is now paused for an hour from now")
+            restartLog("The clock went backwards during a pause, so plan \(id.uuidString) is now paused for a day from now")
         }
     }
 
@@ -585,11 +584,11 @@ public actor AgentState {
         }
     }
 
-    /// Pauses for `pauseDuration`, after which the plan is due at once, and asks the runner to stop a
+    /// Pauses for `length`, after which the plan is due at once, and asks the runner to stop a
     /// run in progress (SIGINT, then SIGKILL; the run ends `.paused`). Allowed while draining.
-    public func pause(_ id: UUID) async throws -> AgentStatus {
+    public func pause(_ id: UUID, for length: PauseLength) async throws -> AgentStatus {
         try requireLoaded()
-        let until = now().addingTimeInterval(Self.pauseDuration)
+        let until = now().addingTimeInterval(length.seconds)
         let status = try await updateHistory(id) { $0.pausedUntil = until }
         await runner?.interrupt(planID: id, intent: .pause)
         return status

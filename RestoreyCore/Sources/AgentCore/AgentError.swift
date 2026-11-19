@@ -1,3 +1,4 @@
+import Foundation
 import RestoreyCore
 
 /// Why the agent refused a request. `message` is the Australian English sentence the XPC reply carries.
@@ -33,6 +34,8 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
     case storage(String)
     /// The XPC payload could not be decoded.
     case invalidRequest(String)
+    /// `pause` was sent a length that isn't one of `PauseLength`'s cases (an app and agent from different builds).
+    case unknownPauseLength
 
     public var message: String {
         switch self {
@@ -56,6 +59,7 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
         case .repositoryAlreadyExists: "A repository already exists there"
         case .operationFailed(let detail): detail
         case .storage(let detail): detail
+        case .unknownPauseLength: "Restorey can’t pause for that long. Choose 1 hour, 4 hours or until tomorrow."
         case .invalidRequest(let detail): "Restorey couldn’t read the request: \(detail)"
         }
     }
@@ -72,6 +76,30 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
         case .uploadLimitNotPositive: "The upload limit must be more than 0 KiB/s"
         case .sourceInsideRepository(let path):
             "“\(FolderDrop.name(path))” is inside this plan’s backup repository. Choose a different folder."
+        }
+    }
+}
+
+extension PauseRequest {
+    /// Reads `pause`'s XPC payload. A length that isn't one of `PauseLength`'s cases is refused with its own
+    /// sentence; any other fault is the generic `invalidRequest`, naming only the type and the coding path.
+    public static func decoded(from data: Data) throws -> PauseRequest {
+        do {
+            return try XPCCoding.decode(PauseRequest.self, from: data)
+        } catch let DecodingError.dataCorrupted(context) where context.codingPath.last?.stringValue == "length" {
+            throw AgentError.unknownPauseLength
+        } catch let error as DecodingError {
+            let path: [any CodingKey] =
+                switch error {
+                case .typeMismatch(_, let context), .valueNotFound(_, let context), .keyNotFound(_, let context),
+                     .dataCorrupted(let context):
+                    context.codingPath
+                @unknown default: []
+                }
+            let at = path.isEmpty ? "the top level" : path.map(\.stringValue).joined(separator: ".")
+            throw AgentError.invalidRequest("PauseRequest is malformed at \(at)")
+        } catch {
+            throw AgentError.invalidRequest("PauseRequest is malformed")
         }
     }
 }

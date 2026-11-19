@@ -314,6 +314,16 @@ struct MenuPresentationTests {
         #expect(!Self.text(of: content).contains("failed"))
     }
 
+    @Test func resumesTomorrowSaysSo() {
+        let plan = Self.plan()
+        // 14:20 on Thursday 12 November, Brisbane. A pause until the next calendar day says so; the same day doesn't.
+        let tomorrow = Self.calendar.date(from: DateComponents(year: 2026, month: 11, day: 13, hour: 15, minute: 47))!
+        let content = Self.make(Self.status([Self.line(plan, phase: .paused(until: tomorrow), next: nil)]))
+        #expect(content.plans[0].detail == "Resumes by itself tomorrow at 15:47")
+        let today = Self.make(Self.status([Self.line(plan, phase: .paused(until: Self.at(15, 47)), next: nil)]))
+        #expect(today.plans[0].detail == "Resumes by itself at 15:47")
+    }
+
     @Test func aSystemStoppedRunIsNeverFailed() {
         let plan = Self.plan()
         let stopped = Self.record(plan, .stoppedBySystem, at: Self.at(14, 18))

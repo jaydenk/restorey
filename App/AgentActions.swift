@@ -14,8 +14,8 @@ enum AgentActions {
         run(backUpFailed) { [await connection.backUpNow(planID).map(\.status)] }
     }
 
-    static func pause(_ plans: [UUID], _ connection: AgentConnection) {
-        run(pauseFailed) { await each(plans, connection.pause) }
+    static func pause(_ plans: [UUID], for length: PauseLength, _ connection: AgentConnection) {
+        run(pauseFailed) { await each(plans) { await connection.pause($0, for: length) } }
     }
 
     static func resume(_ plans: [UUID], _ connection: AgentConnection) {

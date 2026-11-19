@@ -57,7 +57,7 @@ app's and the background process's versions, Show Last Run Log, Show Logs in Fin
 from the background agent whether or not the app is open.
 
 **Shortcuts and Spotlight.** Restorey adds four actions to the Shortcuts app and to Spotlight's actions, with no
-setting up: **Back Up Now**, **Pause Backups** (for an hour, as the menu's Pause), **Resume Backups** and **Get Last Backup**, which gives the
+setting up: **Back Up Now**, **Pause Backups** (for an hour; the agent pauses for 1 hour, 4 hours or until tomorrow, and refuses any other length), **Resume Backups** and **Get Last Backup**, which gives the
 plan's last backup time and outcome as values a shortcut can use (Time, Outcome, Backed Up, Last Successful Backup,
 Summary). Each takes a plan, or none for every plan (Get Last Backup: the newest backup of any plan), and is refused
 with a sentence saying why wherever the menu's item would be dimmed: "“Home” is already backing up.", "Backups are
@@ -626,8 +626,8 @@ the actions then never reach Shortcuts; the build writes `Contents/Resources/Met
   It is decided by `ShortcutRules` (RestoreyCore, tested): from the menu's own `MenuContent`, so an action is refused
   exactly when the menu's item is dimmed or missing, and says why in the menu's words ("“Home” hasn't finished
   setup.", "Backups aren't running."). Restorey just launched by an action waits, up to 30 s and by observing the
-  supervisor rather than polling, while the menu would still say "Connecting…" or "Updating…". The menu's Pause has
-  one length, an hour (`planPauseDuration`), so Pause Backups has no duration to choose.
+  supervisor rather than polling, while the menu would still say "Connecting…" or "Updating…". Pause Backups pauses for
+  one hour (`PauseLength.oneHour`) and has no duration to choose.
 - **Several plans.** Pause Backups and Resume Backups with no plan make the call for every plan the menu could act on,
   each whatever the others did, and if any fails, the error names each plan that failed, with its reason, and those
   that changed ("Restorey couldn't pause “Photos”: … “Home” is paused.", `ShortcutRules.failureMessage`).

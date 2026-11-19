@@ -31,8 +31,9 @@ import Foundation
     func deletePlan(_ id: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// One plan, or every plan when `planID` is nil.
     func backUpNow(_ planID: String?, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
-    /// Pauses for an hour, then resumes on its own.
-    func pause(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
+    /// `PauseRequest` → `AgentStatus`. Pauses for 1 hour, 4 hours or until tomorrow (`PauseLength`), then resumes
+    /// on its own. Any other length is refused and pauses nothing.
+    func pause(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// Clears the pause and, if the plan was paused and isn't stopped, starts a backup at once as Back Up
     /// Now does (Ruling R59); its refusals come back as the error.
     func resume(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
