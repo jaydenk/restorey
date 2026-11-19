@@ -62,8 +62,14 @@ struct ShortcutRulesTests {
         ShortcutRules.backUp(planID: planID, health: health, content: content(status, health: health), status: status)
     }
 
-    private static func pause(_ planID: UUID?, _ status: AgentStatus?) -> Result<ShortcutCall, ShortcutRefusal> {
-        ShortcutRules.pause(planID: planID, health: .healthy, content: content(status), status: status)
+    private static func pause(
+        _ planID: UUID?, _ status: AgentStatus?, length: PauseLength = .oneHour
+    ) -> Result<ShortcutCall, ShortcutRefusal> {
+        ShortcutRules.pause(planID: planID, length: length, health: .healthy, content: content(status), status: status)
+    }
+
+    private static func cancel(_ planID: UUID?, _ status: AgentStatus?) -> Result<ShortcutCall, ShortcutRefusal> {
+        ShortcutRules.cancel(planID: planID, health: .healthy, content: content(status), status: status)
     }
 
     private static func resume(_ planID: UUID?, _ status: AgentStatus?) -> Result<ShortcutCall, ShortcutRefusal> {
@@ -161,6 +167,66 @@ struct ShortcutRulesTests {
     }
 
     // MARK: Pause and Resume
+
+    @Test func pauseSaysHowLongForEachLength() {
+        let home = Self.plan("Home"), photos = Self.plan("Photos")
+        let status = Self.status([Self.line(home), Self.line(photos)])
+        let all: [PauseLength: String] = [
+            .oneHour: "Backups are paused for an hour.", .fourHours: "Backups are paused for 4 hours.",
+            .oneDay: "Backups are paused until tomorrow.",
+        ]
+        let one: [PauseLength: String] = [
+            .oneHour: "“Home” is paused for an hour.", .fourHours: "“Home” is paused for 4 hours.",
+            .oneDay: "“Home” is paused until tomorrow.",
+        ]
+        for length in PauseLength.allCases {
+            #expect(Self.pause(nil, status, length: length)
+                == .success(ShortcutCall(kind: .pause([home.id, photos.id]), dialog: all[length]!)))
+            #expect(Self.pause(home.id, status, length: length)
+                == .success(ShortcutCall(kind: .pause([home.id]), dialog: one[length]!)))
+        }
+    }
+
+    @Test func pauseKeepsItsRefusalsForEveryLength() {
+        let paused = Self.plan("Paused")
+        let status = Self.status([Self.line(paused, phase: .paused(until: Self.at(15, 0)))])
+        for length in PauseLength.allCases {
+            #expect(Self.pause(paused.id, status, length: length)
+                == .failure(ShortcutRefusal("“Paused” is already paused.")))
+            #expect(Self.pause(nil, status, length: length) == .failure(ShortcutRefusal("There’s nothing to pause.")))
+        }
+    }
+
+    // MARK: Cancel
+
+    @Test func cancelStopsWhatIsRunning() {
+        let home = Self.plan("Home"), photos = Self.plan("Photos"), docs = Self.plan("Docs")
+        let status = Self.status([
+            Self.line(home, phase: .running(nil, retrying: nil)), Self.line(photos, phase: .running(nil, retrying: nil)),
+            Self.line(docs),
+        ])
+        #expect(Self.cancel(nil, status)
+            == .success(ShortcutCall(kind: .cancel([home.id, photos.id]), dialog: "Cancelled every backup in progress.")))
+        #expect(Self.cancel(home.id, status)
+            == .success(ShortcutCall(kind: .cancel([home.id]), dialog: "Cancelled the backup of “Home”.")))
+    }
+
+    @Test func cancelIsRefusedWhenNothingIsBackingUp() {
+        let home = Self.plan("Home")
+        let status = Self.status([Self.line(home)])
+        #expect(Self.cancel(nil, status) == .failure(ShortcutRefusal("There’s no backup to cancel.")))
+        #expect(Self.cancel(home.id, status) == .failure(ShortcutRefusal("“Home” isn’t backing up.")))
+        #expect(Self.cancel(UUID(), status) == .failure(ShortcutRefusal("That plan is no longer in Restorey.")))
+        let paused = Self.status([Self.line(home, phase: .paused(until: Self.at(15, 0)))])
+        #expect(Self.cancel(home.id, paused) == .failure(ShortcutRefusal("“Home” isn’t backing up.")))
+    }
+
+    @Test func cancelSaysWhyWhenRestoreyCantBeAsked() {
+        let none = ShortcutRules.cancel(
+            planID: nil, health: .notRunning(reachable: true), content: Self.content(nil, health: .notRunning(reachable: true)),
+            status: nil)
+        #expect(none == .failure(ShortcutRefusal("Backups aren’t running.")))
+    }
 
     @Test func pauseIsTheMenusHourLongPause() {
         let home = Self.plan("Home"), photos = Self.plan("Photos"), paused = Self.plan("Paused")
@@ -438,7 +504,7 @@ struct FolderDropTests {
     }
 }
 
-/// Pause or Resume across several plans where some calls fail (review 17e, Minor 2): the error names each.
+/// Pause, Resume or Cancel across several plans where some calls fail (review 17e, Minor 2): the error names each.
 struct ShortcutPartialFailureTests {
     @Test func everyFailedPlanIsNamedAndTheOthersSaidDone() {
         let message = ShortcutRules.failureMessage(
@@ -458,6 +524,12 @@ struct ShortcutPartialFailureTests {
             .resume, outcomes: [.init(planName: "Home", failure: nil), .init(planName: "Docs", failure: "Busy.")])
         #expect(one == "Restorey couldn’t resume “Docs”: Busy. “Home” has resumed.")
         #expect(ShortcutRules.failureMessage(.pause, outcomes: [.init(planName: "Home", failure: nil)]) == nil)
+    }
+
+    @Test func cancelNamesEachFailedPlanAndThoseCancelled() {
+        let message = ShortcutRules.failureMessage(
+            .cancel, outcomes: [.init(planName: "Home", failure: nil), .init(planName: "Docs", failure: "Busy.")])
+        #expect(message == "Restorey couldn’t cancel “Docs”: Busy. “Home” was cancelled.")
     }
 }
 

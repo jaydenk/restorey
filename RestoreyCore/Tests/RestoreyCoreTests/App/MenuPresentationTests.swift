@@ -197,10 +197,13 @@ struct MenuPresentationTests {
         #expect(content.plans[0].progress == nil)
         #expect(content.actions.perPlanSubmenus)
         #expect(content.actions.backUpNow)
-        // Per plan for the submenus: the running one can't be backed up again, but can be paused.
+        #expect(content.actions.cancel)
+        // Per plan for the submenus: the running one can't be backed up again, but can be paused or cancelled.
         #expect(content.actions.plans == [
             PlanChoice(id: idle.id, name: "MacBook", canBackUp: true, canPause: true, canResume: false, canRestore: true),
-            PlanChoice(id: photos.id, name: "Photos drive", canBackUp: false, canPause: true, canResume: false, canRestore: true),
+            PlanChoice(
+                id: photos.id, name: "Photos drive", canBackUp: false, canPause: true, canResume: false, canRestore: true,
+                canCancel: true),
         ])
     }
 
@@ -216,6 +219,28 @@ struct MenuPresentationTests {
         let kitContent = Self.make(Self.status([Self.line(needsKit)]))
         #expect(kitContent.actions.plans.first?.canRestore == true)
         #expect(!content.actions.backUpNow)
+    }
+
+    /// Cancel Backup is for a backup that is running now, and only while the agent can be asked.
+    @Test func cancelIsOfferedOnlyForARunningBackup() {
+        let idle = Self.plan("MacBook")
+        let running = Self.plan("Photos drive")
+        let quiet = Self.make(Self.status([Self.line(idle)]))
+        #expect(!quiet.actions.cancel)
+        #expect(quiet.actions.plans.map(\.canCancel) == [false])
+
+        let paused = Self.make(Self.status([Self.line(idle, phase: .paused(until: Self.at(15, 0)))]))
+        #expect(!paused.actions.cancel)
+
+        let busy = Self.make(Self.status([Self.line(idle), Self.line(running, phase: .running(nil, retrying: nil))]))
+        #expect(busy.actions.cancel)
+        #expect(busy.actions.plans.map(\.canCancel) == [false, true])
+
+        // Not while the agent can't be asked: no choices at all, so nothing to cancel.
+        let updating = Self.make(
+            Self.status([Self.line(running, phase: .running(nil, retrying: nil))]), health: .updating)
+        #expect(!updating.actions.cancel)
+        #expect(updating.actions.plans.isEmpty)
     }
 
     @Test func runningWithoutProgressOrRateYet() {

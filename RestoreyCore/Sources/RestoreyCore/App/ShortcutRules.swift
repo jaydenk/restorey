@@ -26,8 +26,10 @@ public struct ShortcutCall: Sendable, Equatable {
     public enum Kind: Sendable, Equatable {
         /// The menu's Back Up Now: one plan, or nil for every plan (the menu's "All Plans").
         case backUp(UUID?)
-        /// The menu's Pause, for each plan in turn.
+        /// The menu's Pause, for each plan in turn (the length is the action's own).
         case pause([UUID])
+        /// The menu's Cancel Backup, for each running plan in turn.
+        case cancel([UUID])
         /// The menu's Resume, for each plan in turn.
         case resume([UUID])
     }
@@ -108,17 +110,17 @@ public enum ShortcutRules {
         return .success(ShortcutCall(kind: .backUp(planID), dialog: "Backing up “\(choice.name)”."))
     }
 
-    /// The menu's Pause: one hour (`PauseLength.oneHour`), after which the plan backs up by itself. `planID` nil: every
-    /// plan the menu could pause, as its "All Plans" does.
+    /// The menu's Pause for `length`, after which the plan backs up by itself. `planID` nil: every plan the menu could
+    /// pause, as its "All Plans" does.
     public static func pause(
-        planID: UUID?, health: AgentHealthState, content: MenuContent, status: AgentStatus?
+        planID: UUID?, length: PauseLength, health: AgentHealthState, content: MenuContent, status: AgentStatus?
     ) -> Result<ShortcutCall, ShortcutRefusal> {
         let actions = content.actions
         guard !actions.plans.isEmpty else { return .failure(unavailable(health: health, content: content, status: status)) }
         guard let planID else {
             let plans = actions.plans.filter(\.canPause).map(\.id)
             guard !plans.isEmpty else { return .failure(ShortcutRefusal("There’s nothing to pause.")) }
-            return .success(ShortcutCall(kind: .pause(plans), dialog: "Backups are paused for an hour."))
+            return .success(ShortcutCall(kind: .pause(plans), dialog: "Backups are paused \(spoken(length))."))
         }
         guard let (choice, plan) = find(planID, actions: actions, status: status) else { return .failure(gone) }
         guard choice.canPause else {
@@ -128,7 +130,29 @@ public enum ShortcutRules {
             default: return .failure(notReady(choice.name, plan) ?? ShortcutRefusal("“\(choice.name)” can’t be paused now."))
             }
         }
-        return .success(ShortcutCall(kind: .pause([planID]), dialog: "“\(choice.name)” is paused for an hour."))
+        return .success(ShortcutCall(kind: .pause([planID]), dialog: "“\(choice.name)” is paused \(spoken(length))."))
+    }
+
+    /// How a dialog says how long: "for an hour" (not the menu's "for 1 hour"), "for 4 hours", "until tomorrow".
+    private static func spoken(_ length: PauseLength) -> String {
+        length == .oneHour ? "for an hour" : length.phrase
+    }
+
+    /// The menu's Cancel Backup: stops the run in progress, this run only. `planID` nil: every running plan, as its
+    /// "All Plans" does.
+    public static func cancel(
+        planID: UUID?, health: AgentHealthState, content: MenuContent, status: AgentStatus?
+    ) -> Result<ShortcutCall, ShortcutRefusal> {
+        let actions = content.actions
+        guard !actions.plans.isEmpty else { return .failure(unavailable(health: health, content: content, status: status)) }
+        guard let planID else {
+            let plans = actions.plans.filter(\.canCancel).map(\.id)
+            guard !plans.isEmpty else { return .failure(ShortcutRefusal("There’s no backup to cancel.")) }
+            return .success(ShortcutCall(kind: .cancel(plans), dialog: "Cancelled every backup in progress."))
+        }
+        guard let (choice, _) = find(planID, actions: actions, status: status) else { return .failure(gone) }
+        guard choice.canCancel else { return .failure(ShortcutRefusal("“\(choice.name)” isn’t backing up.")) }
+        return .success(ShortcutCall(kind: .cancel([planID]), dialog: "Cancelled the backup of “\(choice.name)”."))
     }
 
     /// The menu's Resume, which also starts a backup at once (spec §3, Ruling R59). `planID` nil: every paused plan.
@@ -158,7 +182,7 @@ public enum ShortcutRules {
 
     /// Which of the menu's per-plan calls a multi-plan action made.
     public enum PerPlanAction: Sendable {
-        case pause, resume
+        case pause, resume, cancel
     }
 
     /// One plan's call in a multi-plan Pause or Resume: `failure` is the agent's or the connection's sentence.
@@ -179,7 +203,11 @@ public enum ShortcutRules {
     public static func failureMessage(_ action: PerPlanAction, outcomes: [PlanOutcome]) -> String? {
         let failed = outcomes.filter { $0.failure != nil }
         guard !failed.isEmpty else { return nil }
-        let verb = action == .pause ? "pause" : "resume"
+        let verb = switch action {
+        case .pause: "pause"
+        case .resume: "resume"
+        case .cancel: "cancel"
+        }
         var sentences = failed.map { outcome in
             var reason = outcome.failure ?? ""
             if !reason.hasSuffix(".") { reason += "." }
@@ -189,9 +217,13 @@ public enum ShortcutRules {
         if !done.isEmpty {
             let names = done.count == 1 ? done[0] : done.dropLast().joined(separator: ", ") + " and " + done.last!
             let one = done.count == 1
-            sentences.append(action == .pause
-                ? "\(names) \(one ? "is" : "are") paused."
-                : "\(names) \(one ? "has" : "have") resumed.")
+            let sentence: String
+            switch action {
+            case .pause: sentence = "\(names) \(one ? "is" : "are") paused."
+            case .resume: sentence = "\(names) \(one ? "has" : "have") resumed."
+            case .cancel: sentence = "\(names) \(one ? "was" : "were") cancelled."
+            }
+            sentences.append(sentence)
         }
         return sentences.joined(separator: " ")
     }

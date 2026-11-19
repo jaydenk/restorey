@@ -52,12 +52,12 @@ an item named for its fix with the problem under it (Allow Full Disk Access…, 
 Turn On in Login Items…); then a section per plan, headed by its name, with its status, progress or next run, and
 destination (choosing it opens the plan in Settings), then that plan's own problems (Finish Setup…, Save Recovery
 Kit…, Add Check-In URL… with Don't Show This Again) and, after a failure, Show Details… for its history; then Resume,
-Back Up Now and Pause, Restore Files…, Settings… (⌘,) and Quit Restorey. Option-click the icon for diagnostics: the
+Back Up Now, Pause and, while a backup runs, Cancel Backup, Restore Files…, Settings… (⌘,) and Quit Restorey. Pause opens a submenu of how long: For 1 Hour, For 4 Hours or Until Tomorrow (with several plans, headed All Plans and then each plan by name). Cancel Backup stops the backup in progress only: nothing is paused, no alert or check-in is sent, and the next backup falls at its normal time (with several backups running, a submenu of All Plans and each running plan). Option-click the icon for diagnostics: the
 app's and the background process's versions, Show Last Run Log, Show Logs in Finder and Copy Diagnostics. Backups run
 from the background agent whether or not the app is open.
 
-**Shortcuts and Spotlight.** Restorey adds four actions to the Shortcuts app and to Spotlight's actions, with no
-setting up: **Back Up Now**, **Pause Backups** (for an hour; the agent pauses for 1 hour, 4 hours or until tomorrow, and refuses any other length), **Resume Backups** and **Get Last Backup**, which gives the
+**Shortcuts and Spotlight.** Restorey adds five actions to the Shortcuts app and to Spotlight's actions, with no
+setting up: **Back Up Now**, **Pause Backups** (with a Length of For 1 Hour, For 4 Hours or Until Tomorrow; the agent refuses any other length), **Cancel Backup** (stops a backup in progress, this run only; refused with “There’s no backup to cancel.” or “<plan> isn’t backing up.”), **Resume Backups** and **Get Last Backup**, which gives the
 plan's last backup time and outcome as values a shortcut can use (Time, Outcome, Backed Up, Last Successful Backup,
 Summary). Each takes a plan, or none for every plan (Get Last Backup: the newest backup of any plan), and is refused
 with a sentence saying why wherever the menu's item would be dimmed: "“Home” is already backing up.", "Backups are
@@ -72,8 +72,8 @@ lid. Siri can't run them by voice on the Mac: Apple says voice invocation of App
   Restorey's icon and name and "Drag this into the list, then switch it on.", and Open System Settings; once it is on,
   it is one row with a green tick and "Full Disk Access is on".
 - **Plans**: the plans in a list with + (Add Plan…) and − (Delete Plan…) under it, and the selected plan's six tabs.
-  A plan's context menu has Back Up Now, Pause (or Resume), Restore Files…, Show in History and Delete Plan….
-  **Overview** (its state, Back Up Now with Pause or Resume beside it, Restore Files…, the last and next backup, and
+  A plan's context menu has Back Up Now, Pause (a submenu of For 1 Hour, For 4 Hours and Until Tomorrow) or Resume, Cancel Backup while it runs, Restore Files…, Show in History and Delete Plan….
+  **Overview** (its state, Back Up Now with Pause (a pull-down menu of the three lengths) and, while a backup runs, Cancel Backup beside it, or Resume, Restore Files…, the last and next backup, and
   any iCloud files skipped); **Folders** (the name, folders, drives and exclusions; drag folders and drives from
   Finder into the Folders list or the exclusions list, and press Delete to remove the selected ones). The Folders list
   keeps three rules (`FolderDrop`, paths compared by whole components and by where a link leads): a folder inside one
@@ -594,7 +594,7 @@ isn't prefixed again. Its relative day ("yesterday at 09:05") is made again when
 ### Shortcuts
 
 Restorey's Shortcuts actions (Task 17e, audit T2) are App Intents in the app's own bundle (`App/Intents`): Back Up Now,
-Pause Backups, Resume Backups and Get Last Backup, each with an optional plan (a `PlanEntity`, listed from the agent's
+Pause Backups (with a Length, `PauseLengthOption`), Cancel Backup, Resume Backups and Get Last Backup, each with an optional plan (a `PlanEntity`, listed from the agent's
 status by an `EnumerableEntityQuery`), and an `AppShortcutsProvider` that offers them with no setting up, in the
 Shortcuts app and Spotlight (macOS 26: "any app can provide actions to Spotlight using the App Intents API", Apple
 Newsroom, 9 June 2025). Its phrases name the app, as App Intents requires, and offer the plans' names (App Intents is

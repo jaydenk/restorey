@@ -133,8 +133,15 @@ struct PlansPane: View {
         if choice?.canResume == true {
             Button("Resume") { AgentActions.resume([id], connection) }
         } else {
-            Button("Pause") { AgentActions.pause([id], for: .oneHour, connection) }
-                .disabled(choice?.canPause != true)
+            Menu("Pause") {
+                ForEach(PauseLength.allCases, id: \.self) { length in
+                    Button(length.menuTitle) { AgentActions.pause([id], for: length, connection) }
+                }
+            }
+            .disabled(choice?.canPause != true)
+        }
+        if choice?.canCancel == true {
+            Button("Cancel Backup") { AgentActions.cancel([id], connection) }
         }
         Button("Restore Files…") { context.showRestoreFiles(id) }
             .disabled(choice?.canRestore != true)

@@ -101,7 +101,7 @@ struct PlanOverviewTests {
         #expect(overview.reason == Self.menuLine(plan).detail)
         #expect(overview.progress == 0.42)
         #expect(overview.nextBackup == nil)
-        #expect(Self.enabled(overview) == [.backUpNow: false, .pause: true, .restoreFiles: true])
+        #expect(Self.enabled(overview) == [.backUpNow: false, .pause: true, .cancel: true, .restoreFiles: true])
     }
 
     @Test func aBackupStillBeingCountedHasNoPercentageOrFraction() {
@@ -298,6 +298,19 @@ struct PlanOverviewTests {
         let paused = Self.overview(Self.status(phase: .paused(until: Self.at(16, 0))))
         #expect(paused.buttons.map(\.kind) == [.backUpNow, .resume, .restoreFiles])
         #expect(paused.buttons.map(\.title) == ["Back Up Now", "Resume", "Restore Files…"])
+    }
+
+    /// While a backup runs, Cancel Backup sits beside Pause (which opens the lengths); idle and paused plans have none.
+    @Test func cancelBackupSitsBesidePauseWhileRunning() {
+        let running = Self.overview(Self.status(phase: .running(nil, retrying: nil)))
+        #expect(running.buttons.map(\.kind) == [.backUpNow, .pause, .cancel, .restoreFiles])
+        #expect(running.buttons.map(\.title) == ["Back Up Now", "Pause", "Cancel Backup", "Restore Files…"])
+        #expect(!Self.overview(Self.status()).buttons.map(\.kind).contains(.cancel))
+        let paused = Self.overview(Self.status(phase: .paused(until: Self.at(16, 0))))
+        #expect(!paused.buttons.map(\.kind).contains(.cancel))
+        let unreachable = Self.overview(
+            Self.status(phase: .running(nil, retrying: nil)), health: .notRunning(reachable: true))
+        #expect(Self.enabled(unreachable)[.cancel] == false)
     }
 
     /// Final review I2: the Overview says a lasting failure to remove the chosen earlier snapshots, as information only.

@@ -18,19 +18,34 @@ struct MenuLayoutTests {
     }
 
     private static func choice(
-        _ id: UUID, _ name: String, backUp: Bool = true, pause: Bool = true, resume: Bool = false, restore: Bool = true
+        _ id: UUID, _ name: String, backUp: Bool = true, pause: Bool = true, resume: Bool = false, restore: Bool = true,
+        cancel: Bool = false
     ) -> PlanChoice {
-        PlanChoice(id: id, name: name, canBackUp: backUp, canPause: pause, canResume: resume, canRestore: restore)
+        PlanChoice(
+            id: id, name: name, canBackUp: backUp, canPause: pause, canResume: resume, canRestore: restore, canCancel: cancel)
     }
 
     private static func actions(_ plans: [PlanChoice]) -> MenuActions {
         MenuActions(
             backUpNow: plans.contains(where: \.canBackUp), pause: plans.contains(where: \.canPause),
-            resume: plans.contains(where: \.canResume), perPlanSubmenus: plans.count > 1, plans: plans)
+            resume: plans.contains(where: \.canResume), cancel: plans.contains(where: \.canCancel),
+            perPlanSubmenus: plans.count > 1, plans: plans)
     }
 
     private static func button(_ title: String, _ command: MenuCommand, enabled: Bool = true) -> MenuRow {
         .item(MenuItem(title, command: command, enabled: enabled))
+    }
+
+    /// Pause's three lengths for one plan or all: the menu's titles, each doing `command` for its length.
+    private static func lengths(
+        _ command: (PauseLength) -> MenuCommand, enabled: Bool = true, label: String? = nil
+    ) -> [MenuRow] {
+        let titles = ["For 1 Hour", "For 4 Hours", "Until Tomorrow"]
+        let spoken = ["for 1 hour", "for 4 hours", "until tomorrow"]
+        return zip(PauseLength.allCases, zip(titles, spoken)).map { length, words in
+            .item(MenuItem(
+                words.0, command: command(length), enabled: enabled, accessibilityLabel: label.map { "Pause \($0) \(words.1)" }))
+        }
     }
 
     private static let settings = MenuRow.item(MenuItem("Settings…", command: .settings, keyEquivalent: ","))
@@ -47,7 +62,7 @@ struct MenuLayoutTests {
                 command: .openPlan(Self.a), accessibilityLabel: "MacBook, Backed up at 14:16, Next 15:16, B2 · my-backups")),
             .separator,
             Self.button("Back Up Now", .backUpAll),
-            Self.button("Pause", .pauseAll),
+            .submenu(title: "Pause", items: Self.lengths { .pauseAll($0) }),
             Self.button("Restore Files…", .restoreFiles(Self.a)),
         ] + Self.tail)
     }
@@ -77,12 +92,10 @@ struct MenuLayoutTests {
                 Self.button("MacBook", .backUp(Self.a)),
                 Self.button("Photos", .backUp(Self.b), enabled: false),
             ]),
-            .submenu(title: "Pause", items: [
-                Self.button("All Plans", .pauseAll),
-                .separator,
-                Self.button("MacBook", .pause(Self.a)),
-                Self.button("Photos", .pause(Self.b)),
-            ]),
+            .submenu(title: "Pause", items:
+                [MenuRow.header("All Plans")] + Self.lengths({ .pauseAll($0) }, label: "all plans")
+                + [.header("MacBook")] + Self.lengths({ .pause(Self.a, $0) }, label: "MacBook")
+                + [.header("Photos")] + Self.lengths({ .pause(Self.b, $0) }, label: "Photos")),
             .submenu(title: "Restore Files…", items: [
                 Self.button("MacBook", .restoreFiles(Self.a)),
                 Self.button("Photos", .restoreFiles(Self.b)),
@@ -92,6 +105,65 @@ struct MenuLayoutTests {
             Self.button("Developer…", .developer),
             Self.quit,
         ])
+    }
+
+    /// Pause with several plans: a section header for all plans and for each plan, each with the three lengths. A plan
+    /// that can't be paused has its lengths dimmed; the submenu stays available (audit P2).
+    @Test func pauseListsEachLengthUnderAllPlansAndUnderEachPlan() {
+        let plans = [Self.choice(Self.a, "MacBook"), Self.choice(Self.b, "Photos", pause: false)]
+        let rows = MenuLayout.rows(MenuContent(icon: .ok, actions: Self.actions(plans)), developer: false)
+        #expect(rows.contains(.submenu(title: "Pause", items:
+            [MenuRow.header("All Plans")] + Self.lengths({ .pauseAll($0) }, label: "all plans")
+            + [.header("MacBook")] + Self.lengths({ .pause(Self.a, $0) }, label: "MacBook")
+            + [.header("Photos")] + Self.lengths({ .pause(Self.b, $0) }, enabled: false, label: "Photos"))))
+    }
+
+    /// Cancel Backup is there only while a backup runs, after Pause.
+    @Test func cancelBackupAppearsOnlyWhileABackupRuns() {
+        let idle = MenuLayout.rows(
+            MenuContent(icon: .ok, actions: Self.actions([Self.choice(Self.a, "MacBook")])), developer: false)
+        #expect(!idle.contains { if case .item(let item) = $0 { item.title == "Cancel Backup" } else { false } })
+
+        let running = MenuLayout.rows(
+            MenuContent(icon: .backingUp, actions: Self.actions([Self.choice(Self.a, "MacBook", backUp: false, cancel: true)])),
+            developer: false)
+        #expect(running == [
+            Self.button("Back Up Now", .backUpAll, enabled: false),
+            .submenu(title: "Pause", items: Self.lengths { .pauseAll($0) }),
+            Self.button("Cancel Backup", .cancel(Self.a)),
+            Self.button("Restore Files…", .restoreFiles(Self.a)),
+        ] + Self.tail)
+    }
+
+    /// Several plans, one running: a plain item for that plan, with no submenu to choose from.
+    @Test func cancelBackupIsAPlainItemWhenOnlyOneOfSeveralPlansRuns() {
+        let plans = [Self.choice(Self.a, "MacBook"), Self.choice(Self.b, "Photos", backUp: false, cancel: true)]
+        let rows = MenuLayout.rows(MenuContent(icon: .backingUp, actions: Self.actions(plans)), developer: false)
+        #expect(rows.contains(Self.button("Cancel Backup", .cancel(Self.b))))
+        #expect(!rows.contains { if case .submenu(let title, _) = $0 { title == "Cancel Backup" } else { false } })
+        let pause = rows.firstIndex { if case .submenu(let title, _) = $0 { title == "Pause" } else { false } }
+        #expect(pause.map { rows[$0 + 1] } == Self.button("Cancel Backup", .cancel(Self.b)))
+    }
+
+    /// Several running: a submenu with All Plans, a separator, and an item per running plan only.
+    @Test func cancelBackupIsASubmenuWhenSeveralPlansRun() {
+        let plans = [
+            Self.choice(Self.a, "MacBook", backUp: false, cancel: true),
+            Self.choice(Self.b, "Photos", backUp: false, cancel: true),
+            Self.choice(UUID(), "Idle"),
+        ]
+        let rows = MenuLayout.rows(MenuContent(icon: .backingUp, actions: Self.actions(plans)), developer: false)
+        #expect(rows.contains(.submenu(title: "Cancel Backup", items: [
+            Self.button("All Plans", .cancelAll),
+            .separator,
+            Self.button("MacBook", .cancel(Self.a)),
+            Self.button("Photos", .cancel(Self.b)),
+        ])))
+    }
+
+    @Test func eachPauseLengthHasItsMenuTitleAndWords() {
+        #expect(PauseLength.allCases.map(\.menuTitle) == ["For 1 Hour", "For 4 Hours", "Until Tomorrow"])
+        #expect(PauseLength.allCases.map(\.phrase) == ["for 1 hour", "for 4 hours", "until tomorrow"])
     }
 
     /// Audit P2: a submenu stays available when nothing in it can be chosen; its items are disabled instead.
@@ -127,7 +199,7 @@ struct MenuLayoutTests {
         actions.perPlanSubmenus = false
         let rows = MenuLayout.rows(MenuContent(icon: .ok, actions: actions), developer: false)
         #expect(rows.contains(Self.button("Back Up Now", .backUpAll)))
-        #expect(rows.contains(Self.button("Pause", .pauseAll)))
+        #expect(rows.contains(.submenu(title: "Pause", items: Self.lengths { .pauseAll($0) })))
     }
 
     @Test func pausedOffersResumeFirstAndNoPause() {

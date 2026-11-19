@@ -27,4 +27,14 @@ public enum PauseLength: String, Codable, Sendable, CaseIterable {
         case .oneDay: "Until Tomorrow"
         }
     }
+
+    /// The length in words, after a verb: "Pause Home for 1 hour" (VoiceOver reads these, since a section header
+    /// isn't read with the item under it).
+    public var phrase: String {
+        switch self {
+        case .oneHour: "for 1 hour"
+        case .fourHours: "for 4 hours"
+        case .oneDay: "until tomorrow"
+        }
+    }
 }

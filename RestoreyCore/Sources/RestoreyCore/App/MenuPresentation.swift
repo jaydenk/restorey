@@ -143,14 +143,19 @@ public struct PlanChoice: Sendable, Equatable {
     /// Listed under Restore Files…: every plan but an unfinished one, which has no recovery kit and may have no
     /// repository yet.
     public var canRestore: Bool
+    /// A backup is running now (and the agent can be asked): Cancel Backup stops it, this run only.
+    public var canCancel: Bool
 
-    public init(id: UUID, name: String, canBackUp: Bool, canPause: Bool, canResume: Bool, canRestore: Bool) {
+    public init(
+        id: UUID, name: String, canBackUp: Bool, canPause: Bool, canResume: Bool, canRestore: Bool, canCancel: Bool = false
+    ) {
         self.id = id
         self.name = name
         self.canBackUp = canBackUp
         self.canPause = canPause
         self.canResume = canResume
         self.canRestore = canRestore
+        self.canCancel = canCancel
     }
 }
 
@@ -159,15 +164,20 @@ public struct MenuActions: Sendable, Equatable {
     public var backUpNow: Bool
     public var pause: Bool
     public var resume: Bool
+    /// A backup is running: the menu has Cancel Backup.
+    public var cancel: Bool
     /// More than one plan: Back Up Now and Pause also get a submenu to act on one plan.
     public var perPlanSubmenus: Bool
     /// Every plan, in the status's order. Empty when the agent can't be asked to act (anything but healthy).
     public var plans: [PlanChoice]
 
-    public init(backUpNow: Bool, pause: Bool, resume: Bool, perPlanSubmenus: Bool, plans: [PlanChoice] = []) {
+    public init(
+        backUpNow: Bool, pause: Bool, resume: Bool, cancel: Bool = false, perPlanSubmenus: Bool, plans: [PlanChoice] = []
+    ) {
         self.backUpNow = backUpNow
         self.pause = pause
         self.resume = resume
+        self.cancel = cancel
         self.perPlanSubmenus = perPlanSubmenus
         self.plans = plans
     }
@@ -339,11 +349,13 @@ public enum MenuPresentation {
                 id: plan.plan.id, name: plan.plan.name,
                 canBackUp: ready && !plan.phase.isRunning,
                 canPause: ready && !plan.phase.isPaused && !plan.phase.isStopped,
-                canResume: ready && plan.phase.isPaused, canRestore: plan.setupState != .unfinished)
+                canResume: ready && plan.phase.isPaused, canRestore: plan.setupState != .unfinished,
+                canCancel: ready && plan.phase.isRunning)
         }
         return MenuActions(
             backUpNow: choices.contains(where: \.canBackUp), pause: choices.contains(where: \.canPause),
-            resume: choices.contains(where: \.canResume), perPlanSubmenus: plans.count > 1, plans: choices)
+            resume: choices.contains(where: \.canResume), cancel: choices.contains(where: \.canCancel),
+            perPlanSubmenus: plans.count > 1, plans: choices)
     }
 
     // MARK: Banners
@@ -692,6 +704,8 @@ public struct PlanOverview: Sendable, Equatable {
         public enum Kind: Sendable, Hashable {
             case backUpNow
             case pause
+            /// Cancel Backup: stops the run in progress; the schedule carries on.
+            case cancel
             case resume
             case restoreFiles
         }
@@ -704,6 +718,7 @@ public struct PlanOverview: Sendable, Equatable {
             switch kind {
             case .backUpNow: "Back Up Now"
             case .pause: "Pause"
+            case .cancel: "Cancel Backup"
             case .resume: "Resume"
             case .restoreFiles: "Restore Files…"
             }
@@ -802,7 +817,10 @@ extension MenuPresentation {
         }
 
         overview.buttons = [PlanOverview.Button(kind: .backUpNow, enabled: choice?.canBackUp ?? false)]
-        if plan.phase.isRunning { overview.buttons.append(.init(kind: .pause, enabled: choice?.canPause ?? false)) }
+        if plan.phase.isRunning {
+            overview.buttons.append(.init(kind: .pause, enabled: choice?.canPause ?? false))
+            overview.buttons.append(.init(kind: .cancel, enabled: choice?.canCancel ?? false))
+        }
         if plan.phase.isPaused { overview.buttons.append(.init(kind: .resume, enabled: choice?.canResume ?? false)) }
         overview.buttons.append(.init(kind: .restoreFiles, enabled: choice?.canRestore ?? false))
         return overview
