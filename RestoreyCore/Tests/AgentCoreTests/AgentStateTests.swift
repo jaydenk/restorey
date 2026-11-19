@@ -1531,11 +1531,16 @@ extension AgentStateTests {
     /// Final review I2: a plan v0.1 saved whose source is inside its local repository is invalid now. It never runs,
     /// so it says why instead of going quiet: the agent reports it stopped, with the reason, and raises the settings
     /// alert, and the menu's line shows "Stopped" and that reason.
+    ///
+    /// Round 2: the reason is built on every status, so the folder is named by string handling alone. The source is
+    /// written `…/repo/data/x/..`: named from the standardised path it is “data”, while `URL(fileURLWithPath:)`, which
+    /// stats the path, would name it “..”, so this fails if naming goes back to that (and `StatusPathPurityTests` pins
+    /// the source). Nothing exists on disk at these paths.
     @Test func aStoredPlanThatFailsValidationIsReportedStoppedWithItsReason() async throws {
         let dir = try TempDirectory()
         let clock = TestClock()
         let repository = dir.url.appendingPathComponent("repo")
-        var plan = Self.localPlan(repository: repository, sources: [repository.appendingPathComponent("data").path],
+        var plan = Self.localPlan(repository: repository, sources: [repository.appendingPathComponent("data/x/..").path],
                                   now: clock.now)
         plan.recoveryKitConfirmedAt = clock.now
         plan.setupCompletedAt = clock.now
@@ -1559,5 +1564,88 @@ extension AgentStateTests {
         let error = AgentError.invalidPlan([.sourceInsideRepository("/Volumes/Disk/repo/data"), .emptyHostLabel])
         #expect(error.message
             == "“data” is inside this plan’s backup repository. Choose a different folder. The host label can’t be empty")
+    }
+}
+
+// MARK: Following links where the user acts (final review round 2)
+
+extension AgentStateTests {
+    /// A link resolver whose first check is held until `release`, for tests of the deadline and of ordering.
+    private final class HeldResolver: Sendable {
+        let release = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        let entered = Gate()
+        private let calls = Mutex(0)
+
+        func resolver(deadline: TimeInterval) -> LinkResolver {
+            LinkResolver(deadline: deadline) { [self] path in
+                let first = calls.withLock { count in
+                    count += 1
+                    return count == 1
+                }
+                if first {
+                    entered.open()
+                    release.wait()
+                    finished.signal()
+                }
+                return path
+            }
+        }
+
+        func finish() async {
+            release.signal()
+            await OwnThread.run(named: "test wait", qualityOfService: .utility) { self.finished.wait() }
+        }
+    }
+
+    /// The link check has a deadline (the subject here: tiny, with the check held past it). When the file system
+    /// doesn't answer, the save goes ahead on the comparison by path, which passed, and the agent log says so.
+    @Test func aLinkCheckThatTimesOutFallsBackToThePathsAsWritten() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let held = HeldResolver()
+        await state.attach(linkResolver: held.resolver(deadline: 0.05))
+        let log = Locked<[String]>([])
+        await state.attach(agentLog: { line in log.mutate { $0.append(line) } })
+        let plan = Self.localPlan(
+            repository: URL(fileURLWithPath: "/Volumes/Gone/repo", isDirectory: true), sources: ["/Users/me"],
+            now: clock.now)
+
+        let status = try await state.savePlan(
+            SavePlanRequest(plan: plan, secrets: [SecretEntry(key: .repositoryPassword(plan.id), value: "pw")]))
+        #expect(status.plans.map(\.plan.id) == [plan.id])
+        #expect(log.value.contains { $0.hasPrefix("Couldn’t check where the folders of plan \(plan.id.uuidString) lead") })
+        await held.finish()
+    }
+
+    /// Round 2: the link check runs inside the serialised section, so two overlapping saves of one plan finish in the
+    /// order they arrived. The first is held in its link check; the second (to a repository that needs none) arrives,
+    /// queues behind it, and wins once the first is released.
+    @Test func overlappingSavesOfAPlanCompleteInArrivalOrder() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let held = HeldResolver()
+        await state.attach(linkResolver: held.resolver(deadline: 3600))
+        let local = Self.localPlan(
+            repository: dir.url.appendingPathComponent("repo"), sources: ["/Users/me"], now: clock.now)
+        var newer = Self.plan(id: local.id, now: clock.now)
+        newer.name = "Newer"
+
+        let first = Task {
+            try await state.savePlan(
+                SavePlanRequest(plan: local, secrets: [SecretEntry(key: .repositoryPassword(local.id), value: "pw")]))
+        }
+        await held.entered.wait()
+        let second = Task { try await state.savePlan(Self.request(newer)) }
+        #expect(await eventually { await state.queuedWrites == 1 }, "the second save waits its turn")
+
+        await held.finish()
+        _ = try await first.value
+        _ = try await second.value
+        #expect(await state.status().plans.map(\.plan.name) == ["Newer"])
+        let stored = try #require(try await AgentState.configStore(in: dir.url).load())
+        #expect(stored.plans.map(\.name) == ["Newer"])
     }
 }

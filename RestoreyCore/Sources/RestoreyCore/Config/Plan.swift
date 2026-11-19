@@ -255,14 +255,20 @@ extension Plan {
     }
 
     /// The sources that lead into the plan's own local repository once links are followed: `sourceInsideRepository`
-    /// for each, in order. Reads the file system, on a detached task so the caller's actor isn't held while a volume
-    /// doesn't answer. Where the user acts only (`AgentState.savePlan`), never on the status or scheduling path.
-    public func sourcesInsideRepositoryFollowingLinks() async -> [PlanValidationError] {
+    /// for each, in order. Reads the file system through `resolver` (its own thread, a deadline, one outstanding).
+    /// Nil when the file system didn't answer in time: the caller falls back to `validationErrors()`. Where the user
+    /// acts only (`AgentState.savePlan`), never on the status or scheduling path.
+    public func sourcesInsideRepositoryFollowingLinks(
+        resolver: LinkResolver = .live
+    ) async -> [PlanValidationError]? {
         guard let repositoryPath = repository.localFolderPath else { return [] }
-        let sources = sources
-        return await Task.detached {
-            sources.filter { SourcePaths.containsFollowingLinks(repositoryPath, $0) }.map(PlanValidationError.sourceInsideRepository)
-        }.value
+        guard let resolved = await resolver.resolve([repositoryPath] + sources) else { return nil }
+        let repositoryTarget = resolved[0]
+        return zip(sources, resolved.dropFirst())
+            .filter { source, target in
+                SourcePaths.containsByPath(repositoryPath, source) || SourcePaths.containsByPath(repositoryTarget, target)
+            }
+            .map { PlanValidationError.sourceInsideRepository($0.0) }
     }
 
     /// `fileTypeExclusions` normalised as `config.json` stores them: each entry trimmed and lower-cased,

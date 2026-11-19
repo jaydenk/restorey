@@ -88,12 +88,12 @@ lid. Siri can't run them by voice on the Mac: Apple says voice invocation of App
   already listed is refused (“Downloads” is already included in your home folder), a folder holding listed ones is added
   and takes them off the list (and says so), and when the plan's repository is a local folder, that folder and anything
   inside it is refused (a plan with such a source is invalid: the agent's validation compares the paths as written,
-  never reading the disk, and saving a plan also follows links; a plan v0.1 saved with such a source is shown "Stopped"
-  with the reason, "“data” is inside this plan’s backup repository. Choose a different folder", and the Folders tab
-  says the same until the folder is taken off), while a folder holding it is added with a note (shown
-  under the list, and cleared by the next change). Every backup to a local repository excludes the repository's own
-  folder, whatever the list holds, so when it is inside a source the Exclusions sheet shows it as a fixed first row,
-  “This plan’s backups”, that can't be selected or removed; **Schedule**
+  never reading the disk, and saving a plan also follows links, within a deadline; a plan v0.1 saved with such a
+  source is shown "Stopped" with the reason, "“data” is inside this plan’s backup repository. Choose a different
+  folder", and the Folders tab says the same until the folder is taken off), while a folder holding it is added with a
+  note (shown under the list, and cleared by the next change). Every backup to a local repository excludes the
+  repository's own folder, whatever the list holds, so when it is inside a source (by path) the Exclusions sheet shows
+  it as a fixed first row, “This plan’s backups”, that can't be selected or removed; **Schedule**
   (how often, the battery rule, the plan's own upload limit, and its alerts: the check-in URL and "no successful backup in N days");
   **Storage** (the address, read-only, the password and keys, the host label, and "Show Recovery Kit…");
   **Retention** (how many hourly, daily, weekly and monthly snapshots to keep, prune, and **Earlier snapshots**:
@@ -768,12 +768,19 @@ The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`) runs
 A wrong repository password, a missing repository or unreadable backup keys (including a password the helper
 couldn't read from the Keychain) stop the plan until its repository or secrets are changed, or a later backup
 succeeds. A plan whose settings fail validation never runs either; only one saved by v0.1 can (a source inside its own
-local repository), and it is reported the same way: stopped, with the reason, and the settings alert. Validation
-compares paths as written and never reads the disk, since it runs on every status and scheduler tick and a repository on
-a network volume that stops answering must not hold up the agent; saving a plan also follows links (off the agent's
-actor), and a backup resolves where a link to its repository leads off the plan runner's actor, to exclude both. Pause
-stops a run in progress (SIGINT, then SIGKILL after 10 s) and resumes after the length chosen (1 hour, 4 hours or until
-tomorrow, 24 hours). Resume on a
+local repository), and it is reported the same way: stopped, with the reason, and the settings alert. Validation, and
+everything else that builds a status or names a folder in it (`SourcePaths.containsByPath`, `standardised`,
+`lastComponent`, `FolderDrop.name`, `DefaultExclusions.pattern(forFolder:)`), is string handling and never reads the
+disk, since it runs on every status and scheduler tick and a repository on a network volume that stops answering must
+not hold up the agent (`StatusPathPurityTests` pins those files). Links are followed only through `LinkResolver`: on a
+thread of its own (`OwnThread`) with a 10 s deadline (`MarkedNotForBackup.timeLimit`, as for the agent's other
+file-system looks) and one check outstanding in the process (`OneOutstandingGate`), so a stuck one leaves a single
+blocked thread. Saving a plan uses it, inside the serialised write so saves still finish in the order they came, to
+refuse a source that reaches the repository through a link; when the check doesn't answer in time (or an earlier one
+is stuck) the save goes ahead on the comparison by path and the agent log says so. A backup uses it to also exclude
+where a link to its repository leads; when it doesn't answer, only the folder as given is excluded, and the log says
+so. Pause stops a run in progress (SIGINT, then SIGKILL after 10 s) and resumes after the length chosen (1 hour, 4
+hours or until tomorrow, 24 hours). Resume on a
 paused plan starts a fresh backup at once, exactly as Back Up Now does (so it can still be skipped on battery or
 without a network), and if the paused run is still stopping, the new backup starts as soon as it has ended; a
 stopped plan's pause is cleared but nothing runs until it is fixed. Restorey never runs `restic init` except

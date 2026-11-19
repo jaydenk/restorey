@@ -57,6 +57,9 @@ public struct RunnerDependencies: Sendable {
     /// restic's `--retry-lock` for the maintenance commands (`ResticContext.maintenanceRetryLock`): five minutes;
     /// tests that hold a lock shorten it.
     public var maintenanceRetryLock: String
+    /// Follows a link to a local repository for its exclusion (`LinkResolver`: its own thread, a deadline, one
+    /// outstanding). Nil from it means only the path as given is excluded.
+    public var linkResolver: LinkResolver
 
     public init(
         state: AgentState, secrets: any SecretStore, queues: RepositoryQueues, supervisor: SupervisedProcesses,
@@ -75,7 +78,8 @@ public struct RunnerDependencies: Sendable {
         markedItems: (any MarkedItemsFinding)? = nil,
         markedItemsDeadline: TimeInterval = MarkedNotForBackup.timeLimit,
         notForBackupDirectory: URL? = nil,
-        maintenanceRetryLock: String = "5m"
+        maintenanceRetryLock: String = "5m",
+        linkResolver: LinkResolver = .live
     ) {
         self.state = state
         self.secrets = secrets
@@ -104,6 +108,7 @@ public struct RunnerDependencies: Sendable {
         self.notForBackupDirectory = notForBackupDirectory
             ?? credentialsDirectory.appendingPathComponent("not-for-backup", isDirectory: true)
         self.maintenanceRetryLock = maintenanceRetryLock
+        self.linkResolver = linkResolver
     }
 }
 
@@ -708,6 +713,20 @@ public actor PlanRunner {
         return step.record.outcome
     }
 
+    /// Where a link to the plan's local repository leads, for its exclusion. Following it reads the disk, which a volume
+    /// that doesn't answer can hold up for good, so it goes through `deps.linkResolver` (final review round 2). Nil for
+    /// a repository that isn't a local folder, or when the answer didn't come in time: the backup then excludes the
+    /// path as given only.
+    func repositoryLinkTarget(_ plan: Plan) async -> String? {
+        guard let repositoryPath = plan.repository.localFolderPath else { return nil }
+        guard let target = await deps.linkResolver.resolve([repositoryPath])?.first else {
+            deps.agentInfo("Couldn’t find out where the repository folder of plan \(plan.id.uuidString) leads: the file "
+                + "system didn’t answer, so only the folder as given is left out of this backup")
+            return nil
+        }
+        return target
+    }
+
     // MARK: Winding down (Ruling R55)
 
     /// True when no new restic step may start: the agent is draining (the app asked, before an update or
@@ -765,11 +784,7 @@ public actor PlanRunner {
         }
 
         var context = session.context
-        // Where a link to the local repository leads, for its exclusion: following it reads the disk, which a volume
-        // that doesn't answer can hold up, so it is done off the actor (final review I1).
-        if op == .backup, let repositoryPath = plan.repository.localFolderPath {
-            context.repositoryLinkTarget = await SourcePaths.resolvingLinksOffActor(repositoryPath)
-        }
+        if op == .backup { context.repositoryLinkTarget = await repositoryLinkTarget(plan) }
         let uploadsToTheNetwork = op == .backup && plan.repository.needsNetwork
         if uploadsToTheNetwork {
             context.macWideUploadLimitKiB = await deps.state.networkSettings.uploadLimitKiB

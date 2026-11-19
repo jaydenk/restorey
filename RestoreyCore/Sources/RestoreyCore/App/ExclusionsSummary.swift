@@ -30,7 +30,8 @@ public enum ExclusionsSummary {
     /// never in the plan's `exclusions`; this only decides whether the sheet says so. Nil when there is nothing to show.
     public static func repositoryRow(repository: Repository?, sources: [String]) -> String? {
         guard let path = repository?.localFolderPath else { return nil }
-        return sources.contains { SourcePaths.containsFollowingLinks($0, path) } ? path : nil
+        // By path: the sheet's body asks on every render, and the agent excludes both spellings of the folder anyway.
+        return sources.contains { SourcePaths.containsByPath($0, path) } ? path : nil
     }
 
     private static func count(_ n: Int, _ one: String, _ many: String) -> String {

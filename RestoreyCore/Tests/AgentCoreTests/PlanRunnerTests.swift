@@ -74,6 +74,34 @@ struct PlanRunnerTests {
         #expect(log.contains("--exclude=\(DefaultExclusions.pattern(forFolder: resolved)) "))
     }
 
+    /// Round 2: following the repository's link has a deadline (the subject: tiny, the check held past it). When the
+    /// file system doesn't answer, the backup still runs and leaves out the folder as given, and the agent log says so.
+    @Test func aRepositoryLinkThatCantBeFollowedInTimeLeavesOutThePathAsGiven() async throws {
+        let release = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        let resolver = LinkResolver(deadline: 0.05) { path in
+            release.wait()
+            finished.signal()
+            return path + "-resolved"
+        }
+        let f = try await RunnerFixture.make(linkResolver: resolver)
+        defer { f.remove() }
+        try f.write("a.txt", "hello")
+        let plan = await f.plan()
+        let repositoryPath = try #require(plan.repository.localFolderPath)
+
+        #expect(await f.runner.repositoryLinkTarget(plan) == nil)
+        #expect(f.agentInfo.value.contains { $0.hasPrefix("Couldn’t find out where the repository folder of plan") })
+        let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        guard case .success = record.outcome else { Issue.record("expected a success, got \(record.outcome)"); return }
+        let log = try String(contentsOf: f.logs.appendingPathComponent(record.logFile), encoding: .utf8)
+        #expect(log.contains("--exclude=\(DefaultExclusions.pattern(forFolder: repositoryPath))"))
+        #expect(!log.contains("-resolved"))
+
+        release.signal()
+        await OwnThread.run(named: "test wait", qualityOfService: .utility) { finished.wait() }
+    }
+
     /// Spec §8: idle sleep is held off while restic runs, and only then.
     @Test func resticStepsHoldTheSleepAssertionAndASkipTakesNone() async throws {
         let f = try await RunnerFixture.make()

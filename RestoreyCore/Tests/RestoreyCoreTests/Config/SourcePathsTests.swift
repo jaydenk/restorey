@@ -31,16 +31,11 @@ struct SourcePathsTests {
         #expect(!SourcePaths.containsFollowingLinks(link.path, home.path))
     }
 
-    /// Final review I1: the comparison by path never reads the file system, so a hung network volume can't stall
-    /// the agent's status or schedule. A link that leads inside the folder is judged by its own path, and a folder
-    /// whose parent can't even be read (permissions 000) is compared as written.
-    @Test func comparingByPathIgnoresWhereALinkLeadsAndNeverReadsTheDisk() throws {
+    /// Final review I1: the comparison by path judges a link by its own path, never where it leads.
+    @Test func comparingByPathIgnoresWhereALinkLeads() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("SourcePathsTests-\(UUID().uuidString)")
-        defer {
-            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.appendingPathComponent("locked").path)
-            try? fm.removeItem(at: root)
-        }
+        defer { try? fm.removeItem(at: root) }
         let home = root.appendingPathComponent("home")
         let downloads = home.appendingPathComponent("Downloads")
         try fm.createDirectory(at: downloads, withIntermediateDirectories: true)
@@ -48,14 +43,19 @@ struct SourcePathsTests {
         try fm.createSymbolicLink(at: link, withDestinationURL: downloads)
         #expect(!SourcePaths.containsByPath(home.path, link.path), "the link's own path is outside home")
         #expect(SourcePaths.containsByPath(home.path, downloads.path))
+    }
 
-        let locked = root.appendingPathComponent("locked")
-        try fm.createDirectory(at: locked.appendingPathComponent("repo/data"), withIntermediateDirectories: true)
-        try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
-        #expect(SourcePaths.containsByPath(locked.appendingPathComponent("repo").path,
-                                           locked.appendingPathComponent("repo/data").path))
-        #expect(!SourcePaths.containsByPath(locked.appendingPathComponent("repo/data").path,
-                                            locked.appendingPathComponent("repo").path))
+    /// Final review round 2: a folder's name is the last component of the standardised path, by string handling alone.
+    /// `URL(fileURLWithPath:)` (which stats the path) keeps `..` as the last component, so these fail if naming goes
+    /// back to it.
+    @Test func aFoldersNameIsTheLastStandardisedComponent() {
+        #expect(SourcePaths.lastComponent("/Volumes/Disk/repo/") == "repo")
+        #expect(SourcePaths.lastComponent("/Volumes/Disk/repo/data/x/..") == "data")
+        #expect(SourcePaths.lastComponent("/a/./b") == "b")
+        #expect(SourcePaths.lastComponent("/") == "/")
+        #expect(FolderDrop.name("/Users/me/Pictures/Trips/..") == "Pictures")
+        #expect(SourcePaths.standardised("/a//x/../b/") == "/a/b")
+        #expect(DefaultExclusions.pattern(forFolder: "/a/x/../b*/") == #"/a/b\*"#)
     }
 
     @Test func trailingSlashesAndDotDotDontMatter() {

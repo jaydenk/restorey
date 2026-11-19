@@ -604,7 +604,8 @@ public enum MenuPresentation {
     private static func rawDestination(_ repository: String) -> String {
         if !Repository.rawLocationNeedsNetwork(repository) {
             let path = repository.hasPrefix("local:") ? String(repository.dropFirst("local:".count)) : repository
-            return "Local · \(URL(fileURLWithPath: path).lastPathComponent)"
+            // Pure: `URL(fileURLWithPath:)` would stat the repository's folder on every menu build.
+            return "Local · \(SourcePaths.lastComponent(path))"
         }
         let scheme = repository.prefix { $0 != ":" }
         return backendNames[String(scheme)] ?? "Remote repository"

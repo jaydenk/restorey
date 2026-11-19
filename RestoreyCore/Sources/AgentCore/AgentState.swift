@@ -75,6 +75,10 @@ public actor AgentState {
 
     private var writeInFlight = false
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Writes waiting their turn behind the one in flight, for tests.
+    var queuedWrites: Int { writeWaiters.count }
+    /// Follows links where the user acts (`savePlan`); tests attach one they can hold (`attach(linkResolver:)`).
+    private(set) var linkResolver: LinkResolver = .live
 
     /// Writes a line to the agent's own log (`agent.log`) for the run actions it refuses
     /// (`attach(agentLog:)`), so a Back Up Now that did nothing leaves a trace (final review M5).
@@ -366,12 +370,6 @@ public actor AgentState {
         try requireMutable()
         let errors = request.plan.validationErrors()
         guard errors.isEmpty else { throw AgentError.invalidPlan(errors) }
-        // Validation compares paths only (it runs on every status); here, where the user acts, a source that reaches
-        // the repository through a link is refused too. Following links reads the disk, so it runs off the actor, and
-        // the agent may have started draining meanwhile (final review I1).
-        let throughLinks = await request.plan.sourcesInsideRepositoryFollowingLinks()
-        guard throughLinks.isEmpty else { throw AgentError.invalidPlan(throughLinks) }
-        try requireMutable()
         guard request.secrets.allSatisfy({ $0.key.planID == request.plan.id }) else {
             throw AgentError.foreignSecret
         }
@@ -380,6 +378,10 @@ public actor AgentState {
             throw AgentError.invalidRequest("a check-in URL was sent for a plan saved without one")
         }
         return try await serialisedWrite {
+            // Validation compares paths only (it runs on every status); here, where the user acts, a source that
+            // reaches the repository through a link is refused too. Inside the serialised section, so saves still
+            // complete in the order they arrived (final review round 2).
+            try await refuseSourcesReachingTheRepositoryThroughLinks(request.plan)
             // A plan saved without a check-in URL loses any stored one, so it is never pinged.
             let planSecrets = try PlanSecrets(
                 store: secrets, entries: request.secrets,
@@ -738,6 +740,10 @@ public actor AgentState {
     }
 
     /// Called once at startup with where the refused run actions are logged (`agent.log`).
+    public func attach(linkResolver: LinkResolver) {
+        self.linkResolver = linkResolver
+    }
+
     public func attach(agentLog: @escaping @Sendable (String) -> Void) {
         self.agentLog = agentLog
     }
@@ -942,6 +948,18 @@ public actor AgentState {
     func requirePlan(_ id: UUID) throws -> Plan {
         guard let plan = config.plans.first(where: { $0.id == id }) else { throw AgentError.unknownPlan }
         return plan
+    }
+
+    /// Follows the plan's links through `linkResolver` (its own thread, a deadline, one outstanding) and throws
+    /// `invalidPlan` for a source that leads into its local repository. When the file system doesn't answer in time
+    /// the save goes ahead on the comparison by path, which has already passed, and the agent log says so.
+    private func refuseSourcesReachingTheRepositoryThroughLinks(_ plan: Plan) async throws {
+        guard let throughLinks = await plan.sourcesInsideRepositoryFollowingLinks(resolver: linkResolver) else {
+            agentLog("Couldn’t check where the folders of plan \(plan.id.uuidString) lead: the file system didn’t "
+                + "answer, so they were checked as written")
+            return
+        }
+        guard throughLinks.isEmpty else { throw AgentError.invalidPlan(throughLinks) }
     }
 
     /// Writes the config and adopts it in memory only once the write succeeded.

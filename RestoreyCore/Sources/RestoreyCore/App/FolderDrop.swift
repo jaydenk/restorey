@@ -211,8 +211,8 @@ public enum FolderDrop {
     }
 
     /// The name Finder shows for a path: its last component, or "/" for the startup disk's root.
+    /// Pure string handling (`SourcePaths.lastComponent`): the agent names folders with this when it builds a status.
     public static func name(_ path: String) -> String {
-        let last = URL(fileURLWithPath: path).lastPathComponent
-        return last.isEmpty ? path : last
+        SourcePaths.lastComponent(path)
     }
 }
