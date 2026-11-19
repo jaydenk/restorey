@@ -203,6 +203,8 @@ public enum PlanValidationError: Error, Equatable, Sendable {
     case invalidFileType(String)
     /// A per-plan upload limit of 0 or less. None is nil, not 0 (the Mac-wide limit has the same rule).
     case uploadLimitNotPositive(kiB: Int)
+    /// A source that is the plan's own local repository or lies inside it: backing it up would back up the backups.
+    case sourceInsideRepository(String)
 }
 
 extension Plan {
@@ -215,6 +217,11 @@ extension Plan {
         if hostLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { errors.append(.emptyHostLabel) }
         if sources.isEmpty { errors.append(.noSources) }
         for source in sources where !source.hasPrefix("/") { errors.append(.relativeSource(source)) }
+        if let repositoryPath = repository.localFolderPath {
+            for source in sources where SourcePaths.contains(repositoryPath, source) {
+                errors.append(.sourceInsideRepository(source))
+            }
+        }
         switch schedule {
         case .interval(let seconds):
             if seconds < Self.minimumIntervalSeconds { errors.append(.intervalTooShort(seconds: seconds)) }
@@ -386,6 +393,23 @@ public enum Repository: Codable, Sendable, Equatable {
     var isS3: Bool {
         if case .s3 = self { return true }
         return false
+    }
+
+    /// The folder a local repository is in, standardised, read the way restic reads a location (see `needsNetwork`):
+    /// `local:/x` and a plain absolute path `/x` give `/x`. Nil for a storage service, another machine, and a
+    /// relative path (`../x`, `local:x`), which can't be placed reliably from the agent's working folder.
+    public var localFolderPath: String? {
+        guard case .raw(let repository, _) = self else { return nil }
+        let path: Substring
+        if repository.hasPrefix("/") {
+            path = repository[...]
+        } else if repository.hasPrefix("local:") {
+            path = repository.dropFirst("local:".count)
+        } else {
+            return nil
+        }
+        guard path.hasPrefix("/") else { return nil }
+        return URL(fileURLWithPath: String(path)).standardizedFileURL.path
     }
 
     /// Whether restic needs the network to reach this repository (Ruling R69). An S3 or B2 location

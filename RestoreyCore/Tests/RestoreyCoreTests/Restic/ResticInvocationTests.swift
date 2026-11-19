@@ -165,6 +165,38 @@ struct ResticInvocationTests {
         #expect(inv(.forget(dryRun: false), p).arguments.contains("--host=-host"))
     }
 
+    @Test func aLocalRepositoryIsAlwaysExcludedFromItsOwnBackup() {
+        let repo = Repository.raw(repository: "/Volumes/Disk/repo", environmentNames: [])
+        let args = inv(.backup, plan(repo)).arguments
+        #expect(args.contains("--exclude=/Volumes/Disk/repo"))
+        // After the plan's own exclusions, before the sources.
+        #expect(args.firstIndex(of: "--exclude=**/node_modules")! < args.firstIndex(of: "--exclude=/Volumes/Disk/repo")!)
+        #expect(args.firstIndex(of: "--exclude=/Volumes/Disk/repo")! < args.firstIndex(of: "--")!)
+
+        let globby = Repository.raw(repository: "local:/Volumes/Disk/re[po]", environmentNames: [])
+        #expect(inv(.backup, plan(globby)).arguments.contains(#"--exclude=/Volumes/Disk/re\[po\]"#))
+    }
+
+    @Test func aRepositoryReachedThroughASymlinkIsExcludedByBothSpellings() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("ResticInvocationTests-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        let real = root.appendingPathComponent("real")
+        try fm.createDirectory(at: real, withIntermediateDirectories: true)
+        let link = root.appendingPathComponent("link")
+        try fm.createSymbolicLink(at: link, withDestinationURL: real)
+        let args = inv(.backup, plan(.raw(repository: link.path, environmentNames: []))).arguments
+        #expect(args.contains("--exclude=\(DefaultExclusions.pattern(forFolder: link.path))"))
+        #expect(args.contains("--exclude=\(DefaultExclusions.pattern(forFolder: real.resolvingSymlinksInPath().path))"))
+    }
+
+    @Test func aNetworkRepositoryAddsNoExclusion() {
+        for repository in [Repository.s3(Self.s3), .raw(repository: "sftp:host:/x", environmentNames: [])] {
+            let args = inv(.backup, plan(repository)).arguments
+            #expect(args.filter { $0.hasPrefix("--exclude=") }.count == 2, "\(repository)")
+        }
+    }
+
     @Test func validationErrors() {
         #expect(plan().validationErrors() == [])
         var p = plan()

@@ -197,6 +197,14 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
             : plan.uploadLimitKiB
         if let limit { args += ["--limit-upload", String(limit)] }
         for pattern in plan.exclusions { args.append("--exclude=\(pattern)") }
+        // A local repository is never part of its own backup, however the plan's folders are chosen: left out by the
+        // path as given and, if a link leads elsewhere, by the place it leads to (Task 1).
+        if let repositoryPath = plan.repository.localFolderPath {
+            let resolved = URL(fileURLWithPath: repositoryPath).resolvingSymlinksInPath().path
+            for path in resolved == repositoryPath ? [repositoryPath] : [repositoryPath, resolved] {
+                args.append("--exclude=\(DefaultExclusions.pattern(forFolder: path))")
+            }
+        }
         // Items apps mark as not for backup (Task 15c): literal patterns, one per line, written for this run.
         if let file = context.notForBackupExcludeFile { args.append("--exclude-file=\(file.path)") }
         // A relative pattern matches a whole path component at any depth (restic 0.19.1

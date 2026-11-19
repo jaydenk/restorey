@@ -70,6 +70,8 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
         case .intervalTooShort: "Backups can’t run more often than every 5 minutes"
         case .invalidFileType(let entry): FormValidation.fileTypeProblem(rejected: [entry])
         case .uploadLimitNotPositive: "The upload limit must be more than 0 KiB/s"
+        case .sourceInsideRepository(let path):
+            "“\(FolderDrop.name(path))” is inside this plan’s backup repository. Choose a different folder."
         }
     }
 }

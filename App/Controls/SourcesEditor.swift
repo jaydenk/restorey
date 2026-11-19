@@ -76,7 +76,7 @@ struct SourcesEditor: View {
 
     /// The button's and a drop's one way in.
     private func add(_ items: [PickedItem]) {
-        let outcome = FolderDrop.addingSources(items, to: sources)
+        let outcome = FolderDrop.addingSources(items, to: sources, repository: nil)
         sources = outcome.list
         addProblem = outcome.problem
     }

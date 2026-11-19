@@ -283,36 +283,38 @@ struct FolderDropTests {
         let root = try Self.fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let link = PickedItem.classify([root.appendingPathComponent("Folder link")])
-        let added = FolderDrop.addingSources(link, to: [])
+        let added = FolderDrop.addingSources(link, to: [], repository: nil)
         #expect(added.problem == nil)
         #expect(added.list == [root.appendingPathComponent("Folder link").path])
-        let again = FolderDrop.addingSources(PickedItem.classify([root.appendingPathComponent("Folder")]), to: added.list)
+        let again = FolderDrop.addingSources(PickedItem.classify([root.appendingPathComponent("Folder")]), to: added.list, repository: nil)
         #expect(again.problem == "“Folder” is already in the list.")
     }
 
     @Test func aMissingItemSaysItCantBeFound() {
-        let outcome = FolderDrop.addingSources([PickedItem(path: "/Users/me/Gone", kind: .missing)], to: [])
+        let outcome = FolderDrop.addingSources([PickedItem(path: "/Users/me/Gone", kind: .missing)], to: [], repository: nil)
         #expect(outcome.list.isEmpty)
         #expect(outcome.problem == "“Gone” can’t be found.")
     }
 
     @Test func foldersAreAddedInOrderAndStandardised() {
         let outcome = FolderDrop.addingSources(
-            [Self.folder("/Users/me/Documents/"), Self.folder("/Volumes/Photos")], to: ["/Users/me/Pictures"])
+            [Self.folder("/Users/me/Documents/"), Self.folder("/Volumes/Photos")], to: ["/Users/me/Pictures"],
+            repository: nil)
         #expect(outcome == FolderDrop.Outcome(
             list: ["/Users/me/Pictures", "/Users/me/Documents", "/Volumes/Photos"], problem: nil))
     }
 
     @Test func filesAndThingsNotOnThisMacAreRefusedAndSaySo() {
         let outcome = FolderDrop.addingSources(
-            [PickedItem(path: "/Users/me/notes.txt", kind: .file), Self.folder("/Users/me/Music")], to: [])
+            [PickedItem(path: "/Users/me/notes.txt", kind: .file), Self.folder("/Users/me/Music")], to: [],
+            repository: nil)
         #expect(outcome.list == ["/Users/me/Music"])
         #expect(outcome.problem == "“notes.txt” isn’t a folder. Only folders and drives can be added.")
 
         let several = FolderDrop.addingSources([
             PickedItem(path: "/Applications/Mail.app", kind: .file), PickedItem(path: "/Users/me/a.pdf", kind: .file),
             PickedItem(path: "https://example.com", kind: .notOnDisk),
-        ], to: [])
+        ], to: [], repository: nil)
         #expect(several.list.isEmpty)
         #expect(several.problem
             == "2 items aren’t folders. Only folders and drives can be added. Only folders and drives on this Mac can be added.")
@@ -321,11 +323,102 @@ struct FolderDropTests {
     @Test func aFolderAlreadyListedIsNotAddedTwice() {
         let outcome = FolderDrop.addingSources(
             [Self.folder("/Users/me/Documents"), Self.folder("/Users/me/Documents/"), Self.folder("/Users/me/Movies")],
-            to: ["/Users/me/Documents"])
+            to: ["/Users/me/Documents"], repository: nil)
         #expect(outcome.list == ["/Users/me/Documents", "/Users/me/Movies"])
         #expect(outcome.problem == "2 folders are already in the list.")
-        #expect(FolderDrop.addingSources([Self.folder("/Users/me/Documents")], to: ["/Users/me/Documents"]).problem
+        #expect(FolderDrop.addingSources([Self.folder("/Users/me/Documents")], to: ["/Users/me/Documents"], repository: nil).problem
             == "“Documents” is already in the list.")
+    }
+
+    // MARK: Folders already covered, parents that replace, and the plan's own repository (Task 1)
+
+    private static let home = "/Users/me"
+    private static let disk = Repository.raw(repository: "/Volumes/Disk/repo", environmentNames: [])
+
+    private static func adding(
+        _ paths: [String], to list: [String] = [], repository: Repository? = nil
+    ) -> FolderDrop.Outcome {
+        FolderDrop.addingSources(paths.map(folder), to: list, repository: repository, home: home)
+    }
+
+    @Test func aFolderInsideAListedSourceIsRefused() {
+        let outcome = Self.adding(["/Users/me/Downloads"], to: ["/Users/me"])
+        #expect(outcome.list == ["/Users/me"])
+        #expect(outcome.problem == "“Downloads” is already included in your home folder.")
+    }
+
+    @Test func aFolderInsideAnotherListedFolderNamesIt() {
+        let outcome = Self.adding(["/Users/me/Pictures/Trips"], to: ["/Users/me/Pictures"])
+        #expect(outcome.list == ["/Users/me/Pictures"])
+        #expect(outcome.problem == "“Trips” is already included in “Pictures”.")
+    }
+
+    @Test func severalCoveredFoldersAreCounted() {
+        let outcome = Self.adding(["/Users/me/Pictures/Trips", "/Users/me/Pictures/Family"], to: ["/Users/me/Pictures"])
+        #expect(outcome.list == ["/Users/me/Pictures"])
+        #expect(outcome.problem == "2 folders are already included in folders in the list.")
+    }
+
+    @Test func aParentReplacesTheFoldersItCovers() {
+        let outcome = Self.adding(
+            ["/Users/me"], to: ["/Users/me/Downloads", "/Users/me/Documents", "/Volumes/Disk"])
+        #expect(outcome.list == ["/Volumes/Disk", "/Users/me"])
+        #expect(outcome.problem == nil)
+        #expect(outcome.note == "Your home folder includes “Downloads” and “Documents”, so they were taken off the list.")
+    }
+
+    @Test func aParentReplacingOneFolderSaysIt() {
+        let outcome = Self.adding(["/Users/me/Pictures"], to: ["/Users/me/Pictures/Trips"])
+        #expect(outcome.list == ["/Users/me/Pictures"])
+        #expect(outcome.note == "“Pictures” includes “Trips”, so it was taken off the list.")
+    }
+
+    @Test func aParentReplacingThreeOrMoreCountsThem() {
+        let outcome = Self.adding(
+            ["/Users/me"], to: ["/Users/me/Downloads", "/Users/me/Documents", "/Users/me/Music"])
+        #expect(outcome.list == ["/Users/me"])
+        #expect(outcome.note == "Your home folder includes 3 folders that were in the list, so they were taken off it.")
+    }
+
+    @Test func aNameThatOnlyStartsTheSameIsNeitherCoveredNorReplaced() {
+        #expect(Self.adding(["/Users/me/Documents"], to: ["/Users/me/Doc"]).list == ["/Users/me/Doc", "/Users/me/Documents"])
+        let outcome = Self.adding(["/Users/me/Doc"], to: ["/Users/me/Documents"])
+        #expect(outcome.list == ["/Users/me/Documents", "/Users/me/Doc"])
+        #expect(outcome.problem == nil && outcome.note == nil)
+    }
+
+    @Test func theRepositoryFolderIsRefused() {
+        let outcome = Self.adding(["/Volumes/Disk/repo"], repository: Self.disk)
+        #expect(outcome.list.isEmpty)
+        #expect(outcome.problem == "“repo” is where this plan’s backups are kept, so it can’t be backed up.")
+    }
+
+    @Test func aFolderInsideTheRepositoryIsRefused() {
+        let outcome = Self.adding(["/Volumes/Disk/repo/data"], repository: Self.disk)
+        #expect(outcome.list.isEmpty)
+        #expect(outcome.problem
+            == "“data” is inside the folder where this plan’s backups are kept, so it can’t be backed up.")
+    }
+
+    @Test func aFolderHoldingTheRepositoryIsAddedAndSaysTheRepositoryIsLeftOut() {
+        let outcome = Self.adding(["/Volumes/Disk"], repository: Self.disk)
+        #expect(outcome.list == ["/Volumes/Disk"])
+        #expect(outcome.problem == nil)
+        #expect(outcome.note == "This plan’s backups are kept inside “Disk”, so that folder is always left out.")
+    }
+
+    @Test func noRepositoryYetSkipsTheRepositoryRules() {
+        let outcome = Self.adding(["/Volumes/Disk/repo"], repository: nil)
+        #expect(outcome.list == ["/Volumes/Disk/repo"])
+        #expect(outcome.problem == nil && outcome.note == nil)
+    }
+
+    @Test func refusalsJoinWithASpaceInOrderWithTheRepositoryOnesLast() {
+        let outcome = Self.adding(
+            ["/Volumes/Disk/repo/data", "/Users/me/Gone", "/Users/me/Music"], to: ["/Users/me/Music"],
+            repository: Self.disk)
+        #expect(outcome.problem == "“Music” is already in the list. "
+            + "“data” is inside the folder where this plan’s backups are kept, so it can’t be backed up.")
     }
 
     @Test func exclusionsAreGlobEscapedPatternsAndRestoreysOwnFoldersAreDuplicates() throws {

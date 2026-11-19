@@ -75,7 +75,12 @@ lid. Siri can't run them by voice on the Mac: Apple says voice invocation of App
   A plan's context menu has Back Up Now, Pause (or Resume), Restore Files…, Show in History and Delete Plan….
   **Overview** (its state, Back Up Now with Pause or Resume beside it, Restore Files…, the last and next backup, and
   any iCloud files skipped); **Folders** (the name, folders, drives and exclusions; drag folders and drives from
-  Finder into the Folders list or the exclusions list, and press Delete to remove the selected ones); **Schedule**
+  Finder into the Folders list or the exclusions list, and press Delete to remove the selected ones). The Folders list
+  keeps three rules (`FolderDrop`, paths compared by whole components and by where a link leads): a folder inside one
+  already listed is refused (“Downloads” is already included in your home folder), a folder holding listed ones is added
+  and takes them off the list (and says so), and when the plan's repository is a local folder, that folder and anything
+  inside it is refused (a plan with such a source is invalid), while a folder holding it is added with a note. Every
+  backup to a local repository excludes the repository's own folder, whatever the list holds; **Schedule**
   (how often, the battery rule, the plan's own upload limit, and its alerts: the check-in URL and "no successful backup in N days");
   **Storage** (the address, read-only, the password and keys, the host label, and "Show Recovery Kit…");
   **Retention** (how many hourly, daily, weekly and monthly snapshots to keep, prune, and **Earlier snapshots**:
