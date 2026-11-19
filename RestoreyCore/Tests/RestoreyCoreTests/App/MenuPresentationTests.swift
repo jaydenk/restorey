@@ -142,7 +142,7 @@ struct MenuPresentationTests {
     }
 
     /// Final review m6: a first backup that was cut short says it carries on, and that restic keeps what it uploaded.
-    @Test(arguments: [RunOutcome.stoppedBySystem, .interrupted, .paused])
+    @Test(arguments: [RunOutcome.stoppedBySystem, .interrupted, .paused, .cancelled])
     func aFirstBackupThatWasInterruptedSaysItCarriesOn(outcome: RunOutcome) {
         let plan = Self.plan()
         let interrupted = Self.record(plan, outcome, at: Self.at(10, 5))

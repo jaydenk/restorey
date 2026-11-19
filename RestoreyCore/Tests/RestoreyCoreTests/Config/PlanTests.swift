@@ -33,4 +33,23 @@ struct PlanTests {
         #expect(!plan.validationErrors().contains(.sourceInsideRepository("/Volumes/Disk")))
         #expect(plan.validationErrors().isEmpty)
     }
+
+    /// Final review I1: validation runs on every status and every scheduler tick, so it compares paths only and never
+    /// reads the disk. A source that reaches the repository through a link passes it; the check that follows links is
+    /// a separate call, made where the user saves a plan (`AgentState.savePlan`), off the agent's actor.
+    @Test func validationComparesPathsOnlyAndTheLinkCheckIsSeparate() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("PlanTests-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        let repository = root.appendingPathComponent("repo")
+        try fm.createDirectory(at: repository.appendingPathComponent("data"), withIntermediateDirectories: true)
+        let link = root.appendingPathComponent("shortcut")
+        try fm.createSymbolicLink(at: link, withDestinationURL: repository.appendingPathComponent("data"))
+        let plan = Self.plan(Self.raw(repository.path), sources: [link.path])
+
+        #expect(plan.validationErrors().isEmpty)
+        #expect(await plan.sourcesInsideRepositoryFollowingLinks() == [.sourceInsideRepository(link.path)])
+        let direct = Self.plan(Self.raw(repository.path), sources: [root.appendingPathComponent("other").path])
+        #expect(await direct.sourcesInsideRepositoryFollowingLinks() == [])
+    }
 }

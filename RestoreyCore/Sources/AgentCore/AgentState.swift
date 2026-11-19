@@ -273,7 +273,7 @@ public actor AgentState {
         let phase: PlanPhase
         if let run = running[plan.id] {
             phase = .running(run.progress, retrying: run.retrying)
-        } else if let reason = history.stoppedReason {
+        } else if let reason = history.stopReason(for: plan) {
             phase = .stopped(reason: reason)
         } else if let until = history.pausedUntil, until > now {
             phase = .paused(until: min(until, now.addingTimeInterval(PauseLength.longest.seconds)))
@@ -366,6 +366,12 @@ public actor AgentState {
         try requireMutable()
         let errors = request.plan.validationErrors()
         guard errors.isEmpty else { throw AgentError.invalidPlan(errors) }
+        // Validation compares paths only (it runs on every status); here, where the user acts, a source that reaches
+        // the repository through a link is refused too. Following links reads the disk, so it runs off the actor, and
+        // the agent may have started draining meanwhile (final review I1).
+        let throughLinks = await request.plan.sourcesInsideRepositoryFollowingLinks()
+        guard throughLinks.isEmpty else { throw AgentError.invalidPlan(throughLinks) }
+        try requireMutable()
         guard request.secrets.allSatisfy({ $0.key.planID == request.plan.id }) else {
             throw AgentError.foreignSecret
         }
@@ -599,11 +605,12 @@ public actor AgentState {
     /// after it, and the next backup falls at its normal time (not the short retry). With no run in progress
     /// the status comes back unchanged. A run a pause is already stopping keeps the pause (`handle.request`
     /// returns nil once an intent is set). Allowed while draining, like `pause`, since it only stops work.
-    public func cancel(_ id: UUID) async throws -> AgentStatus {
+    /// `stoppedARun` says whether this Cancel stopped anything, for the agent's log; the app gets the status alone.
+    public func cancel(_ id: UUID) async throws -> CancelReply {
         try requireLoaded()
         _ = try requirePlan(id)
-        await runner?.cancel(planID: id)
-        return status()
+        let stopped = await runner?.cancel(planID: id) ?? false
+        return CancelReply(status: status(), stoppedARun: stopped)
     }
 
     /// Clears the plan's pause. When it was paused (`pausedUntil` still in the future), Resume also starts
@@ -1000,4 +1007,25 @@ public enum DrainPurpose: Sendable, Equatable {
 
     /// Whether the agent exits afterwards.
     public var exitsAfterwards: Bool { self != .reregistration }
+}
+
+/// What `AgentState.cancel` did. The XPC reply is the status alone; whether a run was stopped is for the agent's log,
+/// which says so only when something was (final review m7).
+public struct CancelReply: Sendable {
+    public var status: AgentStatus
+    /// This Cancel stopped a run, or dropped the backup Resume queued behind one. False when nothing was running,
+    /// or the run was already being stopped (a pause wins).
+    public var stoppedARun: Bool
+}
+
+extension PlanRunHistory {
+    /// Why the plan won't back up until something is changed: the stop the agent recorded (a wrong password, a missing
+    /// repository), or else settings that fail validation, which only a plan saved by an earlier version can have
+    /// (final review I2: v0.1 allowed a source inside the plan's own repository). Nil when nothing stops it. The
+    /// status reports it as the phase (`stopped`), and `AlertContent` names it in the settings alert.
+    func stopReason(for plan: Plan) -> String? {
+        if let stoppedReason { return stoppedReason }
+        let errors = plan.validationErrors()
+        return errors.isEmpty ? nil : AgentError.invalidPlan(errors).message
+    }
 }

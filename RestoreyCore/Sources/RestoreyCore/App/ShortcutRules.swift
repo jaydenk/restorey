@@ -221,7 +221,7 @@ public enum ShortcutRules {
             switch action {
             case .pause: sentence = "\(names) \(one ? "is" : "are") paused."
             case .resume: sentence = "\(names) \(one ? "has" : "have") resumed."
-            case .cancel: sentence = "\(names) \(one ? "was" : "were") cancelled."
+            case .cancel: sentence = "The \(one ? "backup" : "backups") of \(names) \(one ? "was" : "were") cancelled."
             }
             sentences.append(sentence)
         }

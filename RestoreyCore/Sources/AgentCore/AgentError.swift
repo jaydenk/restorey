@@ -43,7 +43,7 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
         case .draining: "Restorey is finishing the current backup before updating"
         case .restarting: "Restorey is restarting to finish an update. Try again in a moment"
         case .invalidPlan(let errors):
-            errors.map(Self.message(for:)).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            errors.map(\.message).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
                 .joined(separator: ". ")
         case .invalidNetworkSettings(let errors): errors.map(\.message).joined(separator: ". ")
         case .unknownPlan: "There’s no plan with that ID"
@@ -59,25 +59,13 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
         case .repositoryAlreadyExists: "A repository already exists there"
         case .operationFailed(let detail): detail
         case .storage(let detail): detail
+        // Never joined with another message, and shown as it is (the menu's alert), so it keeps its closing stop.
         case .unknownPauseLength: "Restorey can’t pause for that long. Choose 1 hour, 4 hours or until tomorrow."
         case .invalidRequest(let detail): "Restorey couldn’t read the request: \(detail)"
         }
     }
 
     public var description: String { message }
-
-    static func message(for error: PlanValidationError) -> String {
-        switch error {
-        case .emptyHostLabel: "The host label can’t be empty"
-        case .noSources: "Choose at least one source folder"
-        case .relativeSource: "Source folders must be absolute paths"
-        case .intervalTooShort: "Backups can’t run more often than every 5 minutes"
-        case .invalidFileType(let entry): FormValidation.fileTypeProblem(rejected: [entry])
-        case .uploadLimitNotPositive: "The upload limit must be more than 0 KiB/s"
-        case .sourceInsideRepository(let path):
-            "“\(FolderDrop.name(path))” is inside this plan’s backup repository. Choose a different folder."
-        }
-    }
 }
 
 extension PauseRequest {

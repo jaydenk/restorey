@@ -333,19 +333,27 @@ public actor PlanRunner {
     /// Asks the plan's run in progress, if any, to stop. A request repeated while it is pending is
     /// ignored, and so is any request once one is pending: a Cancel after a pause leaves the run paused.
     /// `AgentState.pause` and `AgentState.cancel` are the ways in.
-    func interrupt(planID: UUID, intent: InterruptIntent) async {
+    /// Returns whether any run took the request (false: none in flight, or each already being stopped).
+    @discardableResult
+    func interrupt(planID: UUID, intent: InterruptIntent) async -> Bool {
+        var accepted = false
         for handle in [handles[planID]].compactMap({ $0 }) + (measurementHandles[planID] ?? []) {
-            guard let process = handle.request(intent) else { continue }
+            let request = handle.requestStop(intent)
+            accepted = accepted || request.accepted
+            guard let process = request.process else { continue }
             await process.interrupt(intent, killAfter: deps.interruptGracePeriod)
         }
+        return accepted
     }
 
     /// Cancel Backup: stops the plan's run and drops the backup Resume queued behind a run still stopping, so the
     /// user who pressed Cancel doesn't get a new backup when that run ends. A run a pause is already stopping
     /// stays paused (the first stop wins).
-    func cancel(planID: UUID) async {
-        startWhenPausedRunEnds.remove(planID)
-        await interrupt(planID: planID, intent: .cancel)
+    /// Returns whether it stopped anything: a run, or the queued backup.
+    func cancel(planID: UUID) async -> Bool {
+        let droppedQueued = startWhenPausedRunEnds.remove(planID) != nil
+        let stopped = await interrupt(planID: planID, intent: .cancel)
+        return stopped || droppedQueued
     }
 
     /// Asks every run in flight (recovery's unlocks, backups, maintenance, create, adopt) to stop with
@@ -757,6 +765,11 @@ public actor PlanRunner {
         }
 
         var context = session.context
+        // Where a link to the local repository leads, for its exclusion: following it reads the disk, which a volume
+        // that doesn't answer can hold up, so it is done off the actor (final review I1).
+        if op == .backup, let repositoryPath = plan.repository.localFolderPath {
+            context.repositoryLinkTarget = await SourcePaths.resolvingLinksOffActor(repositoryPath)
+        }
         let uploadsToTheNetwork = op == .backup && plan.repository.needsNetwork
         if uploadsToTheNetwork {
             context.macWideUploadLimitKiB = await deps.state.networkSettings.uploadLimitKiB

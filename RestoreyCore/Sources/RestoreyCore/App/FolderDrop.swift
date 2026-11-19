@@ -87,22 +87,22 @@ public enum FolderDrop {
                 refused.listed.append(name(item.path))
                 continue
             }
-            if let repositoryPath, SourcePaths.contains(repositoryPath, path) {
-                if SourcePaths.contains(path, repositoryPath) {
+            if let repositoryPath, SourcePaths.containsFollowingLinks(repositoryPath, path) {
+                if SourcePaths.containsFollowingLinks(path, repositoryPath) {
                     refused.repositoryItself.append(name(path))
                 } else {
                     refused.insideRepository.append(name(path))
                 }
                 continue
             }
-            if let container = list.first(where: { SourcePaths.contains($0, path) }) {
+            if let container = list.first(where: { SourcePaths.containsFollowingLinks($0, path) }) {
                 refused.covered.append((name(path), container))
                 continue
             }
-            let replaced = list.filter { SourcePaths.contains(path, $0) }
+            let replaced = list.filter { SourcePaths.containsFollowingLinks(path, $0) }
             list = list.filter { !replaced.contains($0) } + [path]
             if let note = replacementNote(for: path, replacing: replaced, home: home) { notes.append(note) }
-            if let repositoryPath, SourcePaths.contains(path, repositoryPath) {
+            if let repositoryPath, SourcePaths.containsFollowingLinks(path, repositoryPath) {
                 notes.append("This plan’s backups are kept inside “\(name(path))”, so that folder is always left out.")
             }
         }
@@ -123,7 +123,7 @@ public enum FolderDrop {
 
     /// A folder as a sentence names it: “Pictures”, or the home folder in words ("Your" at the start of a sentence).
     private static func displayName(_ path: String, home: String, startingSentence: Bool = false) -> String {
-        if SourcePaths.contains(path, home) && SourcePaths.contains(home, path) {
+        if SourcePaths.containsFollowingLinks(path, home) && SourcePaths.containsFollowingLinks(home, path) {
             return startingSentence ? "Your home folder" : "your home folder"
         }
         return "“\(name(path))”"

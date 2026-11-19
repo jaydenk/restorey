@@ -52,12 +52,18 @@ an item named for its fix with the problem under it (Allow Full Disk Access…, 
 Turn On in Login Items…); then a section per plan, headed by its name, with its status, progress or next run, and
 destination (choosing it opens the plan in Settings), then that plan's own problems (Finish Setup…, Save Recovery
 Kit…, Add Check-In URL… with Don't Show This Again) and, after a failure, Show Details… for its history; then Resume,
-Back Up Now, Pause and, while a backup runs, Cancel Backup, Restore Files…, Settings… (⌘,) and Quit Restorey. Pause opens a submenu of how long: For 1 Hour, For 4 Hours or Until Tomorrow (with several plans, headed All Plans and then each plan by name). Cancel Backup stops the backup in progress only: nothing is paused, no alert or check-in is sent, and the next backup falls at its normal time (with several backups running, a submenu of All Plans and each running plan). Option-click the icon for diagnostics: the
+Back Up Now, Pause and, while a backup runs, Cancel Backup, Restore Files…, Settings… (⌘,) and Quit Restorey. Pause
+opens a submenu of how long: For 1 Hour, For 4 Hours or Until Tomorrow (with several plans, headed All Plans and then
+each plan by name). Cancel Backup stops the backup in progress only: nothing is paused, no alert or check-in is sent,
+and the next backup falls at its normal time (with several backups running, a submenu of All Plans and each running
+plan). Option-click the icon for diagnostics: the
 app's and the background process's versions, Show Last Run Log, Show Logs in Finder and Copy Diagnostics. Backups run
 from the background agent whether or not the app is open.
 
 **Shortcuts and Spotlight.** Restorey adds five actions to the Shortcuts app and to Spotlight's actions, with no
-setting up: **Back Up Now**, **Pause Backups** (with a Length of For 1 Hour, For 4 Hours or Until Tomorrow; the agent refuses any other length), **Cancel Backup** (stops a backup in progress, this run only; refused with “There’s no backup to cancel.” or “<plan> isn’t backing up.”), **Resume Backups** and **Get Last Backup**, which gives the
+setting up: **Back Up Now**, **Pause Backups** (with a Length of For 1 Hour, For 4 Hours or Until Tomorrow; the agent
+refuses any other length), **Cancel Backup** (stops a backup in progress, this run only; refused with “There’s no backup
+to cancel.” or ““<name>” isn’t backing up.”), **Resume Backups** and **Get Last Backup**, which gives the
 plan's last backup time and outcome as values a shortcut can use (Time, Outcome, Backed Up, Last Successful Backup,
 Summary). Each takes a plan, or none for every plan (Get Last Backup: the newest backup of any plan), and is refused
 with a sentence saying why wherever the menu's item would be dimmed: "“Home” is already backing up.", "Backups are
@@ -72,14 +78,19 @@ lid. Siri can't run them by voice on the Mac: Apple says voice invocation of App
   Restorey's icon and name and "Drag this into the list, then switch it on.", and Open System Settings; once it is on,
   it is one row with a green tick and "Full Disk Access is on".
 - **Plans**: the plans in a list with + (Add Plan…) and − (Delete Plan…) under it, and the selected plan's six tabs.
-  A plan's context menu has Back Up Now, Pause (a submenu of For 1 Hour, For 4 Hours and Until Tomorrow) or Resume, Cancel Backup while it runs, Restore Files…, Show in History and Delete Plan….
-  **Overview** (its state, Back Up Now with Pause (a pull-down menu of the three lengths) and, while a backup runs, Cancel Backup beside it, or Resume, Restore Files…, the last and next backup, and
+  A plan's context menu has Back Up Now, Pause (a submenu of For 1 Hour, For 4 Hours and Until Tomorrow) or Resume,
+  Cancel Backup while it runs, Restore Files…, Show in History and Delete Plan….
+  **Overview** (its state; Back Up Now, with Pause (a pull-down menu of the three lengths) or Resume beside it, and
+  Cancel Backup while a backup runs; Restore Files…; the last and next backup; and
   any iCloud files skipped); **Folders** (the name, folders, drives and exclusions; drag folders and drives from
   Finder into the Folders list or the exclusions list, and press Delete to remove the selected ones). The Folders list
   keeps three rules (`FolderDrop`, paths compared by whole components and by where a link leads): a folder inside one
   already listed is refused (“Downloads” is already included in your home folder), a folder holding listed ones is added
   and takes them off the list (and says so), and when the plan's repository is a local folder, that folder and anything
-  inside it is refused (a plan with such a source is invalid), while a folder holding it is added with a note (shown
+  inside it is refused (a plan with such a source is invalid: the agent's validation compares the paths as written,
+  never reading the disk, and saving a plan also follows links; a plan v0.1 saved with such a source is shown "Stopped"
+  with the reason, "“data” is inside this plan’s backup repository. Choose a different folder", and the Folders tab
+  says the same until the folder is taken off), while a folder holding it is added with a note (shown
   under the list, and cleared by the next change). Every backup to a local repository excludes the repository's own
   folder, whatever the list holds, so when it is inside a source the Exclusions sheet shows it as a fixed first row,
   “This plan’s backups”, that can't be selected or removed; **Schedule**
@@ -360,7 +371,11 @@ saves anything left, confirms the kit, then backs up: confirming makes the plan 
 first. `backUpNow` answers with a `BackUpNowReply` whose `alreadyRunning` says so for the plan asked for, instead
 of refusing (an agent from before it answered with a bare status, which still decodes). Only a backup step still under way
 and carrying on counts: a run stopping for a pause (or any other stop), a run in its maintenance after the backup step
-(forget, prune, check), or a one-off action such as an adopt, still gets the "is already backing up" refusal, as before; only Resume queues a backup behind a stopping run (Ruling R62). The agent’s `cancel` call (v0.1.1) stops only the run in progress: it ends cancelled with no ping, alert or maintenance, sets no pause, and the next backup falls at its normal time; with no run in progress it changes nothing, a run a pause is already stopping stays paused, and, like Pause, it is allowed while the agent is draining. The progress line
+(forget, prune, check), or a one-off action such as an adopt, still gets the "is already backing up" refusal, as before;
+only Resume queues a backup behind a stopping run (Ruling R62). The agent’s `cancel` call (v0.1.1) stops only the run in
+progress: it ends cancelled with no ping, alert or maintenance, sets no pause, and the next backup falls at its normal
+time; with no run in progress it changes nothing, a run a pause is already stopping stays paused, and, like Pause, it is
+allowed while the agent is draining. The agent's log records a Cancel only when it stopped something. The progress line
 (`FirstBackupProgress`) is the menu's wording, plus "Waiting to start" while the run has no progress yet (queued behind
 an adopt's size measurement, say). Closing the window leaves the backup running. Every agent sentence shown in setup
 gets a closing full stop (`FormValidation.sentence`), as the form's own sentences have. An environment row's value
@@ -594,7 +609,8 @@ isn't prefixed again. Its relative day ("yesterday at 09:05") is made again when
 ### Shortcuts
 
 Restorey's Shortcuts actions (Task 17e, audit T2) are App Intents in the app's own bundle (`App/Intents`): Back Up Now,
-Pause Backups (with a Length, `PauseLengthOption`), Cancel Backup, Resume Backups and Get Last Backup, each with an optional plan (a `PlanEntity`, listed from the agent's
+Pause Backups (with a Length, `PauseLengthOption`), Cancel Backup, Resume Backups and Get Last Backup, each with an
+optional plan (a `PlanEntity`, listed from the agent's
 status by an `EnumerableEntityQuery`), and an `AppShortcutsProvider` that offers them with no setting up, in the
 Shortcuts app and Spotlight (macOS 26: "any app can provide actions to Spotlight using the App Intents API", Apple
 Newsroom, 9 June 2025). Its phrases name the app, as App Intents requires, and offer the plans' names (App Intents is
@@ -626,11 +642,13 @@ the actions then never reach Shortcuts; the build writes `Contents/Resources/Met
   It is decided by `ShortcutRules` (RestoreyCore, tested): from the menu's own `MenuContent`, so an action is refused
   exactly when the menu's item is dimmed or missing, and says why in the menu's words ("“Home” hasn't finished
   setup.", "Backups aren't running."). Restorey just launched by an action waits, up to 30 s and by observing the
-  supervisor rather than polling, while the menu would still say "Connecting…" or "Updating…". Pause Backups pauses for
-  one hour (`PauseLength.oneHour`) and has no duration to choose.
-- **Several plans.** Pause Backups and Resume Backups with no plan make the call for every plan the menu could act on,
+  supervisor rather than polling, while the menu would still say "Connecting…" or "Updating…". Pause Backups takes a
+  Length (`PauseLengthOption`, the menu's three: For 1 Hour, For 4 Hours or Until Tomorrow).
+- **Several plans.** Pause Backups, Cancel Backup and Resume Backups with no plan make the call for every plan the menu
+  could act on (for Cancel Backup, every plan backing up),
   each whatever the others did, and if any fails, the error names each plan that failed, with its reason, and those
-  that changed ("Restorey couldn't pause “Photos”: … “Home” is paused.", `ShortcutRules.failureMessage`).
+  that changed ("Restorey couldn't pause “Photos”: … “Home” is paused.", "… The backup of “Home” was cancelled.",
+  `ShortcutRules.failureMessage`).
 - **Errors** are `ShortcutError`, which conforms to `CustomLocalizedStringResourceConvertible`: Shortcuts shows an
   error's `localizedStringResource`, and a plain `Error` reads as a generic failure. A plan deleted since a shortcut
   was made still resolves (as "Deleted plan"), so the action runs and says "That plan is no longer in Restorey."
@@ -749,7 +767,13 @@ The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`) runs
 
 A wrong repository password, a missing repository or unreadable backup keys (including a password the helper
 couldn't read from the Keychain) stop the plan until its repository or secrets are changed, or a later backup
-succeeds. Pause stops a run in progress (SIGINT, then SIGKILL after 10 s) and resumes after an hour. Resume on a
+succeeds. A plan whose settings fail validation never runs either; only one saved by v0.1 can (a source inside its own
+local repository), and it is reported the same way: stopped, with the reason, and the settings alert. Validation
+compares paths as written and never reads the disk, since it runs on every status and scheduler tick and a repository on
+a network volume that stops answering must not hold up the agent; saving a plan also follows links (off the agent's
+actor), and a backup resolves where a link to its repository leads off the plan runner's actor, to exclude both. Pause
+stops a run in progress (SIGINT, then SIGKILL after 10 s) and resumes after the length chosen (1 hour, 4 hours or until
+tomorrow, 24 hours). Resume on a
 paused plan starts a fresh backup at once, exactly as Back Up Now does (so it can still be skipped on battery or
 without a network), and if the paused run is still stopping, the new backup starts as soon as it has ended; a
 stopped plan's pause is cleared but nothing runs until it is fixed. Restorey never runs `restic init` except
@@ -999,7 +1023,7 @@ the Mac-wide skip list, no network, an unmounted volume) is recorded and tried a
 sooner when the network comes back or the volume mounts, as above. A backup that met another client's lock, was
 stopped by the system at logout or shutdown, or was interrupted because the agent stopped mid-run, is retried 15
 minutes after it started (not at once, so
-something that kills the agent on every run can't loop); a paused plan runs as soon as its hour is up. One plan
+something that kills the agent on every run can't loop); a paused plan runs as soon as its pause is up. One plan
 never runs twice at once; different plans can, and plans that share a repository take turns. While restic runs, the agent
 holds a power assertion that stops the Mac idle-sleeping ("Restorey backup" in `pmset -g assertions`); the
 display can still sleep, and closing the lid still sleeps the Mac. When the agent is finishing up for a

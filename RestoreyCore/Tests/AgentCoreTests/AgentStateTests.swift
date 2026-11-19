@@ -1198,8 +1198,9 @@ struct AgentStateTests {
         try await Self.waitUntilDraining(state)
 
         let before = await state.status()
-        let status = try await state.cancel(plan.id)
-        #expect(status.plans == before.plans, "no runner, so nothing to stop and nothing changes")
+        let cancel = try await state.cancel(plan.id)
+        #expect(cancel.status.plans == before.plans, "no runner, so nothing to stop and nothing changes")
+        #expect(!cancel.stoppedARun)
         #expect(try await state.runInputs(plan.id).history.pausedUntil == nil)
 
         await state.endRun(planID: plan.id)
@@ -1495,5 +1496,68 @@ extension AgentStateTests {
         plan.hasCheckInURL = false
         await #expect(throws: AgentError.self) { try await state.savePlan(SavePlanRequest(plan: plan, secrets: [])) }
         #expect(try secrets.read(.checkInURL(plan.id)) == "https://hc.example/ping/abc")
+    }
+}
+
+// MARK: A source inside the plan's own repository (final review I1, I2, m3)
+
+extension AgentStateTests {
+    private static func localPlan(repository: URL, sources: [String], now: Date) -> Plan {
+        Plan.newHotPlan(
+            name: "Home", repository: .raw(repository: repository.path, environmentNames: []), origin: .created,
+            hostLabel: "mac", sources: sources, exclusions: [], now: now)
+    }
+
+    /// Validation compares paths only, so `savePlan` follows links itself before saving: a source that leads into the
+    /// plan's local repository through a link is still refused, and nothing is saved.
+    @Test func savePlanRefusesASourceThatReachesTheRepositoryThroughALink() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let fm = FileManager.default
+        let repository = dir.url.appendingPathComponent("repo")
+        try fm.createDirectory(at: repository.appendingPathComponent("data"), withIntermediateDirectories: true)
+        let link = dir.url.appendingPathComponent("shortcut")
+        try fm.createSymbolicLink(at: link, withDestinationURL: repository.appendingPathComponent("data"))
+        let plan = Self.localPlan(repository: repository, sources: [link.path], now: clock.now)
+        #expect(plan.validationErrors().isEmpty, "the comparison by path alone doesn't see it")
+
+        let request = SavePlanRequest(plan: plan, secrets: [SecretEntry(key: .repositoryPassword(plan.id), value: "pw")])
+        let refusal = "“shortcut” is inside this plan’s backup repository. Choose a different folder"
+        await #expect { _ = try await state.savePlan(request) } throws: { Self.message($0) == refusal }
+        #expect(await state.status().plans.isEmpty)
+    }
+
+    /// Final review I2: a plan v0.1 saved whose source is inside its local repository is invalid now. It never runs,
+    /// so it says why instead of going quiet: the agent reports it stopped, with the reason, and raises the settings
+    /// alert, and the menu's line shows "Stopped" and that reason.
+    @Test func aStoredPlanThatFailsValidationIsReportedStoppedWithItsReason() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let repository = dir.url.appendingPathComponent("repo")
+        var plan = Self.localPlan(repository: repository, sources: [repository.appendingPathComponent("data").path],
+                                  now: clock.now)
+        plan.recoveryKitConfirmedAt = clock.now
+        plan.setupCompletedAt = clock.now
+        try await AgentState.configStore(in: dir.url).save(ConfigFile(plans: [plan]))
+        let state = await Self.makeState(dir, clock: clock)
+
+        let reason = "“data” is inside this plan’s backup repository. Choose a different folder"
+        let status = try #require(await state.status().plans.first)
+        #expect(status.phase == .stopped(reason: reason))
+        #expect(status.nextRunAt == nil)
+        #expect(status.alerts.contains(.configurationError))
+
+        let line = MenuPresentation.planLine(
+            for: status, now: clock.now, calendar: Calendar(identifier: .gregorian), locale: Locale(identifier: "en_AU"))
+        #expect(line.status == "Stopped")
+        #expect(line.detail == reason)
+    }
+
+    /// Final review m3: every validation sentence is joined with ". ", so none ends with its own full stop.
+    @Test func invalidPlanMessagesJoinWithoutADoubleFullStop() {
+        let error = AgentError.invalidPlan([.sourceInsideRepository("/Volumes/Disk/repo/data"), .emptyHostLabel])
+        #expect(error.message
+            == "“data” is inside this plan’s backup repository. Choose a different folder. The host label can’t be empty")
     }
 }

@@ -177,7 +177,23 @@ struct ResticInvocationTests {
         #expect(inv(.backup, plan(globby)).arguments.contains(#"--exclude=/Volumes/Disk/re\[po\]"#))
     }
 
-    @Test func aRepositoryReachedThroughASymlinkIsExcludedByBothSpellings() throws {
+    /// The builder never reads the disk (final review I1): where a link to the repository leads is resolved by the
+    /// runner off its actor and passed in the context, and both spellings are excluded.
+    @Test func aRepositoryReachedThroughASymlinkIsExcludedByBothSpellings() {
+        var context = Self.context
+        context.repositoryLinkTarget = "/Volumes/Real/repo"
+        let args = inv(.backup, plan(.raw(repository: "/Users/me/link", environmentNames: [])), context).arguments
+        #expect(args.contains("--exclude=/Users/me/link"))
+        #expect(args.contains("--exclude=/Volumes/Real/repo"))
+
+        context.repositoryLinkTarget = "/Users/me/link"
+        let same = inv(.backup, plan(.raw(repository: "/Users/me/link", environmentNames: [])), context).arguments
+        #expect(same.filter { $0 == "--exclude=/Users/me/link" }.count == 1, "the same place is excluded once")
+    }
+
+    /// With no resolved target, only the path as given is excluded, even when that path is a link on disk: the
+    /// builder doesn't follow it.
+    @Test func withoutAResolvedTargetTheBuilderDoesntFollowTheLink() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("ResticInvocationTests-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: root) }
@@ -187,7 +203,7 @@ struct ResticInvocationTests {
         try fm.createSymbolicLink(at: link, withDestinationURL: real)
         let args = inv(.backup, plan(.raw(repository: link.path, environmentNames: []))).arguments
         #expect(args.contains("--exclude=\(DefaultExclusions.pattern(forFolder: link.path))"))
-        #expect(args.contains("--exclude=\(DefaultExclusions.pattern(forFolder: real.resolvingSymlinksInPath().path))"))
+        #expect(!args.contains("--exclude=\(DefaultExclusions.pattern(forFolder: real.resolvingSymlinksInPath().path))"))
     }
 
     @Test func aNetworkRepositoryAddsNoExclusion() {

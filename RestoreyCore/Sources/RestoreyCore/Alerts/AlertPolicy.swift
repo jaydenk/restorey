@@ -13,7 +13,9 @@ import Foundation
 /// - `checkFailed`: the same rule applied to the newest check record.
 /// - Either stays raised while it is in `history.activeAlerts` and `recent` holds no verdict for its
 ///   operation: a failure that has aged out of `recent` was never cleared.
-/// - `configurationError`: the plan has been stopped (`stoppedReason`), for example after a wrong password.
+/// - `configurationError`: the plan has been stopped (`stoppedReason`), for example after a wrong password, or its
+///   settings fail validation, which only a plan saved by an earlier version can do (a v0.1 plan with a source inside
+///   its own repository): such a plan never runs, so without this it would go quiet.
 ///
 /// `fullDiskAccessMissing` and `notificationsOff` are not computed here. The agent raises them from live
 /// probes (Tasks 14 and 16), because history cannot know them.
@@ -37,7 +39,7 @@ public func activeConditions(history: PlanRunHistory, plan: Plan, now: Date) -> 
         }
     }
 
-    if history.stoppedReason != nil { conditions.insert(.configurationError) }
+    if history.stoppedReason != nil || !plan.validationErrors().isEmpty { conditions.insert(.configurationError) }
     return conditions
 }
 

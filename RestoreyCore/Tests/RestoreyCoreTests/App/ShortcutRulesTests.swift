@@ -529,7 +529,11 @@ struct ShortcutPartialFailureTests {
     @Test func cancelNamesEachFailedPlanAndThoseCancelled() {
         let message = ShortcutRules.failureMessage(
             .cancel, outcomes: [.init(planName: "Home", failure: nil), .init(planName: "Docs", failure: "Busy.")])
-        #expect(message == "Restorey couldn’t cancel “Docs”: Busy. “Home” was cancelled.")
+        #expect(message == "Restorey couldn’t cancel “Docs”: Busy. The backup of “Home” was cancelled.")
+        let two = ShortcutRules.failureMessage(
+            .cancel, outcomes: [.init(planName: "Home", failure: nil), .init(planName: "Photos", failure: nil),
+                                .init(planName: "Docs", failure: "Busy.")])
+        #expect(two == "Restorey couldn’t cancel “Docs”: Busy. The backups of “Home” and “Photos” were cancelled.")
     }
 }
 

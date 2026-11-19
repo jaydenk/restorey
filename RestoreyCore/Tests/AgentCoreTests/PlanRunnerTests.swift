@@ -54,6 +54,26 @@ struct PlanRunnerTests {
         #expect(!log.contains(RunnerFixture.password))
     }
 
+    /// Final review I1: the runner resolves a linked local repository off its actor and restic gets both spellings
+    /// as exclusions, so the backups are never backed up whichever way the folders reach them.
+    @Test func aRepositoryReachedThroughALinkIsExcludedByWhereItLeads() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        try f.write("a.txt", "hello")
+        let link = f.root.appendingPathComponent("repo-link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: f.repository)
+        try await f.updatePlan { $0.repository = .raw(repository: link.path, environmentNames: []) }
+        _ = try await f.state.confirmRecoveryKit(f.planID)
+
+        let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        guard case .success = record.outcome else { Issue.record("expected a success, got \(record.outcome)"); return }
+        let log = try String(contentsOf: f.logs.appendingPathComponent(record.logFile), encoding: .utf8)
+        let resolved = link.resolvingSymlinksInPath().path
+        #expect(resolved != link.path)
+        #expect(log.contains("--exclude=\(DefaultExclusions.pattern(forFolder: link.path))"))
+        #expect(log.contains("--exclude=\(DefaultExclusions.pattern(forFolder: resolved)) "))
+    }
+
     /// Spec §8: idle sleep is held off while restic runs, and only then.
     @Test func resticStepsHoldTheSleepAssertionAndASkipTakesNone() async throws {
         let f = try await RunnerFixture.make()
@@ -1429,9 +1449,10 @@ struct PlanRunnerTests {
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
         try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
 
-        _ = try await f.state.cancel(f.planID)
+        let cancel = try await f.state.cancel(f.planID)
         let record = try await run.value
 
+        #expect(cancel.stoppedARun, "the agent log says a run was cancelled")
         #expect(record.outcome == .cancelled)
         #expect(await f.pings() == [], "neither a /fail nor a success ping")
         await f.state.alertsDelivered()
@@ -1475,8 +1496,9 @@ struct PlanRunnerTests {
 
         let after = try await f.state.cancel(f.planID)
 
+        #expect(!after.stoppedARun, "nothing was running, so the agent log doesn't say a run was cancelled")
         // `generatedAt` and `sequence` move with every status built; everything else must stay as it was.
-        #expect(after.plans == before.plans)
+        #expect(after.status.plans == before.plans)
         #expect(await f.state.status().plans == before.plans)
         #expect(await f.history().recent.count == recordsBefore, "no new record")
         #expect(await f.pings() == [.success], "only the finished run’s ping")

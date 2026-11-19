@@ -671,10 +671,11 @@ private enum Words {
         return "\(unreadable) \(unreadable == 1 ? "file" : "files") couldn’t be read"
     }
 
-    /// A backup that ended without a verdict because something stopped it (the system, the user's pause, a crash).
+    /// A backup that ended without a verdict because something stopped it (the system, the user's pause or Cancel
+    /// Backup, a crash).
     static func interruptsFirstBackup(_ outcome: RunOutcome) -> Bool {
         switch outcome {
-        case .stoppedBySystem, .interrupted, .paused: true
+        case .stoppedBySystem, .interrupted, .paused, .cancelled: true
         default: false
         }
     }
