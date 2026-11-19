@@ -1,7 +1,7 @@
 import AppKit
 import RestoreyCore
 
-/// The agent calls behind the menu's Back Up Now, Pause and Resume, shared by the menu and Settings' Overview tab
+/// The agent calls behind the menu's Back Up Now, Pause, Cancel and Resume, shared by the menu and Settings' Overview tab
 /// (Task 14c) so both ask the same way and show the same alert when one fails.
 @MainActor
 enum AgentActions {

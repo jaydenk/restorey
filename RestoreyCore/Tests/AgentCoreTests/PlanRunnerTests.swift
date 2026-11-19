@@ -1482,11 +1482,50 @@ struct PlanRunnerTests {
         #expect(await f.pings() == [.success], "only the finished run’s ping")
     }
 
-    /// Review focus 4: a pause already stopping the run wins; Cancel keeps its outcome and its `pausedUntil`.
+    /// A backup that traps SIGINT, counts each one in `ints`, and stays up until `release` exists: the run is held in
+    /// its stopping state however slow the machine is. Once released it exits 130 if it was interrupted (restic's
+    /// code), else finishes with a summary, so a second run of the same stub succeeds.
+    private struct HeldStopStub: Sendable {
+        let stub: URL
+        let dir: URL
+        func release() { FileManager.default.createFile(atPath: dir.appendingPathComponent("release").path, contents: nil) }
+        func interrupts() -> Int {
+            let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+            return files.filter { $0.hasPrefix("ints-") }.reduce(0) { total, name in
+                total + ((try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)) ?? "")
+                    .split(separator: "\n").count
+            }
+        }
+        func finish() { release(); try? FileManager.default.removeItem(at: dir) }
+    }
+
+    private func heldStopStub() throws -> HeldStopStub {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restorey-heldstop-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let body = """
+            #!/bin/sh
+            [ "$1" = cat ] && exit 10
+            [ "$1" = backup ] || exit 0
+            trap "echo i >> '\(dir.path)/ints-$$'" INT
+            echo '\(Self.cancelStatus)'
+            while [ ! -f '\(dir.path)/release' ]; do [ -d '\(dir.path)' ] || exit 1; /bin/sleep 0.05; done
+            if [ -f "\(dir.path)/ints-$$" ]; then exit 130; fi
+            echo '\(Self.cancelSummary)'
+
+            """
+        let stub = dir.appendingPathComponent("restic.sh")
+        try body.write(to: stub, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+        return HeldStopStub(stub: stub, dir: dir)
+    }
+
+    /// Review focus 4: a pause already stopping the run wins; Cancel keeps its outcome and its `pausedUntil`, and
+    /// sends no second SIGINT. The stub holds the run stopping until released after Cancel returns.
     @Test func cancelWhileAPauseIsStoppingTheRunKeepsThePause() async throws {
-        let stepped = try steppedBackupStub([.out(Self.cancelStatus), .out(Self.cancelSummary)])
-        defer { stepped.finish() }
-        let f = try await RunnerFixture.make(executable: stepped.stub)
+        let held = try heldStopStub()
+        defer { held.finish() }
+        let f = try await RunnerFixture.make(executable: held.stub, gracePeriod: .seconds(60))
         defer { f.remove() }
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
         try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
@@ -1494,12 +1533,64 @@ struct PlanRunnerTests {
         _ = try await f.state.pause(f.planID, for: .oneHour)
         let until = try #require(await f.history().pausedUntil)
         _ = try await f.state.cancel(f.planID)
+        held.release()
         let record = try await run.value
 
         #expect(record.outcome == .paused)
+        #expect(held.interrupts() == 1, "the pause’s SIGINT only, never a second")
         #expect(await f.history().pausedUntil == until)
         #expect(await f.status().phase == .paused(until: until))
         #expect(await f.pings() == [])
+    }
+
+    /// The first stop wins at the handle itself: a Cancel after a pause is refused and the intent stays `.pause`.
+    @Test func aRunHandleKeepsItsFirstStop() {
+        let handle = RunHandle(isBackup: true)
+        #expect(handle.request(.pause) == nil, "no process attached, so nothing to interrupt, but the intent is recorded")
+        #expect(handle.intent == .pause)
+        #expect(handle.request(.cancel) == nil)
+        #expect(handle.intent == .pause)
+    }
+
+    /// Cancel then Pause while the run is stopping, then Resume: Resume queues its backup behind the stopping run
+    /// (any pending stop, not only a pause) instead of failing as "already backing up", and the pause is cleared.
+    @Test func resumeAfterCancelThenPauseQueuesTheBackup() async throws {
+        let held = try heldStopStub()
+        defer { held.finish() }
+        let f = try await RunnerFixture.make(executable: held.stub, gracePeriod: .seconds(60))
+        defer { f.remove() }
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
+
+        _ = try await f.state.cancel(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
+        _ = try await f.state.resume(f.planID)
+        #expect(await f.history().pausedUntil == nil)
+        held.release()
+        #expect(try await run.value.outcome == .cancelled)
+
+        let queued = try #require(await f.runner.waitForBackgroundRun(planID: f.planID), "the queued backup ran")
+        guard case .success = queued.outcome else { Issue.record("expected a success, got \(queued.outcome)"); return }
+    }
+
+    /// Pause, Resume (a backup queued behind the stopping run), then Cancel: the Cancel drops the queued backup, so
+    /// the user who pressed it gets no new backup when the paused run ends.
+    @Test func cancelDropsTheBackupResumeQueued() async throws {
+        let held = try heldStopStub()
+        defer { held.finish() }
+        let f = try await RunnerFixture.make(executable: held.stub, gracePeriod: .seconds(60))
+        defer { f.remove() }
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
+
+        _ = try await f.state.pause(f.planID, for: .oneHour)
+        _ = try await f.state.resume(f.planID)
+        _ = try await f.state.cancel(f.planID)
+        held.release()
+        #expect(try await run.value.outcome == .paused)
+
+        #expect(await f.runner.waitForBackgroundRun(planID: f.planID) == nil, "no queued backup started")
+        #expect(await f.operations().filter { $0 == .backup }.count == 1)
     }
 
     /// Task 16e: the progress carries whether restic has finished counting. A status before the `scan_finished` line

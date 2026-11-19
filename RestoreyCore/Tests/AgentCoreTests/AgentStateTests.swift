@@ -1197,8 +1197,9 @@ struct AgentStateTests {
         let drain = Task { await state.prepareForRestart() }
         try await Self.waitUntilDraining(state)
 
+        let before = await state.status()
         let status = try await state.cancel(plan.id)
-        #expect(status.plans.first?.phase != nil)
+        #expect(status.plans == before.plans, "no runner, so nothing to stop and nothing changes")
         #expect(try await state.runInputs(plan.id).history.pausedUntil == nil)
 
         await state.endRun(planID: plan.id)

@@ -602,7 +602,7 @@ public actor AgentState {
     public func cancel(_ id: UUID) async throws -> AgentStatus {
         try requireLoaded()
         _ = try requirePlan(id)
-        await runner?.interrupt(planID: id, intent: .cancel)
+        await runner?.cancel(planID: id)
         return status()
     }
 

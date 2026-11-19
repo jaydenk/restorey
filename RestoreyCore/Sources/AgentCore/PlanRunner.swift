@@ -209,8 +209,8 @@ public actor PlanRunner {
     /// and returns the status showing it running. A single plan that is invalid or has no confirmed
     /// recovery kit is refused with the reason; one already running is reported as such, not refused.
     ///
-    /// `afterPausedRun` is Resume's (Ruling R62): when the plan's run is still stopping for a pause, the
-    /// backup starts, through this same path, once that run has ended and recorded `.paused`, instead of
+    /// `afterPausedRun` is Resume's (Ruling R62): when the plan's run is still stopping (for a pause, or a Cancel
+    /// that a pause followed), the backup starts, through this same path, once that run has ended, instead of
     /// being refused as "already backing up". Back Up Now itself doesn't pass it.
     public func backUpNow(_ planID: UUID?, afterPausedRun: Bool = false) async throws -> BackUpNowReply {
         try await deps.state.requireRunnable(planID)
@@ -218,7 +218,7 @@ public actor PlanRunner {
         if let planID {
             let plan = try await deps.state.runInputs(planID).plan
             if let refusal = Self.refusal(plan) { throw refusal }
-            if afterPausedRun, handles[planID]?.intent == .pause {
+            if afterPausedRun, handles[planID]?.intent != nil {
                 startWhenPausedRunEnds.insert(planID)
             } else {
                 // A backup step already under way and carrying on (the scheduler got there first) is the backup
@@ -338,6 +338,14 @@ public actor PlanRunner {
             guard let process = handle.request(intent) else { continue }
             await process.interrupt(intent, killAfter: deps.interruptGracePeriod)
         }
+    }
+
+    /// Cancel Backup: stops the plan's run and drops the backup Resume queued behind a run still stopping, so the
+    /// user who pressed Cancel doesn't get a new backup when that run ends. A run a pause is already stopping
+    /// stays paused (the first stop wins).
+    func cancel(planID: UUID) async {
+        startWhenPausedRunEnds.remove(planID)
+        await interrupt(planID: planID, intent: .cancel)
     }
 
     /// Asks every run in flight (recovery's unlocks, backups, maintenance, create, adopt) to stop with
