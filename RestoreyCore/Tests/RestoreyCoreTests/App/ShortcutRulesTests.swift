@@ -108,6 +108,7 @@ struct ShortcutRulesTests {
         #expect(ShortcutRules.isSettled(health: .notRunning(reachable: false), hasStatus: false))
         #expect(ShortcutRules.isSettled(health: .damaged, hasStatus: false))
         #expect(ShortcutRules.isSettled(health: .failed("x"), hasStatus: false))
+        #expect(ShortcutRules.isSettled(health: .signatureUntrusted, hasStatus: false))
     }
 
     // MARK: Back Up Now

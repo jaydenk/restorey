@@ -64,14 +64,15 @@ public struct MenuBanner: Sendable, Equatable {
     public var title: String
     /// Why it matters: the item's tooltip in the menu, the reason under the headline in the Overview.
     public var detail: String
-    public var action: BannerAction
+    /// Nil for a banner that only says what happened (the backup a repair stopped): there is nothing to fix.
+    public var action: BannerAction?
     /// A second item that sets the banner aside for good ("No off-Mac monitoring" only).
     public var dismiss: BannerAction?
     /// The plan it is about, whose section it sits in; nil for the whole Mac.
     public var planID: UUID?
 
     public init(
-        severity: Severity, title: String, detail: String, action: BannerAction, dismiss: BannerAction? = nil,
+        severity: Severity, title: String, detail: String, action: BannerAction?, dismiss: BannerAction? = nil,
         planID: UUID? = nil
     ) {
         self.severity = severity
@@ -221,18 +222,32 @@ public enum MenuPresentation {
     /// reported.
     public static let notAnsweringGrace: TimeInterval = 30 * 60
 
+    /// `backupStoppedByRepairAt`: when the app last re-registered an agent that hadn't answered for
+    /// `AgentHealthPolicy.hungResticCap`, stopping the backup it was running (`AgentHealthAction.reregisterStoppingBackup`).
     public static func make(
         health: AgentHealthState, status: AgentStatus?, notificationsAuthorised: Bool?,
-        now: Date, calendar: Calendar, locale: Locale
+        backupStoppedByRepairAt: Date? = nil, now: Date, calendar: Calendar, locale: Locale
     ) -> MenuContent {
         let format = TextContext(now: now, calendar: calendar, locale: locale)
-        var content = content(health: health, status: status, notificationsAuthorised: notificationsAuthorised, format: format)
+        var content = content(
+            health: health, status: status, notificationsAuthorised: notificationsAuthorised,
+            backupStoppedByRepairAt: backupStoppedByRepairAt, format: format)
         content.toolTip = toolTip(content, status: status, format: format)
         return content
     }
 
+    /// The backup a repair stopped is said until any plan backs up, or starts trying to, after the stop. The stopped run's
+    /// own record (`.interrupted`, written when the agent next starts) began before it, so it doesn't count.
+    public static func backupStoppedNoteStands(stoppedAt: Date, status: AgentStatus) -> Bool {
+        !status.plans.contains { plan in
+            (plan.lastBackup.map { $0.endedAt > stoppedAt } ?? false)
+                || (plan.latestBackupRecord.map { $0.startedAt > stoppedAt } ?? false)
+        }
+    }
+
     private static func content(
-        health: AgentHealthState, status: AgentStatus?, notificationsAuthorised: Bool?, format: TextContext
+        health: AgentHealthState, status: AgentStatus?, notificationsAuthorised: Bool?, backupStoppedByRepairAt: Date?,
+        format: TextContext
     ) -> MenuContent {
         let now = format.now
         switch health {
@@ -263,6 +278,11 @@ public enum MenuPresentation {
             return MenuContent(
                 icon: .error, message: "Restorey’s installation is damaged",
                 messageDetail: "Reinstall Restorey from the download.")
+        case .signatureUntrusted:
+            return MenuContent(
+                icon: .error, message: "Restorey can’t verify its own signature",
+                messageDetail: "Until it can, it won’t talk to its background process or show your backups. "
+                    + "Reinstall Restorey from the download.")
         case .failed(let sentence):
             // The sentence ends in the system's error, of any length: the line says what happened, its tooltip and
             // Settings → General say why (audit P5).
@@ -270,14 +290,16 @@ public enum MenuPresentation {
         case .healthy:
             // Healthy again, with the fresh status still on its way (`shouldRefetchStatus`).
             guard let status else { return MenuContent(icon: .idle, message: "Connecting to Restorey’s background process…") }
-            return healthy(status: status, notificationsAuthorised: notificationsAuthorised, format: format)
+            return healthy(
+                status: status, notificationsAuthorised: notificationsAuthorised,
+                backupStoppedByRepairAt: backupStoppedByRepairAt, format: format)
         }
     }
 
     // MARK: Healthy
 
     private static func healthy(
-        status: AgentStatus, notificationsAuthorised: Bool?, format: TextContext
+        status: AgentStatus, notificationsAuthorised: Bool?, backupStoppedByRepairAt: Date?, format: TextContext
     ) -> MenuContent {
         if let configError = status.configError {
             // Never the raw error in the menu (audit P5): Settings → Plans shows it.
@@ -286,7 +308,8 @@ public enum MenuPresentation {
                 action: .showSettingsError)
             return MenuContent(icon: .error, banners: [banner])
         }
-        let banners = banners(status: status, notificationsAuthorised: notificationsAuthorised)
+        let banners = banners(
+            status: status, notificationsAuthorised: notificationsAuthorised, backupStoppedByRepairAt: backupStoppedByRepairAt)
         let lines = status.plans.map { line(for: $0, format: format) }
         return MenuContent(
             icon: icon(banners: banners, plans: status.plans, lines: lines), banners: banners, plans: lines,
@@ -363,8 +386,16 @@ public enum MenuPresentation {
 
     // MARK: Banners
 
-    private static func banners(status: AgentStatus, notificationsAuthorised: Bool?) -> [MenuBanner] {
+    private static func banners(
+        status: AgentStatus, notificationsAuthorised: Bool?, backupStoppedByRepairAt: Date?
+    ) -> [MenuBanner] {
         var banners: [MenuBanner] = []
+        if let stoppedAt = backupStoppedByRepairAt, backupStoppedNoteStands(stoppedAt: stoppedAt, status: status) {
+            banners.append(MenuBanner(
+                severity: .warning,
+                title: "Restorey restarted its background process, which hadn’t answered for 30 minutes",
+                detail: "The backup that was running was stopped and will run again at its next time.", action: nil))
+        }
         if status.plans.isEmpty {
             banners.append(MenuBanner(
                 severity: .warning, title: "No backup plan yet",

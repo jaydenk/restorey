@@ -33,6 +33,11 @@ final class AgentConnection {
     private var connection: NSXPCConnection?
     private var resubscribe: Task<Void, Never>?
 
+    /// The app's own signature can't be trusted, so no agent is admitted and every call fails (`AgentPeerCheck.refuseAll`).
+    var refusesEveryAgent: Bool {
+        if case .refuseAll = peerCheck { true } else { false }
+    }
+
     /// Every status the agent sends: pushes, `status` replies and the replies to mutating calls.
     var onStatus: ((AgentStatus) -> Void)?
 

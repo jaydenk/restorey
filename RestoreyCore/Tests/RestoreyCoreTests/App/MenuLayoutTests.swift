@@ -282,6 +282,19 @@ struct MenuLayoutTests {
         ] + Self.tail)
     }
 
+    /// A banner with no fix (the backup a repair stopped) is a line that says so, its detail under it.
+    @Test func aBannerWithoutAFixIsALine() {
+        let banner = MenuBanner(
+            severity: .warning, title: "Restorey restarted its background process, which hadn’t answered for 30 minutes",
+            detail: "The backup that was running was stopped and will run again at its next time.", action: nil)
+        #expect(MenuLayout.bannerRows(banner) == [.item(MenuItem(
+            "Restorey restarted its background process, which hadn’t answered for 30 minutes",
+            subtitle: "The backup that was running was stopped and will run again at its next time.", symbol: .warning,
+            enabled: false,
+            accessibilityLabel: "Warning: Restorey restarted its background process, which hadn’t answered for 30 minutes. "
+                + "The backup that was running was stopped and will run again at its next time."))])
+    }
+
     /// A message's full sentence is its tooltip (audit P5).
     @Test func aMessageCarriesItsDetailAsATooltip() {
         let content = MenuContent(icon: .error, message: "Backups couldn’t be set up", messageDetail: "It failed: because.")
@@ -365,6 +378,7 @@ struct MenuLayoutTests {
             (.notRunning(reachable: false), "Background process: not running"),
             (.damaged, "Background process: missing from the app"),
             (.failed("x"), "Background process: couldn’t be registered"),
+            (.signatureUntrusted, "Background process: not contacted, as the app’s signature can’t be verified"),
         ]
         for (health, line) in expected {
             d.health = health

@@ -68,13 +68,16 @@ public struct AgentHealthInput: Sendable, Equatable {
     /// A restic from this app's `Contents/Helpers` is running under the agent (`resticRunsUnderAgent`).
     /// Only asked for an unreachable agent, the one case that would be unregistered without a drain.
     public var resticRunningUnderAgent: Bool
+    /// The app's connection admits no agent (`AgentPeerCheck.refuseAll`): its own signature can't be trusted, so
+    /// every hello fails however healthy the agent is (Ruling T7-1).
+    public var connectionRefusesEveryAgent: Bool
     public var now: Date
 
     public init(
         smStatus: AgentServiceStatus, heartbeat: AgentHeartbeat, expectedExecutablePrefix: String,
         appVersion: String, appBuild: String, storedPlistHash: String?, currentPlistHash: String,
         executableFingerprintOnDisk: String?, lastRepairs: [RepairRecord], unreachableSince: Date? = nil,
-        resticRunningUnderAgent: Bool = false, now: Date
+        resticRunningUnderAgent: Bool = false, connectionRefusesEveryAgent: Bool = false, now: Date
     ) {
         self.smStatus = smStatus
         self.heartbeat = heartbeat
@@ -87,6 +90,7 @@ public struct AgentHealthInput: Sendable, Equatable {
         self.lastRepairs = lastRepairs
         self.unreachableSince = unreachableSince
         self.resticRunningUnderAgent = resticRunningUnderAgent
+        self.connectionRefusesEveryAgent = connectionRefusesEveryAgent
         self.now = now
     }
 
@@ -103,11 +107,15 @@ public enum AgentHealthAction: Sendable, Equatable {
     /// `prepareForReregistration` (drain, don't exit), then `unregister()` then `register()`. An unreachable
     /// agent has nothing to drain.
     case reregisterAfterDrain
+    /// `reregisterAfterDrain` for an agent that hasn't answered for `AgentHealthPolicy.hungResticCap` while a restic
+    /// it started is running: the undrained `unregister()` stops that backup (owner, 20 Nov 2026). Under the same
+    /// hourly limit as any re-registration.
+    case reregisterStoppingBackup
     /// `prepareForRestart`; launchd's `KeepAlive` starts the new binary.
     case restartAfterDrain
     /// The agent doesn't answer, but a restic it started is running, so an undrained `unregister()` would
     /// kill a live backup (Ruling R68): shown as not running, logged, and decided again at the next
-    /// heartbeat.
+    /// heartbeat, for at most `AgentHealthPolicy.hungResticCap`.
     case waitForRunningRestic
     /// The agent is already draining: "Updating the background agent…", with Back Up Now disabled. The
     /// app asks it to restart once drained, which also frees an agent left drained by an app that quit
@@ -118,6 +126,9 @@ public enum AgentHealthAction: Sendable, Equatable {
     /// "Background agent isn't running" (or isn't working properly), with "Restart agent" when
     /// `canRepair`, and "Open Login Items".
     case showNotRunning(canRepair: Bool)
+    /// The app's connection admits no agent, as its own signature can't be trusted: no repair can help, and every
+    /// one would stop a healthy agent's backups (Ruling T7-1). "Reinstall Restorey".
+    case showSignatureUntrusted
 }
 
 public enum AgentHealthPolicy: Sendable, Equatable {
@@ -137,6 +148,11 @@ public enum AgentHealthPolicy: Sendable, Equatable {
     /// kills a running restic, so one missed heartbeat (a busy or briefly stopped agent) must not
     /// trigger it: three heartbeats.
     public static let unreachableGrace: TimeInterval = 30
+
+    /// How long an `enabled` agent that doesn't answer is waited on while a restic it started runs, measured from
+    /// `unreachableSince` like the grace (owner, 20 Nov 2026). A backup that runs on past it is taken as hung: the
+    /// re-registration goes ahead, stopping it, and the menu says so.
+    public static let hungResticCap: TimeInterval = 30 * 60
 
     /// At most one automatic repair of each kind an hour.
     public static let repairInterval: TimeInterval = 3600
@@ -160,15 +176,22 @@ public func decideAgentHealth(
     case .requiresApproval:
         return .showSwitchedOff
     case .enabled:
+        // Every hello fails whatever the agent's state, so nothing here can be decided from it, and every repair would
+        // stop a healthy agent's backups.
+        if input.connectionRefusesEveryAgent { return .showSignatureUntrusted }
         guard case .ok(let reply) = input.heartbeat else {
             switch enabledButUnreachable {
             case .repairAutomatically:
-                let since = input.unreachableSince ?? input.now
-                guard input.now.timeIntervalSince(since) >= AgentHealthPolicy.unreachableGrace else {
+                let unreachableFor = input.now.timeIntervalSince(input.unreachableSince ?? input.now)
+                guard unreachableFor >= AgentHealthPolicy.unreachableGrace else {
                     return .showNotRunning(canRepair: true)
                 }
-                // An unreachable agent can't be drained, so the re-registration would kill the restic.
-                if input.resticRunningUnderAgent { return .waitForRunningRestic }
+                // An unreachable agent can't be drained, so the re-registration would kill the restic: waited on,
+                // but not for ever.
+                if input.resticRunningUnderAgent {
+                    guard unreachableFor >= AgentHealthPolicy.hungResticCap else { return .waitForRunningRestic }
+                    return repair(.reregisterStoppingBackup)
+                }
                 return repair(.reregisterAfterDrain)
             case .offerRestart: return .showNotRunning(canRepair: true)
             }

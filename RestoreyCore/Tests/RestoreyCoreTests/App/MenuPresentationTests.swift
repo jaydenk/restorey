@@ -64,11 +64,11 @@ struct MenuPresentationTests {
 
     private static func make(
         _ status: AgentStatus?, health: AgentHealthState = .healthy, notifications: Bool? = true,
-        now: Date = now
+        backupStoppedByRepairAt: Date? = nil, now: Date = now
     ) -> MenuContent {
         MenuPresentation.make(
             health: health, status: status, notificationsAuthorised: notifications,
-            now: now, calendar: calendar, locale: locale)
+            backupStoppedByRepairAt: backupStoppedByRepairAt, now: now, calendar: calendar, locale: locale)
     }
 
     // MARK: Idle
@@ -750,6 +750,59 @@ struct MenuPresentationTests {
         // The sentence ends in a system error of any length, so it is the line's tooltip (audit P5).
         #expect(failed.message == "Backups couldn’t be set up")
         #expect(failed.messageDetail == "Couldn’t register the agent.")
+    }
+
+    /// Ruling T7-1: the app can't trust its own signature, so it admits no agent; no repair is offered, since none
+    /// can help.
+    @Test func anUntrustedSignatureNamesTheCause() {
+        let content = Self.make(Self.status([Self.line(Self.plan())]), health: .signatureUntrusted)
+        #expect(content.icon == .error)
+        #expect(content.banners.isEmpty)
+        #expect(content.plans.isEmpty)
+        #expect(content.actions.plans.isEmpty)
+        #expect(content.message == "Restorey can’t verify its own signature")
+        #expect(content.messageDetail
+            == "Until it can, it won’t talk to its background process or show your backups. Reinstall Restorey from the download.")
+    }
+
+    // MARK: A backup stopped by a repair (owner, 20 Nov 2026)
+
+    private static let stoppedNote = MenuBanner(
+        severity: .warning,
+        title: "Restorey restarted its background process, which hadn’t answered for 30 minutes",
+        detail: "The backup that was running was stopped and will run again at its next time.", action: nil)
+
+    /// The agent was re-registered after 30 minutes of silence, stopping the backup it was running: said until a plan
+    /// backs up, or tries to, after that.
+    @Test func aBackupStoppedByARepairIsSaidUntilTheNextAttempt() {
+        let plan = Self.plan()
+        let stoppedAt = Self.at(14, 0)
+        let before = Self.status([Self.line(plan, backedUpAt: Self.at(13, 0))])
+        let content = Self.make(before, backupStoppedByRepairAt: stoppedAt)
+        #expect(content.banners == [Self.stoppedNote])
+        #expect(content.icon == .warning)
+        #expect(MenuPresentation.backupStoppedNoteStands(stoppedAt: stoppedAt, status: before))
+        #expect(Self.make(before).banners.isEmpty, "nothing stopped")
+
+        // The stopped run's own record, written when the agent next started, began before the stop: still said.
+        var recovered = Self.record(plan, .interrupted, at: Self.at(14, 1))
+        recovered.startedAt = Self.at(13, 30)
+        let interrupted = Self.line(plan, backedUpAt: Self.at(13, 0), last: recovered)
+        #expect(Self.make(Self.status([interrupted]), backupStoppedByRepairAt: stoppedAt).banners == [Self.stoppedNote])
+
+        // A backup since: gone.
+        let since = Self.status([Self.line(plan, backedUpAt: Self.at(14, 10))])
+        #expect(Self.make(since, backupStoppedByRepairAt: stoppedAt).banners.isEmpty)
+        #expect(!MenuPresentation.backupStoppedNoteStands(stoppedAt: stoppedAt, status: since))
+
+        // A later attempt that failed: gone too.
+        let failed = Self.line(plan, backedUpAt: Self.at(13, 0), last: Self.record(plan, .failed(exitCode: 1, reason: "x"), at: Self.at(14, 10)))
+        #expect(Self.make(Self.status([failed]), backupStoppedByRepairAt: stoppedAt).banners.isEmpty)
+
+        // Any plan will do.
+        let other = Self.plan("Photos")
+        let either = Self.status([Self.line(plan, backedUpAt: Self.at(13, 0)), Self.line(other, backedUpAt: Self.at(14, 10))])
+        #expect(Self.make(either, backupStoppedByRepairAt: stoppedAt).banners.isEmpty)
     }
 
     @Test func aConfigurationErrorStopsEverything() {

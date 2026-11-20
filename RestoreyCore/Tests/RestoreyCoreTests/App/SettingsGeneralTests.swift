@@ -41,6 +41,8 @@ struct SettingsGeneralTests {
             == .init("Not running — no backups will happen", severity: .error, action: .restartAgent))
         #expect(SettingsGeneral.agent(health: .damaged, hello: nil)
             == .init("Restorey’s installation is damaged — reinstall it from the download", severity: .error))
+        #expect(SettingsGeneral.agent(health: .signatureUntrusted, hello: nil)
+            == .init("Restorey can’t verify its own signature — reinstall it from the download", severity: .error))
         #expect(SettingsGeneral.agent(health: .failed("Restorey couldn’t register its agent."), hello: nil)
             == .init("Restorey couldn’t register its agent.", severity: .error))
         #expect(GeneralAction.restartAgent.buttonTitle == "Restart Backups")

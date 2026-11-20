@@ -73,6 +73,8 @@ public enum SettingsGeneral {
             return Line("Not running — no backups will happen", severity: .error, action: .restartAgent)
         case .damaged:
             return Line("Restorey’s installation is damaged — reinstall it from the download", severity: .error)
+        case .signatureUntrusted:
+            return Line("Restorey can’t verify its own signature — reinstall it from the download", severity: .error)
         case .failed(let sentence):
             return Line(sentence, severity: .error)
         }

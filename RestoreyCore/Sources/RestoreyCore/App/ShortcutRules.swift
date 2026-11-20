@@ -74,7 +74,7 @@ public enum ShortcutRules {
         switch health {
         case .checking, .updating, .waitingForUpdate: false
         case .healthy: hasStatus
-        case .switchedOff, .notRunning, .damaged, .failed: true
+        case .switchedOff, .notRunning, .damaged, .signatureUntrusted, .failed: true
         }
     }
 

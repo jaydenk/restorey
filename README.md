@@ -207,7 +207,9 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
   was running at the agent's last status (under 30 minutes old), the menu instead keeps that status with
   "(not responding)" and a warning. After 30 seconds without an answer it unregisters and registers the agent again on its own, unless
   a restic from Restorey's own bundle is still running under the agent: unregistering would kill that backup,
-  so it waits and looks again at each heartbeat. The agent's answer never waits on the notification centre, so a
+  so it waits and looks again at each heartbeat, for at most 30 minutes. After that the backup is taken as hung:
+  Restorey re-registers the agent anyway, which stops it, logs that as an error, and the menu says "Restorey
+  restarted its background process, which hadn’t answered for 30 minutes" until a plan next backs up or tries to. The agent's answer never waits on the notification centre, so a
   stuck `usernoted` doesn't make a working agent look dead. A switched-off agent reads differently (see
   `docs/spike-findings.md`), so this never overrides your choice
 
@@ -256,7 +258,9 @@ interface only to the signed app: the listener requires the app's bundle ID and 
 team in `Config/Local.xcconfig`, so any other process is refused. The check runs the other way too: a signed app
 requires the agent's bundle ID and the same team on its connection, so it never sends a call to another process
 holding the agent's name. An unsigned or ad-hoc build (Debug and CI) has no team to require and connects unchecked;
-the app decides from its own signature, not the Info.plist, and logs which applies. Only one call returns secrets: `recoveryKit`
+the app decides from its own signature, not the Info.plist, and logs which applies. If it can't read its own signature,
+or the team differs from the Info.plist's, it admits no agent and repairs nothing (a repair could stop a running backup);
+the menu says "Restorey can’t verify its own signature" and asks for a reinstall. Only one call returns secrets: `recoveryKit`
 replies with a plan's repository password, its S3 keys or raw environment values, and its check-in URL, so the app
 can show the recovery kit; it goes only to the signed Restorey app over that XPC connection, the agent logs just the
 plan and how many secrets it sent, and the app keeps them only while the kit or the Restore Files window is open

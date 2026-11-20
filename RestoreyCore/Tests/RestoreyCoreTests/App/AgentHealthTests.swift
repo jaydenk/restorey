@@ -174,6 +174,55 @@ struct AgentHealthTests {
         #expect(decideAgentHealth(reachable) == .reregisterAfterDrain)
     }
 
+    /// Owner, 20 Nov 2026: a hung backup is waited on for at most `hungResticCap`, measured from
+    /// `unreachableSince` like the grace; then the re-registration goes ahead and stops it.
+    @Test func aHungBackupIsWaitedOnForThirtyMinutes() {
+        func decide(running: Bool, for seconds: TimeInterval, repairs: [RepairRecord] = []) -> AgentHealthAction {
+            var input = Self.input(heartbeat: .unreachable, lastRepairs: repairs, unreachableFor: seconds)
+            input.resticRunningUnderAgent = running
+            return decideAgentHealth(input)
+        }
+        #expect(AgentHealthPolicy.hungResticCap == 30 * 60)
+        #expect(decide(running: true, for: 30 * 60 - 1) == .waitForRunningRestic)
+        #expect(decide(running: true, for: 30 * 60) == .reregisterStoppingBackup)
+        #expect(decide(running: true, for: 4 * 3600) == .reregisterStoppingBackup)
+        // Under the same hourly limit as any re-registration.
+        #expect(decide(running: true, for: 30 * 60, repairs: [Self.recent(.reregister)]) == .showNotRunning(canRepair: true))
+        #expect(decide(running: true, for: 30 * 60, repairs: [Self.recent(.restart)]) == .reregisterStoppingBackup)
+        // No restic: nothing to stop, as before.
+        #expect(decide(running: false, for: 30 * 60) == .reregisterAfterDrain)
+    }
+
+    /// Ruling T7-1: a connection that admits no agent (`AgentPeerCheck.refuseAll`) makes every hello fail, so the
+    /// agent would look unreachable however healthy it is. Repairing it would stop its backups every hour, so no
+    /// repair is ever decided; the menu names the real cause.
+    @Test func aConnectionThatRefusesEveryAgentNeverRepairs() {
+        func decide(
+            _ smStatus: AgentServiceStatus = .enabled, heartbeat: AgentHeartbeat = .unreachable, running: Bool = false,
+            for seconds: TimeInterval? = 4 * 3600, storedPlistHash: String? = "abc"
+        ) -> AgentHealthAction {
+            var input = Self.input(smStatus, heartbeat: heartbeat, storedPlistHash: storedPlistHash, unreachableFor: seconds)
+            input.connectionRefusesEveryAgent = true
+            input.resticRunningUnderAgent = running
+            return decideAgentHealth(input)
+        }
+        #expect(decide() == .showSignatureUntrusted)
+        #expect(decide(running: true) == .showSignatureUntrusted)
+        #expect(decide(for: 10) == .showSignatureUntrusted)
+        #expect(decide(for: nil) == .showSignatureUntrusted)
+        #expect(decide(storedPlistHash: "old") == .showSignatureUntrusted)
+        // Not decided from the agent at all, so the policy doesn't matter either.
+        var conservative = Self.input(heartbeat: .unreachable, unreachableFor: 600)
+        conservative.connectionRefusesEveryAgent = true
+        #expect(decideAgentHealth(conservative, enabledButUnreachable: .offerRestart) == .showSignatureUntrusted)
+        // Registering stops nothing, and switched off is still the user's to fix.
+        #expect(decide(.notFound) == .register)
+        #expect(decide(.notRegistered) == .register)
+        #expect(decide(.requiresApproval) == .showSwitchedOff)
+        // Off by default.
+        #expect(!Self.input().connectionRefusesEveryAgent)
+    }
+
     /// A fault that survives one repair waits for the user ("Restart Backups").
     @Test func enabledUnreachableRepairsAtMostHourly() {
         #expect(decideAgentHealth(Self.input(heartbeat: .unreachable, repairAttemptedRecently: true, unreachableFor: 600))

@@ -14,6 +14,9 @@ public enum AgentHealthState: Sendable, Equatable {
     /// The app's own bundle is missing the agent's plist: "Restorey's installation is damaged — reinstall it
     /// from the download". No repair is offered, since none can help.
     case damaged
+    /// The app can't trust its own code signature, so its connection admits no agent (`AgentPeerCheck.refuseAll`,
+    /// Ruling T7-1): "Restorey can't verify its own signature". No repair is offered, since none can help.
+    case signatureUntrusted
     /// Registering failed; the sentence is shown as is.
     case failed(String)
 }
