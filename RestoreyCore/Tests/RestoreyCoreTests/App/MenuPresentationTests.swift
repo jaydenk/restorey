@@ -670,6 +670,18 @@ struct MenuPresentationTests {
         #expect(content.banners.map(\.title) == ["Backups aren’t running"])
     }
 
+    /// A stopped plan has run nothing since the stop, so that is why no backup has succeeded: the line says the stop.
+    @Test func aStoppedPlanThatAlsoHasNoRecentSuccessShowsItsStopReason() {
+        let plan = Self.plan()
+        let content = Self.make(Self.status([
+            Self.line(plan, phase: .stopped(reason: "Wrong password"), backedUpAt: Self.at(14, 16, daysAgo: 4), next: nil,
+                alerts: [.noRecentSuccess]),
+        ]))
+        #expect(content.plans[0].status == "Stopped")
+        #expect(content.plans[0].detail == "Wrong password")
+        #expect(content.plans[0].severity == .error)
+    }
+
     @Test func noRecentSuccessKeepsTheSkipReasonAsDetail() {
         let plan = Self.plan()
         let skipped = Self.line(

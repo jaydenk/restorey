@@ -94,8 +94,12 @@ final class AgentConnection {
         }
     }
 
-    func cancel(_ planID: UUID) async -> Result<AgentStatus, AgentCallError> {
-        await statusCall(timeout: .seconds(60)) { $0.cancel(planID.uuidString, withReply: $1) }
+    /// The reply says what the Cancel did (`CancelOutcome`; `.unknown` from an agent that doesn't say). Its status also
+    /// feeds `onStatus`, like the status calls'.
+    func cancel(_ planID: UUID) async -> Result<CancelResult, AgentCallError> {
+        let result = await call(CancelResult.self, timeout: .seconds(60)) { $0.cancel(planID.uuidString, withReply: $1) }
+        if case .success(let reply) = result { onStatus?(reply.status) }
+        return result
     }
 
     func resume(_ planID: UUID) async -> Result<AgentStatus, AgentCallError> {

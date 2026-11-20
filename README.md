@@ -64,7 +64,8 @@ from the background agent whether or not the app is open.
 setting up: **Back Up Now**, **Pause Backups** (with a Length of For 1 Hour, For 4 Hours or Until Tomorrow; the agent
 refuses any other length; with nothing backing up it's refused with “Nothing is backing up, so there’s nothing to
 pause.”), **Cancel Backup** (stops a backup in progress, this run only; refused with “There’s no backup
-to cancel.” or ““<name>” isn’t backing up.”), **Resume Backups** and **Get Last Backup**, which gives the
+to cancel.” or ““<name>” isn’t backing up.”; if a pause was already stopping the run when the cancel arrived, the
+pause wins and the dialog says “““<name>” is already pausing, so there was nothing to cancel.”), **Resume Backups** and **Get Last Backup**, which gives the
 plan's last backup time and outcome as values a shortcut can use (Time, Outcome, Backed Up, Last Successful Backup,
 Summary). Each takes a plan, or none for every plan (Get Last Backup: the newest backup of any plan), and is refused
 with a sentence saying why wherever the menu's item would be dimmed: "“Home” is already backing up.", "Backups are
@@ -343,7 +344,8 @@ fields with `FormValidation` and reads them into the plan's repository. "Check" 
 generated password and asks the agent what is there (`probeRepository`): nothing (`empty`), or a repository the
 stand-in can't open (`passwordRejected`, restic's exit 12), which is how setup learns that one is there before the
 user has typed its password. **Repository password** then offers either a generated password (shown, copyable as a
-concealed pasteboard item, or replaced by the user's own) and an explicit "Create New Repository", or the existing
+concealed pasteboard item, or replaced by the user's own, with the hint "To type accented letters, turn on Show." under
+a field you type into, since the secure field hides what an accent key has done) and an explicit "Create New Repository", or the existing
 repository's password: "Open Repository" probes again with it and shows "312 snapshots from 3 Macs" and the host
 label this Mac's snapshots are under (`SetupAdoption`: the repository's host matching this Mac's computer, local or
 Unix host name, spelt as the snapshots spell it, else this Mac's name, with the new-group warning); "Use This
@@ -653,7 +655,10 @@ the actions then never reach Shortcuts; the build writes `Contents/Resources/Met
   could act on (for Cancel Backup, every plan backing up),
   each whatever the others did, and if any fails, the error names each plan that failed, with its reason, and those
   that changed ("Restorey couldn't pause “Photos”: … “Home” is paused.", "… The backup of “Home” was cancelled.",
-  `ShortcutRules.failureMessage`).
+  `ShortcutRules.failureMessage`). Cancel Backup's dialog says when a pause had already won
+  (`ShortcutRules.cancelDialog`): the agent's reply to `cancel` is the status with one more key, `cancelOutcome`
+  (`stoppedARun`, `alreadyPausing`, `nothingToCancel`; `CancelResult`), which an older app ignores and an older agent
+  omits (read as `unknown`, which keeps the plain wording).
 - **Errors** are `ShortcutError`, which conforms to `CustomLocalizedStringResourceConvertible`: Shortcuts shows an
   error's `localizedStringResource`, and a plain `Error` reads as a generic failure. A plan deleted since a shortcut
   was made still resolves (as "Deleted plan"), so the action runs and says "That plan is no longer in Restorey."
@@ -826,10 +831,11 @@ files out); a lock held elsewhere, an interruption or a preview that fails keeps
 `agent.log` at ERROR, no row), and its row is added when it finally runs (its success is an INFO line in
 `agent.log`). A lock or an interruption also holds that backup's `forget`, `prune` and `check` back; a preview that
 fails does not, because the plan's own `forget` is scoped to its tag and `check` is independent, so a lasting failure
-can't stop retention or integrity checking. After three backups in a row with a failed preview the plan's Overview
-adds a quiet line ("Couldn't remove the earlier snapshots you chose: <reason>. Restorey will try again after the next
-backup."): information only, with no alert and no change to the menu icon. A removal that reaches a verdict, or a new
-choice, resets the count.
+can't stop retention or integrity checking. After three backups in a row with a failed preview (another client's
+lock held during the preview counts as a failed preview) the plan's Overview adds a quiet one-sentence line
+("Couldn't remove the earlier snapshots you chose: <reason>; Restorey will try again after the next backup."):
+information only, with no alert and no change to the menu icon. A removal that reaches a verdict, or a new choice,
+resets the count.
 
 "N files couldn't be read" after a backup counts the distinct files restic left out of the snapshot: those it failed on
 while archiving (`"during":"archival"` in its `--json` output). Errors from its scanner, which only estimates totals for

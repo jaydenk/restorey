@@ -400,6 +400,50 @@ public struct BackUpNowReply: Codable, Sendable, Equatable {
     }
 }
 
+/// What a Cancel did, as the agent tells the app.
+public enum CancelOutcome: String, Codable, Sendable, Equatable {
+    /// A run was stopped, or the backup Resume queued behind one was dropped.
+    case stoppedARun
+    /// A pause was already stopping the run, and the first stop wins: nothing was cancelled.
+    case alreadyPausing
+    /// Nothing was running (it had just ended, say).
+    case nothingToCancel
+    /// The agent didn't say: one from before this reply, or a newer one's outcome this build doesn't know.
+    case unknown
+
+    public init(from decoder: any Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: raw) ?? .unknown
+    }
+}
+
+/// `cancel`'s reply: the status, and what the Cancel did. The status's own keys stay at the top level with one more
+/// beside them (`cancelOutcome`), so an app from before this type still reads the reply as a bare `AgentStatus`, and
+/// an agent from before it (a bare status) decodes as `.unknown`, which the app words as it always did.
+public struct CancelResult: Codable, Sendable, Equatable {
+    public var status: AgentStatus
+    public var outcome: CancelOutcome
+
+    public init(status: AgentStatus, outcome: CancelOutcome) {
+        self.status = status
+        self.outcome = outcome
+    }
+
+    private enum CodingKeys: String, CodingKey { case cancelOutcome }
+
+    public init(from decoder: any Decoder) throws {
+        status = try AgentStatus(from: decoder)
+        outcome = try decoder.container(keyedBy: CodingKeys.self)
+            .decodeIfPresent(CancelOutcome.self, forKey: .cancelOutcome) ?? .unknown
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        try status.encode(to: encoder)
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(outcome, forKey: .cancelOutcome)
+    }
+}
+
 /// `probeRepository`'s reply (Ruling P2-2): what is at the plan's repository address.
 /// JSON: `{"state":{"type":"empty"}}`, `{"state":{"type":"existing","report":{…}}}` or
 /// `{"state":{"type":"passwordRejected"}}`.

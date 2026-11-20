@@ -326,6 +326,35 @@ struct PlanOverviewTests {
         #expect(shown.reason == quiet.reason)
     }
 
+    /// The other messages the agent records (`PlanRunner+EarlierSnapshots`) read as one sentence too, whatever their lead.
+    @Test(arguments: [
+        ("Restorey couldn’t remove the earlier snapshots: Another restic holds the repository’s lock.",
+         "Another restic holds the repository’s lock"),
+        ("Restorey can’t remove those snapshots: the plan was changed.", "the plan was changed"),
+        ("Another restic holds the repository’s lock", "Another restic holds the repository’s lock"),
+    ])
+    func theRemovalNoteDropsTheAgentsOwnLead(problem: String, reason: String) {
+        var plan = Self.status()
+        plan.earlierRemovalProblem = problem
+        #expect(Self.overview(plan).earlierRemovalNote
+            == "Couldn’t remove the earlier snapshots you chose: \(reason); Restorey will try again after the next backup.")
+    }
+
+    @Test func aRemovalProblemWithNoReasonAfterItsLeadIsSaidAsItIs() {
+        var plan = Self.status()
+        plan.earlierRemovalProblem = "Restorey couldn’t read restic’s list of snapshots to remove"
+        #expect(Self.overview(plan).earlierRemovalNote
+            == "Couldn’t read restic’s list of snapshots to remove; Restorey will try again after the next backup.")
+    }
+
+    /// A stopped plan's Overview says it is stopped, and why, even when no backup has succeeded for days.
+    @Test func aStoppedPlanThatAlsoHasNoRecentSuccessShowsItsStopReason() {
+        let plan = Self.status(phase: .stopped(reason: "Wrong password"), alerts: [.noRecentSuccess])
+        let shown = Self.overview(plan)
+        #expect(shown.headline == "Stopped")
+        #expect(shown.reason == "Wrong password")
+    }
+
     /// Final review I2: the Overview says a lasting failure to remove the chosen earlier snapshots, as information only.
     @Test func theOverviewSaysWhenTheChosenRemovalKeepsFailing() {
         var plan = Self.status()
@@ -333,7 +362,8 @@ struct PlanOverviewTests {
         let quiet = Self.overview(plan)
         plan.earlierRemovalProblem = "Restorey couldn’t count the earlier snapshots: Fatal: the preview broke."
         let shown = Self.overview(plan)
-        #expect(shown.earlierRemovalNote == "Couldn’t remove the earlier snapshots you chose: Restorey couldn’t count the earlier snapshots: Fatal: the preview broke. Restorey will try again after the next backup.")
+        // One sentence: the agent's own "Restorey couldn’t count the earlier snapshots:" lead is not said twice.
+        #expect(shown.earlierRemovalNote == "Couldn’t remove the earlier snapshots you chose: Fatal: the preview broke; Restorey will try again after the next backup.")
         // Information only: the headline, its colour and the reason are as without it.
         #expect(shown.headline == quiet.headline)
         #expect(shown.severity == quiet.severity)

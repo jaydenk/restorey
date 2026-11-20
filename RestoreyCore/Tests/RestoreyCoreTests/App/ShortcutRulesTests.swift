@@ -223,6 +223,27 @@ struct ShortcutRulesTests {
         #expect(Self.cancel(home.id, paused) == .failure(ShortcutRefusal("“Home” isn’t backing up.")))
     }
 
+    /// The agent's reply says a pause was already stopping the run, so nothing was cancelled: the dialog says that
+    /// instead of claiming a cancel.
+    @Test func cancelSaysWhenAPauseWasAlreadyStoppingTheRun() {
+        let call = ShortcutCall(kind: .cancel([UUID()]), dialog: "Cancelled the backup of “Home”.")
+        #expect(ShortcutRules.cancelDialog(call, results: [("Home", .alreadyPausing)])
+            == "“Home” is already pausing, so there was nothing to cancel.")
+        #expect(ShortcutRules.cancelDialog(call, results: [("Home", .stoppedARun)]) == call.dialog)
+        // An agent that doesn't say (unknown), or a run that had just ended, keeps today's wording.
+        #expect(ShortcutRules.cancelDialog(call, results: [("Home", .unknown)]) == call.dialog)
+        #expect(ShortcutRules.cancelDialog(call, results: [("Home", .nothingToCancel)]) == call.dialog)
+    }
+
+    @Test func cancelAcrossPlansNamesTheOnesAPauseWon() {
+        let all = ShortcutCall(kind: .cancel([UUID(), UUID()]), dialog: "Cancelled every backup in progress.")
+        #expect(ShortcutRules.cancelDialog(all, results: [("Home", .alreadyPausing), ("Photos", .alreadyPausing)])
+            == "“Home” and “Photos” are already pausing, so there was nothing to cancel.")
+        #expect(ShortcutRules.cancelDialog(all, results: [("Home", .stoppedARun), ("Photos", .alreadyPausing)])
+            == "Cancelled the backup of “Home”. “Photos” is already pausing, so there was nothing to cancel.")
+        #expect(ShortcutRules.cancelDialog(all, results: [("Home", .stoppedARun), ("Photos", .unknown)]) == all.dialog)
+    }
+
     @Test func cancelSaysWhyWhenRestoreyCantBeAsked() {
         let none = ShortcutRules.cancel(
             planID: nil, health: .notRunning(reachable: true), content: Self.content(nil, health: .notRunning(reachable: true)),

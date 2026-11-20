@@ -490,6 +490,15 @@ public enum MenuPresentation {
             line.action = .showDetails(status.plan.id)
             return
         }
+        // A stopped plan has run nothing since it stopped, so the stop is why no backup has succeeded: it comes before
+        // "No successful backup".
+        if case .stopped(let reason) = status.phase {
+            // The agent's reason, of any length: the menu item opens the plan, whose page shows it (audit P5).
+            line.status = "Stopped"
+            line.detail = reason
+            line.severity = .error
+            return
+        }
         if alerts.contains(.noRecentSuccess) {
             let days = status.plan.noSuccessAlertDays
             line.status = "No successful backup in \(days) \(days == 1 ? "day" : "days")"
@@ -499,13 +508,6 @@ public enum MenuPresentation {
                 line.detail = reason.summary
                 line.menuDetail = reason.summary
             }
-            return
-        }
-        if case .stopped(let reason) = status.phase {
-            // The agent's reason, of any length: the menu item opens the plan, whose page shows it (audit P5).
-            line.status = "Stopped"
-            line.detail = reason
-            line.severity = .error
             return
         }
 
@@ -858,11 +860,11 @@ extension MenuPresentation {
         if alerts.contains(.backupFailed) {
             overview.headline = "Backup failed"
             overview.reason = line.detail
-        } else if alerts.contains(.noRecentSuccess) {
-            overview.headline = line.status
-            overview.reason = line.detail
         } else if case .stopped = plan.phase {
             overview.headline = "Stopped"
+            overview.reason = line.detail
+        } else if alerts.contains(.noRecentSuccess) {
+            overview.headline = line.status
             overview.reason = line.detail
         } else if plan.setupState == .needsNewKit {
             overview.headline = "Waiting for a new recovery kit"
@@ -909,10 +911,23 @@ extension MenuPresentation {
         return BiggestAdditionsText.overviewSummary(record: backup, locale: locale)
     }
 
+    /// One sentence. The agent's reasons arrive as its own sentences ("Restorey couldn’t count the earlier snapshots:
+    /// <why>"), so the lead goes and the reason follows ours; one with no reason after its lead is the whole note.
     private static func earlierRemovalNote(_ plan: PlanStatus) -> String? {
         guard var reason = plan.earlierRemovalProblem else { return nil }
         while reason.hasSuffix(".") { reason.removeLast() }
-        return "Couldn’t remove the earlier snapshots you chose: \(reason). Restorey will try again after the next backup."
+        let retry = "; Restorey will try again after the next backup."
+        for lead in ["Restorey couldn’t ", "Restorey can’t "] where reason.hasPrefix(lead) {
+            if let colon = reason.range(of: ": ") {
+                reason = String(reason[colon.upperBound...])
+            } else {
+                // "Restorey couldn’t read …": said as the note's own words, not nested in "Couldn’t remove …:".
+                let sentence = reason.dropFirst("Restorey ".count)
+                return sentence.prefix(1).uppercased() + sentence.dropFirst() + retry
+            }
+            break
+        }
+        return "Couldn’t remove the earlier snapshots you chose: \(reason)\(retry)"
     }
 
     private static func nextBackupRow(_ plan: PlanStatus, _ format: TextContext) -> PlanOverview.Row? {

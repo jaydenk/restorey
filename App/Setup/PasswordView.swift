@@ -85,6 +85,10 @@ struct PasswordView: View {
 }
 
 /// Nothing at the address: the generated password, shown and copyable, or the user's own.
+/// Under a field where the person types a repository password: the field is secure, which hides what an accent key
+/// (a dead key) has done, so Show is how to check it.
+private let accentsHint = "To type accented letters, turn on Show."
+
 private struct NewRepositoryForm: View {
     @Bindable var model: SetupModel
 
@@ -119,6 +123,8 @@ private struct NewRepositoryForm: View {
         if !model.ownPassword {
             Text("Six random words: about 77 bits, as strong as 13 random letters and digits, and easier to read out.")
                 .explanatoryNote()
+        } else {
+            Text(accentsHint).explanatoryNote()
         }
     }
 
@@ -142,6 +148,7 @@ private struct ExistingRepositoryPassword: View {
                 text: Binding(get: { model.secret(key) }, set: { model.setSecret($0, for: key) }))
         }
         .disabled(model.working)
+        Text(accentsHint).explanatoryNote()
     }
 }
 

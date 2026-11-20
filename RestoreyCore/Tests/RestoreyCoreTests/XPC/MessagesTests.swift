@@ -293,6 +293,25 @@ struct MessagesTests {
         #expect(decoded == BackUpNowReply(status: status, alreadyRunning: false))
     }
 
+    /// `cancel`'s reply is a status with one more key, so an app from before it still reads it as the bare status, and
+    /// an agent from before it (a bare status) says "unknown".
+    @Test func cancelResultKeepsTheStatusShapeBothWays() throws {
+        let status = AgentStatus(plans: [], configError: nil, fdaMissing: false, generatedAt: Date(timeIntervalSince1970: 0))
+        for outcome in [CancelOutcome.stoppedARun, .alreadyPausing, .nothingToCancel, .unknown] {
+            try roundTrip(CancelResult(status: status, outcome: outcome))
+        }
+        let wire = try XPCCoding.encode(CancelResult(status: status, outcome: .alreadyPausing))
+        #expect(try XPCCoding.decode(AgentStatus.self, from: wire) == status, "an older app reads it as a bare status")
+        #expect(try json(CancelResult(status: status, outcome: .alreadyPausing)).contains(#""cancelOutcome":"alreadyPausing""#))
+        let old = try XPCCoding.encode(status)
+        #expect(try XPCCoding.decode(CancelResult.self, from: old) == CancelResult(status: status, outcome: .unknown))
+        // A newer agent's outcome this build doesn't know reads as unknown, not as a failed call.
+        var future = try #require(try JSONSerialization.jsonObject(with: old) as? [String: Any])
+        future["cancelOutcome"] = "somethingNew"
+        let decoded = try XPCCoding.decode(CancelResult.self, from: JSONSerialization.data(withJSONObject: future))
+        #expect(decoded.outcome == .unknown)
+    }
+
     @Test func recoveryKitSecretsRoundTrip() throws {
         try roundTrip(RecoveryKitSecrets(plan: Self.plan(), secrets: [
             SecretEntry(key: .repositoryPassword(Self.planID), value: "pa ss\"wörd\n"),

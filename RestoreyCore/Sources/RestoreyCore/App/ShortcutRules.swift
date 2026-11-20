@@ -157,6 +157,24 @@ public enum ShortcutRules {
         return .success(ShortcutCall(kind: .cancel([planID]), dialog: "Cancelled the backup of “\(choice.name)”."))
     }
 
+    /// What Cancel Backup says once the agent has answered for each plan: the call's own dialog, unless a pause was
+    /// already stopping a run (`CancelOutcome.alreadyPausing`), in which case that plan wasn't cancelled and the dialog
+    /// says why. An agent that doesn't say (`unknown`) keeps the call's wording.
+    public static func cancelDialog(_ call: ShortcutCall, results: [(name: String, outcome: CancelOutcome)]) -> String {
+        let pausing = results.filter { $0.outcome == .alreadyPausing }.map { "“\($0.name)”" }
+        guard !pausing.isEmpty else { return call.dialog }
+        let pauseSentence = "\(listed(pausing)) \(pausing.count == 1 ? "is" : "are") already pausing, so there was nothing to cancel."
+        // The call's own sentence would claim the plans a pause won too, so name the others.
+        let cancelled = results.filter { $0.outcome != .alreadyPausing }.map { "“\($0.name)”" }
+        guard !cancelled.isEmpty else { return pauseSentence }
+        return "Cancelled the \(cancelled.count == 1 ? "backup" : "backups") of \(listed(cancelled)). \(pauseSentence)"
+    }
+
+    /// "“A”", "“A” and “B”", "“A”, “B” and “C”".
+    private static func listed(_ names: [String]) -> String {
+        names.count < 2 ? names.joined() : names.dropLast().joined(separator: ", ") + " and " + names.last!
+    }
+
     /// The menu's Resume, which also starts a backup at once (spec §3, Ruling R59). `planID` nil: every paused plan.
     public static func resume(
         planID: UUID?, health: AgentHealthState, content: MenuContent, status: AgentStatus?

@@ -618,12 +618,13 @@ public actor AgentState {
     /// after it, and the next backup falls at its normal time (not the short retry). With no run in progress
     /// the status comes back unchanged. A run a pause is already stopping keeps the pause (`handle.request`
     /// returns nil once an intent is set). Allowed while draining, like `pause`, since it only stops work.
-    /// `stoppedARun` says whether this Cancel stopped anything, for the agent's log; the app gets the status alone.
+    /// The reply says what the Cancel did (`CancelOutcome`): the agent's log has a line only when it stopped something,
+    /// and the Cancel Backup shortcut says when a pause had already won.
     public func cancel(_ id: UUID) async throws -> CancelReply {
         try requireLoaded()
         _ = try requirePlan(id)
-        let stopped = await runner?.cancel(planID: id) ?? false
-        return CancelReply(status: status(), stoppedARun: stopped)
+        let outcome = await runner?.cancel(planID: id) ?? .nothingToCancel
+        return CancelReply(status: status(), outcome: outcome)
     }
 
     /// Clears the plan's pause. When it was paused (`pausedUntil` still in the future), Resume also starts
@@ -1038,13 +1039,17 @@ public enum DrainPurpose: Sendable, Equatable {
     public var exitsAfterwards: Bool { self != .reregistration }
 }
 
-/// What `AgentState.cancel` did. The XPC reply is the status alone; whether a run was stopped is for the agent's log,
-/// which says so only when something was (final review m7).
+/// What `AgentState.cancel` did: the status and the `CancelOutcome` (`CancelResult` on the wire). The agent's log says so
+/// only when something was stopped (final review m7).
 public struct CancelReply: Sendable {
     public var status: AgentStatus
+    public var outcome: CancelOutcome
+
     /// This Cancel stopped a run, or dropped the backup Resume queued behind one. False when nothing was running,
     /// or the run was already being stopped (a pause wins).
-    public var stoppedARun: Bool
+    public var stoppedARun: Bool { outcome == .stoppedARun }
+
+    public var result: CancelResult { CancelResult(status: status, outcome: outcome) }
 }
 
 extension PlanRunHistory {

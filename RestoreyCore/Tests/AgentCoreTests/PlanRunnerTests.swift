@@ -1491,6 +1491,7 @@ struct PlanRunnerTests {
         let record = try await run.value
 
         #expect(cancel.stoppedARun, "the agent log says a run was cancelled")
+        #expect(cancel.outcome == .stoppedARun)
         #expect(record.outcome == .cancelled)
         #expect(await f.pings() == [], "neither a /fail nor a success ping")
         await f.state.alertsDelivered()
@@ -1560,6 +1561,7 @@ struct PlanRunnerTests {
         let after = try await f.state.cancel(f.planID)
 
         #expect(!after.stoppedARun, "nothing was running, so the agent log doesn't say a run was cancelled")
+        #expect(after.outcome == .nothingToCancel)
         // `generatedAt` and `sequence` move with every status built; everything else must stay as it was.
         #expect(after.status.plans == before.plans)
         #expect(await f.state.status().plans == before.plans)
@@ -1617,10 +1619,12 @@ struct PlanRunnerTests {
 
         _ = try await f.state.pause(f.planID, for: .oneHour)
         let until = try #require(await f.history().pausedUntil)
-        _ = try await f.state.cancel(f.planID)
+        let cancel = try await f.state.cancel(f.planID)
         held.release()
         let record = try await run.value
 
+        #expect(cancel.outcome == .alreadyPausing, "the Shortcut says the pause won, not that it cancelled")
+        #expect(!cancel.stoppedARun)
         #expect(record.outcome == .paused)
         #expect(held.interrupts() == 1, "the pause’s SIGINT only, never a second")
         #expect(await f.history().pausedUntil == until)

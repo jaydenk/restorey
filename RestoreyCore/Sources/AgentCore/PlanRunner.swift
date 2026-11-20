@@ -357,11 +357,14 @@ public actor PlanRunner {
     /// Cancel Backup: stops the plan's run and drops the backup Resume queued behind a run still stopping, so the
     /// user who pressed Cancel doesn't get a new backup when that run ends. A run a pause is already stopping
     /// stays paused (the first stop wins).
-    /// Returns whether it stopped anything: a run, or the queued backup.
-    func cancel(planID: UUID) async -> Bool {
+    /// Says what it did: it stopped a run or the queued backup; a pause was already stopping the run (so nothing was
+    /// cancelled); or nothing was running.
+    func cancel(planID: UUID) async -> CancelOutcome {
         let droppedQueued = startWhenPausedRunEnds.remove(planID) != nil
+        let pausing = ([handles[planID]].compactMap { $0 } + (measurementHandles[planID] ?? [])).contains { $0.intent == .pause }
         let stopped = await interrupt(planID: planID, intent: .cancel)
-        return stopped || droppedQueued
+        if stopped || droppedQueued { return .stoppedARun }
+        return pausing ? .alreadyPausing : .nothingToCancel
     }
 
     /// Asks every run in flight (recovery's unlocks, backups, maintenance, create, adopt) to stop with

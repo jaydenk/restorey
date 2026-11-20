@@ -268,7 +268,6 @@ final class SetupModel {
         supervisor?.status?.plans.first { $0.plan.id == planID }
     }
 
-
     /// A resumed setup gets the plan back from the agent's status (the plan was saved at each Continue).
     /// Waits for the first status when there is none yet. A first run with no plan saved has nothing to load.
     /// A status without the plan (deleted elsewhere) sets `planMissing`; with a settings error the wait goes on.

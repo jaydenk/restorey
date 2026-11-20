@@ -118,7 +118,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
             let reply = try await state.cancel(try Self.planID(planID))
             // Only a Cancel that stopped something is worth a line: one with no run in progress changes nothing.
             if reply.stoppedARun { log.info("Cancelled the run of plan \(planID)") }
-            return reply.status
+            return reply.result
         }
     }
 
