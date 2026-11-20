@@ -21,6 +21,8 @@ public enum BannerAction: Sendable, Equatable {
     case showDetails(UUID)
     /// `config.json` can't be read: Settings → Plans says why.
     case showSettingsError
+    /// Sets aside the note that a repair stopped a backup (`backupStoppedByRepairAt`), which the app keeps.
+    case dismissBackupStoppedNote
 
     /// The words on the banner's (or line's) button.
     public var buttonTitle: String {
@@ -35,6 +37,7 @@ public enum BannerAction: Sendable, Equatable {
         case .saveRecoveryKit: "Save Recovery Kit…"
         case .showDetails: "Show Details…"
         case .showSettingsError: "Show in Settings…"
+        case .dismissBackupStoppedNote: "Dismiss"
         }
     }
 
@@ -52,6 +55,7 @@ public enum BannerAction: Sendable, Equatable {
         case .saveRecoveryKit: "Save Recovery Kit…"
         case .showDetails: "Show Details…"
         case .showSettingsError: "Show in Settings…"
+        case .dismissBackupStoppedNote: "Dismiss"
         }
     }
 }
@@ -66,7 +70,8 @@ public struct MenuBanner: Sendable, Equatable {
     public var detail: String
     /// Nil for a banner that only says what happened (the backup a repair stopped): there is nothing to fix.
     public var action: BannerAction?
-    /// A second item that sets the banner aside for good ("No off-Mac monitoring" only).
+    /// An item after it that sets the banner aside: "No off-Mac monitoring" for good, the backup a repair stopped
+    /// until the next repair that stops one.
     public var dismiss: BannerAction?
     /// The plan it is about, whose section it sits in; nil for the whole Mac.
     public var planID: UUID?
@@ -237,12 +242,23 @@ public enum MenuPresentation {
     }
 
     /// The backup a repair stopped is said until any plan backs up, or starts trying to, after the stop. The stopped run's
-    /// own record (`.interrupted`, written when the agent next starts) began before it, so it doesn't count.
+    /// own record (`.interrupted`, written when the agent next starts) began before it, so it doesn't count. It also
+    /// goes when no plan could run to clear it (final review): none is left, or every one is stopped or waits for its
+    /// recovery kit (`canRunAgain`), so "will run again at its next time" no longer holds and the plan's own line says
+    /// why. The user can also dismiss it (`BannerAction.dismissBackupStoppedNote`).
     public static func backupStoppedNoteStands(stoppedAt: Date, status: AgentStatus) -> Bool {
-        !status.plans.contains { plan in
+        status.plans.contains(where: canRunAgain) && !status.plans.contains { plan in
             (plan.lastBackup.map { $0.endedAt > stoppedAt } ?? false)
                 || (plan.latestBackupRecord.map { $0.startedAt > stoppedAt } ?? false)
         }
+    }
+
+    /// Whether the agent will start a backup of `plan` on its own: its recovery kit is confirmed and the agent hasn't
+    /// stopped it (`nextRunDate`'s gates as the status shows them). A paused plan runs again when the pause ends.
+    private static func canRunAgain(_ plan: PlanStatus) -> Bool {
+        guard plan.setupState == .complete else { return false }
+        if case .stopped = plan.phase { return false }
+        return true
     }
 
     private static func content(
@@ -394,7 +410,8 @@ public enum MenuPresentation {
             banners.append(MenuBanner(
                 severity: .warning,
                 title: "Restorey restarted its background process, which hadn’t answered for 30 minutes",
-                detail: "The backup that was running was stopped and will run again at its next time.", action: nil))
+                detail: "The backup that was running was stopped and will run again at its next time.", action: nil,
+                dismiss: .dismissBackupStoppedNote))
         }
         if status.plans.isEmpty {
             banners.append(MenuBanner(
@@ -805,7 +822,7 @@ public struct PlanOverview: Sendable, Equatable {
     /// information, never a warning; nil when nothing was skipped or not counted.
     public var cloudOnlyNote: CloudOnlyNote?
     /// Said once setup's choice to remove earlier snapshots has failed three backups in a row ("Couldn't remove the earlier
-    /// snapshots you chose: <reason>. Restorey will try again after the next backup."). Information: no colour, and the menu
+    /// snapshots you chose: <reason>; Restorey will try again after the next backup."). Information: no colour, and the menu
     /// icon is unchanged. Nil otherwise.
     public var earlierRemovalNote: String?
     /// Said while the plan's newest tidy was held back because many more files couldn't be read than last time ("Old

@@ -209,7 +209,8 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
   a restic from Restorey's own bundle is still running under the agent: unregistering would kill that backup,
   so it waits and looks again at each heartbeat, for at most 30 minutes the Mac is awake (sleep doesn't count). After that the backup is taken as hung:
   Restorey re-registers the agent anyway, which stops it, logs that as an error, and the menu says "Restorey
-  restarted its background process, which hadn’t answered for 30 minutes" until a plan next backs up or tries to. The agent's answer never waits on the notification centre, so a
+  restarted its background process, which hadn’t answered for 30 minutes" until a plan next backs up or tries to, no plan
+  is left that could (none, or each one stopped or waiting for its recovery kit), or you choose Dismiss under it. The agent's answer never waits on the notification centre, so a
   stuck `usernoted` doesn't make a working agent look dead. A switched-off agent reads differently (see
   `docs/spike-findings.md`), so this never overrides your choice
 

@@ -770,7 +770,8 @@ struct MenuPresentationTests {
     private static let stoppedNote = MenuBanner(
         severity: .warning,
         title: "Restorey restarted its background process, which hadn’t answered for 30 minutes",
-        detail: "The backup that was running was stopped and will run again at its next time.", action: nil)
+        detail: "The backup that was running was stopped and will run again at its next time.", action: nil,
+        dismiss: .dismissBackupStoppedNote)
 
     /// The agent was re-registered after 30 minutes of silence, stopping the backup it was running: said until a plan
     /// backs up, or tries to, after that.
@@ -803,6 +804,34 @@ struct MenuPresentationTests {
         let other = Self.plan("Photos")
         let either = Self.status([Self.line(plan, backedUpAt: Self.at(13, 0)), Self.line(other, backedUpAt: Self.at(14, 10))])
         #expect(Self.make(either, backupStoppedByRepairAt: stoppedAt).banners.isEmpty)
+    }
+
+    /// No plan could back up to clear the note (final review): none left, or every one stopped or waiting for its
+    /// recovery kit. The note goes, rather than hold the icon at a warning for good.
+    @Test func theStopNoteGoesWhenNoPlanCouldRun() {
+        let plan = Self.plan()
+        let stoppedAt = Self.at(14, 0)
+        func stands(_ plans: [PlanStatus]) -> Bool {
+            MenuPresentation.backupStoppedNoteStands(stoppedAt: stoppedAt, status: Self.status(plans))
+        }
+        let waiting = Self.line(plan, backedUpAt: Self.at(13, 0))
+        let stopped = Self.line(plan, phase: .stopped(reason: "Wrong password"), backedUpAt: Self.at(13, 0), next: nil)
+        let newKit = Self.line(plan, backedUpAt: Self.at(13, 0), next: nil, setupState: .needsNewKit)
+        let unfinished = Self.line(Self.plan("Photos", setup: false), backedUpAt: nil, next: nil)
+        let paused = Self.line(plan, phase: .paused(until: Self.at(16, 0)), backedUpAt: Self.at(13, 0))
+
+        #expect(stands([waiting]))
+        #expect(stands([paused]), "a paused plan runs again when the pause ends")
+        #expect(!stands([]), "the plan was deleted")
+        #expect(!stands([stopped]))
+        #expect(!stands([newKit]))
+        #expect(!stands([unfinished]))
+        #expect(!stands([stopped, newKit, unfinished]))
+        #expect(stands([stopped, waiting]), "one plan can still run")
+
+        #expect(!Self.make(Self.status([]), backupStoppedByRepairAt: stoppedAt).banners.contains(Self.stoppedNote))
+        let content = Self.make(Self.status([stopped]), backupStoppedByRepairAt: stoppedAt)
+        #expect(!content.banners.contains(Self.stoppedNote))
     }
 
     @Test func aConfigurationErrorStopsEverything() {

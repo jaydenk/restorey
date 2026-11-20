@@ -294,6 +294,8 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
             router.showSettings(section: .history, planID: planID)
         case .showSettingsError:
             router.showSettings(section: .plans)
+        case .dismissBackupStoppedNote:
+            supervisor.dismissBackupStoppedNote()
         }
     }
 

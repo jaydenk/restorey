@@ -104,6 +104,15 @@ final class AgentSupervisor {
         registration.openLoginItems()
     }
 
+    /// The menu's "Dismiss" under the note that a repair stopped a backup: forgets the stop, so the note stays gone
+    /// after a relaunch too.
+    func dismissBackupStoppedNote() {
+        guard backupStoppedByRepairAt != nil else { return }
+        log.info("The note that a repair stopped a backup was dismissed")
+        noteBackupStoppedByRepair(nil)
+        notify()
+    }
+
     /// A hello outside the heartbeat, for setup's permissions step: the notification answer the agent holds can
     /// change in System Settings at any time, and the step shows it within its 2 s poll. Only the hello's
     /// reply is noted; the heartbeat still decides the agent's health.
@@ -352,7 +361,7 @@ final class AgentSupervisor {
     }
 
     /// Persisted, so the menu still says so after a relaunch; nil clears it. The menu shows it only once the agent is
-    /// healthy again, and that change notifies; a clear happens in `received`, which does.
+    /// healthy again, and that change notifies; a clear happens in `received` or `dismissBackupStoppedNote`, which do.
     private func noteBackupStoppedByRepair(_ at: Date?) {
         backupStoppedByRepairAt = at
         if let at { defaults.set(at, forKey: Self.backupStoppedByRepairKey) } else {
@@ -398,7 +407,7 @@ final class AgentSupervisor {
         lastKnownStatus = status
         if let stoppedAt = backupStoppedByRepairAt,
            !MenuPresentation.backupStoppedNoteStands(stoppedAt: stoppedAt, status: status) {
-            log.info("A plan has backed up or tried to since the repair that stopped a backup: the menu no longer says so")
+            log.info("A plan has backed up or tried to since the repair that stopped a backup, or none is left that could: the menu no longer says so")
             noteBackupStoppedByRepair(nil)
         }
         notify()

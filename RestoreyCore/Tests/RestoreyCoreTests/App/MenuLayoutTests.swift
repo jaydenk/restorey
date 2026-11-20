@@ -287,12 +287,20 @@ struct MenuLayoutTests {
         let banner = MenuBanner(
             severity: .warning, title: "Restorey restarted its background process, which hadn’t answered for 30 minutes",
             detail: "The backup that was running was stopped and will run again at its next time.", action: nil)
-        #expect(MenuLayout.bannerRows(banner) == [.item(MenuItem(
+        let line = MenuRow.item(MenuItem(
             "Restorey restarted its background process, which hadn’t answered for 30 minutes",
             subtitle: "The backup that was running was stopped and will run again at its next time.", symbol: .warning,
             enabled: false,
             accessibilityLabel: "Warning: Restorey restarted its background process, which hadn’t answered for 30 minutes. "
-                + "The backup that was running was stopped and will run again at its next time."))])
+                + "The backup that was running was stopped and will run again at its next time."))
+        #expect(MenuLayout.bannerRows(banner) == [line])
+
+        // With a dismiss, that follows as an item of its own (final review).
+        var dismissible = banner
+        dismissible.dismiss = .dismissBackupStoppedNote
+        #expect(MenuLayout.bannerRows(dismissible) == [
+            line, .item(MenuItem("Dismiss", symbol: .dismiss, command: .banner(.dismissBackupStoppedNote))),
+        ])
     }
 
     /// A message's full sentence is its tooltip (audit P5).
@@ -438,6 +446,7 @@ struct MenuLayoutTests {
         #expect(BannerAction.saveRecoveryKit(id).buttonTitle == "Save Recovery Kit…")
         #expect(BannerAction.showDetails(id).buttonTitle == "Show Details…")
         #expect(BannerAction.showSettingsError.buttonTitle == "Show in Settings…")
+        #expect(BannerAction.dismissBackupStoppedNote.buttonTitle == "Dismiss")
     }
 
     /// The menu names each fix as a command (audit P4).
@@ -453,6 +462,7 @@ struct MenuLayoutTests {
         #expect(BannerAction.setUp.menuTitle == "Finish Setup…")
         #expect(BannerAction.saveRecoveryKit(id).menuTitle == "Save Recovery Kit…")
         #expect(BannerAction.showDetails(id).menuTitle == "Show Details…")
+        #expect(BannerAction.dismissBackupStoppedNote.menuTitle == "Dismiss")
         #expect(BannerAction.showSettingsError.menuTitle == "Show in Settings…")
     }
 
