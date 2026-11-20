@@ -80,8 +80,10 @@ upload or pause badge, so they don't fit.
   with no backup in History. The cause was the agent: start-up recovery registered its `restic unlock` as a run of
   the plan (`PlanRunner.begin` → `AgentState.beginRun`), so the plan's phase was `.running` for the unlock (the dev
   agent's 20 Nov 05:42 restart: `unlock` 05:42:50.06–05:42:55.40). It now registers the unlock like the measurement
-  after an adopt (`beginMeasurement`): drains, deletes, pauses and the system stop still reach it, but the phase is
-  untouched. The fix is in the agent, where the phase is decided, not in the icon.
+  after an adopt (`beginMeasurement`): a drain waits for it and the system stop reaches it, but the phase is
+  untouched. A pause can't reach it (the state gets the runner only after recovery), and a delete meanwhile is
+  refused at once as "still starting up", as Back Up Now is, rather than waiting for restic. The fix is in the agent,
+  where the phase is decided, not in the icon.
 - `App/Assets.xcassets`: the five `Status*` image sets are removed.
 - `scripts/verify-bundle.sh`: drops its check that the five glyphs are template images in `Assets.car`.
 - Docs: the menu bar icon passages in the UI spec (§ menu bar, Icon), the README ("The menu bar"), and the product

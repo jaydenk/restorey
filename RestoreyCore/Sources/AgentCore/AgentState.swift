@@ -461,6 +461,10 @@ public actor AgentState {
         let plan = try requirePlan(id)
         guard !deleting.contains(id) else { throw AgentError.planDeleting(name: plan.name) }
         guard running[id] == nil else { throw AgentError.planRunning(name: plan.name) }
+        // Without a runner the agent is still in start-up recovery (`main.swift` attaches it afterwards), and a
+        // registration then is recovery's unlock, which nothing can stop yet: refused at once, as Back Up Now is,
+        // rather than waiting for restic.
+        if measuring[id] != nil, runner == nil { throw AgentError.runnerUnavailable }
         // Marked before the first await, so beginRun can't slip in while this waits on the stores.
         deleting.insert(id)
         defer { deleting.remove(id) }

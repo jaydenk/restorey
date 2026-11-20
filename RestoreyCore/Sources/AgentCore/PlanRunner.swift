@@ -305,17 +305,19 @@ public actor PlanRunner {
         where plan.validationErrors().isEmpty && (plan.recoveryKitConfirmedAt != nil || interrupted.contains(plan.id)) {
             let key = RepositoryQueues.key(for: plan.repository)
             guard !unlocked.contains(key) else { continue }
-            // Not a run of the plan (L168): registered like the measurement after an adopt, so a drain waits for it
-            // and a pause, delete or system stop reaches it, but the plan isn't shown backing up. Runs can't start
-            // alongside it: they wait for recovery (`begin`).
+            // Not a run of the plan (L168): registered like the measurement after an adopt, so a drain and the system
+            // stop wait for it or reach it, but the plan isn't shown backing up. A pause or delete can't reach it: the
+            // state gets the runner only after recovery, and refuses a delete meanwhile (`deletePlan`). Runs can't
+            // start alongside it: they wait for recovery (`begin`). The handle is registered first, as `begin` does.
+            let handle = RunHandle()
+            measurementHandles[plan.id, default: []].append(handle)
             do {
                 try await deps.state.beginMeasurement(planID: plan.id)
             } catch {
+                measurementEnded(planID: plan.id, handle: handle)
                 skippedUnlock(plan, reason: (error as? AgentError)?.message ?? "\(error)")
                 continue
             }
-            let handle = RunHandle()
-            measurementHandles[plan.id, default: []].append(handle)
             switch prepare(plan) {
             case .ready(let session):
                 unlocked.insert(key)
@@ -331,7 +333,7 @@ public actor PlanRunner {
             case .failed(_, let reason, _):
                 skippedUnlock(plan, reason: reason)
             }
-            // After its record is committed: a delete waits for the registration to end before the plan goes.
+            // After its record is committed, so its plan is still there to record it.
             await deps.state.endMeasurement(planID: plan.id)
             measurementEnded(planID: plan.id, handle: handle)
         }

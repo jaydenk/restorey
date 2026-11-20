@@ -1322,6 +1322,51 @@ struct PlanRunnerTests {
         #expect(history.runningRecord == nil)
     }
 
+    /// A delete that arrives while start-up recovery is unlocking (the app's listener is up before the runner is
+    /// attached, as in `main.swift`) is refused at once as "still starting up", like Back Up Now, rather than waiting
+    /// for an unlock nothing can stop yet.
+    @Test func aDeleteDuringRecoveryIsRefusedAtOnce() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restorey-held-unlock-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let started = directory.appendingPathComponent("unlock-started")
+        let release = directory.appendingPathComponent("release")
+        let wrapper = directory.appendingPathComponent("restic.sh")
+        try """
+            #!/bin/sh
+            if [ "$1" = unlock ]; then
+              : > '\(started.path)'
+              while [ ! -f '\(release.path)' ]; do /bin/sleep 0.05; done
+            fi
+            exec '\(try ResticBinary.require().path)' "$@"
+
+            """.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+        let f = try await RunnerFixture.make(executable: wrapper)
+        defer { f.remove() }
+
+        let (state, runner) = await f.reloadedUnattached()
+        let recovery = Task {
+            await runner.recoverAfterStart()
+            await state.attach(runner: runner)
+        }
+        while !FileManager.default.fileExists(atPath: started.path) { try await Task.sleep(for: .milliseconds(10)) }
+
+        // The unlock is held for 3 s: a delete that waited for it would return only after that.
+        let releaser = Task {
+            try await Task.sleep(for: .seconds(3))
+            try "".write(to: release, atomically: true, encoding: .utf8)
+        }
+        let clock = ContinuousClock()
+        let asked = clock.now
+        await #expect(throws: AgentError.runnerUnavailable) { _ = try await state.deletePlan(f.planID) }
+        #expect(clock.now - asked < .seconds(2), "the delete waited for the unlock")
+        try await releaser.value
+        await recovery.value
+        #expect(try await state.runInputs(f.planID).history.recent.first?.operation == .unlock)
+    }
+
     @Test func recoveryLogsAnUnlockItHasToSkip() async throws {
         let f = try await RunnerFixture.make(createRepository: false) { plan in
             if case .raw(let repository, _) = plan.repository {
