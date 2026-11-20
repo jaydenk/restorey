@@ -259,8 +259,10 @@ public enum MenuPresentation {
                 severity: .error, title: "Backups aren’t running",
                 detail: "No backups will happen.", action: .restartAgent)
             return MenuContent(icon: .error, banners: [banner], message: lastKnown(status, format))
-        case .longWaitForRunningBackup:
-            return longWait(status: status, format: format)
+        case .waitingForRunningBackup(let long):
+            // A restic is running under the agent, so neither wait says no backups are happening (fix round 1),
+            // whatever the age of the last status.
+            return long ? longWait(status: status, format: format) : notAnswering(status: status, format: format)
         case .damaged:
             return MenuContent(
                 icon: .error, message: "Restorey’s installation is damaged",
@@ -645,13 +647,15 @@ public enum MenuPresentation {
         return MenuContent(icon: .backingUp, plans: lines)
     }
 
-    /// R68: the agent didn't answer but its last status is recent, so it is shown as it was, marked.
-    private static func notAnswering(status: AgentStatus, format: TextContext) -> MenuContent {
-        let lines = status.plans.map { line(for: $0, format: format, suffix: "(not responding)") }
+    /// R68: the agent didn't answer but its last status is recent, or a restic is known to run under it, so the last
+    /// state is shown as it was, marked.
+    private static func notAnswering(status: AgentStatus?, format: TextContext) -> MenuContent {
+        let plans = status?.plans ?? []
+        let lines = plans.map { line(for: $0, format: format, suffix: "(not responding)") }
         let banner = MenuBanner(
             severity: .warning, title: "Backups aren’t responding",
             detail: "Showing the last state reported.", action: .restartAgent)
-        let icon = max(.warning, icon(banners: [], plans: status.plans, lines: lines))
+        let icon = max(.warning, icon(banners: [], plans: plans, lines: lines))
         return MenuContent(icon: icon, banners: [banner], plans: lines)
     }
 

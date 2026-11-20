@@ -39,8 +39,11 @@ struct SettingsGeneralTests {
             == .init("Switched off — no backups will happen", severity: .error, action: .openLoginItems))
         #expect(SettingsGeneral.agent(health: .notRunning(reachable: false), hello: nil)
             == .init("Not running — no backups will happen", severity: .error, action: .restartAgent))
-        #expect(SettingsGeneral.agent(health: .longWaitForRunningBackup, hello: nil)
-            == .init("Not running — no backups will happen", severity: .error, action: .restartAgent))
+        // Fix round 1: waiting on a backup under an unreachable agent, short or long, is never "no backups".
+        for longWait in [false, true] {
+            #expect(SettingsGeneral.agent(health: .waitingForRunningBackup(longWait: longWait), hello: nil)
+                == .init("Not answering — a backup is still running", severity: .warning, action: .restartAgent))
+        }
         #expect(SettingsGeneral.agent(health: .damaged, hello: nil)
             == .init("Restorey’s installation is damaged — reinstall it from the download", severity: .error))
         #expect(SettingsGeneral.agent(health: .signatureUntrusted, hello: nil)

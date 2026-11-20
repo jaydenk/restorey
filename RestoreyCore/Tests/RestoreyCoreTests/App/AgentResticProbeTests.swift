@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import RestoreyCore
 
-/// `resticRunsUnderAgent` against real processes: a stand-in "agent" in a fake `Contents/Helpers/` runs
+/// `probeResticUnderAgent` against real processes: a stand-in "agent" in a fake `Contents/Helpers/` runs
 /// a stand-in `restic` from the same folder, as the real agent does.
 @Suite(.timeLimit(.minutes(1)))
 struct AgentResticProbeTests {
@@ -74,12 +74,12 @@ struct AgentResticProbeTests {
     @Test func findsAResticRunningUnderTheAgent() async throws {
         let bundle = try await Bundle.make()
         defer { bundle.remove() }
-        #expect(!resticRunsUnderAgent(helpersPrefix: bundle.prefix))
+        #expect(probeResticUnderAgent(helpersPrefix: bundle.prefix) == .notRunning)
         let agent = try start(bundle.agent, ["spawn", bundle.restic.path, "30"])
         defer { agent.terminate() }
-        #expect(try await eventually { resticRunsUnderAgent(helpersPrefix: bundle.prefix) })
+        #expect(try await eventually { probeResticUnderAgent(helpersPrefix: bundle.prefix) == .running })
         // Without the trailing slash too.
-        #expect(resticRunsUnderAgent(helpersPrefix: String(bundle.prefix.dropLast())))
+        #expect(probeResticUnderAgent(helpersPrefix: String(bundle.prefix.dropLast())) == .running)
     }
 
     @Test func ignoresAResticWhoseParentIsNotTheAgent() async throws {
@@ -89,7 +89,7 @@ struct AgentResticProbeTests {
         let restic = try start(bundle.restic, ["30"])
         defer { restic.terminate() }
         try await Task.sleep(for: .milliseconds(200))
-        #expect(!resticRunsUnderAgent(helpersPrefix: bundle.prefix))
+        #expect(probeResticUnderAgent(helpersPrefix: bundle.prefix) == .notRunning)
     }
 
     @Test func ignoresAnotherBundlesRestic() async throws {
@@ -98,7 +98,37 @@ struct AgentResticProbeTests {
         defer { ours.remove(); theirs.remove() }
         let agent = try start(theirs.agent, ["spawn", theirs.restic.path, "30"])
         defer { agent.terminate() }
-        #expect(try await eventually { resticRunsUnderAgent(helpersPrefix: theirs.prefix) })
-        #expect(!resticRunsUnderAgent(helpersPrefix: ours.prefix))
+        #expect(try await eventually { probeResticUnderAgent(helpersPrefix: theirs.prefix) == .running })
+        #expect(probeResticUnderAgent(helpersPrefix: ours.prefix) == .notRunning)
+    }
+
+    // MARK: Fail closed (fix round 1)
+
+    /// A process table with one agent (pid 10) in `/A/Contents/Helpers/` running its restic (pid 11).
+    private static func table(
+        realPath: @escaping @Sendable (String) -> String? = { $0 }, pids: [pid_t]? = [1, 10, 11]
+    ) -> ProcessTable {
+        let paths: [pid_t: String] = [1: "/sbin/launchd", 10: "/A/Contents/Helpers/RestoreyAgent", 11: "/A/Contents/Helpers/restic"]
+        return ProcessTable(
+            realPath: realPath, allProcessIDs: { pids }, executablePath: { paths[$0] },
+            parentPID: { $0 == 11 ? 10 : 1 })
+    }
+
+    @Test func aReadableTableAnswersYesOrNo() {
+        #expect(probeResticUnderAgent(helpersPrefix: "/A/Contents/Helpers/", table: Self.table()) == .running)
+        #expect(probeResticUnderAgent(helpersPrefix: "/A/Contents/Helpers/", table: Self.table(pids: [1, 10])) == .notRunning)
+        #expect(!ResticUnderAgent.notRunning.mayBeRunning)
+        #expect(ResticUnderAgent.running.mayBeRunning)
+    }
+
+    /// A process table that can't be read says nothing about restic, so it counts as one that may be running: an
+    /// automatic re-registration would otherwise kill a live backup.
+    @Test func anUnreadableTableMayHaveAResticRunning() {
+        let noList = probeResticUnderAgent(helpersPrefix: "/A/Contents/Helpers/", table: Self.table(pids: nil))
+        #expect(noList == .unknown("the process list couldn’t be read"))
+        #expect(noList.mayBeRunning)
+        let noFolder = probeResticUnderAgent(helpersPrefix: "/A/Contents/Helpers/", table: Self.table(realPath: { _ in nil }))
+        #expect(noFolder == .unknown("the real path of /A/Contents/Helpers couldn’t be read"))
+        #expect(noFolder.mayBeRunning)
     }
 }

@@ -69,8 +69,11 @@ public enum SettingsGeneral {
         case .updating, .waitingForUpdate: return Line("Updating" + version)
         case .switchedOff:
             return Line("Switched off — no backups will happen", severity: .error, action: .openLoginItems)
-        case .notRunning, .longWaitForRunningBackup:
+        case .notRunning:
             return Line("Not running — no backups will happen", severity: .error, action: .restartAgent)
+        case .waitingForRunningBackup:
+            // A restic runs under the agent, so backups are happening (fix round 1).
+            return Line("Not answering — a backup is still running", severity: .warning, action: .restartAgent)
         case .damaged:
             return Line("Restorey’s installation is damaged — reinstall it from the download", severity: .error)
         case .signatureUntrusted:

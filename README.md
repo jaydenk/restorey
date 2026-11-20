@@ -207,7 +207,10 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
   was running at the agent's last status (under 30 minutes old), the menu instead keeps that status with
   "(not responding)" and a warning. After 30 seconds without an answer it unregisters and registers the agent again on its own, unless
   a restic from Restorey's own bundle is still running under the agent: unregistering would kill that backup,
-  so it waits and looks again at each heartbeat, for as long as that backup runs. Restorey can't tell a stuck backup
+  so it waits and looks again at each heartbeat, for as long as that backup runs. If the process table can't be read,
+  Restorey assumes a backup may be running and waits too (logged as an error once). While it waits, the menu shows
+  "Backups aren’t responding" (a warning) and the last status marked "(not responding)", and Settings → General says
+  "Not answering — a backup is still running"; nothing says no backups are happening. Restorey can't tell a stuck backup
   from a busy one (a first backup, or a slow hourly run), so it never stops a running backup on its own. After 30
   minutes the Mac is awake (sleep doesn't count) it warns: "Restorey’s background process hasn’t answered for 30
   minutes", with "Restart Backups", which stops the backup if you choose it, above the last status still marked

@@ -66,7 +66,8 @@ public struct AgentHealthInput: Sendable, Equatable {
     /// while it answers. Sleep and wall-clock changes don't count, so a hello that failed just before a long sleep
     /// can't make the first failure after waking look like hours of silence.
     public var unreachableAwakeFor: TimeInterval?
-    /// A restic from this app's `Contents/Helpers` is running under the agent (`resticRunsUnderAgent`).
+    /// A restic from this app's `Contents/Helpers` may be running under the agent (`ResticUnderAgent.mayBeRunning`:
+    /// true when the process table couldn't be read).
     /// Only asked for an unreachable agent, the one case that would be unregistered without a drain.
     public var resticRunningUnderAgent: Bool
     /// The app's connection admits no agent (`AgentPeerCheck.refuseAll`): its own signature can't be trusted, so
@@ -111,8 +112,8 @@ public enum AgentHealthAction: Sendable, Equatable {
     /// `prepareForRestart`; launchd's `KeepAlive` starts the new binary.
     case restartAfterDrain
     /// The agent doesn't answer, but a restic it started is running, so an undrained `unregister()` would
-    /// kill a live backup (Ruling R68): shown as not running, logged, and decided again at the next
-    /// heartbeat, for as long as that restic runs. Restorey can't tell a stuck restic from a busy one (a first backup,
+    /// kill a live backup (Ruling R68): shown as not answering, logged, and decided again at the next
+    /// heartbeat, for as long as that restic runs (`AgentHealthState.waitingForRunningBackup`). Restorey can't tell a stuck restic from a busy one (a first backup,
     /// a slow hourly run), so it never stops it on its own (owner, 20 Nov 2026). `longWait` from
     /// `AgentHealthPolicy.longWaitWarning` on: the menu warns and offers Restart Backups, the person's choice.
     case waitForRunningRestic(longWait: Bool)

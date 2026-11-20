@@ -196,6 +196,13 @@ struct AgentHealthTests {
         #expect(decide(running: false, for: 30 * 60) == .reregisterAfterDrain)
     }
 
+    /// The wait ends as soon as the agent answers: with a restic still running, a current agent needs nothing.
+    @Test func anAnswerEndsTheWait() {
+        var input = Self.input()
+        input.resticRunningUnderAgent = true
+        #expect(decideAgentHealth(input) == .none)
+    }
+
     /// Fix round 1: the grace and the long-wait warning count only time the Mac was awake while the agent kept failing.
     /// A hello that failed just before an 8-hour sleep and the first after waking are seconds of awake time apart, so
     /// neither the grace nor the warning is reached; a forward clock change can't reach them either, as no wall-clock

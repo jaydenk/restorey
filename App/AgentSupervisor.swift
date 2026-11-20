@@ -9,6 +9,9 @@ import RestoreyCore
 final class AgentSupervisor {
     /// The last automatic repair of each kind, as `[RepairRecord]` JSON in the app's `UserDefaults`.
     static let repairRecordKey = "lastAgentRepairs"
+    /// Kept by earlier 0.1.2 builds for their note that a repair had stopped a backup, which no longer exists (owner's
+    /// correction, 20 Nov 2026): removed at start so it doesn't linger in the app's defaults.
+    private static let retiredBackupStoppedKey = "backupStoppedByRepairAt"
 
     private(set) var health: AgentHealthState = .checking
     /// The latest status from the agent. Cleared whenever the health leaves `.healthy`, and fetched
@@ -47,6 +50,8 @@ final class AgentSupervisor {
     @ObservationIgnored private let awakeOrigin = SuspendingClock().now
     /// The last `register()` failure logged, so one repeated every heartbeat is logged once.
     @ObservationIgnored private var lastRegisterFailure: String?
+    /// The process table couldn't be read for the restic check: logged once until it can be again.
+    @ObservationIgnored private var resticProbeFailureLogged = false
     @ObservationIgnored private var drainRetryDelay: TimeInterval = AgentHealthPolicy.heartbeatInterval
     @ObservationIgnored private var runs = AgentRunTracker()
 
@@ -62,6 +67,7 @@ final class AgentSupervisor {
             appVersion: info["CFBundleShortVersionString"] as? String ?? "unknown",
             appBuild: info["CFBundleVersion"] as? String ?? "unknown")
         lastRepairs = loadRepairRecords()
+        defaults.removeObject(forKey: Self.retiredBackupStoppedKey)
         connection.onStatus = { [weak self] status in self?.received(status) }
     }
 
@@ -140,8 +146,7 @@ final class AgentSupervisor {
             executableFingerprintOnDisk: lastHello.flatMap(Self.fingerprintOnDisk),
             lastRepairs: lastRepairs, unreachableAwakeFor: unreachableAwakeFor,
             // Only an unreachable agent would be unregistered undrained, so only then is the process table read.
-            resticRunningUnderAgent: unreachableAwakeFor != nil
-                && resticRunsUnderAgent(helpersPrefix: installed.helpersPrefix),
+            resticRunningUnderAgent: unreachableAwakeFor != nil && probeRestic().mayBeRunning,
             connectionRefusesEveryAgent: refusesEveryAgent,
             now: Date())
         let action = decideAgentHealth(input)
@@ -203,7 +208,7 @@ final class AgentSupervisor {
         case .waitForRunningRestic(let longWait):
             // Re-decided at every heartbeat; `heartbeat` logs why when the action begins. Never repaired: only the
             // user's Restart Backups stops that backup.
-            set(longWait ? .longWaitForRunningBackup : .notRunning(reachable: false))
+            set(.waitingForRunningBackup(longWait: longWait))
         case .showSwitchedOff:
             set(.switchedOff)
         case .showNotRunning:
@@ -293,6 +298,21 @@ final class AgentSupervisor {
                 "Restorey couldn’t register its background process: \(error.localizedDescription)",
                 connectionRefusesEveryAgent: connection.refusesEveryAgent))
         }
+    }
+
+    /// Reads the process table for a restic under the agent. One that can't be read fails closed (`mayBeRunning`), and
+    /// is logged as an error once until a read succeeds again.
+    private func probeRestic() -> ResticUnderAgent {
+        let probe = probeResticUnderAgent(helpersPrefix: installed.helpersPrefix)
+        if case .unknown(let why) = probe {
+            if !resticProbeFailureLogged {
+                log.error("Couldn't read the process table to check for a restic under the agent (\(why)): treating one as running, so the agent isn't re-registered")
+                resticProbeFailureLogged = true
+            }
+        } else {
+            resticProbeFailureLogged = false
+        }
+        return probe
     }
 
     /// Awake time since the supervisor first asked, for `UnreachableRun`.

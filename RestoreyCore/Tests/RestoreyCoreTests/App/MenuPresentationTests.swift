@@ -777,7 +777,7 @@ struct MenuPresentationTests {
         let plan = Self.plan()
         // Older than `notAnsweringGrace`, which alone would make the menu an error.
         let running = Self.status([Self.line(plan, phase: .running(nil, retrying: nil))], generatedAt: Self.at(13, 30))
-        let content = Self.make(running, health: .longWaitForRunningBackup)
+        let content = Self.make(running, health: .waitingForRunningBackup(longWait: true))
         #expect(content.banners == [Self.longWaitBanner])
         #expect(content.banners.first?.action.menuTitle == "Restart Backups")
         #expect(content.icon == .warning)
@@ -786,22 +786,42 @@ struct MenuPresentationTests {
         #expect(content.toolTip == "Restorey’s background process hasn’t answered for 30 minutes")
 
         // Nothing known about the plans (the app was relaunched during the wait): the warning still stands.
-        let unknown = Self.make(nil, health: .longWaitForRunningBackup)
+        let unknown = Self.make(nil, health: .waitingForRunningBackup(longWait: true))
         #expect(unknown.banners == [Self.longWaitBanner])
         #expect(unknown.icon == .warning)
     }
 
-    /// Derived from the current health, not stored: absent before 30 minutes, gone once the agent answers.
-    @Test func theLongWaitWarningIsOnlyShownDuringTheLongWait() {
+    /// Fix round 1: while Restorey waits on a restic running under an unreachable agent, before the 30 minutes too, the
+    /// menu never says no backups are happening, however old the last status is or if there is none.
+    @Test func theShortWaitNeverSaysNoBackupsAreHappening() {
         let plan = Self.plan()
-        let running = Self.status([Self.line(plan, phase: .running(nil, retrying: nil))], generatedAt: Self.at(14, 0))
-        let before = Self.make(running, health: .notRunning(reachable: false))
-        #expect(!before.banners.contains(Self.longWaitBanner))
-        #expect(before.banners.map(\.title) == ["Backups aren’t responding"])
+        let stale = Self.status([Self.line(plan, phase: .running(nil, retrying: nil))], generatedAt: Self.at(13, 30))
+        let idle = Self.status([Self.line(plan)], generatedAt: Self.at(14, 19))
+        for status in [stale, idle, nil] as [AgentStatus?] {
+            let content = Self.make(status, health: .waitingForRunningBackup(longWait: false))
+            #expect(content.icon == .warning, "\(String(describing: status))")
+            #expect(content.banners == [MenuBanner(
+                severity: .warning, title: "Backups aren’t responding", detail: "Showing the last state reported.",
+                action: .restartAgent)])
+            #expect(!content.banners.contains { $0.detail.contains("No backups will happen") })
+        }
+        #expect(Self.make(stale, health: .waitingForRunningBackup(longWait: false)).plans.map(\.status)
+            == ["Backing up (not responding)"])
+    }
 
-        let answered = Self.make(Self.status([Self.line(plan, phase: .running(nil, retrying: nil))]), health: .healthy)
-        #expect(!answered.banners.contains(Self.longWaitBanner))
-        #expect(answered.banners.isEmpty)
+    /// Derived from the current health, not stored: the long-wait warning is shown in that state and in no other, so it
+    /// is absent during the short wait and gone in whatever state follows the agent's answer.
+    @Test func theLongWaitWarningBelongsToTheLongWaitStateAlone() {
+        let running = Self.status([Self.line(Self.plan(), phase: .running(nil, retrying: nil))], generatedAt: Self.at(14, 0))
+        let others: [AgentHealthState] = [
+            .checking, .healthy, .updating, .waitingForUpdate, .switchedOff, .notRunning(reachable: false),
+            .notRunning(reachable: true), .waitingForRunningBackup(longWait: false), .damaged, .signatureUntrusted,
+            .failed("x"),
+        ]
+        for health in others {
+            #expect(!Self.make(running, health: health).banners.contains(Self.longWaitBanner), "\(health)")
+        }
+        #expect(Self.make(running, health: .waitingForRunningBackup(longWait: true)).banners.contains(Self.longWaitBanner))
     }
 
     @Test func aConfigurationErrorStopsEverything() {
