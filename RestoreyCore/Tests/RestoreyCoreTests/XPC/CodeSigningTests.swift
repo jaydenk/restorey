@@ -89,4 +89,13 @@ import Testing
         }
         #expect(check.requirement == "never")
     }
+
+    /// After an update replaces the agent's file, the old process fails the connection's requirement, and XPC reports
+    /// it with this error (FoundationErrors.h, macOS 13). Any other XPC failure is an ordinary unreachable agent.
+    @Test func onlyTheRequirementErrorIsASignatureRejection() {
+        #expect(CodeSigning.isRequirementFailure(NSError(domain: NSCocoaErrorDomain, code: 4102)))
+        #expect(!CodeSigning.isRequirementFailure(NSError(domain: NSCocoaErrorDomain, code: 4097)), "interrupted")
+        #expect(!CodeSigning.isRequirementFailure(NSError(domain: NSCocoaErrorDomain, code: 4099)), "invalidated")
+        #expect(!CodeSigning.isRequirementFailure(NSError(domain: NSPOSIXErrorDomain, code: 4102)))
+    }
 }

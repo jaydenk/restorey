@@ -33,6 +33,14 @@ public enum CodeSigning {
     static func isTeamID(_ string: String) -> Bool {
         string.range(of: "^[A-Z0-9]{10}$", options: .regularExpression) != nil
     }
+
+    /// The error XPC gives a connection whose peer fails its `setCodeSigningRequirement`
+    /// (`NSXPCConnectionCodeSigningRequirementFailure`). The app's connection gets it from an agent still running after
+    /// an update replaced its file: the signature then seals an Info.plist that is no longer on disk.
+    public static func isRequirementFailure(_ error: any Error) -> Bool {
+        let error = error as NSError
+        return error.domain == NSCocoaErrorDomain && error.code == NSXPCConnectionCodeSigningRequirementFailure
+    }
 }
 
 /// What the running process's own code signature says.

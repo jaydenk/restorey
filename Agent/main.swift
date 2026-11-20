@@ -160,6 +160,13 @@ do {
             await runner.recoverAfterStart()
             await state.attach(runner: runner)
             log.info("Recovery finished; the runner is accepting runs")
+            // The runner notices a replaced executable only before a restic step, and the app can't ask an agent whose
+            // file was replaced to restart (its connection refuses this process's signature), so check every few
+            // seconds. Started after recovery, so the restart drain can't stop recovery's own restic.
+            Task {
+                await ReplacementWatch.run(
+                    replaced: { executableReplaced() }, onReplaced: { await state.restartForReplacedBinary() })
+            }
             // The 400-day run-log retention (Ruling R70): now, then daily from the scheduler's tick.
             await runner.pruneRunLogsIfDue()
 

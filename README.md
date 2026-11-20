@@ -197,6 +197,15 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
   too): it asks the agent to finish any run in progress and exit
   (`prepareForRestart`), and launchd starts the new one. The menu says "Finishing the current backup before
   updating" meanwhile, or "Updating Restorey’s background process…" when it finds the agent already draining
+- an agent still running after an install replaced its file: the app's connection refuses it (its signature now seals
+  an Info.plist that is no longer on disk; see the signing paragraph below), so the app can't ask it anything. The menu
+  says "Updating Restorey’s background process…" and the app waits while the agent restarts by itself, once any
+  restic step in flight ends. It never repairs a refused agent on its own: the process table can't always place that
+  agent's backup (an old copy moved to the Bin reports restic's new path), and an agent refused for another reason
+  would be refused again after a repair. After 30 minutes of awake time the menu warns instead: "Restorey’s
+  background process hasn’t answered for 30 minutes" if a backup may be running, otherwise "Backups aren’t running",
+  each with Restart Backups. The time
+  refused doesn't count towards the 30-second grace below once the old agent has gone
 - the app's own bundle is missing the agent's plist: "Restorey's installation is damaged — reinstall it from the
   download", with no repair offered
 - switched off in Login Items: "Backups are switched off", with "Open System Settings". Never switched
@@ -221,8 +230,8 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
 When an update lands while a backup runs, the old agent finishes only the restic step in progress and starts no
 new one, since restic would run the new helper, which the old agent refuses. A backup still waiting its turn shows
 "Skipped: Restorey was updating" and the new agent runs it at once. The agent also notices on its own (within
-a minute, or before its next restic step) that its executable was replaced, and restarts itself, even if the app
-isn't running.
+5 seconds, or before its next restic step) that its executable was replaced, and restarts itself, even if the app
+isn't running. It has to: the new app's connection refuses the old agent, so the app can't ask it to.
 
 A stale agent is restarted before any re-registration, since an older agent may not know the newer
 `prepareForReregistration` call. Automatic repairs happen at most once an hour for each kind (restart,

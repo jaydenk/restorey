@@ -196,6 +196,59 @@ struct AgentHealthTests {
         #expect(decide(running: false, for: 30 * 60) == .reregisterAfterDrain)
     }
 
+    /// An update replaces the agent's file while the old process runs, and the app's connection then refuses that process
+    /// for its signature (Task 7's requirement). Every agent since Ruling R55 restarts itself once it notices (within 5 s
+    /// with `ReplacementWatch`, within its 60 s scheduler tick before that), after any restic step in flight and its
+    /// queued pings. So the app waits ("Updating Restorey’s background process…") and never repairs a refused agent on
+    /// its own: an undrained re-registration could kill a backup the process table can't place (a bundle moved to the
+    /// Bin reports restic's new path), and one that isn't an update would be refused again anyway. From
+    /// `longWaitWarning` on it says so, and the person may Restart Backups.
+    @Test func anAgentRefusedForItsSignatureIsWaitedOnAndNeverRepaired() {
+        func decide(
+            running: Bool = false, for seconds: TimeInterval?, repairs: [RepairRecord] = [],
+            policy: AgentHealthPolicy = .repairAutomatically
+        ) -> AgentHealthAction {
+            var input = Self.input(heartbeat: .signatureRejected, lastRepairs: repairs, unreachableFor: seconds)
+            input.resticRunningUnderAgent = running
+            return decideAgentHealth(input, enabledButUnreachable: policy)
+        }
+        for running in [false, true] {
+            #expect(decide(running: running, for: nil) == .waitForReplacedAgent)
+            #expect(decide(running: running, for: 0) == .waitForReplacedAgent)
+            #expect(decide(running: running, for: 31) == .waitForReplacedAgent, "past the ordinary grace, still an update")
+            #expect(decide(running: running, for: 30 * 60 - 1) == .waitForReplacedAgent)
+            #expect(decide(running: running, for: 600, policy: .offerRestart) == .waitForReplacedAgent)
+        }
+        // From the warning on, the person's choice; never a repair, whatever the hourly limit says.
+        #expect(decide(running: true, for: 30 * 60) == .waitForRunningRestic(longWait: true))
+        #expect(decide(running: false, for: 30 * 60) == .showNotRunning(canRepair: true))
+        #expect(decide(running: false, for: 10 * 3600, repairs: [Self.recentRepair]) == .showNotRunning(canRepair: true))
+        #expect(decide(running: false, for: 10 * 3600, policy: .offerRestart) == .showNotRunning(canRepair: true))
+        // Refuse-all still comes first: there every hello fails, signature or not.
+        var refusing = Self.input(heartbeat: .signatureRejected, unreachableFor: 10)
+        refusing.connectionRefusesEveryAgent = true
+        #expect(decideAgentHealth(refusing) == .showSignatureUntrusted)
+    }
+
+    /// The supervisor's awake-time run of silence. A refused agent counts as silent, but when it gives way to one that
+    /// doesn't answer (the old agent exited and the new one isn't listening yet) the run starts afresh, so minutes of
+    /// refusal don't count towards the 30 s grace and re-register the new agent.
+    @Test func aRefusalDoesNotCountTowardsTheOrdinaryGrace() {
+        var silence = AgentSilence()
+        #expect(silence.heartbeat(.signatureRejected, counted: true, askedAt: .seconds(0), now: .seconds(1)) == 1)
+        #expect(silence.heartbeat(.signatureRejected, counted: true, askedAt: .seconds(60), now: .seconds(61)) == 61)
+        #expect(silence.heartbeat(.unreachable, counted: true, askedAt: .seconds(70), now: .seconds(74)) == 4)
+        #expect(silence.heartbeat(.unreachable, counted: true, askedAt: .seconds(80), now: .seconds(82)) == 12)
+        // An answer ends it, and so does a beat that isn't counted (not enabled, refuse-all).
+        #expect(silence.heartbeat(.ok(Self.reply()), counted: true, askedAt: .seconds(90), now: .seconds(90)) == nil)
+        #expect(silence.heartbeat(.unreachable, counted: true, askedAt: .seconds(100), now: .seconds(101)) == 1)
+        #expect(silence.heartbeat(.unreachable, counted: false, askedAt: .seconds(110), now: .seconds(110)) == nil)
+        // Silence that turns into a refusal keeps counting: the same agent, now known to be replaced.
+        var turned = AgentSilence()
+        _ = turned.heartbeat(.unreachable, counted: true, askedAt: .seconds(0), now: .seconds(1))
+        #expect(turned.heartbeat(.signatureRejected, counted: true, askedAt: .seconds(10), now: .seconds(11)) == 11)
+    }
+
     /// The wait ends as soon as the agent answers: with a restic still running, a current agent needs nothing.
     @Test func anAnswerEndsTheWait() {
         var input = Self.input()
