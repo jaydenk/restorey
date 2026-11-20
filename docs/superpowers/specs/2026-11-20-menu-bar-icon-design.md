@@ -49,7 +49,9 @@ upload or pause badge, so they don't fit.
 - **One canvas for every state** (drive plus room for the badge), so the icon doesn't change width or move between
   states. The drive sits at the same place in all five.
 - **Size and weight:** the drive at the weight and size of the system's menu bar icons (Wi-Fi, battery); the badge
-  about 60 % of the icon's height. Tuned against a real menu bar, not guessed.
+  about 60 % of the icon's height. Tuned against a real menu bar, not guessed. **Chosen (20 Nov 2026):** the drive at
+  SF Symbols' default size (18 × 13 pt, the same as `wifi`), the badge 72 % of the drive's height (62 % made the marks
+  too small), a 1.5 pt cleared gap, one 22 × 16 pt canvas.
 - **Template image** (`isTemplate = true`): the menu bar tints it for light and dark and dims it on an inactive
   display.
 - **Up to date has to say so (owner, 20 Nov 2026: "we need some state to say it's up to date").** Today's `.ok`

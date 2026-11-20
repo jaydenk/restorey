@@ -592,15 +592,16 @@ are read in full at the window's smallest size; only the biggest-additions line,
 ### The menu bar
 
 The icon and the menu come from one place (`MenuPresentation` in RestoreyCore), so they can't disagree. The icon
-shows the worst state across all plans, as the "Layers" glyph that matches the app icon: three stacked snapshot
-layers fading back in time (the newest full, the next 70 %, the oldest 45 %), whose top slot shows the state. OK shows
-the newest layer; backing up, an up arrow lifting it away; paused, a pause mark; warning, a "!"; and error (a problem
-that stops backups), an "×". The two older layers never change, so the icon keeps its size and place. The five
-glyphs are vector SVG template images in `App/Assets.xcassets` (`StatusIdle`, `StatusBackingUp`, `StatusPaused`,
-`StatusAttention`, `StatusError`, mapped in `App/StatusIcon.swift`), 18 × 19 pt, with 1.7 pt layer outlines and 1.6 pt state marks 6.5 pt tall (about the weight of `wifi` and `battery.100percent` at menu bar size), monochrome like
-the rest of the menu bar (owner, 12 Nov 2026). A template image is drawn from its alpha channel, so the menu bar
-tints and dims them like its own and keeps the fade (Apple's `NSImage.isTemplate`: "You can use the alpha channel in
-the image to adjust the opacity of black content"); colour is kept for the severity symbols inside the open menu.
+shows the worst state across all plans as the system's drive symbol (`externaldrive`) with the state as a badge in
+its bottom-right corner (owner, 20 Nov 2026): a tick when every plan has a backup and nothing is wrong; an up arrow
+while backing up; a pause mark when paused; a "!" when something needs attention; an "×" for a problem that stops
+backups. With nothing to report yet (a plan before its first backup, or Restorey still connecting to its background
+process) it is the drive alone, so the tick never claims backups that don't exist; no plans at all is a "!" ("No
+backup plan yet"). `App/StatusIcon.swift` draws the six images from SF Symbols at run time: the drive at the system's
+menu bar size and weight (18 × 13 pt, like `wifi`), a filled circle badge 72 % of its height over a circle cleared out
+of it with a 1.5 pt gap, on one 22 × 16 pt canvas for every state so the icon never changes width. They are template
+images, monochrome like the rest of the menu bar (owner, 12 Nov 2026), so the menu bar tints and dims them like its
+own; colour is kept for the severity symbols inside the open menu.
 The icon's tooltip says the state in words, updated with the icon (`MenuContent.toolTip`): the worst problem when
 there is one ("Restorey — Full Disk Access is missing", or "Restorey — MacBook: Backup failed at 14:16" with several
 plans, for a plan's problem as for its status), otherwise "Restorey — Backing up", "Restorey — Paused" or the newest
