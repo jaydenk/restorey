@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import RestoreyCore
 
-/// Whether one folder is another or lies below it, compared by whole path components (Task 1). Two entry points: by
-/// path alone (no file system access, for validation and scheduling) and following links (where the user acts).
+/// Whether one folder is another or lies below it, compared by whole path components (Task 1), by path alone (no file
+/// system access). Where links lead is learnt only through `LinkResolver` (`LinkResolverTests`, `FolderDropTests`).
 struct SourcePathsTests {
     @Test func aFolderContainsItselfAndItsDescendants() {
         #expect(SourcePaths.containsByPath("/a", "/a"))
@@ -16,19 +16,6 @@ struct SourcePathsTests {
         #expect(!SourcePaths.containsByPath("/Users/me/Doc", "/Users/me/Documents"))
         #expect(!SourcePaths.containsByPath("/Volumes/Backup", "/Volumes/Backups"))
         #expect(!SourcePaths.containsByPath("/Volumes/Backup", "/Volumes/Backups/data"))
-    }
-
-    @Test func aFolderReachedThroughASymlinkIsCoveredWhenFollowingLinks() throws {
-        let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("SourcePathsTests-\(UUID().uuidString)")
-        defer { try? fm.removeItem(at: root) }
-        let home = root.appendingPathComponent("home")
-        let downloads = home.appendingPathComponent("Downloads")
-        try fm.createDirectory(at: downloads, withIntermediateDirectories: true)
-        let link = root.appendingPathComponent("link")
-        try fm.createSymbolicLink(at: link, withDestinationURL: downloads)
-        #expect(SourcePaths.containsFollowingLinks(home.path, link.path))
-        #expect(!SourcePaths.containsFollowingLinks(link.path, home.path))
     }
 
     /// Final review I1: the comparison by path judges a link by its own path, never where it leads.
@@ -62,5 +49,30 @@ struct SourcePathsTests {
         #expect(SourcePaths.containsByPath("/a/b/", "/a/b/c/"))
         #expect(SourcePaths.containsByPath("/a/b", "/a/x/../b/c"))
         #expect(!SourcePaths.containsByPath("/a/b", "/a/b/../c"))
+    }
+
+    /// Seen live 20 Nov 2026: the folder picker stores `/tmp/…` while a typed repository path keeps `/private/tmp/…`.
+    /// Only the three firmlinks map, and the comparison reads nothing.
+    @Test func privateTmpVarAndEtcAreTheirShortForms() {
+        for name in ["tmp", "var", "etc"] {
+            #expect(SourcePaths.containsByPath("/\(name)/a", "/private/\(name)/a/repo"))
+            #expect(SourcePaths.containsByPath("/private/\(name)/a", "/\(name)/a/repo"))
+            #expect(SourcePaths.containsByPath("/private/\(name)/a", "/private/\(name)/a/repo"))
+        }
+        #expect(SourcePaths.containsByPath("/private", "/private/tmp/x"))
+        #expect(SourcePaths.containsByPath("/private/", "/private/var/backups/repo"))
+        // `/private` holds the firmlinks, so it holds their short spellings too.
+        for name in ["tmp", "var", "etc"] {
+            #expect(SourcePaths.containsByPath("/private", "/\(name)/x"))
+            #expect(SourcePaths.containsByPath("/private/", "/\(name)"))
+        }
+        #expect(!SourcePaths.containsByPath("/private", "/Users/me"))
+        #expect(!SourcePaths.containsByPath("/private/tmpx", "/tmp"))
+        #expect(!SourcePaths.containsByPath("/tmp", "/private/tmpx"))
+        #expect(!SourcePaths.containsByPath("/tmp/a", "/private/tmp/b"))
+        #expect(!SourcePaths.containsByPath("/Users/me", "/private/Users/me"))
+        #expect(!SourcePaths.containsByPath("/private/Users/me", "/Users/me"))
+        #expect(SourcePaths.sameFirmlinkSpelling("/private/var/x", "/var/x/"))
+        #expect(!SourcePaths.sameFirmlinkSpelling("/private/var/x", "/var/y"))
     }
 }

@@ -92,8 +92,8 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
     public var pendingEarlierRemoval: EarlierSnapshotsConfirmation?
     /// Consecutive backups after which `pendingEarlierRemoval`'s preview failed (final review I2), with the newest reason.
     /// The failure doesn't hold back the backup's maintenance, so this is how a lasting one becomes visible
-    /// (`PendingRemovalFailures.noticeThreshold`). Reset when a removal reaches a verdict or the choice is replaced. Nil in
-    /// state written before it existed.
+    /// (`PendingRemovalFailures.noticeThreshold`). A lock another client holds during the preview counts too: it is a preview
+    /// that failed. Reset when a removal reaches a verdict or the choice is replaced. Nil in state written before it existed.
     public var pendingEarlierRemovalFailures: PendingRemovalFailures?
 
     public static let recentLimit = 50

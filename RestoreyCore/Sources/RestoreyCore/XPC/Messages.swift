@@ -26,6 +26,52 @@ public struct PauseRequest: Codable, Sendable, Equatable {
     }
 }
 
+// MARK: Recovery kit
+
+/// `confirmRecoveryKit`'s request (Task 9), sent as JSON in the string an app from before it sent the bare plan ID in.
+/// That bare ID still reads, as a confirmation with no digest to check that starts nothing, which is what it always
+/// was; the added keys are optional in the JSON too.
+public struct ConfirmRecoveryKitRequest: Codable, Sendable, Equatable {
+    public var planID: UUID
+    /// `RecoveryKitDocument.digest` of the kit the person saved. The agent refuses the confirmation when it no longer
+    /// matches the plan it stores; nil checks nothing.
+    public var kitDigest: String?
+    /// Setup's Start: the agent starts the first backup itself, together with the confirmation, so the scheduler never
+    /// finds the plan due before it.
+    public var startFirstBackup: Bool
+
+    public init(planID: UUID, kitDigest: String?, startFirstBackup: Bool) {
+        self.planID = planID
+        self.kitDigest = kitDigest
+        self.startFirstBackup = startFirstBackup
+    }
+
+    private enum CodingKeys: String, CodingKey { case planID, kitDigest, startFirstBackup }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        planID = try c.decode(UUID.self, forKey: .planID)
+        kitDigest = try c.decodeIfPresent(String.self, forKey: .kitDigest)
+        startFirstBackup = try c.decodeIfPresent(Bool.self, forKey: .startFirstBackup) ?? false
+    }
+
+    /// Reads the string `confirmRecoveryKit` carries: a bare plan ID (an app from before this type) or the JSON.
+    public init(message: String) throws {
+        if let planID = UUID(uuidString: message) {
+            self.init(planID: planID, kitDigest: nil, startFirstBackup: false)
+        } else {
+            self = try XPCCoding.decode(Self.self, from: Data(message.utf8))
+        }
+    }
+
+    /// The string `confirmRecoveryKit` carries: the bare plan ID when there is nothing more to say, which an agent from
+    /// before this type reads too, otherwise the JSON.
+    public func message() throws -> String {
+        if kitDigest == nil, !startFirstBackup { return planID.uuidString }
+        return String(decoding: try XPCCoding.encode(self), as: UTF8.self)
+    }
+}
+
 // MARK: Handshake
 
 /// The app's half of the version handshake (spec §8).
@@ -156,12 +202,17 @@ public struct PlanStatus: Codable, Sendable, Equatable {
     /// Why setup's choice to remove earlier snapshots keeps failing (`PendingRemovalFailures`), once it has failed three
     /// backups in a row; nil otherwise, and in a status from before it existed. Information only: no alert, no menu icon.
     public var earlierRemovalProblem: String?
+    /// The sentence for a tidy held back because many more files couldn't be read than last time ("Old snapshots weren’t
+    /// removed: 412 files couldn’t be read, up from 3 last time."), while that is the plan's newest tidy; nil otherwise,
+    /// and in a status from before it existed. Information only: no alert, no menu icon.
+    public var tidyHeldBack: String?
 
     /// `setupState` nil derives it from the plan (`PlanSetupState(plan:)`).
     public init(
         plan: Plan, phase: PlanPhase, lastRecord: RunRecord?, nextRunAt: Date?, alerts: [AlertCondition],
         lastBackup: RunRecord? = nil, repositorySize: RepositorySize? = nil, setupState: PlanSetupState? = nil,
-        latestBackupRecord: RunRecord? = nil, latestBackupVerdict: RunRecord? = nil, earlierRemovalProblem: String? = nil
+        latestBackupRecord: RunRecord? = nil, latestBackupVerdict: RunRecord? = nil, earlierRemovalProblem: String? = nil,
+        tidyHeldBack: String? = nil
     ) {
         self.plan = plan
         self.phase = phase
@@ -175,11 +226,12 @@ public struct PlanStatus: Codable, Sendable, Equatable {
         self.repositorySize = repositorySize
         self.setupState = setupState ?? PlanSetupState(plan: plan)
         self.earlierRemovalProblem = earlierRemovalProblem
+        self.tidyHeldBack = tidyHeldBack
     }
 
     private enum CodingKeys: String, CodingKey {
         case plan, phase, lastRecord, nextRunAt, alerts, lastBackup, repositorySize, setupState, latestBackupRecord
-        case latestBackupVerdict, earlierRemovalProblem
+        case latestBackupVerdict, earlierRemovalProblem, tidyHeldBack
     }
 
     private static func backupRecord(_ record: RunRecord?) -> RunRecord? {
@@ -207,6 +259,7 @@ public struct PlanStatus: Codable, Sendable, Equatable {
         repositorySize = try c.decodeIfPresent(RepositorySize.self, forKey: .repositorySize)
         setupState = try c.decodeIfPresent(PlanSetupState.self, forKey: .setupState) ?? PlanSetupState(plan: plan)
         earlierRemovalProblem = try c.decodeIfPresent(String.self, forKey: .earlierRemovalProblem)
+        tidyHeldBack = try c.decodeIfPresent(String.self, forKey: .tidyHeldBack)
     }
 }
 
@@ -390,6 +443,50 @@ public struct BackUpNowReply: Codable, Sendable, Equatable {
         }
         status = try c.decode(AgentStatus.self, forKey: .status)
         alreadyRunning = try c.decodeIfPresent(Bool.self, forKey: .alreadyRunning) ?? false
+    }
+}
+
+/// What a Cancel did, as the agent tells the app.
+public enum CancelOutcome: String, Codable, Sendable, Equatable {
+    /// A run was stopped, or the backup Resume queued behind one was dropped.
+    case stoppedARun
+    /// A pause was already stopping the run, and the first stop wins: nothing was cancelled.
+    case alreadyPausing
+    /// Nothing was running (it had just ended, say).
+    case nothingToCancel
+    /// The agent didn't say: one from before this reply, or a newer one's outcome this build doesn't know.
+    case unknown
+
+    public init(from decoder: any Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: raw) ?? .unknown
+    }
+}
+
+/// `cancel`'s reply: the status, and what the Cancel did. The status's own keys stay at the top level with one more
+/// beside them (`cancelOutcome`), so an app from before this type still reads the reply as a bare `AgentStatus`, and
+/// an agent from before it (a bare status) decodes as `.unknown`, which the app words as it always did.
+public struct CancelResult: Codable, Sendable, Equatable {
+    public var status: AgentStatus
+    public var outcome: CancelOutcome
+
+    public init(status: AgentStatus, outcome: CancelOutcome) {
+        self.status = status
+        self.outcome = outcome
+    }
+
+    private enum CodingKeys: String, CodingKey { case cancelOutcome }
+
+    public init(from decoder: any Decoder) throws {
+        status = try AgentStatus(from: decoder)
+        outcome = try decoder.container(keyedBy: CodingKeys.self)
+            .decodeIfPresent(CancelOutcome.self, forKey: .cancelOutcome) ?? .unknown
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        try status.encode(to: encoder)
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(outcome, forKey: .cancelOutcome)
     }
 }
 

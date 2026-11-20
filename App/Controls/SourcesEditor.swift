@@ -22,6 +22,7 @@ struct SourcesEditor: View {
     /// What the last add did that isn't a problem (folders it replaced, the repository left out); cleared with `addProblem`.
     @State private var addNote: String?
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.appLog) private var log
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -79,16 +80,25 @@ struct SourcesEditor: View {
         panel.message = "Choose the folders and drives to back up."
         Task { @MainActor in
             guard await panel.presentForKeyWindow() == .OK else { return }
-            add(PickedItem.classify(panel.urls))
+            add(panel.urls)
         }
     }
 
-    /// The button's and a drop's one way in.
-    private func add(_ items: [PickedItem]) {
-        let outcome = FolderDrop.addingSources(items, to: sources, repository: repository)
-        sources = outcome.list
-        addProblem = outcome.problem
-        addNote = outcome.note
+    /// The button's and a drop's one way in. What the items are, and where they and the folders they are compared
+    /// with lead, is read off the main actor (`FolderDrop.look`, within its 10 s deadline, L157); the rule is then
+    /// applied to the list as it is by then. An add judged by path because the disk didn't answer says so in the note
+    /// and the app log.
+    private func add(_ urls: [URL]) {
+        let home = NSHomeDirectory()
+        let compared = sources + [repository?.localFolderPath, home].compactMap { $0 }
+        Task { @MainActor in
+            let look = await FolderDrop.look(at: urls, against: compared)
+            if !look.checkedInTime { logUnchecked(look, log: log, list: "Folders") }
+            let outcome = FolderDrop.addingSources(look, to: sources, repository: repository, home: home)
+            sources = outcome.list
+            addProblem = outcome.problem
+            addNote = outcome.note
+        }
     }
 
     private func remove(_ paths: Set<String>) {

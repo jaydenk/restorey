@@ -128,6 +128,49 @@ import Testing
         }
     }
 
+    // MARK: Digest
+
+    /// Task 9: the kit's digest is made from the plan alone (its address, host label, the names of the keys the kit
+    /// holds and `credentialsVersion`), so the app hashing the kit it showed and the agent hashing what it stores now
+    /// agree without the agent reading a secret, and the digest can't carry one.
+    @Test func theDigestIsTheShownPlansAndNeverASecretValue() {
+        let kit = Self.s3Kit(checkIn: true)
+        let document = RecoveryKitDocument.make(kit, createdAt: Self.created)
+        #expect(document.digest == RecoveryKitDocument.digest(for: kit.plan))
+        #expect(document.digest.count == 64)
+        #expect(document.digest.allSatisfy { "0123456789abcdef".contains($0) })
+        // The same plan with other secret values and another moment gives the same digest: values never go in.
+        var other = kit
+        other.secrets = other.secrets.map { SecretEntry(key: $0.key, value: $0.value + "-changed") }
+        #expect(RecoveryKitDocument.make(other, createdAt: Self.created.addingTimeInterval(60)).digest == document.digest)
+    }
+
+    @Test func theDigestChangesWithWhatTheKitIsForButNotTheCheckInURLOrName() {
+        let plan = Self.s3Kit(checkIn: false).plan
+        let digest = RecoveryKitDocument.digest(for: plan)
+        func changed(_ change: (inout Plan) -> Void) -> String {
+            var copy = plan
+            change(&copy)
+            return RecoveryKitDocument.digest(for: copy)
+        }
+        #expect(changed { $0.hostLabel = "salt" } != digest)
+        #expect(changed { $0.credentialsVersion += 1 } != digest)
+        #expect(changed { $0.id = UUID() } != digest)
+        #expect(changed {
+            $0.repository = .s3(S3Location(
+                provider: .b2, endpoint: URL(string: "https://s3.us-west-004.backblazeb2.com")!,
+                bucket: "other-bucket", prefix: "macs/pepper"))
+        } != digest)
+        // Same address, other keys: a raw repository's environment names are the kit's key names.
+        let raw = changed { $0.repository = .raw(repository: "rest:http://nas/repo", environmentNames: ["A"]) }
+        #expect(changed { $0.repository = .raw(repository: "rest:http://nas/repo", environmentNames: ["B"]) } != raw)
+        #expect(changed { $0.repository = .raw(repository: "rest:http://nas/repo", environmentNames: ["A", "B"]) } != raw)
+        // Not needed to restore (product spec §7), and setup adds it after the kit step: no new kit for it.
+        #expect(changed { $0.hasCheckInURL = true } == digest)
+        #expect(changed { $0.name = "Work" } == digest)
+        #expect(changed { $0.sources = ["/Users/me/Documents"] } == digest)
+    }
+
     // MARK: Where the PDF goes
 
     @Test func onlyAnInternalFixedDiskIsTheMacsOwn() {

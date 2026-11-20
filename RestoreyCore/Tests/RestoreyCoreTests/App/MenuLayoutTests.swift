@@ -282,6 +282,20 @@ struct MenuLayoutTests {
         ] + Self.tail)
     }
 
+    /// The long wait on a running backup (owner, 20 Nov 2026) is an item named for its fix, Restart Backups, with the
+    /// problem under it and why in its tooltip, and nothing to dismiss: it goes once the agent answers.
+    @Test func theLongWaitBannerOffersRestartBackups() {
+        let banner = MenuBanner(
+            severity: .warning, title: "Restorey’s background process hasn’t answered for 30 minutes",
+            detail: "A backup is still running, so Restorey is waiting for it rather than stopping it. Restart Backups stops it now.",
+            action: .restartAgent)
+        #expect(MenuLayout.bannerRows(banner) == [.item(MenuItem(
+            "Restart Backups", subtitle: "Restorey’s background process hasn’t answered for 30 minutes", symbol: .warning,
+            toolTip: "A backup is still running, so Restorey is waiting for it rather than stopping it. Restart Backups stops it now.",
+            command: .banner(.restartAgent),
+            accessibilityLabel: "Warning: Restorey’s background process hasn’t answered for 30 minutes. Restart Backups"))])
+    }
+
     /// A message's full sentence is its tooltip (audit P5).
     @Test func aMessageCarriesItsDetailAsATooltip() {
         let content = MenuContent(icon: .error, message: "Backups couldn’t be set up", messageDetail: "It failed: because.")
@@ -363,8 +377,11 @@ struct MenuLayoutTests {
             (.checking, "Background process: connecting"),
             (.switchedOff, "Background process: switched off"),
             (.notRunning(reachable: false), "Background process: not running"),
+            (.waitingForRunningBackup(longWait: false), "Background process: not answering; a backup is still running"),
+            (.waitingForRunningBackup(longWait: true), "Background process: not answering; a backup is still running"),
             (.damaged, "Background process: missing from the app"),
             (.failed("x"), "Background process: couldn’t be registered"),
+            (.signatureUntrusted, "Background process: not contacted, as the app’s signature can’t be verified"),
         ]
         for (health, line) in expected {
             d.health = health

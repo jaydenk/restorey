@@ -118,7 +118,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
             let reply = try await state.cancel(try Self.planID(planID))
             // Only a Cancel that stopped something is worth a line: one with no run in progress changes nothing.
             if reply.stoppedARun { log.info("Cancelled the run of plan \(planID)") }
-            return reply.status
+            return reply.result
         }
     }
 
@@ -232,10 +232,19 @@ final class AgentService: NSObject, AgentXPC, Sendable {
         }
     }
 
-    func confirmRecoveryKit(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+    /// `request` is a `ConfirmRecoveryKitRequest`, or the bare plan ID an app from before it sends.
+    func confirmRecoveryKit(_ request: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
         respond(reply, "confirmRecoveryKit") { [state, log, plansChanged] in
-            let status = try await state.confirmRecoveryKit(try Self.planID(planID))
-            log.info("Recovery details confirmed for plan \(planID)")
+            let confirm: ConfirmRecoveryKitRequest
+            do {
+                confirm = try ConfirmRecoveryKitRequest(message: request)
+            } catch {
+                throw AgentError.invalidRequest("ConfirmRecoveryKitRequest is malformed")
+            }
+            let status = try await state.confirmRecoveryKit(
+                planID: confirm.planID, kitDigest: confirm.kitDigest, startFirstBackup: confirm.startFirstBackup)
+            let id = confirm.planID.uuidString
+            log.info("Recovery details confirmed for plan \(id)\(confirm.startFirstBackup ? " at setup’s Start" : "")")
             plansChanged()
             return status
         }

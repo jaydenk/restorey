@@ -95,7 +95,8 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             let model = makeSetupModel(progress)
             model.closeWindow = { [weak self] in self?.slots.openWindow(for: .setup)?.performClose(nil) }
             self?.setupModel = model
-            let controller = NSHostingController(rootView: SetupWindow(model: model))
+            let controller = NSHostingController(
+                rootView: SetupWindow(model: model).environment(\.appLog, self?.supervisor?.log))
             // Each step is a different height: the window follows the content's ideal size as the step changes,
             // rather than keeping the first step's height and clipping the buttons of a taller one.
             controller.sizingOptions = [.preferredContentSize, .minSize]
@@ -149,7 +150,8 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             let controller = NSHostingController(
                 rootView: SettingsWindow(
                     context: context, minimumWidth: SettingsWindow.measuredMinimumWidth(), state: state,
-                    editorSlot: slot, networkSlot: network))
+                    editorSlot: slot, networkSlot: network
+                ).environment(\.appLog, supervisor.log))
             // The window may be made larger than the content's minimum, never smaller.
             controller.sizingOptions = [.minSize]
             return controller

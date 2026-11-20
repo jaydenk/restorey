@@ -2,7 +2,8 @@ import Foundation
 import Testing
 @testable import RestoreyCore
 
-/// `config.json` schema 2 → 3 (Ruling P2-6), on the decoded dictionary as `VersionedStore` runs it.
+/// `config.json` schema 2 → 3 (Ruling P2-6) and 3 → 4 (owner, 20 Nov 2026), on the decoded dictionary as
+/// `VersionedStore` runs it.
 struct MigrationsTests {
     private static let confirmedAt = "2027-01-15T08:00:00.000Z"
 
@@ -29,8 +30,8 @@ struct MigrationsTests {
         return try XPCCoding.decode(NetworkSettings.self, from: JSONSerialization.data(withJSONObject: raw))
     }
 
-    @Test func currentVersionIsThree() {
-        #expect(ConfigMigrations.currentVersion == 3)
+    @Test func currentVersionIsFour() {
+        #expect(ConfigMigrations.currentVersion == 4)
     }
 
     @Test func migratesV2PlansToV3() throws {
@@ -88,6 +89,44 @@ struct MigrationsTests {
         var payload: [String: Any] = ["plans": "nope"]
         #expect(throws: ConfigMigrations.MigrationError.notAPlanList) {
             try ConfigMigrations.moveNetworkRulesToConfig(&payload)
+        }
+    }
+
+    // MARK: 3 → 4
+
+    /// Every plan saved before the field had the defaults of revision 1: the agent adds what came after (the CoreSpeech
+    /// caches) once it has loaded the file. The person's folder exclusions are left exactly as stored.
+    @Test func migratesV3PlansToV4() throws {
+        let exclusions = ["/Users/me/Library/Caches", "**/scratch"]
+        var payload: [String: Any] = [
+            "plans": [["name": "Home", "exclusions": exclusions], ["name": "Work", "exclusions": [String]()]],
+            "network": ["skipOnConstrainedNetwork": true, "skippedWiFiNames": [String]()],
+        ]
+        try #require(ConfigMigrations.migrations[3] != nil)
+        try ConfigMigrations.migrations[3]?(&payload)
+        let plans = try #require(payload["plans"] as? [[String: Any]])
+        #expect(plans.map { $0["exclusionDefaultsRevision"] as? Int } == [1, 1])
+        #expect(plans[0]["exclusions"] as? [String] == exclusions)
+        #expect(plans[1]["exclusions"] as? [String] == [])
+        #expect(payload["network"] != nil)
+    }
+
+    @Test func aV3PlanThatAlreadyHasARevisionKeepsIt() throws {
+        var payload: [String: Any] = ["plans": [["exclusionDefaultsRevision": 2]]]
+        try ConfigMigrations.addExclusionDefaultsRevision(&payload)
+        #expect((payload["plans"] as? [[String: Any]])?.first?["exclusionDefaultsRevision"] as? Int == 2)
+    }
+
+    @Test func aV3PayloadWithoutPlansIsLeftAlone() throws {
+        var payload: [String: Any] = [:]
+        try ConfigMigrations.addExclusionDefaultsRevision(&payload)
+        #expect(payload.isEmpty)
+    }
+
+    @Test func aV3PlanListThatIsntOneIsRefused() {
+        var payload: [String: Any] = ["plans": "nope"]
+        #expect(throws: ConfigMigrations.MigrationError.notAPlanList) {
+            try ConfigMigrations.addExclusionDefaultsRevision(&payload)
         }
     }
 }

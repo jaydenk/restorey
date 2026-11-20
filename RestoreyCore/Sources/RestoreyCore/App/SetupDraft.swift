@@ -88,10 +88,12 @@ public struct SetupDraft: Sendable, Equatable, CustomStringConvertible, CustomDe
         progress.planID = id
     }
 
-    /// The recovery-kit step's "I've saved it somewhere other than this Mac" tick (`SetupProgress.kitSaved`).
-    /// The agent's confirmation waits for Done (`SetupFlow`).
-    public mutating func setKitSaved(_ saved: Bool) {
+    /// The recovery-kit step's "I've saved it somewhere other than this Mac" tick (`SetupProgress.kitSaved`), with the
+    /// digest of the kit it was given for (`SetupProgress.kitDigest`), which clearing it forgets. The agent's
+    /// confirmation waits for Done (`SetupFlow`).
+    public mutating func setKitSaved(_ saved: Bool, digest: String?) {
         progress.kitSaved = saved
+        progress.kitDigest = saved ? digest : nil
     }
 
     /// Records the permissions step's "Open at login" switch, applied later by Continue.

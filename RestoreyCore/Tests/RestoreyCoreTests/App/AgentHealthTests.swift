@@ -33,7 +33,7 @@ struct AgentHealthTests {
             smStatus: smStatus, heartbeat: heartbeat, expectedExecutablePrefix: prefix, appVersion: "0.1.0",
             appBuild: "7", storedPlistHash: storedPlistHash, currentPlistHash: "abc",
             executableFingerprintOnDisk: "disk", lastRepairs: lastRepairs,
-            unreachableSince: unreachableFor.map { now.addingTimeInterval(-$0) }, now: now)
+            unreachableAwakeFor: unreachableFor, now: now)
     }
 
     private static func input(
@@ -164,7 +164,7 @@ struct AgentHealthTests {
             input.resticRunningUnderAgent = running
             return decideAgentHealth(input)
         }
-        #expect(decide(running: true, for: 600) == .waitForRunningRestic)
+        #expect(decide(running: true, for: 600) == .waitForRunningRestic(longWait: false))
         #expect(decide(running: true, for: 10) == .showNotRunning(canRepair: true), "inside the grace, as before")
         // The backup has finished: the next heartbeat repairs.
         #expect(decide(running: false, for: 610) == .reregisterAfterDrain)
@@ -172,6 +172,110 @@ struct AgentHealthTests {
         var reachable = Self.input(heartbeat: .ok(Self.reply(path: "/elsewhere/RestoreyDevAgent")))
         reachable.resticRunningUnderAgent = true
         #expect(decideAgentHealth(reachable) == .reregisterAfterDrain)
+    }
+
+    /// Owner, 20 Nov 2026 (correction): Restorey can't tell a stuck restic from a busy one, so a backup running under an
+    /// unreachable agent is waited on for as long as it runs and never stopped automatically. From `longWaitWarning` of
+    /// awake time on, the wait is flagged so the menu warns; the hourly repair limit has no part in it.
+    @Test func aBackupUnderAnUnreachableAgentIsNeverStoppedAutomatically() {
+        func decide(running: Bool, for seconds: TimeInterval, repairs: [RepairRecord] = []) -> AgentHealthAction {
+            var input = Self.input(heartbeat: .unreachable, lastRepairs: repairs, unreachableFor: seconds)
+            input.resticRunningUnderAgent = running
+            return decideAgentHealth(input)
+        }
+        #expect(AgentHealthPolicy.longWaitWarning == 30 * 60)
+        #expect(decide(running: true, for: 30 * 60 - 1) == .waitForRunningRestic(longWait: false))
+        #expect(decide(running: true, for: 30 * 60) == .waitForRunningRestic(longWait: true))
+        #expect(decide(running: true, for: 10 * 3600) == .waitForRunningRestic(longWait: true), "never a repair")
+        // The hourly limit is irrelevant: with or without a recent repair of either kind, it is the same wait.
+        for repairs in [[Self.recent(.reregister)], [Self.recent(.restart)], [Self.recent(.reregister), Self.recent(.restart)]] {
+            #expect(decide(running: true, for: 600, repairs: repairs) == .waitForRunningRestic(longWait: false))
+            #expect(decide(running: true, for: 10 * 3600, repairs: repairs) == .waitForRunningRestic(longWait: true))
+        }
+        // No restic: nothing to stop, so the repair goes ahead as before.
+        #expect(decide(running: false, for: 30 * 60) == .reregisterAfterDrain)
+    }
+
+    /// The wait ends as soon as the agent answers: with a restic still running, a current agent needs nothing.
+    @Test func anAnswerEndsTheWait() {
+        var input = Self.input()
+        input.resticRunningUnderAgent = true
+        #expect(decideAgentHealth(input) == .none)
+    }
+
+    /// Fix round 1: the grace and the long-wait warning count only time the Mac was awake while the agent kept failing.
+    /// A hello that failed just before an 8-hour sleep and the first after waking are seconds of awake time apart, so
+    /// neither the grace nor the warning is reached; a forward clock change can't reach them either, as no wall-clock
+    /// time is read. Awake time is a `SuspendingClock` reading, here a plain `Duration`.
+    @Test func onlyAwakeTimeCountsTowardsTheGraceAndTheWarning() {
+        func decide(_ run: inout UnreachableRun, failing: Bool, askedAt: Duration, now: Duration) -> AgentHealthAction {
+            var input = Self.input(heartbeat: .unreachable)
+            input.unreachableAwakeFor = run.heartbeat(failing: failing, askedAt: askedAt, now: now)
+            input.resticRunningUnderAgent = input.unreachableAwakeFor != nil
+            return decideAgentHealth(input)
+        }
+        // Failed at 1000 s of awake time; the Mac slept 8 hours; the next hello, 3 s after waking, fails too.
+        var slept = UnreachableRun()
+        #expect(decide(&slept, failing: true, askedAt: .seconds(1000), now: .seconds(1002)) == .showNotRunning(canRepair: true))
+        #expect(slept.heartbeat(failing: true, askedAt: .seconds(1003), now: .seconds(1005)) == 5)
+        #expect(decide(&slept, failing: true, askedAt: .seconds(1013), now: .seconds(1015)) == .showNotRunning(canRepair: true))
+        // Past the grace in awake time, restic still running: waited on.
+        #expect(decide(&slept, failing: true, askedAt: .seconds(1040), now: .seconds(1042))
+            == .waitForRunningRestic(longWait: false))
+
+        // 30 awake minutes of failures reach the warning, 29:59 doesn't; the wait goes on either way.
+        var long = UnreachableRun()
+        _ = long.heartbeat(failing: true, askedAt: .seconds(0), now: .seconds(2))
+        #expect(decide(&long, failing: true, askedAt: .seconds(1797), now: .seconds(1799))
+            == .waitForRunningRestic(longWait: false))
+        #expect(decide(&long, failing: true, askedAt: .seconds(1798), now: .seconds(1800))
+            == .waitForRunningRestic(longWait: true))
+
+        // Measured from when the first failing hello was asked, not when it gave up; an answer ends the run.
+        var answered = UnreachableRun()
+        #expect(answered.heartbeat(failing: true, askedAt: .seconds(10), now: .seconds(17)) == 7)
+        #expect(answered.heartbeat(failing: false, askedAt: .seconds(20), now: .seconds(20)) == nil)
+        #expect(answered.heartbeat(failing: true, askedAt: .seconds(30), now: .seconds(31)) == 1)
+    }
+
+    /// Fix round 1 (controller ruling): `register()` still runs under refuse-all, since it stops nothing. If it fails,
+    /// the cause shown is still the signature, as no registration would let the app talk to the agent anyway; the
+    /// registration error is only logged.
+    @Test func aFailedRegistrationUnderRefuseAllShowsTheSignature() {
+        #expect(healthAfterFailedRegistration("Restorey couldn’t register its background process: x", connectionRefusesEveryAgent: true)
+            == .signatureUntrusted)
+        #expect(healthAfterFailedRegistration("Restorey couldn’t register its background process: x", connectionRefusesEveryAgent: false)
+            == .failed("Restorey couldn’t register its background process: x"))
+    }
+
+    /// Ruling T7-1: a connection that admits no agent (`AgentPeerCheck.refuseAll`) makes every hello fail, so the
+    /// agent would look unreachable however healthy it is. Repairing it would stop its backups every hour, so no
+    /// repair is ever decided; the menu names the real cause.
+    @Test func aConnectionThatRefusesEveryAgentNeverRepairs() {
+        func decide(
+            _ smStatus: AgentServiceStatus = .enabled, heartbeat: AgentHeartbeat = .unreachable, running: Bool = false,
+            for seconds: TimeInterval? = 4 * 3600, storedPlistHash: String? = "abc"
+        ) -> AgentHealthAction {
+            var input = Self.input(smStatus, heartbeat: heartbeat, storedPlistHash: storedPlistHash, unreachableFor: seconds)
+            input.connectionRefusesEveryAgent = true
+            input.resticRunningUnderAgent = running
+            return decideAgentHealth(input)
+        }
+        #expect(decide() == .showSignatureUntrusted)
+        #expect(decide(running: true) == .showSignatureUntrusted)
+        #expect(decide(for: 10) == .showSignatureUntrusted)
+        #expect(decide(for: nil) == .showSignatureUntrusted)
+        #expect(decide(storedPlistHash: "old") == .showSignatureUntrusted)
+        // Not decided from the agent at all, so the policy doesn't matter either.
+        var conservative = Self.input(heartbeat: .unreachable, unreachableFor: 600)
+        conservative.connectionRefusesEveryAgent = true
+        #expect(decideAgentHealth(conservative, enabledButUnreachable: .offerRestart) == .showSignatureUntrusted)
+        // Registering stops nothing, and switched off is still the user's to fix.
+        #expect(decide(.notFound) == .register)
+        #expect(decide(.notRegistered) == .register)
+        #expect(decide(.requiresApproval) == .showSwitchedOff)
+        // Off by default.
+        #expect(!Self.input().connectionRefusesEveryAgent)
     }
 
     /// A fault that survives one repair waits for the user ("Restart Backups").

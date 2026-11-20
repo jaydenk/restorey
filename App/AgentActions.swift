@@ -20,7 +20,7 @@ enum AgentActions {
     }
 
     static func cancel(_ plans: [UUID], _ connection: AgentConnection) {
-        run(cancelFailed) { await each(plans, connection.cancel) }
+        run(cancelFailed) { await each(plans) { await connection.cancel($0).map(\.status) } }
     }
 
     static func resume(_ plans: [UUID], _ connection: AgentConnection) {

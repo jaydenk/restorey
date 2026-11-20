@@ -149,8 +149,8 @@ struct CancelBackupIntent: AppIntent {
             planID: plan?.id, health: ready.health, content: ready.content, status: ready.status
         ).get(orThrow: ShortcutError.init)
         guard case .cancel(let plans) = call.kind else { return .result(dialog: "\(call.dialog)") }
-        try await perPlan(.cancel, plans, ready, ready.connection.cancel)
-        return .result(dialog: "\(call.dialog)")
+        let results = try await perPlan(.cancel, plans, ready, ready.connection.cancel)
+        return .result(dialog: "\(ShortcutRules.cancelDialog(call, results: results.map { ($0.name, $0.value.outcome) }))")
     }
 }
 
@@ -274,21 +274,26 @@ struct RestoreyShortcuts: AppShortcutsProvider {
 
 /// Makes the menu's per-plan call for each plan, every one whatever the earlier ones did (as the menu's "All Plans"
 /// does), then throws one error naming each plan that failed and those that changed (`ShortcutRules.failureMessage`).
-@MainActor
-private func perPlan(
+/// Returns each plan's name and the call's reply, for the calls that answered.
+@MainActor @discardableResult
+private func perPlan<Reply>(
     _ action: ShortcutRules.PerPlanAction, _ plans: [UUID], _ ready: ShortcutGateway.Ready,
-    _ call: (UUID) async -> Result<AgentStatus, AgentCallError>
-) async throws {
+    _ call: (UUID) async -> Result<Reply, AgentCallError>
+) async throws -> [(name: String, value: Reply)] {
     var outcomes: [ShortcutRules.PlanOutcome] = []
+    var replies: [(name: String, value: Reply)] = []
     for id in plans {
         let name = ready.content.actions.plans.first { $0.id == id }?.name ?? "Deleted plan"
-        if case .failure(let error) = await call(id) {
+        switch await call(id) {
+        case .failure(let error):
             outcomes.append(.init(planName: name, failure: error.description))
-        } else {
+        case .success(let reply):
             outcomes.append(.init(planName: name, failure: nil))
+            replies.append((name, reply))
         }
     }
     if let message = ShortcutRules.failureMessage(action, outcomes: outcomes) { throw ShortcutError(message) }
+    return replies
 }
 
 private extension Result where Failure == ShortcutRefusal {

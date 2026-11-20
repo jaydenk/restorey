@@ -18,7 +18,11 @@ struct ExclusionsSheet: View {
     @State private var selection: Set<String> = []
     /// Why the last add (button or drop) left something out; cleared by the next change to the list.
     @State private var addProblem: String?
+    /// What the last add did that isn't a problem (judged by path, the disk not checked in time); cleared with
+    /// `addProblem`.
+    @State private var addNote: String?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appLog) private var log
 
     var body: some View {
         let own = Set(DefaultExclusions.ownFolders(home: home, identity: identity))
@@ -49,6 +53,9 @@ struct ExclusionsSheet: View {
             .acceptsDroppedFolders { add($0) }
             if let addProblem {
                 SeverityText(addProblem, severity: .warning)
+            }
+            if let addNote {
+                Text(addNote).explanatoryNote()
             }
             HStack {
                 Button("Add Folder…", action: addFolder)
@@ -96,15 +103,22 @@ struct ExclusionsSheet: View {
         panel.message = "Choose the folders to leave out of the backup."
         Task { @MainActor in
             guard await panel.presentForKeyWindow() == .OK else { return }
-            add(PickedItem.classify(panel.urls))
+            add(panel.urls)
         }
     }
 
-    /// The button's and a drop's one way in.
-    private func add(_ items: [PickedItem]) {
-        let outcome = FolderDrop.addingExclusions(items, to: exclusions)
-        exclusions = outcome.list
-        addProblem = outcome.problem
+    /// The button's and a drop's one way in. What the items are is read off the main actor (`FolderDrop.look`,
+    /// within its 10 s deadline, L157); the rule is then applied to the list as it is by then. An add judged by path
+    /// because the disk didn't answer says so in the note and the app log.
+    private func add(_ urls: [URL]) {
+        Task { @MainActor in
+            let look = await FolderDrop.look(at: urls)
+            if !look.checkedInTime { logUnchecked(look, log: log, list: "Exclusions") }
+            let outcome = FolderDrop.addingExclusions(look, to: exclusions)
+            exclusions = outcome.list
+            addProblem = outcome.problem
+            addNote = outcome.note
+        }
     }
 
     /// The selected rows but Restorey's own folders, which always stay.
@@ -112,5 +126,6 @@ struct ExclusionsSheet: View {
         exclusions.removeAll { selection.contains($0) && !own.contains($0) }
         selection = []
         addProblem = nil
+        addNote = nil
     }
 }

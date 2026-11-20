@@ -129,6 +129,8 @@ targets:
     platform: macOS
     sources:
       - AgentHostedTests
+      # App code under test: the app has no test target, so the alert builder is compiled in here.
+      - App/Controls/DestructiveAlert.swift
     dependencies:
       - target: RestoreyAgent
         link: false

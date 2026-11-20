@@ -3,11 +3,12 @@ import Foundation
 /// Schema history for `config.json`. `VersionedStore` runs `migrations[n]` to take a payload from
 /// version `n` to `n + 1`, working on the decoded dictionary so old shapes never need old Swift types.
 public enum ConfigMigrations {
-    public static let currentVersion = 3
+    public static let currentVersion = 4
 
     public static let migrations: [Int: @Sendable (inout [String: Any]) throws -> Void] = [
         1: addFileTypeExclusionsAndOneFileSystem,
         2: moveNetworkRulesToConfig,
+        3: addExclusionDefaultsRevision,
     ]
 
     public enum MigrationError: Error, Equatable {
@@ -69,5 +70,19 @@ public enum ConfigMigrations {
                 "skippedWiFiNames": [String](),
             ] as [String: Any]
         }
+    }
+
+    /// 3 → 4 (owner, 20 Nov 2026): every plan gets `exclusionDefaultsRevision = 1`, the default folder list it was made
+    /// from (the CoreSpeech caches, added on 17 Nov 2026, are the only default added since schema 3). The agent adds
+    /// later defaults once it has loaded the file (`AgentState.addNewDefaultExclusions`): it knows the home folder,
+    /// which this migration doesn't. Folder `exclusions` are left exactly as stored. A plan that somehow already has
+    /// the key keeps its value.
+    @Sendable public static func addExclusionDefaultsRevision(_ payload: inout [String: Any]) throws {
+        guard let plans = payload["plans"] else { return }
+        guard var list = plans as? [[String: Any]] else { throw MigrationError.notAPlanList }
+        for index in list.indices where list[index]["exclusionDefaultsRevision"] == nil {
+            list[index]["exclusionDefaultsRevision"] = 1
+        }
+        payload["plans"] = list
     }
 }

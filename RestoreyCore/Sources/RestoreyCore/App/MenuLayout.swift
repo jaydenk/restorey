@@ -157,7 +157,9 @@ public struct MenuDiagnostics: Sendable, Equatable {
         case .checking: return "Background process: connecting"
         case .switchedOff: return "Background process: switched off"
         case .notRunning: return "Background process: not running"
+        case .waitingForRunningBackup: return "Background process: not answering; a backup is still running"
         case .damaged: return "Background process: missing from the app"
+        case .signatureUntrusted: return "Background process: not contacted, as the app’s signature can’t be verified"
         case .failed: return "Background process: couldn’t be registered"
         }
     }

@@ -1,7 +1,8 @@
 import AppKit
+import RestoreyCore
 
-/// The earlier-snapshots confirmation's NSAlert (Task 14b), built here rather than in the app so its buttons can be
-/// tested. The one AppKit type in RestoreyCore.
+/// The earlier-snapshots confirmation's NSAlert (Task 14b), its own type so its buttons can be tested. It lived in
+/// RestoreyCore until v0.1.2, which made the agent link AppKit for it; it is app-only now (`DestructiveAlertTests`).
 ///
 /// NSAlert's own rules (NSAlert.h, `-addButtonWithTitle:`): the first button added gets Return, but any button titled
 /// "Cancel" gets Escape instead, so a Cancel added first has no Return and the alert has no default button (live
@@ -9,14 +10,14 @@ import AppKit
 /// Return explicitly; `DestructiveConfirmation` (the app) maps Escape to it while the alert is up, since a button has
 /// one key equivalent. The destructive button never has Return or Escape.
 @MainActor
-public enum DestructiveAlert {
-    public struct Built {
-        public let alert: NSAlert
-        public let cancel: NSButton
-        public let remove: NSButton
+enum DestructiveAlert {
+    struct Built {
+        let alert: NSAlert
+        let cancel: NSButton
+        let remove: NSButton
     }
 
-    public static func make(_ text: EarlierSnapshotsText.Confirmation) -> Built {
+    static func make(_ text: EarlierSnapshotsText.Confirmation) -> Built {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = text.title

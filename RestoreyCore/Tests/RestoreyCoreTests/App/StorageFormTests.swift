@@ -148,6 +148,9 @@ import Testing
         #expect(StorageForm.planName(for: .raw(repository: "/Volumes/Backup/restic", environmentNames: [])) == "Local · restic")
         #expect(StorageForm.planName(for: .raw(repository: "local:/Volumes/Drive", environmentNames: [])) == "Local · Drive")
         #expect(StorageForm.planName(for: .raw(repository: "sftp:nas:/restic", environmentNames: [])) == "restic · sftp")
+        // Named by string handling (L157): `URL(fileURLWithPath:)` stats the path, which a drive that stops answering
+        // holds up, and keeps `..` as the name.
+        #expect(StorageForm.planName(for: .raw(repository: "/Volumes/Backup/restic/x/..", environmentNames: [])) == "Local · restic")
     }
 
     @Test func helpLinksAreTheProvidersDocs() {

@@ -63,12 +63,11 @@ struct MenuPresentationTests {
     }
 
     private static func make(
-        _ status: AgentStatus?, health: AgentHealthState = .healthy, notifications: Bool? = true,
-        now: Date = now
+        _ status: AgentStatus?, health: AgentHealthState = .healthy, notifications: Bool? = true, now: Date = now
     ) -> MenuContent {
         MenuPresentation.make(
-            health: health, status: status, notificationsAuthorised: notifications,
-            now: now, calendar: calendar, locale: locale)
+            health: health, status: status, notificationsAuthorised: notifications, now: now, calendar: calendar,
+            locale: locale)
     }
 
     // MARK: Idle
@@ -586,7 +585,19 @@ struct MenuPresentationTests {
         let paused = Self.status([Self.line(fresh, backedUpAt: nil), Self.line(done, phase: .paused(until: Self.at(15, 0)))])
         #expect(Self.make(paused).icon == .paused)
         let failed = Self.status([Self.line(done, outcome: .failed(exitCode: 1, reason: "x"), alerts: [.backupFailed])])
-        #expect(Self.make(failed).icon > .ok)
+        #expect(Self.make(failed).icon == .error)
+    }
+
+    /// A plan whose only records failed or were skipped has no backup that saved the data (`lastBackup` nil), so no
+    /// tick: the plain drive, unless an alert or a skip that is a warning says there's a problem.
+    @Test func aFailedOrSkippedOnlyPlanIsIdle() {
+        let plan = Self.plan()
+        let failed = Self.record(plan, .failed(exitCode: 1, reason: "x"), at: Self.at(14, 16))
+        #expect(Self.make(Self.status([Self.line(plan, backedUpAt: nil, last: failed)])).icon == .idle)
+        // Skipped for an update: the one skip that isn't itself a warning (`settledFacts`).
+        let skipped = Self.record(plan, .skipped(.agentUpdating), at: Self.at(14, 16))
+        let skippedLine = Self.line(plan, phase: .skipped(.agentUpdating), backedUpAt: nil, last: skipped)
+        #expect(Self.make(Self.status([skippedLine])).icon == .idle)
     }
 
     /// While Restorey connects to or updates its background process it knows nothing yet, so no tick.
@@ -670,6 +681,18 @@ struct MenuPresentationTests {
         #expect(content.banners.map(\.title) == ["Backups aren’t running"])
     }
 
+    /// A stopped plan has run nothing since the stop, so that is why no backup has succeeded: the line says the stop.
+    @Test func aStoppedPlanThatAlsoHasNoRecentSuccessShowsItsStopReason() {
+        let plan = Self.plan()
+        let content = Self.make(Self.status([
+            Self.line(plan, phase: .stopped(reason: "Wrong password"), backedUpAt: Self.at(14, 16, daysAgo: 4), next: nil,
+                alerts: [.noRecentSuccess]),
+        ]))
+        #expect(content.plans[0].status == "Stopped")
+        #expect(content.plans[0].detail == "Wrong password")
+        #expect(content.plans[0].severity == .error)
+    }
+
     @Test func noRecentSuccessKeepsTheSkipReasonAsDetail() {
         let plan = Self.plan()
         let skipped = Self.line(
@@ -726,6 +749,79 @@ struct MenuPresentationTests {
         // The sentence ends in a system error of any length, so it is the line's tooltip (audit P5).
         #expect(failed.message == "Backups couldn’t be set up")
         #expect(failed.messageDetail == "Couldn’t register the agent.")
+    }
+
+    /// Ruling T7-1: the app can't trust its own signature, so it admits no agent; no repair is offered, since none
+    /// can help.
+    @Test func anUntrustedSignatureNamesTheCause() {
+        let content = Self.make(Self.status([Self.line(Self.plan())]), health: .signatureUntrusted)
+        #expect(content.icon == .error)
+        #expect(content.banners.isEmpty)
+        #expect(content.plans.isEmpty)
+        #expect(content.actions.plans.isEmpty)
+        #expect(content.message == "Restorey can’t verify its own signature")
+        #expect(content.messageDetail
+            == "Until it can, it won’t talk to its background process or show your backups. Reinstall Restorey from the download.")
+    }
+
+    // MARK: A long wait on a running backup (owner, 20 Nov 2026)
+
+    private static let longWaitBanner = MenuBanner(
+        severity: .warning, title: "Restorey’s background process hasn’t answered for 30 minutes",
+        detail: "A backup is still running, so Restorey is waiting for it rather than stopping it. Restart Backups stops it now.",
+        action: .restartAgent)
+
+    /// After 30 awake minutes without an answer while a backup runs, Restorey keeps waiting and warns; stopping the
+    /// backup is the person's choice (Restart Backups). The last state is still shown, however old it is.
+    @Test func aLongWaitOnARunningBackupWarnsAndOffersRestart() {
+        let plan = Self.plan()
+        // Older than `notAnsweringGrace`, which alone would make the menu an error.
+        let running = Self.status([Self.line(plan, phase: .running(nil, retrying: nil))], generatedAt: Self.at(13, 30))
+        let content = Self.make(running, health: .waitingForRunningBackup(longWait: true))
+        #expect(content.banners == [Self.longWaitBanner])
+        #expect(content.banners.first?.action.menuTitle == "Restart Backups")
+        #expect(content.icon == .warning)
+        #expect(content.plans.map(\.status) == ["Backing up (not responding)"])
+        #expect(content.actions == MenuActions(backUpNow: false, pause: false, resume: false, perPlanSubmenus: false))
+        #expect(content.toolTip == "Restorey’s background process hasn’t answered for 30 minutes")
+
+        // Nothing known about the plans (the app was relaunched during the wait): the warning still stands.
+        let unknown = Self.make(nil, health: .waitingForRunningBackup(longWait: true))
+        #expect(unknown.banners == [Self.longWaitBanner])
+        #expect(unknown.icon == .warning)
+    }
+
+    /// Fix round 1: while Restorey waits on a restic running under an unreachable agent, before the 30 minutes too, the
+    /// menu never says no backups are happening, however old the last status is or if there is none.
+    @Test func theShortWaitNeverSaysNoBackupsAreHappening() {
+        let plan = Self.plan()
+        let stale = Self.status([Self.line(plan, phase: .running(nil, retrying: nil))], generatedAt: Self.at(13, 30))
+        let idle = Self.status([Self.line(plan)], generatedAt: Self.at(14, 19))
+        for status in [stale, idle, nil] as [AgentStatus?] {
+            let content = Self.make(status, health: .waitingForRunningBackup(longWait: false))
+            #expect(content.icon == .warning, "\(String(describing: status))")
+            #expect(content.banners == [MenuBanner(
+                severity: .warning, title: "Backups aren’t responding", detail: "Showing the last state reported.",
+                action: .restartAgent)])
+            #expect(!content.banners.contains { $0.detail.contains("No backups will happen") })
+        }
+        #expect(Self.make(stale, health: .waitingForRunningBackup(longWait: false)).plans.map(\.status)
+            == ["Backing up (not responding)"])
+    }
+
+    /// Derived from the current health, not stored: the long-wait warning is shown in that state and in no other, so it
+    /// is absent during the short wait and gone in whatever state follows the agent's answer.
+    @Test func theLongWaitWarningBelongsToTheLongWaitStateAlone() {
+        let running = Self.status([Self.line(Self.plan(), phase: .running(nil, retrying: nil))], generatedAt: Self.at(14, 0))
+        let others: [AgentHealthState] = [
+            .checking, .healthy, .updating, .waitingForUpdate, .switchedOff, .notRunning(reachable: false),
+            .notRunning(reachable: true), .waitingForRunningBackup(longWait: false), .damaged, .signatureUntrusted,
+            .failed("x"),
+        ]
+        for health in others {
+            #expect(!Self.make(running, health: health).banners.contains(Self.longWaitBanner), "\(health)")
+        }
+        #expect(Self.make(running, health: .waitingForRunningBackup(longWait: true)).banners.contains(Self.longWaitBanner))
     }
 
     @Test func aConfigurationErrorStopsEverything() {

@@ -56,6 +56,9 @@ struct PlanOverviewTab: View {
                 if let note = overview.earlierRemovalNote {
                     Text(note).explanatoryNote()
                 }
+                if let note = overview.tidyHeldBackNote {
+                    Text(note).explanatoryNote()
+                }
             }
         }
         .formStyle(.grouped)

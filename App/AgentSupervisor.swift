@@ -9,6 +9,9 @@ import RestoreyCore
 final class AgentSupervisor {
     /// The last automatic repair of each kind, as `[RepairRecord]` JSON in the app's `UserDefaults`.
     static let repairRecordKey = "lastAgentRepairs"
+    /// Kept by earlier 0.1.2 builds for their note that a repair had stopped a backup, which no longer exists (owner's
+    /// correction, 20 Nov 2026): removed at start so it doesn't linger in the app's defaults.
+    private static let retiredBackupStoppedKey = "backupStoppedByRepairAt"
 
     private(set) var health: AgentHealthState = .checking
     /// The latest status from the agent. Cleared whenever the health leaves `.healthy`, and fetched
@@ -26,7 +29,8 @@ final class AgentSupervisor {
     @ObservationIgnored let connection: AgentConnection
     @ObservationIgnored private let registration: AgentRegistration
     @ObservationIgnored private let installed: InstalledCopy
-    @ObservationIgnored private let log: AppLog
+    /// The app's log, also handed to the windows' views (`EnvironmentValues.appLog`).
+    @ObservationIgnored let log: AppLog
     @ObservationIgnored private let request: HelloRequest
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var observers: [() -> Void] = []
@@ -39,9 +43,15 @@ final class AgentSupervisor {
     @ObservationIgnored private var lastAction: AgentHealthAction?
     /// After a drain call fails, re-registration waits until then (10 s doubling to 10 min).
     @ObservationIgnored private var drainRetryAfter: Date?
-    /// The start of the current run of failed heartbeats from an `enabled` agent (see
-    /// `AgentHealthPolicy.unreachableGrace`).
-    @ObservationIgnored private var unreachableSince: Date?
+    /// The current run of failed heartbeats from an `enabled` agent, timed in awake time (see
+    /// `AgentHealthPolicy.unreachableGrace` and `longWaitWarning`).
+    @ObservationIgnored private var unreachable = UnreachableRun()
+    /// Stops while the Mac sleeps and ignores wall-clock changes, so neither counts towards the grace or the warning.
+    @ObservationIgnored private let awakeOrigin = SuspendingClock().now
+    /// The last `register()` failure logged, so one repeated every heartbeat is logged once.
+    @ObservationIgnored private var lastRegisterFailure: String?
+    /// The process table couldn't be read for the restic check: logged once until it can be again.
+    @ObservationIgnored private var resticProbeFailureLogged = false
     @ObservationIgnored private var drainRetryDelay: TimeInterval = AgentHealthPolicy.heartbeatInterval
     @ObservationIgnored private var runs = AgentRunTracker()
 
@@ -51,12 +61,13 @@ final class AgentSupervisor {
         self.log = log
         self.defaults = defaults
         registration = AgentRegistration(installed: installed, identity: identity, defaults: defaults)
-        connection = AgentConnection(installed: installed, identity: identity)
+        connection = AgentConnection(installed: installed, identity: identity, log: log)
         let info = Bundle.main.infoDictionary ?? [:]
         request = HelloRequest(
             appVersion: info["CFBundleShortVersionString"] as? String ?? "unknown",
             appBuild: info["CFBundleVersion"] as? String ?? "unknown")
         lastRepairs = loadRepairRecords()
+        defaults.removeObject(forKey: Self.retiredBackupStoppedKey)
         connection.onStatus = { [weak self] status in self?.received(status) }
     }
 
@@ -82,7 +93,7 @@ final class AgentSupervisor {
     /// automatic repairs doesn't apply, but it counts as one. Never offered for a damaged install, where
     /// `unregister()` would remove a working registration that `register()` can't put back.
     func restartAgent() {
-        guard !busy, health != .damaged else { return }
+        guard !busy, health != .damaged, health != .signatureUntrusted else { return }
         busy = true
         log.info("Restarting the agent at the user's request")
         Task { await reregister(reachable: lastHello != nil) }
@@ -115,35 +126,39 @@ final class AgentSupervisor {
             return
         }
         let smStatus = registration.status
-        // No point asking an agent that isn't registered. Stamped before asking: an agent that is stopped
-        // rather than dead only fails at the call timeout, which mustn't stretch the grace.
-        let askedAt = Date()
-        let beat = smStatus == .enabled ? await helloWithRetry() : .unreachable
+        // No point asking an agent that isn't registered, or any agent while the connection admits none (Ruling T7-1).
+        // Stamped before asking: an agent that is stopped rather than dead only fails at the call timeout, which
+        // mustn't stretch the grace.
+        let refusesEveryAgent = connection.refusesEveryAgent
+        let askedAt = awakeTime()
+        let beat = smStatus == .enabled && !refusesEveryAgent ? await helloWithRetry() : .unreachable
         guard !busy else { return }
         // `SMAppService.status` (`smStatus`) is read afresh above at every heartbeat, so the user switching the
         // agent off in Login Items shows within one heartbeat while the app runs.
         if case .ok(let reply) = beat { noteHello(reply) } else { noteHello(nil) }
-        if smStatus == .enabled, beat == .unreachable {
-            if unreachableSince == nil { unreachableSince = askedAt }
-        } else {
-            unreachableSince = nil
-        }
+        let unreachableAwakeFor = unreachable.heartbeat(
+            failing: smStatus == .enabled && !refusesEveryAgent && beat == .unreachable, askedAt: askedAt, now: awakeTime())
 
         let input = AgentHealthInput(
             smStatus: smStatus, heartbeat: beat, expectedExecutablePrefix: installed.helpersPrefix,
             appVersion: request.appVersion, appBuild: request.appBuild,
             storedPlistHash: registration.storedPlistHash, currentPlistHash: plistHash,
             executableFingerprintOnDisk: lastHello.flatMap(Self.fingerprintOnDisk),
-            lastRepairs: lastRepairs, unreachableSince: unreachableSince,
+            lastRepairs: lastRepairs, unreachableAwakeFor: unreachableAwakeFor,
             // Only an unreachable agent would be unregistered undrained, so only then is the process table read.
-            resticRunningUnderAgent: unreachableSince != nil
-                && resticRunsUnderAgent(helpersPrefix: installed.helpersPrefix),
+            resticRunningUnderAgent: unreachableAwakeFor != nil && probeRestic().mayBeRunning,
+            connectionRefusesEveryAgent: refusesEveryAgent,
             now: Date())
         let action = decideAgentHealth(input)
         if action != lastAction {
             log.info("Agent health: \(describe(input)) → \(action)")
-            if action == .waitForRunningRestic {
-                log.info("Not re-registering the unreachable agent: a restic it started is still running, and unregister() without a drain would kill it. Checking again at each heartbeat")
+            switch action {
+            case .waitForRunningRestic(longWait: false):
+                log.info("Not re-registering the unreachable agent: a restic it started is still running, and unregister() without a drain would kill it. Checking again at each heartbeat for as long as it runs")
+            case .waitForRunningRestic(longWait: true):
+                log.error("The agent hasn't answered for \(Int(AgentHealthPolicy.longWaitWarning / 60)) minutes while a restic it started is still running. Still waiting rather than stopping it: the menu warns, and only Restart Backups stops it")
+            default:
+                break
             }
             lastAction = action
         }
@@ -169,14 +184,15 @@ final class AgentSupervisor {
             busy = true
             do {
                 try registration.register()
+                lastRegisterFailure = nil
                 log.info("Registered the agent; status is now \(registration.status)")
                 set(.checking)
             } catch {
-                let failure = AgentHealthState.failed(
-                    "Restorey couldn’t register its background process: \(error.localizedDescription)")
+                let sentence = "Restorey couldn’t register its background process: \(error.localizedDescription)"
                 // Retried every heartbeat; logged once per distinct failure.
-                if health != failure { log.error("Couldn't register the agent: \(error)") }
-                set(failure)
+                if lastRegisterFailure != sentence { log.error("Couldn't register the agent: \(error)") }
+                lastRegisterFailure = sentence
+                set(healthAfterFailedRegistration(sentence, connectionRefusesEveryAgent: connection.refusesEveryAgent))
             }
             busy = false
             checkSoon()
@@ -189,13 +205,17 @@ final class AgentSupervisor {
             if case .ok = heartbeat { await reregister(reachable: true) } else { await reregister(reachable: false) }
         case .waitForUpdate:
             await waitForUpdate()
-        case .waitForRunningRestic:
-            // Re-decided at every heartbeat; `heartbeat` logs why when the action begins.
-            set(.notRunning(reachable: false))
+        case .waitForRunningRestic(let longWait):
+            // Re-decided at every heartbeat; `heartbeat` logs why when the action begins. Never repaired: only the
+            // user's Restart Backups stops that backup.
+            set(.waitingForRunningBackup(longWait: longWait))
         case .showSwitchedOff:
             set(.switchedOff)
         case .showNotRunning:
             if case .ok = heartbeat { set(.notRunning(reachable: true)) } else { set(.notRunning(reachable: false)) }
+        case .showSignatureUntrusted:
+            // `AgentConnection` logged why when it was made; nothing is repaired, so nothing more to log.
+            set(.signatureUntrusted)
         }
     }
 
@@ -274,8 +294,30 @@ final class AgentSupervisor {
             log.info("Re-registered the agent; status is now \(registration.status)")
         } catch {
             log.error("Couldn't re-register the agent: \(error)")
-            set(.failed("Restorey couldn’t register its background process: \(error.localizedDescription)"))
+            set(healthAfterFailedRegistration(
+                "Restorey couldn’t register its background process: \(error.localizedDescription)",
+                connectionRefusesEveryAgent: connection.refusesEveryAgent))
         }
+    }
+
+    /// Reads the process table for a restic under the agent. One that can't be read fails closed (`mayBeRunning`), and
+    /// is logged as an error once until a read succeeds again.
+    private func probeRestic() -> ResticUnderAgent {
+        let probe = probeResticUnderAgent(helpersPrefix: installed.helpersPrefix)
+        if case .unknown(let why) = probe {
+            if !resticProbeFailureLogged {
+                log.error("Couldn't read the process table to check for a restic under the agent (\(why)): treating one as running, so the agent isn't re-registered")
+                resticProbeFailureLogged = true
+            }
+        } else {
+            resticProbeFailureLogged = false
+        }
+        return probe
+    }
+
+    /// Awake time since the supervisor first asked, for `UnreachableRun`.
+    private func awakeTime() -> Duration {
+        awakeOrigin.duration(to: SuspendingClock().now)
     }
 
     /// The fingerprint of the file now at the path the agent reports.

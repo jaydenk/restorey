@@ -71,8 +71,13 @@ public enum SettingsGeneral {
             return Line("Switched off — no backups will happen", severity: .error, action: .openLoginItems)
         case .notRunning:
             return Line("Not running — no backups will happen", severity: .error, action: .restartAgent)
+        case .waitingForRunningBackup:
+            // A restic runs under the agent, so backups are happening (fix round 1).
+            return Line("Not answering — a backup is still running", severity: .warning, action: .restartAgent)
         case .damaged:
             return Line("Restorey’s installation is damaged — reinstall it from the download", severity: .error)
+        case .signatureUntrusted:
+            return Line("Restorey can’t verify its own signature — reinstall it from the download", severity: .error)
         case .failed(let sentence):
             return Line(sentence, severity: .error)
         }

@@ -12,9 +12,15 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
     public var hostLabel: String
     /// Absolute paths.
     public var sources: [String]
-    /// restic exclude patterns (folders, mostly), passed as `--exclude`. They belong to the person: a
-    /// migration never rewrites them.
+    /// restic exclude patterns (folders, mostly), passed as `--exclude`. They belong to the person: nothing in
+    /// them is ever removed or changed for them. The one exception is an addition: a default added after the plan was
+    /// made is added once (`exclusionDefaultsRevision`), and stays removed if the person removes it.
     public var exclusions: [String]
+    /// The default folder list's revision (`DefaultExclusions.revision`) whose additions this plan has been given.
+    /// New plans start at the current one; schema 4 gave older plans 1. Agent-owned: after loading `config.json` the
+    /// agent adds `DefaultExclusions.additions(after:home:)` the plan doesn't already list and moves this on
+    /// (`AgentState.addNewDefaultExclusions`), and a saved plan keeps the stored value.
+    public var exclusionDefaultsRevision: Int
     /// File extensions without the dot, in lower case (`dmg`, `vmdk`), passed as `--iexclude=*.<ext>`
     /// (Ruling R64b). Editable per plan; new plans start with `DefaultExclusions.fileTypes`.
     public var fileTypeExclusions: [String]
@@ -45,6 +51,11 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
     public var setupCompletedAt: Date?
     /// Whether the user has dismissed the "No off-Mac monitoring" note for this plan.
     public var offMacNoteDismissed: Bool
+    /// Moves on by one each time the repository or a secret that opens it changes (the repository password, an S3
+    /// key, an environment value), never with the check-in URL. Agent-owned, like `recoveryKitConfirmedAt`: it stands
+    /// for the secrets' values in the recovery kit's digest (`RecoveryKitDocument.digest(for:)`), so a kit shown before
+    /// a change can't be confirmed after it and the digest never holds a secret. 0 for a new plan.
+    public var credentialsVersion: Int
     public var createdAt: Date
     /// When setup adopted the plan's repository ("Use This Repository"). It bounds "snapshots from before
     /// adoption" (product spec §5.6, Task 14b): only snapshots this Mac made by then are offered. Nil for a created
@@ -60,6 +71,7 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         hostLabel: String,
         sources: [String],
         exclusions: [String],
+        exclusionDefaultsRevision: Int = DefaultExclusions.revision,
         fileTypeExclusions: [String],
         oneFileSystem: Bool,
         skipsItemsMarkedNotForBackup: Bool = true,
@@ -76,6 +88,7 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         recoveryKitConfirmedAt: Date?,
         setupCompletedAt: Date? = nil,
         offMacNoteDismissed: Bool = false,
+        credentialsVersion: Int = 0,
         createdAt: Date,
         adoptedAt: Date? = nil
     ) {
@@ -86,6 +99,7 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         self.hostLabel = hostLabel
         self.sources = sources
         self.exclusions = exclusions
+        self.exclusionDefaultsRevision = exclusionDefaultsRevision
         self.fileTypeExclusions = fileTypeExclusions
         self.oneFileSystem = oneFileSystem
         self.skipsItemsMarkedNotForBackup = skipsItemsMarkedNotForBackup
@@ -102,16 +116,18 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         self.recoveryKitConfirmedAt = recoveryKitConfirmedAt
         self.setupCompletedAt = setupCompletedAt
         self.offMacNoteDismissed = offMacNoteDismissed
+        self.credentialsVersion = credentialsVersion
         self.createdAt = createdAt
         self.adoptedAt = adoptedAt
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, repository, origin, hostLabel, sources, exclusions, fileTypeExclusions, oneFileSystem
+        case id, name, repository, origin, hostLabel, sources, exclusions, exclusionDefaultsRevision
+        case fileTypeExclusions, oneFileSystem
         case skipsItemsMarkedNotForBackup, backUpAnyway
         case schedule, conditions, retention, pruneEnabled, forgetCadence, uploadLimitKiB, packSizeMiB
         case noSuccessAlertDays, hasCheckInURL, recoveryKitConfirmedAt, setupCompletedAt, offMacNoteDismissed
-        case createdAt, adoptedAt
+        case credentialsVersion, createdAt, adoptedAt
     }
 
     /// `config.json` always has `offMacNoteDismissed` (schema 3), but a plan in a status or save request from
@@ -128,6 +144,9 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         hostLabel = try c.decode(String.self, forKey: .hostLabel)
         sources = try c.decode([String].self, forKey: .sources)
         exclusions = try c.decode([String].self, forKey: .exclusions)
+        // `config.json` always has it (schema 4). A plan without one, in a request from a build before it, had the
+        // list every plan had before the field: revision 1, so a later default is offered to it once, never lost.
+        exclusionDefaultsRevision = try c.decodeIfPresent(Int.self, forKey: .exclusionDefaultsRevision) ?? 1
         fileTypeExclusions = try c.decode([String].self, forKey: .fileTypeExclusions)
         oneFileSystem = try c.decode(Bool.self, forKey: .oneFileSystem)
         // Added after schema 3 with no migration (additive, like `adoptedAt`): absent means the defaults.
@@ -145,13 +164,16 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         recoveryKitConfirmedAt = try c.decodeIfPresent(Date.self, forKey: .recoveryKitConfirmedAt)
         setupCompletedAt = try c.decodeIfPresent(Date.self, forKey: .setupCompletedAt)
         offMacNoteDismissed = try c.decodeIfPresent(Bool.self, forKey: .offMacNoteDismissed) ?? false
+        // Added after schema 3 with no migration (Task 9): absent is a plan whose secrets haven't changed since.
+        credentialsVersion = try c.decodeIfPresent(Int.self, forKey: .credentialsVersion) ?? 0
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         adoptedAt = try c.decodeIfPresent(Date.self, forKey: .adoptedAt)
     }
 
     /// A new plan with every spec default applied. Callers pass the folder exclusion list
     /// (`DefaultExclusions.paths(home:identity:)`), which depends on the home folder and the build's
-    /// identity; the file types default to `DefaultExclusions.fileTypes`.
+    /// identity, and is recorded as made from the current `DefaultExclusions.revision`; the file types default to
+    /// `DefaultExclusions.fileTypes`.
     public static func newHotPlan(
         name: String,
         repository: Repository,
@@ -221,6 +243,19 @@ extension PlanValidationError {
         case .sourceInsideRepository(let path):
             "“\(FolderDrop.name(path))” is inside this plan’s backup repository. Choose a different folder"
         }
+    }
+}
+
+extension Plan {
+    /// The keychain items that open the plan's repository, in the plan's order: the repository password, then an S3
+    /// plan's two keys or a raw plan's environment values. The check-in URL isn't one: it isn't needed to restore.
+    public var credentialKeys: [SecretKey] {
+        var keys: [SecretKey] = [.repositoryPassword(id)]
+        switch repository {
+        case .s3: keys += [.s3AccessKeyID(id), .s3SecretAccessKey(id)]
+        case .raw(_, let names): keys += names.map { .environment(id, name: $0) }
+        }
+        return keys
     }
 }
 

@@ -68,8 +68,9 @@ import Testing
         draft.setPlanID(Self.planID)
         draft.go(to: .recoveryKit)
         #expect(!draft.progress.kitSaved)
-        draft.setKitSaved(true)
-        #expect(draft.progress == SetupProgress(planID: Self.planID, step: .recoveryKit, addingPlan: false, kitSaved: true))
+        draft.setKitSaved(true, digest: "kit-digest")
+        #expect(draft.progress == SetupProgress(
+            planID: Self.planID, step: .recoveryKit, addingPlan: false, kitSaved: true, kitDigest: "kit-digest"))
         // The probe isn't a secret: a step change keeps it.
         draft.probe = RepositoryProbe(state: .passwordRejected)
         draft.go(to: .sources)

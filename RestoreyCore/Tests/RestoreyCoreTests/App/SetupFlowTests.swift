@@ -220,7 +220,8 @@ import Testing
     @Test func theStoreRoundTripsAndClears() {
         Self.withStore { store, _ in
             #expect(store.load() == nil)
-            let progress = SetupProgress(planID: UUID(), step: .password, addingPlan: true, kitSaved: true)
+            let progress = SetupProgress(
+                planID: UUID(), step: .password, addingPlan: true, kitSaved: true, kitDigest: "kit-digest")
             store.save(progress)
             #expect(store.load() == progress)
             store.clear()
@@ -320,6 +321,27 @@ import Testing
 }
 
 extension SetupFlowTests {
+    // MARK: The kit tick
+
+    /// Task 9: the tick keeps the digest of the kit it was given for, which Done confirms. Progress saved before the
+    /// digest existed can't say which kit was saved, so its tick reads as not given and setup shows the kit again.
+    @Test func theKitTickKeepsItsDigestAndAnOlderTickReadsAsNotGiven() throws {
+        let plans = [Self.status("Home", .unfinished)]
+        let id = plans[0].plan.id
+        var draft = SetupDraft(progress: SetupProgress(planID: id, step: .recoveryKit, addingPlan: false))
+        draft.setKitSaved(true, digest: "ab12")
+        #expect(draft.progress.kitSaved && draft.progress.kitDigest == "ab12")
+        let decoded = try JSONDecoder().decode(SetupProgress.self, from: JSONEncoder().encode(draft.progress))
+        #expect(decoded == draft.progress)
+        draft.setKitSaved(false, digest: "ab12")
+        #expect(!draft.progress.kitSaved && draft.progress.kitDigest == nil)
+
+        let old = Data(#"{"planID":"\#(id.uuidString)","step":"schedule","addingPlan":false,"kitSaved":true}"#.utf8)
+        let progress = try JSONDecoder().decode(SetupProgress.self, from: old)
+        #expect(!progress.kitSaved)
+        #expect(SetupFlow.resume(saved: progress, plans: plans, installed: true)?.step == .recoveryKit)
+    }
+
     // MARK: "Add Plan…" (Settings → Plans)
 
     @Test func addingAPlanStartsAFreshSetupAtStorage() {

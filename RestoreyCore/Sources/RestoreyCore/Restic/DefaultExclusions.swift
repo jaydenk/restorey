@@ -1,6 +1,6 @@
 import Foundation
 
-/// The exclusions a new plan starts with (spec §5.7, Ruling R64).
+/// The exclusions a new plan starts with (spec §5.7, Ruling R64), and what was added to them since (`revision`).
 ///
 /// There is no Time Machine list to read: on macOS 27 `StdExclusions.plist` no longer exists (the list is
 /// compiled into `/System/Library/CoreServices/TimeMachine/backupd`), so the folders below were found by
@@ -50,6 +50,23 @@ public enum DefaultExclusions {
             // Not under a `Library/` level, so the Group Containers pattern above misses it; EPERM on every run.
             "\(h)/Library/Group Containers/group.com.apple.CoreSpeech/Caches",
         ]
+    }
+
+    /// The folder list's revision. Moves on by one with each folder added to `paths(home:)`, whose patterns go in
+    /// `additions(after:home:)` under the new number; an old revision's entry is never edited. A plan records the
+    /// revision its list was made from (`Plan.exclusionDefaultsRevision`), so the agent can add a later default to it
+    /// once (owner, 20 Nov 2026). Defaults are never removed or changed in an existing plan.
+    public static let revision = 2
+
+    /// The patterns `paths(home:)` gained after `revision`, oldest first: what a plan made at that revision is given.
+    /// Revision 1 is the list every plan saved before schema 4 started with.
+    public static func additions(after revision: Int, home: URL) -> [String] {
+        let h = escapedGlob(home.path)
+        let added: [(revision: Int, patterns: [String])] = [
+            // 17 Nov 2026 (final review m1).
+            (2, ["\(h)/Library/Group Containers/group.com.apple.CoreSpeech/Caches"]),
+        ]
+        return added.filter { $0.revision > revision }.flatMap(\.patterns)
     }
 
     /// `paths(home:)` plus Restorey's own logs and Application Support folders for `identity`.

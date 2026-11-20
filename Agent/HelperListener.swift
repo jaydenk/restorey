@@ -20,7 +20,7 @@ final class HelperListener: NSObject, NSXPCListenerDelegate, Sendable {
     func listen(identity: Identity, team: String) -> NSXPCListener {
         let listener = NSXPCListener(machServiceName: identity.helperServiceName)
         listener.setConnectionCodeSigningRequirement(
-            AgentListener.codeSigningRequirement(bundleID: identity.agentBundleID, team: team))
+            CodeSigning.requirement(bundleID: identity.agentBundleID, team: team))
         listener.delegate = self
         listener.resume()
         log.info("Listening on \(identity.helperServiceName) for \(identity.agentBundleID) in helper mode")

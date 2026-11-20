@@ -24,6 +24,9 @@ public struct SetupProgress: Codable, Sendable, Equatable {
     /// The recovery kit has been saved or printed at `.recoveryKit`. The agent's confirmation is deferred
     /// to Done (see `SetupFlow`), so this, not the plan, is what lets setup go past `.recoveryKit`.
     public var kitSaved: Bool
+    /// `RecoveryKitDocument.digest` of the kit the tick was given for, which Done's Start confirms (Task 9): the kit
+    /// has closed by then, and the agent refuses it if the recovery details changed since. Not secret. Nil with no tick.
+    public var kitDigest: String?
     /// The permissions step's "Open at login" choice, kept from the moment it is switched until Continue applies
     /// it, because granting Full Disk Access quits the app mid-step. Nil until switched: on (P2-16).
     public var openAtLogin: Bool?
@@ -40,13 +43,15 @@ public struct SetupProgress: Codable, Sendable, Equatable {
     public var earlierRemoval: EarlierSnapshotsConfirmation?
 
     public init(
-        planID: UUID?, step: SetupStep, addingPlan: Bool, kitSaved: Bool = false, openAtLogin: Bool? = nil,
-        repositoryCreated: Bool = false, adoption: AdoptReport? = nil, earlierRemoval: EarlierSnapshotsConfirmation? = nil
+        planID: UUID?, step: SetupStep, addingPlan: Bool, kitSaved: Bool = false, kitDigest: String? = nil,
+        openAtLogin: Bool? = nil, repositoryCreated: Bool = false, adoption: AdoptReport? = nil,
+        earlierRemoval: EarlierSnapshotsConfirmation? = nil
     ) {
         self.planID = planID
         self.step = step
         self.addingPlan = addingPlan
         self.kitSaved = kitSaved
+        self.kitDigest = kitDigest
         self.openAtLogin = openAtLogin
         self.repositoryCreated = repositoryCreated
         self.adoption = adoption
@@ -54,17 +59,19 @@ public struct SetupProgress: Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case planID, step, addingPlan, kitSaved, openAtLogin, repositoryCreated, adoption, earlierRemoval
+        case planID, step, addingPlan, kitSaved, kitDigest, openAtLogin, repositoryCreated, adoption, earlierRemoval
     }
 
     /// Progress stored before `kitSaved`, `openAtLogin`, `repositoryCreated` or `adoption` existed still decodes:
-    /// not saved, not switched, nothing created or adopted.
+    /// not saved, not switched, nothing created or adopted. A tick stored before `kitDigest` can't say which kit was
+    /// saved, so it reads as not given: setup shows the kit again rather than confirm one it can't name.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         planID = try c.decodeIfPresent(UUID.self, forKey: .planID)
         step = try c.decode(SetupStep.self, forKey: .step)
         addingPlan = try c.decode(Bool.self, forKey: .addingPlan)
-        kitSaved = try c.decodeIfPresent(Bool.self, forKey: .kitSaved) ?? false
+        kitDigest = try c.decodeIfPresent(String.self, forKey: .kitDigest)
+        kitSaved = try c.decodeIfPresent(Bool.self, forKey: .kitSaved) == true && kitDigest != nil
         openAtLogin = try c.decodeIfPresent(Bool.self, forKey: .openAtLogin)
         repositoryCreated = try c.decodeIfPresent(Bool.self, forKey: .repositoryCreated) ?? false
         adoption = try c.decodeIfPresent(AdoptReport.self, forKey: .adoption)
@@ -134,11 +141,12 @@ public struct SetupFacts: Sendable, Equatable {
 /// The setup step machine the setup window drives.
 ///
 /// Ordering that the window must keep: the recovery kit is saved at `.recoveryKit` (recorded as
-/// `SetupProgress.kitSaved`), but the agent's `confirmRecoveryKit` is deferred. Confirming makes the plan
-/// `.complete` and runnable, and sources and schedule come after the kit, so confirming early would let the
-/// scheduler back up the default sources mid-setup. On Done ("Start first backup") the window calls
-/// `confirmRecoveryKit` and then `backUpNow`. Until then the plan stays `.unfinished`, which is what lets
-/// `resume` bring the owner back to sources, schedule or done.
+/// `SetupProgress.kitSaved`, with the kit's digest), but the agent's `confirmRecoveryKit` is deferred. Confirming
+/// makes the plan `.complete` and runnable, and sources and schedule come after the kit, so confirming early would let
+/// the scheduler back up the default sources mid-setup. On Done ("Start first backup") the window calls
+/// `confirmRecoveryKit` once, with the digest and `startFirstBackup`: the agent checks the kit is still the current one,
+/// then confirms it and starts the first backup together (Task 9). Until then the plan stays `.unfinished`, which is
+/// what lets `resume` bring the owner back to sources, schedule or done.
 public enum SetupFlow {
     public static func firstStep(installed: Bool, addingPlan: Bool) -> SetupStep {
         if addingPlan { return .storage }

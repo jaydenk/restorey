@@ -1304,6 +1304,69 @@ struct PlanRunnerTests {
         #expect(await f.history().runningRecordID == nil)
     }
 
+    /// Recovery's `unlock` after a start isn't a run of the plan (L168): the status never shows the plan running, so
+    /// the menu bar icon doesn't say "backing up" for the seconds a remote unlock takes after every restart.
+    @Test func recoveryUnlockDoesNotShowThePlanRunning() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        let (state, runner) = await f.reloaded() // the agent starting again
+        let phases = Locked<[PlanPhase]>([])
+        await state.setStatusObserver { status in
+            phases.mutate { $0 += status.plans.map(\.phase) }
+        }
+        await runner.recoverAfterStart()
+        let history = try await state.runInputs(f.planID).history
+        #expect(history.recent.first?.operation == .unlock, "recovery ran its unlock")
+        #expect(!phases.value.isEmpty, "the unlock's record was pushed")
+        #expect(!phases.value.contains { $0.isRunning }, "pushed phases: \(phases.value)")
+        #expect(history.runningRecord == nil)
+    }
+
+    /// A delete that arrives while start-up recovery is unlocking (the app's listener is up before the runner is
+    /// attached, as in `main.swift`) is refused at once as "still starting up", like Back Up Now, rather than waiting
+    /// for an unlock nothing can stop yet.
+    @Test func aDeleteDuringRecoveryIsRefusedAtOnce() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restorey-held-unlock-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let started = directory.appendingPathComponent("unlock-started")
+        let release = directory.appendingPathComponent("release")
+        let wrapper = directory.appendingPathComponent("restic.sh")
+        try """
+            #!/bin/sh
+            if [ "$1" = unlock ]; then
+              : > '\(started.path)'
+              while [ ! -f '\(release.path)' ]; do /bin/sleep 0.05; done
+            fi
+            exec '\(try ResticBinary.require().path)' "$@"
+
+            """.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+        let f = try await RunnerFixture.make(executable: wrapper)
+        defer { f.remove() }
+
+        let (state, runner) = await f.reloadedUnattached()
+        let recovery = Task {
+            await runner.recoverAfterStart()
+            await state.attach(runner: runner)
+        }
+        while !FileManager.default.fileExists(atPath: started.path) { try await Task.sleep(for: .milliseconds(10)) }
+
+        // The unlock is held until the test releases it after the refusal; the fallback release only stops a delete
+        // that waits for the unlock from hanging the test (it then finds the release file already there).
+        let fallback = Task {
+            try await Task.sleep(for: .seconds(30))
+            try "".write(to: release, atomically: true, encoding: .utf8)
+        }
+        await #expect(throws: AgentError.runnerUnavailable) { _ = try await state.deletePlan(f.planID) }
+        #expect(!FileManager.default.fileExists(atPath: release.path), "the delete waited for the unlock")
+        try "".write(to: release, atomically: true, encoding: .utf8)
+        fallback.cancel()
+        await recovery.value
+        #expect(try await state.runInputs(f.planID).history.recent.first?.operation == .unlock)
+    }
+
     @Test func recoveryLogsAnUnlockItHasToSkip() async throws {
         let f = try await RunnerFixture.make(createRepository: false) { plan in
             if case .raw(let repository, _) = plan.repository {
@@ -1491,6 +1554,7 @@ struct PlanRunnerTests {
         let record = try await run.value
 
         #expect(cancel.stoppedARun, "the agent log says a run was cancelled")
+        #expect(cancel.outcome == .stoppedARun)
         #expect(record.outcome == .cancelled)
         #expect(await f.pings() == [], "neither a /fail nor a success ping")
         await f.state.alertsDelivered()
@@ -1560,6 +1624,7 @@ struct PlanRunnerTests {
         let after = try await f.state.cancel(f.planID)
 
         #expect(!after.stoppedARun, "nothing was running, so the agent log doesn't say a run was cancelled")
+        #expect(after.outcome == .nothingToCancel)
         // `generatedAt` and `sequence` move with every status built; everything else must stay as it was.
         #expect(after.status.plans == before.plans)
         #expect(await f.state.status().plans == before.plans)
@@ -1617,10 +1682,12 @@ struct PlanRunnerTests {
 
         _ = try await f.state.pause(f.planID, for: .oneHour)
         let until = try #require(await f.history().pausedUntil)
-        _ = try await f.state.cancel(f.planID)
+        let cancel = try await f.state.cancel(f.planID)
         held.release()
         let record = try await run.value
 
+        #expect(cancel.outcome == .alreadyPausing, "the Shortcut says the pause won, not that it cancelled")
+        #expect(!cancel.stoppedARun)
         #expect(record.outcome == .paused)
         #expect(held.interrupts() == 1, "the pause’s SIGINT only, never a second")
         #expect(await f.history().pausedUntil == until)
@@ -1731,6 +1798,60 @@ struct PlanRunnerTests {
             return
         }
         #expect(await f.status().phase == .idle)
+    }
+
+    /// Task 9 (final review rows 233, 246): setup's Start confirms the kit it showed and starts the first backup in one
+    /// call. The confirmation and the run appear in the same status, so no status (and no scheduler read) ever has the
+    /// plan confirmed but not running: it is never "due", and the backup that runs is this manual one.
+    @Test func confirmingTheShownKitStartsTheFirstBackupInTheSameTurn() async throws {
+        let f = try await RunnerFixture.make(confirmKit: false)
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        let shown = RecoveryKitDocument.make(try await f.state.recoveryKit(f.planID), createdAt: f.clock.now).digest
+        let firstConfirmed = Locked<PlanPhase?>(nil)
+        let planID = f.planID
+        await f.state.setStatusObserver { status in
+            guard let plan = status.plans.first(where: { $0.plan.id == planID }), plan.plan.recoveryKitConfirmedAt != nil
+            else { return }
+            firstConfirmed.mutate { if $0 == nil { $0 = plan.phase } }
+        }
+
+        let status = try await f.state.confirmRecoveryKit(planID: f.planID, kitDigest: shown, startFirstBackup: true)
+        #expect(status.plans.first?.setupState == .complete)
+        #expect(status.plans.first?.phase.isRunning == true)
+        #expect(firstConfirmed.value?.isRunning == true, "confirmed and running appeared together")
+        let record = try #require(await f.runner.waitForBackgroundRun(planID: f.planID))
+        #expect(record.trigger == .manual)
+        guard case .success = record.outcome else {
+            Issue.record("expected a success, got \(record.outcome)")
+            return
+        }
+        #expect(await f.history().recent.filter { $0.operation == .backup }.map(\.id) == [record.id])
+    }
+
+    /// A kit shown before its keys changed confirms nothing and starts nothing; the plan stays free to start once the
+    /// new kit is confirmed.
+    @Test func aStaleKitNeitherConfirmsNorStartsTheFirstBackup() async throws {
+        let f = try await RunnerFixture.make(confirmKit: false)
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        let stale = RecoveryKitDocument.digest(for: await f.plan())
+        try await f.updatePlan { $0.hostLabel = "otherhost" }
+
+        await #expect { try await f.state.confirmRecoveryKit(planID: f.planID, kitDigest: stale, startFirstBackup: true) }
+            throws: { ($0 as? AgentError) == .recoveryKitChanged }
+        #expect(await f.plan().recoveryKitConfirmedAt == nil)
+        #expect(await f.status().phase.isRunning == false)
+        #expect(await f.runner.waitForBackgroundRun(planID: f.planID) == nil)
+
+        let current = RecoveryKitDocument.digest(for: await f.plan())
+        let status = try await f.state.confirmRecoveryKit(planID: f.planID, kitDigest: current, startFirstBackup: true)
+        #expect(status.plans.first?.phase.isRunning == true)
+        let record = try #require(await f.runner.waitForBackgroundRun(planID: f.planID))
+        guard case .success = record.outcome else {
+            Issue.record("expected a success, got \(record.outcome)")
+            return
+        }
     }
 
     @Test func backUpNowStillHonoursPreflight() async throws {

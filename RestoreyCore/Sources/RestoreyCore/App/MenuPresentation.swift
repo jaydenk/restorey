@@ -259,10 +259,19 @@ public enum MenuPresentation {
                 severity: .error, title: "Backups aren’t running",
                 detail: "No backups will happen.", action: .restartAgent)
             return MenuContent(icon: .error, banners: [banner], message: lastKnown(status, format))
+        case .waitingForRunningBackup(let long):
+            // A restic is running under the agent, so neither wait says no backups are happening (fix round 1),
+            // whatever the age of the last status.
+            return long ? longWait(status: status, format: format) : notAnswering(status: status, format: format)
         case .damaged:
             return MenuContent(
                 icon: .error, message: "Restorey’s installation is damaged",
                 messageDetail: "Reinstall Restorey from the download.")
+        case .signatureUntrusted:
+            return MenuContent(
+                icon: .error, message: "Restorey can’t verify its own signature",
+                messageDetail: "Until it can, it won’t talk to its background process or show your backups. "
+                    + "Reinstall Restorey from the download.")
         case .failed(let sentence):
             // The sentence ends in the system's error, of any length: the line says what happened, its tooltip and
             // Settings → General say why (audit P5).
@@ -490,6 +499,15 @@ public enum MenuPresentation {
             line.action = .showDetails(status.plan.id)
             return
         }
+        // A stopped plan has run nothing since it stopped, so the stop is why no backup has succeeded: it comes before
+        // "No successful backup".
+        if case .stopped(let reason) = status.phase {
+            // The agent's reason, of any length: the menu item opens the plan, whose page shows it (audit P5).
+            line.status = "Stopped"
+            line.detail = reason
+            line.severity = .error
+            return
+        }
         if alerts.contains(.noRecentSuccess) {
             let days = status.plan.noSuccessAlertDays
             line.status = "No successful backup in \(days) \(days == 1 ? "day" : "days")"
@@ -499,13 +517,6 @@ public enum MenuPresentation {
                 line.detail = reason.summary
                 line.menuDetail = reason.summary
             }
-            return
-        }
-        if case .stopped(let reason) = status.phase {
-            // The agent's reason, of any length: the menu item opens the plan, whose page shows it (audit P5).
-            line.status = "Stopped"
-            line.detail = reason
-            line.severity = .error
             return
         }
 
@@ -636,13 +647,30 @@ public enum MenuPresentation {
         return MenuContent(icon: .backingUp, plans: lines)
     }
 
-    /// R68: the agent didn't answer but its last status is recent, so it is shown as it was, marked.
-    private static func notAnswering(status: AgentStatus, format: TextContext) -> MenuContent {
-        let lines = status.plans.map { line(for: $0, format: format, suffix: "(not responding)") }
+    /// R68: the agent didn't answer but its last status is recent, or a restic is known to run under it, so the last
+    /// state is shown as it was, marked.
+    private static func notAnswering(status: AgentStatus?, format: TextContext) -> MenuContent {
+        let plans = status?.plans ?? []
+        let lines = plans.map { line(for: $0, format: format, suffix: "(not responding)") }
         let banner = MenuBanner(
             severity: .warning, title: "Backups aren’t responding",
             detail: "Showing the last state reported.", action: .restartAgent)
-        let icon = max(.warning, icon(banners: [], plans: status.plans, lines: lines))
+        let icon = max(.warning, icon(banners: [], plans: plans, lines: lines))
+        return MenuContent(icon: icon, banners: [banner], plans: lines)
+    }
+
+    /// Owner, 20 Nov 2026: the agent hasn't answered for `AgentHealthPolicy.longWaitWarning` while a backup it started
+    /// runs. Restorey keeps waiting, never stopping it on its own, so the last state is shown as in `notAnswering`
+    /// however old it is, under a warning whose fix, Restart Backups, stops the backup by the person's choice.
+    private static func longWait(status: AgentStatus?, format: TextContext) -> MenuContent {
+        let plans = status?.plans ?? []
+        let lines = plans.map { line(for: $0, format: format, suffix: "(not responding)") }
+        let banner = MenuBanner(
+            severity: .warning, title: "Restorey’s background process hasn’t answered for 30 minutes",
+            detail: "A backup is still running, so Restorey is waiting for it rather than stopping it. "
+                + "Restart Backups stops it now.",
+            action: .restartAgent)
+        let icon = max(.warning, icon(banners: [], plans: plans, lines: lines))
         return MenuContent(icon: icon, banners: [banner], plans: lines)
     }
 
@@ -772,9 +800,13 @@ public struct PlanOverview: Sendable, Equatable {
     /// information, never a warning; nil when nothing was skipped or not counted.
     public var cloudOnlyNote: CloudOnlyNote?
     /// Said once setup's choice to remove earlier snapshots has failed three backups in a row ("Couldn't remove the earlier
-    /// snapshots you chose: <reason>. Restorey will try again after the next backup."). Information: no colour, and the menu
+    /// snapshots you chose: <reason>; Restorey will try again after the next backup."). Information: no colour, and the menu
     /// icon is unchanged. Nil otherwise.
     public var earlierRemovalNote: String?
+    /// Said while the plan's newest tidy was held back because many more files couldn't be read than last time ("Old
+    /// snapshots weren’t removed: 412 files couldn’t be read, up from 3 last time."), until a later tidy runs. Information:
+    /// no colour, and the menu icon is unchanged. Nil otherwise.
+    public var tidyHeldBackNote: String?
     /// The files the last backup couldn't read, for the "Show…" under the "N files couldn't be read" line (Task 16b). Set
     /// only where the reason carries that line (the settled headline, never a failure, a stop, a pause, a running backup
     /// or a plan waiting for a kit), and nil when the record kept no items (an older record). Information only.
@@ -807,7 +839,7 @@ extension MenuPresentation {
         var overview = PlanOverview(
             headline: "", reason: nil, progress: nil, severity: nil, isPaused: false,
             lastBackup: lastBackupRow(plan, format), cloudOnlyNote: cloudOnlyNote(plan, locale: locale),
-            earlierRemovalNote: earlierRemovalNote(plan),
+            earlierRemovalNote: earlierRemovalNote(plan), tidyHeldBackNote: plan.tidyHeldBack,
             biggestAdditions: biggestAdditions(plan, locale: locale),
             nextBackup: nextBackupRow(plan, format), buttons: [])
         if let line = content.plans.first(where: { $0.id == planID }) {
@@ -854,11 +886,11 @@ extension MenuPresentation {
         if alerts.contains(.backupFailed) {
             overview.headline = "Backup failed"
             overview.reason = line.detail
-        } else if alerts.contains(.noRecentSuccess) {
-            overview.headline = line.status
-            overview.reason = line.detail
         } else if case .stopped = plan.phase {
             overview.headline = "Stopped"
+            overview.reason = line.detail
+        } else if alerts.contains(.noRecentSuccess) {
+            overview.headline = line.status
             overview.reason = line.detail
         } else if plan.setupState == .needsNewKit {
             overview.headline = "Waiting for a new recovery kit"
@@ -905,10 +937,23 @@ extension MenuPresentation {
         return BiggestAdditionsText.overviewSummary(record: backup, locale: locale)
     }
 
+    /// One sentence. The agent's reasons arrive as its own sentences ("Restorey couldn’t count the earlier snapshots:
+    /// <why>"), so the lead goes and the reason follows ours; one with no reason after its lead is the whole note.
     private static func earlierRemovalNote(_ plan: PlanStatus) -> String? {
         guard var reason = plan.earlierRemovalProblem else { return nil }
         while reason.hasSuffix(".") { reason.removeLast() }
-        return "Couldn’t remove the earlier snapshots you chose: \(reason). Restorey will try again after the next backup."
+        let retry = "; Restorey will try again after the next backup."
+        for lead in ["Restorey couldn’t ", "Restorey can’t "] where reason.hasPrefix(lead) {
+            if let colon = reason.range(of: ": ") {
+                reason = String(reason[colon.upperBound...])
+            } else {
+                // "Restorey couldn’t read …": said as the note's own words, not nested in "Couldn’t remove …:".
+                let sentence = reason.dropFirst("Restorey ".count)
+                return sentence.prefix(1).uppercased() + sentence.dropFirst() + retry
+            }
+            break
+        }
+        return "Couldn’t remove the earlier snapshots you chose: \(reason)\(retry)"
     }
 
     private static func nextBackupRow(_ plan: PlanStatus, _ format: TextContext) -> PlanOverview.Row? {

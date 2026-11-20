@@ -64,7 +64,8 @@ from the background agent whether or not the app is open.
 setting up: **Back Up Now**, **Pause Backups** (with a Length of For 1 Hour, For 4 Hours or Until Tomorrow; the agent
 refuses any other length; with nothing backing up it's refused with “Nothing is backing up, so there’s nothing to
 pause.”), **Cancel Backup** (stops a backup in progress, this run only; refused with “There’s no backup
-to cancel.” or ““<name>” isn’t backing up.”), **Resume Backups** and **Get Last Backup**, which gives the
+to cancel.” or ““<name>” isn’t backing up.”; if a pause was already stopping the run when the cancel arrived, the
+pause wins and the dialog says “““<name>” is already pausing, so there was nothing to cancel.”), **Resume Backups** and **Get Last Backup**, which gives the
 plan's last backup time and outcome as values a shortcut can use (Time, Outcome, Backed Up, Last Successful Backup,
 Summary). Each takes a plan, or none for every plan (Get Last Backup: the newest backup of any plan), and is refused
 with a sentence saying why wherever the menu's item would be dimmed: "“Home” is already backing up.", "Backups are
@@ -93,7 +94,8 @@ lid. Siri can't run them by voice on the Mac: Apple says voice invocation of App
   source is shown "Stopped" with the reason, "“data” is inside this plan’s backup repository. Choose a different
   folder", and the Folders tab says the same until the folder is taken off), while a folder holding it is added with a
   note (shown under the list, and cleared by the next change). Every backup to a local repository excludes the
-  repository's own folder, whatever the list holds, so when it is inside a source (by path) the Exclusions sheet shows
+  repository's own folder, whatever the list holds, so when it is inside a source (by path, with `/private/tmp`,
+  `/private/var` and `/private/etc` the same as `/tmp`, `/var` and `/etc`) the Exclusions sheet shows
   it as a fixed first row, “This plan’s backups”, that can't be selected or removed; **Schedule**
   (how often, the battery rule, the plan's own upload limit, and its alerts: the check-in URL and "no successful backup in N days");
   **Storage** (the address, read-only, the password and keys, the host label, and "Show Recovery Kit…");
@@ -205,7 +207,14 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
   was running at the agent's last status (under 30 minutes old), the menu instead keeps that status with
   "(not responding)" and a warning. After 30 seconds without an answer it unregisters and registers the agent again on its own, unless
   a restic from Restorey's own bundle is still running under the agent: unregistering would kill that backup,
-  so it waits and looks again at each heartbeat. The agent's answer never waits on the notification centre, so a
+  so it waits and looks again at each heartbeat, for as long as that backup runs. If the process table can't be read,
+  Restorey assumes a backup may be running and waits too (logged as an error once). While it waits, the menu shows
+  "Backups aren’t responding" (a warning) and the last status marked "(not responding)", and Settings → General says
+  "Not answering — a backup is still running"; nothing says no backups are happening. Restorey can't tell a stuck backup
+  from a busy one (a first backup, or a slow hourly run), so it never stops a running backup on its own. After 30
+  minutes the Mac is awake (sleep doesn't count) it warns: "Restorey’s background process hasn’t answered for 30
+  minutes", with "Restart Backups", which stops the backup if you choose it, above the last status still marked
+  "(not responding)". The warning goes as soon as the agent answers again. The agent's answer never waits on the notification centre, so a
   stuck `usernoted` doesn't make a working agent look dead. A switched-off agent reads differently (see
   `docs/spike-findings.md`), so this never overrides your choice
 
@@ -251,7 +260,14 @@ The agent runs only as its launchd job: started any other way (double-clicked, r
 hosted tests' XCTest host) it touches none of its files and starts nothing, so there is never a second agent
 beside the real one ("Why the keychain tests need a signed host" has the details). The agent serves its XPC
 interface only to the signed app: the listener requires the app's bundle ID and the
-team in `Config/Local.xcconfig`, so any other process is refused. Only one call returns secrets: `recoveryKit`
+team in `Config/Local.xcconfig`, so any other process is refused. The check runs the other way too: a signed app
+requires the agent's bundle ID and the same team on its connection, so it never sends a call to another process
+holding the agent's name. Unsigned or ad-hoc builds (CI, Debug without `Local.xcconfig`) have no team to require and
+connect unchecked; the app decides from its own signature, not the Info.plist, and logs which applies. It reads that
+signature from its code on disk, not the running process, so a signed build under the debugger (whose breakpoints void
+the running code's validity) still talks to its agent; the agent checks the running app on its side. If it can't read its own signature,
+or the team differs from the Info.plist's, it admits no agent and repairs nothing (a repair could stop a running backup);
+the menu says "Restorey can’t verify its own signature" and asks for a reinstall. Only one call returns secrets: `recoveryKit`
 replies with a plan's repository password, its S3 keys or raw environment values, and its check-in URL, so the app
 can show the recovery kit; it goes only to the signed Restorey app over that XPC connection, the agent logs just the
 plan and how many secrets it sent, and the app keeps them only while the kit or the Restore Files window is open
@@ -342,7 +358,8 @@ fields with `FormValidation` and reads them into the plan's repository. "Check" 
 generated password and asks the agent what is there (`probeRepository`): nothing (`empty`), or a repository the
 stand-in can't open (`passwordRejected`, restic's exit 12), which is how setup learns that one is there before the
 user has typed its password. **Repository password** then offers either a generated password (shown, copyable as a
-concealed pasteboard item, or replaced by the user's own) and an explicit "Create New Repository", or the existing
+concealed pasteboard item, or replaced by the user's own, with the hint "To type accented letters, turn on Show." under
+a field you type into, since the secure field hides what an accent key has done) and an explicit "Create New Repository", or the existing
 repository's password: "Open Repository" probes again with it and shows "312 snapshots from 3 Macs" and the host
 label this Mac's snapshots are under (`SetupAdoption`: the repository's host matching this Mac's computer, local or
 Unix host name, spelt as the snapshots spell it, else this Mac's name, with the new-group warning); "Use This
@@ -368,8 +385,12 @@ home folder by default (or the adopted snapshot's folders, with the new-group wa
 exclusions in one line (`ExclusionsSummary`, which also names the items apps mark as not for backup) and "Review Exclusions…" (folders, with Restorey's own two kept; file
 types; one file system). **Schedule** has the interval (hourly by default; 1, 2, 4, 6, 12 or 24 hours), the battery
 rule, retention and the optional check-in URL with why it matters (`ScheduleForm`). **Done**'s "Start First Backup"
-saves anything left, confirms the kit, then backs up: confirming makes the plan due, so the scheduler may start it
-first. `backUpNow` answers with a `BackUpNowReply` whose `alreadyRunning` says so for the plan asked for, instead
+saves anything left, then makes one `confirmRecoveryKit` call carrying the digest of the kit the tick was given for
+(kept in the setup progress) and `startFirstBackup`: the agent checks the digest, then saves the confirmation and
+registers the first backup with no suspension point between them, so no status and no scheduler read has the plan
+confirmed but not running (the scheduler skips running plans), and the backup that runs is that manual one. A kit
+whose details changed since it was shown confirms nothing and starts nothing: setup goes back to the kit step, with
+the new kit and the tick cleared. Progress saved by a build before the digest resumes at the kit step. `backUpNow` answers with a `BackUpNowReply` whose `alreadyRunning` says so for the plan asked for, instead
 of refusing (an agent from before it answered with a bare status, which still decodes). Only a backup step still under way
 and carrying on counts: a run stopping for a pause (or any other stop), a run in its maintenance after the backup step
 (forget, prune, check), or a one-off action such as an adopt, still gets the "is already backing up" refusal, as before;
@@ -396,7 +417,7 @@ off by default. Switched on, "Use This Repository" adopts as usual, then asks th
 (`previewEarlierSnapshots`: a `forget --dry-run` that takes no lock and records nothing) and shows its own
 confirmation, "Remove N snapshots from before Restorey?", with how many the plan's retention keeps, whether prune will
 free the space, that they go after the first successful backup, and that it can't be undone, in a few short sentences so the sheet fits the setup window. Cancel is
-the default button (Return, and Escape too); "Remove N Snapshots" is never the default (`DestructiveAlert`). The confirmed snapshot IDs are
+the default button (Return, and Escape too); "Remove N Snapshots" is never the default (`DestructiveAlert`, app-only: it is in `App/Controls`, not RestoreyCore, so the agent does not link AppKit for it). The confirmed snapshot IDs are
 kept in the setup progress (`earlierRemoval`), and Done hands them to the agent before it confirms the kit
 (`removeEarlierSnapshotsAfterNextBackup`); the agent removes them only after the plan's first backup that succeeds
 with every file, so a setup that fails never deletes anything. The confirmation says that other tools' snapshots of
@@ -488,8 +509,13 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   "Show…", a sheet with the plan's switch for them and the list, each with "Back up anyway". Folders and drives
   dragged from Finder onto the Folders list, or onto the exclusions sheet's list, are added by the same rule as its add
   button (`FolderDrop`, RestoreyCore: only folders and drives, so a file or an app is refused, and nothing listed twice,
-  sources compared by where they lead). Each item is judged where it leads (`PickedItem.classify`): a link to a folder
-  is a folder and is kept as the path chosen, a link to a file is a file, and a broken link "can't be found". What the
+  sources compared by where they lead). Each item is judged where it leads (`FolderDrop.look`): a link to a folder
+  is a folder and is kept as the path chosen, a link to a file is a file, and a broken link "can't be found". That
+  look reads the disk, so it runs off the main actor through `LinkResolver`, with the agent's 10 s bound (see "Links
+  are followed only through `LinkResolver`" below); past it, or while an earlier look is stuck, each item is judged
+  by its path as written, links not followed: one written as a folder (a trailing slash) is added as chosen, anything
+  else "isn't a folder", the list says "Restorey couldn’t check these in time, so they were added as chosen.", and
+  `app.log` names the paths. What the
   rule leaves out is said under the list ("“notes.txt” isn't a
   folder. Only folders and drives can be added."). The list is ringed in the accent colour while a drag is over it
   (`dropDestination(for:isEnabled:action:)` and `onDropSessionUpdated`, macOS 26). Delete (⌫ or ⌦,
@@ -599,9 +625,12 @@ backups. With nothing to report yet (a plan before its first backup, or Restorey
 process) it is the drive alone, so the tick never claims backups that don't exist; no plans at all is a "!" ("No
 backup plan yet"). `App/StatusIcon.swift` draws the six images from SF Symbols at run time: the drive at the system's
 menu bar size and weight (18 × 13 pt, like `wifi`), a filled circle badge 72 % of its height over a circle cleared out
-of it with a 1.5 pt gap, on one 22 × 16 pt canvas for every state so the icon never changes width. They are template
-images, monochrome like the rest of the menu bar (owner, 12 Nov 2026), so the menu bar tints and dims them like its
-own; colour is kept for the severity symbols inside the open menu.
+of it with a 1.5 pt gap, on one 22 × 16 pt canvas for every state so the icon never changes width. The cut-out is
+drawn with the drive in a transparency layer of its own, so it clears only the drive. Should the drive symbol ever be
+missing, the icon is the letter "R" in the menu bar's font on the same canvas, so the item stays visible and
+clickable (the tooltip still says the state). They are template images, monochrome like the rest of the menu bar
+(owner, 12 Nov 2026), so the menu bar tints and dims them like its own; colour is kept for the severity symbols
+inside the open menu.
 The icon's tooltip says the state in words, updated with the icon (`MenuContent.toolTip`): the worst problem when
 there is one ("Restorey — Full Disk Access is missing", or "Restorey — MacBook: Backup failed at 14:16" with several
 plans, for a plan's problem as for its status), otherwise "Restorey — Backing up", "Restorey — Paused" or the newest
@@ -652,7 +681,10 @@ the actions then never reach Shortcuts; the build writes `Contents/Resources/Met
   could act on (for Cancel Backup, every plan backing up),
   each whatever the others did, and if any fails, the error names each plan that failed, with its reason, and those
   that changed ("Restorey couldn't pause “Photos”: … “Home” is paused.", "… The backup of “Home” was cancelled.",
-  `ShortcutRules.failureMessage`).
+  `ShortcutRules.failureMessage`). Cancel Backup's dialog says when a pause had already won
+  (`ShortcutRules.cancelDialog`): the agent's reply to `cancel` is the status with one more key, `cancelOutcome`
+  (`stoppedARun`, `alreadyPausing`, `nothingToCancel`; `CancelResult`), which an older app ignores and an older agent
+  omits (read as `unknown`, which keeps the plain wording).
 - **Errors** are `ShortcutError`, which conforms to `CustomLocalizedStringResourceConvertible`: Shortcuts shows an
   error's `localizedStringResource`, and a plain `Error` reads as a generic failure. A plan deleted since a shortcut
   was made still resolves (as "Deleted plan"), so the action runs and says "That plan is no longer in Restorey."
@@ -760,7 +792,11 @@ The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`) runs
 4. Runs `restic backup` through the repository's queue, classifies the result, records it, and sends the
    success or `/fail` ping straight away, so maintenance never delays it.
 5. After a successful backup, in the same turn of the queue: `forget` (after every backup that made a
-   snapshot, or daily for an adopted repository), `prune` weekly when it is switched on, and a plain
+   snapshot, or daily for an adopted repository; skipped, with `prune`, after a warning backup that couldn't
+   read many more files than the previous backup that saved data: `n >= 2m && n >= m + 100`, `m` being 0 if that
+   backup wasn't a warning, and never skipped for a plan's first backup. The skip is its own History row, "Old
+   snapshots weren’t removed: 412 files couldn’t be read, up from 3 last time.", shown on the Overview until a
+   later tidy runs), `prune` weekly when it is switched on, and a plain
    `unlock` followed by `check` weekly. A successful prune is followed by `restic stats --mode raw-data`,
    whose total (the stored size of the data the snapshots use, a little under what the provider counts,
    which includes unused packs and indexes) is the repository size the menu shows with its age. Each is its
@@ -779,7 +815,9 @@ disk, since it runs on every status and scheduler tick and a repository on a net
 not hold up the agent (`StatusPathPurityTests` pins those files). Links are followed only through `LinkResolver`: on a
 thread of its own (`OwnThread`) with a 10 s deadline (`MarkedNotForBackup.timeLimit`, as for the agent's other
 file-system looks) and one check outstanding in the process (`OneOutstandingGate`), so a stuck one leaves a single
-blocked thread. Saving a plan uses it, inside the serialised write so saves still finish in the order they came, to
+blocked thread. The app does the same when folders are added to a plan's lists (`FolderDrop.look`, its own process's
+gate), so its main actor never waits on a volume; the form rules it runs there (`FormValidation.addingSources`,
+`StorageForm.planName`) are string handling, pinned by `StatusPathPurityTests` too. Saving a plan uses it, inside the serialised write so saves still finish in the order they came, to
 refuse a source that reaches the repository through a link; when the check doesn't answer in time (or an earlier one
 is stuck) the save goes ahead on the comparison by path and the agent log says so. While a link check hangs, all of the agent's config writes (saves, alerts' state, run starts) can wait up to 10 s, after which later checks are skipped and logged. A backup uses it to also exclude
 where a link to its repository leads; when it doesn't answer, only the folder as given is excluded, and the log says
@@ -821,10 +859,11 @@ files out); a lock held elsewhere, an interruption or a preview that fails keeps
 `agent.log` at ERROR, no row), and its row is added when it finally runs (its success is an INFO line in
 `agent.log`). A lock or an interruption also holds that backup's `forget`, `prune` and `check` back; a preview that
 fails does not, because the plan's own `forget` is scoped to its tag and `check` is independent, so a lasting failure
-can't stop retention or integrity checking. After three backups in a row with a failed preview the plan's Overview
-adds a quiet line ("Couldn't remove the earlier snapshots you chose: <reason>. Restorey will try again after the next
-backup."): information only, with no alert and no change to the menu icon. A removal that reaches a verdict, or a new
-choice, resets the count.
+can't stop retention or integrity checking. After three backups in a row with a failed preview (another client's
+lock held during the preview counts as a failed preview) the plan's Overview adds a quiet one-sentence line
+("Couldn't remove the earlier snapshots you chose: <reason>; Restorey will try again after the next backup."):
+information only, with no alert and no change to the menu icon. A removal that reaches a verdict, or a new choice,
+resets the count.
 
 "N files couldn't be read" after a backup counts the distinct files restic left out of the snapshot: those it failed on
 while archiving (`"during":"archival"` in its `--json` output). Errors from its scanner, which only estimates totals for
@@ -843,6 +882,14 @@ exclusion pattern (`DefaultExclusions.pattern(forFolder:)`, glob characters esca
 unsaved edit, with Save, Revert and the close and quit guard as in the Folders tab; the row then reads "Won't be backed up
 from the next backup" with Undo, which removes it again; nothing changes until you save the plan. A file deleted while the backup ran has no button, and a path
 the plan already excludes reads "Already not backed up". This is information only: no outcome, icon, alert or ping changes.
+
+The agent keeps at most 10,000 of a run's `error` messages in memory (`ResticProcess.storedErrorLimit`); a volume
+failing on every file could otherwise raise millions. The rest are counted (`droppedErrorCount`), and the archival ones
+among them still add to the warning's unreadable count (one each, as their items aren't kept to de-duplicate). The list
+above shows the first 100 items and "and N more" as before.
+
+Maintenance runs (`forget`, `prune` and `check`, not `backup`) pass restic's `--cleanup-cache`, which removes old cache
+directories under Restorey's own `--cache-dir`, so a repository you no longer use doesn't keep its cache.
 
 **What each backup added** (Task 16d). Every backup runs with restic's `--verbose`, so `backup --json` prints a
 `verbose_status` line for each file and folder it finishes (restic 0.19.1 `internal/ui/backup/json.go`); a new or
@@ -878,7 +925,7 @@ system, which is not a failure (no alert, no check-in ping; the backup is tried 
 started), and exits within 4 seconds, before launchd's 5-second limit (restic gets 2.5 seconds to honour
 SIGINT). A run already being paused keeps its pause, but its restic gets the same 2.5 seconds instead of the pause's 10. If the agent stops mid-run any other way (a crash, `kill -9`), its next start records
 that run as interrupted (an interrupted backup is a failure and sends its `/fail` ping) and runs a plain
-`restic unlock` (never `--remove-all`) once per repository, before it accepts any run. Before exiting for an update, the agent finishes the restic step in
+`restic unlock` (never `--remove-all`) once per repository, before it accepts any run. That unlock isn't a run of the plan: the menu and its icon don't show the plan backing up while it runs (a drain waits for it; deleting the plan meanwhile is refused as "still starting up", as Back Up Now is). Before exiting for an update, the agent finishes the restic step in
 progress (a backup's maintenance waits for the next backup) and then waits up to 3 minutes for queued check-in
 pings.
 
@@ -916,14 +963,18 @@ reasons are in the design spec, §5.7):
 restic also skips folders tagged with `CACHEDIR.TAG` (`--exclude-caches`) and iCloud files that aren't
 downloaded to this Mac (`--exclude-cloud-files`). Time Machine's own exclusion list can't be read on macOS 27,
 so Restorey doesn't try. Plans saved by an earlier build get the file types and the one-file-system setting when
-`config.json` is upgraded to schema 2; their folder exclusions are kept as they were (defaults added later, such as the CoreSpeech folder, reach new plans
-only: add them to an existing plan under Settings → Folders, Review Exclusions…). Before a file is
+`config.json` is upgraded to schema 2. A default folder added after a plan was made, such as the CoreSpeech folder, is
+added to that plan once: each plan records the revision of the default list it has been given
+(`exclusionDefaultsRevision`; schema 4 gives older plans revision 1, new plans start at the current one), and when the
+agent starts it adds the later defaults the plan doesn't already list to the end of its exclusions, saves once and
+logs the plan and patterns in `agent.log`. Nothing is ever removed or changed, so a default you remove (Settings →
+Folders, Review Exclusions…) stays removed. Before a file is
 rewritten by an upgrade, the old one is kept beside it as `config.json.v1.bak` (`<file>.v<schema>.bak`, readable
 only by you). If an upgrade fails, the agent says so and leaves the file alone.
 
 ## `config.json`
 
-`config.json` (schema 3) holds the plans and, beside them, the Mac-wide network settings (`network`): an upload
+`config.json` (schema 4) holds the plans and, beside them, the Mac-wide network settings (`network`): an upload
 limit shared by the backups to networked repositories (none by default), whether to skip a backup on a
 constrained or expensive network (on by default), and Wi-Fi network names to skip backups on (none by default).
 These rules apply only to a repository on another machine; a backup to a folder or an external drive ignores them.
@@ -965,7 +1016,8 @@ finished, and whether the "No off-Mac monitoring" note was dismissed. The agent 
 dismissed note; a saved plan can't change them (only confirming the recovery kit and `dismissOffMacNote` do).
 Upgrading from schema 2 moves the per-plan "skip on a constrained network" setting to the Mac-wide one, which
 stays on if any plan had it on (an upgrade with every plan's setting off turns it off), and marks every plan
-whose recovery kit was already confirmed as having finished setup.
+whose recovery kit was already confirmed as having finished setup. Upgrading from schema 3 gives every plan
+`exclusionDefaultsRevision` 1, so the agent adds the defaults since then once (What a backup leaves out, above).
 
 ## Alerts
 
@@ -1138,7 +1190,16 @@ Keys" button and Option peek as Restore Files (in setup's kit step too); after a
 made key again and Restorey brought back to the front. For a plan needing a new kit, the window is headed "Save a new recovery kit — the saved one
 has the old keys" and its tick "I've saved it somewhere other than this Mac" confirms the kit with the agent, which
 lets backups carry on. Before confirming, the window checks the kit against the agent's current secrets, so a kit
-whose keys changed while it was open is shown again rather than confirmed.
+whose keys changed while it was open is shown again rather than confirmed; the confirmation itself carries the kit's
+digest too, so a change saved in the moment between that check and the agent's answer is refused the same way.
+
+The digest (`RecoveryKitDocument.digest`) is a SHA-256 over the plan's ID, the repository address, the host label,
+the Keychain names of the password and storage keys, and the plan's `credentialsVersion`: a counter the agent alone
+sets, moved on by every save that changes the repository or one of those secrets. It stands in for their values, so
+the digest holds no secret and the agent checks it without reading the Keychain. The app makes it from the plan in
+the kit it showed, the agent from the plan it stores; a mismatch is refused with "The recovery details changed. Save
+the new recovery kit first." `confirmRecoveryKit`'s string is a `ConfirmRecoveryKitRequest` as JSON (plan ID, digest,
+`startFirstBackup`), or the bare plan ID an app from before it sends, which still confirms as it always did.
 
 A plan needs a new kit when what the kit holds to open and restore its repository changes: saving a different
 repository password or storage key (or environment value), or a new host label (the kit's restore commands pass it

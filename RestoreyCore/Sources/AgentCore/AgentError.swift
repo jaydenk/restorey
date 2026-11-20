@@ -26,6 +26,9 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
     /// plan's kit was confirmed once and a change to its repository or a secret asks for a new one (Ruling R28),
     /// which reads differently from a first backup (carry list).
     case recoveryKitNotConfirmed(name: String, setupFinished: Bool)
+    /// `confirmRecoveryKit` was sent the digest of a kit that no longer matches the plan (Task 9): its repository, a
+    /// key or the host label changed after the kit was shown. Nothing was confirmed.
+    case recoveryKitChanged
     /// `createRepository` found a repository at the address; restic init never overwrites one.
     case repositoryAlreadyExists
     /// A restic action asked for by the app (create, adopt) failed. The text is already redacted.
@@ -56,6 +59,8 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
             "Confirm you’ve saved the recovery kit for \(name) before its first backup"
         case .recoveryKitNotConfirmed(let name, setupFinished: true):
             "Save a new recovery kit for \(name) — the saved one has the old keys"
+        // Two sentences, so it keeps its closing stop; the app recognises it to show the new kit.
+        case .recoveryKitChanged: RecoveryKitDocument.detailsChangedRefusal
         case .repositoryAlreadyExists: "A repository already exists there"
         case .operationFailed(let detail): detail
         case .storage(let detail): detail

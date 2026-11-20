@@ -293,6 +293,40 @@ struct MessagesTests {
         #expect(decoded == BackUpNowReply(status: status, alreadyRunning: false))
     }
 
+    /// `cancel`'s reply is a status with one more key, so an app from before it still reads it as the bare status, and
+    /// an agent from before it (a bare status) says "unknown".
+    @Test func cancelResultKeepsTheStatusShapeBothWays() throws {
+        let status = AgentStatus(plans: [], configError: nil, fdaMissing: false, generatedAt: Date(timeIntervalSince1970: 0))
+        for outcome in [CancelOutcome.stoppedARun, .alreadyPausing, .nothingToCancel, .unknown] {
+            try roundTrip(CancelResult(status: status, outcome: outcome))
+        }
+        let wire = try XPCCoding.encode(CancelResult(status: status, outcome: .alreadyPausing))
+        #expect(try XPCCoding.decode(AgentStatus.self, from: wire) == status, "an older app reads it as a bare status")
+        #expect(try json(CancelResult(status: status, outcome: .alreadyPausing)).contains(#""cancelOutcome":"alreadyPausing""#))
+        let old = try XPCCoding.encode(status)
+        #expect(try XPCCoding.decode(CancelResult.self, from: old) == CancelResult(status: status, outcome: .unknown))
+        // A newer agent's outcome this build doesn't know reads as unknown, not as a failed call.
+        var future = try #require(try JSONSerialization.jsonObject(with: old) as? [String: Any])
+        future["cancelOutcome"] = "somethingNew"
+        let decoded = try XPCCoding.decode(CancelResult.self, from: JSONSerialization.data(withJSONObject: future))
+        #expect(decoded.outcome == .unknown)
+    }
+
+    /// Task 9: `confirmRecoveryKit` carries a `ConfirmRecoveryKitRequest` in the string an app from before it sent the
+    /// bare plan ID in. That old message still reads, as a confirmation with no digest to check that starts nothing.
+    @Test func confirmRecoveryKitRequestReadsTheOldBarePlanIDAndRoundTrips() throws {
+        let old = try ConfirmRecoveryKitRequest(message: Self.planID.uuidString)
+        #expect(old == ConfirmRecoveryKitRequest(planID: Self.planID, kitDigest: nil, startFirstBackup: false))
+        #expect(try old.message() == Self.planID.uuidString, "a plain confirmation reads the same to an older agent")
+        let new = ConfirmRecoveryKitRequest(planID: Self.planID, kitDigest: "ab12", startFirstBackup: true)
+        #expect(try ConfirmRecoveryKitRequest(message: new.message()) == new)
+        #expect(try new.message() == #"{"kitDigest":"ab12","planID":"6F1C2E1A-0000-4000-8000-000000000001","startFirstBackup":true}"#)
+        // The added keys are optional, as Task 4's `cancelOutcome` is.
+        let bare = #"{"planID":"6F1C2E1A-0000-4000-8000-000000000001"}"#
+        #expect(try ConfirmRecoveryKitRequest(message: bare) == old)
+        #expect(throws: (any Error).self) { try ConfirmRecoveryKitRequest(message: "not a plan") }
+    }
+
     @Test func recoveryKitSecretsRoundTrip() throws {
         try roundTrip(RecoveryKitSecrets(plan: Self.plan(), secrets: [
             SecretEntry(key: .repositoryPassword(Self.planID), value: "pa ss\"wörd\n"),

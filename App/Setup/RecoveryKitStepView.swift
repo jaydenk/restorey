@@ -26,6 +26,8 @@ struct RecoveryKitStepView: View {
             Toggle(RecoveryKitText.savedTick, isOn: $model.kitSaved)
                 .toggleStyle(.checkbox)
                 .disabled(!model.canTickKitSaved)
+            // Done's Start sends the person back here when the details changed since the tick (Task 9).
+            SetupStepStatus(model: model)
             Spacer(minLength: 12)
             HStack {
                 if model.kitBlockedByStandInPassword {

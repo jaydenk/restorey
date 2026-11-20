@@ -68,7 +68,8 @@ public enum UnreadableList {
 
     /// `exclusions` is the form's, `saved` the saved plan's: a pattern in the form but not yet saved is an edit still
     /// to undo (so reopening the sheet keeps Undo), one the saved plan has is "Already not backed up". A row is
-    /// excluded when its exact pattern is in `exclusions`: the same check an undo makes, so undo and the row agree.
+    /// excluded when its pattern is in `exclusions` (the `/private/var` and `/var` spellings of one folder count as
+    /// the same pattern, `SourcePaths`): the same check an undo makes, so undo and the row agree.
     public static func rows(
         items: [UnreadableItem], exclusions: [String], saved: [String], home: URL, exists: (String) -> Bool
     ) -> [Row] {
@@ -78,8 +79,8 @@ public enum UnreadableList {
             let action: Action
             if deleted {
                 action = .none
-            } else if exclusions.contains(pattern) {
-                action = .excluded(unsaved: !saved.contains(pattern))
+            } else if contains(exclusions, pattern) {
+                action = .excluded(unsaved: !contains(saved, pattern))
             } else {
                 action = .dontBackUp(pattern: pattern)
             }
@@ -89,15 +90,22 @@ public enum UnreadableList {
         }
     }
 
+    /// Whether `patterns` holds `pattern`, or the same folder under its other `/private/tmp|var|etc` spelling. A
+    /// pattern is a path with glob characters escaped, none of which is in those leading components.
+    private static func contains(_ patterns: [String], _ pattern: String) -> Bool {
+        patterns.contains { SourcePaths.sameFirmlinkSpelling($0, pattern) }
+    }
+
     /// `exclusions` with the pattern for `path` added once.
     public static func adding(_ path: String, to exclusions: [String]) -> [String] {
         let pattern = DefaultExclusions.pattern(forFolder: path)
         return exclusions.contains(pattern) ? exclusions : exclusions + [pattern]
     }
 
-    /// `exclusions` without the pattern for `path`.
+    /// `exclusions` without the pattern for `path`, in either firmlink spelling: the row counts either as excluded
+    /// (`contains`), so Undo takes out whichever the form holds.
     public static func removing(_ path: String, from exclusions: [String]) -> [String] {
         let pattern = DefaultExclusions.pattern(forFolder: path)
-        return exclusions.filter { $0 != pattern }
+        return exclusions.filter { !SourcePaths.sameFirmlinkSpelling($0, pattern) }
     }
 }

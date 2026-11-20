@@ -71,8 +71,11 @@ import Foundation
     func probeFullDiskAccess(withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// → `AgentStatus`. Hides the plan's "No off-Mac monitoring" note for good (`offMacNoteDismissed`).
     func dismissOffMacNote(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
-    /// The user says the recovery details are saved. A plan never runs on its own before this.
-    func confirmRecoveryKit(_ planID: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
+    /// The user says the recovery details are saved. A plan never runs on its own before this. `request` is a
+    /// `ConfirmRecoveryKitRequest` as JSON, or the bare plan ID an app from before it sends (read as no digest and
+    /// nothing started) → `AgentStatus`. A digest that no longer matches the plan refuses it with nothing confirmed;
+    /// `startFirstBackup` starts setup's first backup together with the confirmation (Task 9).
+    func confirmRecoveryKit(_ request: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// → `NotificationPermissionReply`. Asks from the agent, which is what posts the notifications.
     func requestNotificationPermission(withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// → `LocationPermissionReply` once the user has answered. Asks from the agent, which is what reads the

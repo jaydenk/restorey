@@ -50,12 +50,15 @@ struct AgentStateTests {
         private var failAll = false
         private var held: CheckedContinuation<Void, Never>?
         private var heldWaiters: [CheckedContinuation<Void, Never>] = []
+        /// Saves asked for, failed ones included.
+        private(set) var saveCount = 0
 
         init(_ inner: VersionedStore<Payload>) { self.inner = inner }
 
         func load() async throws -> Payload? { try await inner.load() }
 
         func save(_ payload: Payload) async throws {
+            saveCount += 1
             if failAll { throw Failure() }
             if failNext { failNext = false; throw Failure() }
             if holdNext {
@@ -404,6 +407,94 @@ struct AgentStateTests {
         // And it survives a reload from disk.
         let reloaded = await Self.makeState(dir, clock: clock)
         #expect(await reloaded.status().plans.first?.plan.setupCompletedAt == completedAt)
+    }
+
+    // MARK: Confirming the kit that was shown (Task 9)
+
+    /// The secrets' version stamp the kit digest hashes in place of their values: agent-owned, moved on by any change
+    /// to the repository or a secret that opens it, and by nothing else (not a resend, not the check-in URL).
+    @Test func credentialsVersionMovesOnlyWhenWhatOpensTheRepositoryChanges() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        var plan = Self.plan(now: clock.now)
+        plan.credentialsVersion = 41
+        func version() async -> Int? { await state.status().plans.first?.plan.credentialsVersion }
+        _ = try await state.savePlan(Self.request(plan))
+        #expect(await version() == 0, "a new plan starts at 0, whatever the request says")
+        _ = try await state.savePlan(Self.request(plan))
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: []))
+        #expect(await version() == 0)
+        plan.hasCheckInURL = true
+        _ = try await state.savePlan(SavePlanRequest(
+            plan: plan, secrets: [SecretEntry(key: .checkInURL(plan.id), value: "https://hc-ping.com/x")]))
+        #expect(await version() == 0)
+        _ = try await state.savePlan(Self.request(plan, password: "a new password"))
+        #expect(await version() == 1)
+        plan.repository = .raw(repository: "rest:http://nas/repo", environmentNames: [])
+        _ = try await state.savePlan(SavePlanRequest(plan: plan, secrets: []))
+        #expect(await version() == 2)
+        let reloaded = await Self.makeState(dir, clock: clock)
+        #expect(await reloaded.status().plans.first?.plan.credentialsVersion == 2)
+    }
+
+    /// The digest of the kit the app showed is checked against what the agent stores now: a change saved since (here a
+    /// new password from Settings) refuses the confirmation, with nothing confirmed. The current kit's digest confirms.
+    @Test func aConfirmationOfAKitWithOldDetailsIsRefusedAndConfirmsNothing() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        let shown = RecoveryKitDocument.make(try await state.recoveryKit(plan.id), createdAt: clock.now).digest
+        _ = try await state.savePlan(Self.request(plan, password: "a new password"))
+        let before = try Data(contentsOf: dir.config)
+
+        let refused = "The recovery details changed. Save the new recovery kit first."
+        #expect(AgentError.recoveryKitChanged.message == refused)
+        // With `startFirstBackup` too (PlanRunnerTests.aStaleKitNeitherConfirmsNorStartsTheFirstBackup).
+        await #expect { try await state.confirmRecoveryKit(planID: plan.id, kitDigest: shown, startFirstBackup: false) }
+            throws: { Self.message($0) == refused }
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == nil)
+        #expect(await state.status().plans.first?.setupState == .unfinished)
+        #expect(try Data(contentsOf: dir.config) == before)
+
+        let current = RecoveryKitDocument.make(try await state.recoveryKit(plan.id), createdAt: clock.now).digest
+        #expect(current != shown)
+        let status = try await state.confirmRecoveryKit(planID: plan.id, kitDigest: current, startFirstBackup: false)
+        #expect(status.plans.first?.setupState == .complete)
+    }
+
+    /// Starting the first backup is the runner's: with none attached yet (start-up recovery) it is refused before
+    /// anything is confirmed, so the plan can't be left confirmed for the scheduler with no backup started.
+    @Test func startingTheFirstBackupWithoutTheRunnerConfirmsNothing() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        let digest = RecoveryKitDocument.digest(for: try #require(await state.status().plans.first).plan)
+        await #expect(throws: AgentError.runnerUnavailable) {
+            try await state.confirmRecoveryKit(planID: plan.id, kitDigest: digest, startFirstBackup: true)
+        }
+        #expect(await state.status().plans.first?.plan.recoveryKitConfirmedAt == nil)
+    }
+
+    /// What the scheduler reads leaves out a plan that is running, so a plan confirmed and started together is never
+    /// offered to it as due.
+    @Test func theSchedulerIsNeverOfferedARunningPlan() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        _ = try await state.confirmRecoveryKit(plan.id)
+        #expect(await state.scheduleInputs().map(\.plan.id) == [plan.id])
+        try await state.beginRun(planID: plan.id)
+        #expect(await state.scheduleInputs().isEmpty)
+        #expect(await state.allRunInputs().map(\.plan.id) == [plan.id], "the runner's own view still has it")
+        await state.endRun(planID: plan.id)
+        #expect(await state.scheduleInputs().map(\.plan.id) == [plan.id])
     }
 
     // MARK: The screens' calls: history, recovery kit, off-Mac note

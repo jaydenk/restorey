@@ -150,7 +150,8 @@ final class TempRepository: @unchecked Sendable {
         let outcome = classify(
             operation: op, exitCode: termination.exitCode, interruptedByUs: termination.interruptIntent,
             terminatedBySignal: termination.terminatedBySignal, killedByUs: termination.killedByUs, summary: termination.summary,
-            errors: termination.messages, exitErrorMessage: termination.exitErrorMessage
+            errors: termination.messages, droppedArchivalErrors: termination.droppedArchivalErrorCount,
+            exitErrorMessage: termination.exitErrorMessage
         )
         return Run(termination: termination, messages: log.messages, outcome: outcome)
     }

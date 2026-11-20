@@ -52,32 +52,59 @@ enum StatusIcon {
     private static let badgeRatio: CGFloat = 0.72
     private static let badgeGap: CGFloat = 1.5
 
+    /// The canvas when the drive symbol is missing: the size of the drive's canvas at menu bar size, so the status
+    /// item keeps its width and stays clickable.
+    private static let fallbackSize = NSSize(width: 22, height: 16)
+
     private static func make(_ state: StatusIconState) -> NSImage {
-        let drive = symbol(driveName) ?? NSImage()
-        let side = (drive.size.height * badgeRatio).rounded()
-        // Room for the badge to overhang the drive's bottom-right corner, the same for every state.
-        let size = NSSize(
-            width: (drive.size.width + side * 0.45).rounded(), height: (drive.size.height + side * 0.3).rounded())
-        let badge = badgeName(for: state).flatMap(symbol)
-        let image = NSImage(size: size, flipped: false) { rect in
-            drive.draw(in: NSRect(
-                x: 0, y: rect.maxY - drive.size.height, width: drive.size.width, height: drive.size.height))
-            guard let badge else { return true }
-            let badgeRect = NSRect(x: rect.maxX - side, y: 0, width: side, height: side)
-            NSGraphicsContext.current?.compositingOperation = .destinationOut
-            NSBezierPath(ovalIn: badgeRect.insetBy(dx: -badgeGap, dy: -badgeGap)).fill()
-            NSGraphicsContext.current?.compositingOperation = .sourceOver
-            badge.draw(in: badgeRect)
-            return true
-        }
+        let image = symbol(driveName).map { drawn(state, drive: $0) } ?? fallback()
         image.isTemplate = true
         image.accessibilityDescription = accessibilityDescription(for: state)
         return image
     }
 
+    private static func drawn(_ state: StatusIconState, drive: NSImage) -> NSImage {
+        let side = (drive.size.height * badgeRatio).rounded()
+        // Room for the badge to overhang the drive's bottom-right corner, the same for every state.
+        let size = NSSize(
+            width: (drive.size.width + side * 0.45).rounded(), height: (drive.size.height + side * 0.3).rounded())
+        let badge = badgeName(for: state).flatMap(symbol)
+        return NSImage(size: size, flipped: false) { rect in
+            let driveRect = NSRect(
+                x: 0, y: rect.maxY - drive.size.height, width: drive.size.width, height: drive.size.height)
+            guard let badge, let context = NSGraphicsContext.current else {
+                drive.draw(in: driveRect)
+                return true
+            }
+            let badgeRect = NSRect(x: rect.maxX - side, y: 0, width: side, height: side)
+            // The drive and its cut-out in a layer of their own, so the destination-out clears only the drive, never
+            // whatever the image is drawn over.
+            context.cgContext.beginTransparencyLayer(auxiliaryInfo: nil)
+            drive.draw(in: driveRect)
+            context.compositingOperation = .destinationOut
+            NSBezierPath(ovalIn: badgeRect.insetBy(dx: -badgeGap, dy: -badgeGap)).fill()
+            context.compositingOperation = .sourceOver
+            context.cgContext.endTransparencyLayer()
+            badge.draw(in: badgeRect)
+            return true
+        }
+    }
+
+    /// The letter "R" in the menu bar's font, centred on `fallbackSize`, for every state: the tooltip and the
+    /// accessibility description still say the state.
+    private static func fallback() -> NSImage {
+        let letter = NSAttributedString(
+            string: "R", attributes: [.font: NSFont.menuBarFont(ofSize: 0), .foregroundColor: NSColor.black])
+        return NSImage(size: fallbackSize, flipped: false) { rect in
+            let text = letter.size()
+            letter.draw(at: NSPoint(x: rect.midX - text.width / 2, y: rect.midY - text.height / 2))
+            return true
+        }
+    }
+
     /// Nil only on a build for an older macOS than the target, since the names are fixed and checked. Logged. A missing
     /// badge leaves the plain drive (the tooltip and accessibility description still say the state); a missing drive
-    /// leaves an empty image.
+    /// leaves the letter "R" (`fallback`).
     private static func symbol(_ name: String) -> NSImage? {
         if let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) { return image }
         Logger(subsystem: Bundle.main.bundleIdentifier ?? "Restorey", category: "app")

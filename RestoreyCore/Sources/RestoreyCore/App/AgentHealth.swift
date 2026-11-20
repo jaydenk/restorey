@@ -62,19 +62,24 @@ public struct AgentHealthInput: Sendable, Equatable {
     public var executableFingerprintOnDisk: String?
     /// The last repair of each kind (at most one per kind).
     public var lastRepairs: [RepairRecord]
-    /// When an `enabled` agent's heartbeat first failed in the current run of failures; `nil` while it
-    /// answers.
-    public var unreachableSince: Date?
-    /// A restic from this app's `Contents/Helpers` is running under the agent (`resticRunsUnderAgent`).
+    /// How long an `enabled` agent's heartbeats have kept failing, in time the Mac was awake (`UnreachableRun`); `nil`
+    /// while it answers. Sleep and wall-clock changes don't count, so a hello that failed just before a long sleep
+    /// can't make the first failure after waking look like hours of silence.
+    public var unreachableAwakeFor: TimeInterval?
+    /// A restic from this app's `Contents/Helpers` may be running under the agent (`ResticUnderAgent.mayBeRunning`:
+    /// true when the process table couldn't be read).
     /// Only asked for an unreachable agent, the one case that would be unregistered without a drain.
     public var resticRunningUnderAgent: Bool
+    /// The app's connection admits no agent (`AgentPeerCheck.refuseAll`): its own signature can't be trusted, so
+    /// every hello fails however healthy the agent is (Ruling T7-1).
+    public var connectionRefusesEveryAgent: Bool
     public var now: Date
 
     public init(
         smStatus: AgentServiceStatus, heartbeat: AgentHeartbeat, expectedExecutablePrefix: String,
         appVersion: String, appBuild: String, storedPlistHash: String?, currentPlistHash: String,
-        executableFingerprintOnDisk: String?, lastRepairs: [RepairRecord], unreachableSince: Date? = nil,
-        resticRunningUnderAgent: Bool = false, now: Date
+        executableFingerprintOnDisk: String?, lastRepairs: [RepairRecord], unreachableAwakeFor: TimeInterval? = nil,
+        resticRunningUnderAgent: Bool = false, connectionRefusesEveryAgent: Bool = false, now: Date
     ) {
         self.smStatus = smStatus
         self.heartbeat = heartbeat
@@ -85,8 +90,9 @@ public struct AgentHealthInput: Sendable, Equatable {
         self.currentPlistHash = currentPlistHash
         self.executableFingerprintOnDisk = executableFingerprintOnDisk
         self.lastRepairs = lastRepairs
-        self.unreachableSince = unreachableSince
+        self.unreachableAwakeFor = unreachableAwakeFor
         self.resticRunningUnderAgent = resticRunningUnderAgent
+        self.connectionRefusesEveryAgent = connectionRefusesEveryAgent
         self.now = now
     }
 
@@ -106,9 +112,11 @@ public enum AgentHealthAction: Sendable, Equatable {
     /// `prepareForRestart`; launchd's `KeepAlive` starts the new binary.
     case restartAfterDrain
     /// The agent doesn't answer, but a restic it started is running, so an undrained `unregister()` would
-    /// kill a live backup (Ruling R68): shown as not running, logged, and decided again at the next
-    /// heartbeat.
-    case waitForRunningRestic
+    /// kill a live backup (Ruling R68): shown as not answering, logged, and decided again at the next
+    /// heartbeat, for as long as that restic runs (`AgentHealthState.waitingForRunningBackup`). Restorey can't tell a stuck restic from a busy one (a first backup,
+    /// a slow hourly run), so it never stops it on its own (owner, 20 Nov 2026). `longWait` from
+    /// `AgentHealthPolicy.longWaitWarning` on: the menu warns and offers Restart Backups, the person's choice.
+    case waitForRunningRestic(longWait: Bool)
     /// The agent is already draining: "Updating the background agent…", with Back Up Now disabled. The
     /// app asks it to restart once drained, which also frees an agent left drained by an app that quit
     /// half-way through a re-registration.
@@ -118,6 +126,9 @@ public enum AgentHealthAction: Sendable, Equatable {
     /// "Background agent isn't running" (or isn't working properly), with "Restart agent" when
     /// `canRepair`, and "Open Login Items".
     case showNotRunning(canRepair: Bool)
+    /// The app's connection admits no agent, as its own signature can't be trusted: no repair can help, and every
+    /// one would stop a healthy agent's backups (Ruling T7-1). "Reinstall Restorey".
+    case showSignatureUntrusted
 }
 
 public enum AgentHealthPolicy: Sendable, Equatable {
@@ -138,10 +149,44 @@ public enum AgentHealthPolicy: Sendable, Equatable {
     /// trigger it: three heartbeats.
     public static let unreachableGrace: TimeInterval = 30
 
+    /// How long an `enabled` agent that doesn't answer is waited on, while a restic it started runs, before the menu
+    /// warns, measured from `unreachableAwakeFor` like the grace (owner, 20 Nov 2026). The wait goes on past it: only
+    /// the person's Restart Backups stops that backup.
+    public static let longWaitWarning: TimeInterval = 30 * 60
+
     /// At most one automatic repair of each kind an hour.
     public static let repairInterval: TimeInterval = 3600
     /// `hello` every 10 s.
     public static let heartbeatInterval: TimeInterval = 10
+}
+
+/// The current run of failed heartbeats from an `enabled` agent, timed in awake time: the app feeds it
+/// `SuspendingClock` readings, which stop while the Mac sleeps and ignore wall-clock changes (fix round 1 of Task 11).
+/// A run starts when the first failing hello was asked, so a call that only fails at its timeout doesn't stretch the
+/// grace.
+public struct UnreachableRun: Sendable, Equatable {
+    public private(set) var startedAt: Duration?
+
+    public init() {}
+
+    /// `failing`: an `enabled` agent's hello failed this heartbeat. Returns `AgentHealthInput.unreachableAwakeFor`.
+    public mutating func heartbeat(failing: Bool, askedAt: Duration, now: Duration) -> TimeInterval? {
+        guard failing else {
+            startedAt = nil
+            return nil
+        }
+        let start = startedAt ?? askedAt
+        startedAt = start
+        let elapsed = (now - start).components
+        return max(0, TimeInterval(elapsed.seconds) + TimeInterval(elapsed.attoseconds) / 1e18)
+    }
+}
+
+/// What a failed `register()` shows. While the connection admits no agent the cause the user can act on is the
+/// signature, since no registration would let the app talk to the agent; the registration error is only logged
+/// (fix round 1 of Task 11, controller ruling).
+public func healthAfterFailedRegistration(_ sentence: String, connectionRefusesEveryAgent: Bool) -> AgentHealthState {
+    connectionRefusesEveryAgent ? .signatureUntrusted : .failed(sentence)
 }
 
 /// The repair table (spec §6.2 and §8, spike H3a, H6 and phase B).
@@ -160,15 +205,21 @@ public func decideAgentHealth(
     case .requiresApproval:
         return .showSwitchedOff
     case .enabled:
+        // Every hello fails whatever the agent's state, so nothing here can be decided from it, and every repair would
+        // stop a healthy agent's backups.
+        if input.connectionRefusesEveryAgent { return .showSignatureUntrusted }
         guard case .ok(let reply) = input.heartbeat else {
             switch enabledButUnreachable {
             case .repairAutomatically:
-                let since = input.unreachableSince ?? input.now
-                guard input.now.timeIntervalSince(since) >= AgentHealthPolicy.unreachableGrace else {
+                let unreachableFor = input.unreachableAwakeFor ?? 0
+                guard unreachableFor >= AgentHealthPolicy.unreachableGrace else {
                     return .showNotRunning(canRepair: true)
                 }
-                // An unreachable agent can't be drained, so the re-registration would kill the restic.
-                if input.resticRunningUnderAgent { return .waitForRunningRestic }
+                // An unreachable agent can't be drained, so the re-registration would kill the restic: waited on for
+                // as long as it runs, never repaired, whatever the hourly limit says.
+                if input.resticRunningUnderAgent {
+                    return .waitForRunningRestic(longWait: unreachableFor >= AgentHealthPolicy.longWaitWarning)
+                }
                 return repair(.reregisterAfterDrain)
             case .offerRestart: return .showNotRunning(canRepair: true)
             }

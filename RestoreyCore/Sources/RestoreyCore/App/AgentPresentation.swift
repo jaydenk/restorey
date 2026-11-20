@@ -11,9 +11,17 @@ public enum AgentHealthState: Sendable, Equatable {
     case switchedOff
     /// `reachable` when the agent answers but a repair didn't fix it.
     case notRunning(reachable: Bool)
+    /// The agent doesn't answer while a restic it started runs (`AgentHealthAction.waitForRunningRestic`): Restorey waits
+    /// rather than stop that backup, so no surface says no backups are happening (fix round 1). `longWait` from
+    /// `AgentHealthPolicy.longWaitWarning` of awake time on: the menu warns, with Restart Backups (owner, 20 Nov 2026).
+    /// Leaves as soon as the agent answers.
+    case waitingForRunningBackup(longWait: Bool)
     /// The app's own bundle is missing the agent's plist: "Restorey's installation is damaged — reinstall it
     /// from the download". No repair is offered, since none can help.
     case damaged
+    /// The app can't trust its own code signature, so its connection admits no agent (`AgentPeerCheck.refuseAll`,
+    /// Ruling T7-1): "Restorey can't verify its own signature". No repair is offered, since none can help.
+    case signatureUntrusted
     /// Registering failed; the sentence is shown as is.
     case failed(String)
 }

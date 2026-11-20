@@ -190,15 +190,16 @@ public enum FormValidation {
         return (types, rejected)
     }
 
-    /// `existing` followed by each new path that isn't already in it. Paths are compared as the same place:
-    /// `/tmp` and `/private/tmp`, a trailing slash and `..` all count as one. A path is stored in its
-    /// standardised form (no trailing slash).
+    /// `existing` followed by each new path that isn't already in it. Paths are compared as written, by string
+    /// handling alone (`SourcePaths`): `/tmp` and `/private/tmp`, a trailing slash and `..` all count as one, but a link
+    /// and where it leads are two paths: links are never followed. It never reads the disk, since the app runs it on
+    /// its main actor (L157); adding folders also compares where links lead, off the main actor (`FolderDrop.look`). A
+    /// path is stored in its standardised form (no trailing slash).
     public static func addingSources(_ paths: [String], to existing: [String]) -> [String] {
         var result = existing
-        var seen = Set(existing.map(placeKey))
         for path in paths {
-            let standard = URL(fileURLWithPath: path).standardizedFileURL.path
-            if seen.insert(placeKey(standard)).inserted { result.append(standard) }
+            let standard = SourcePaths.standardised(path)
+            if !result.contains(where: { SourcePaths.sameFirmlinkSpelling($0, standard) }) { result.append(standard) }
         }
         return result
     }
@@ -208,10 +209,6 @@ public enum FormValidation {
         if path == home { return "~" }
         if path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
         return path
-    }
-
-    private static func placeKey(_ path: String) -> String {
-        URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
     }
 
     private static func trimmed(_ text: String) -> String { text.trimmingCharacters(in: .whitespacesAndNewlines) }

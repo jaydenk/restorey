@@ -153,6 +153,13 @@ struct UnreadableItemsTests {
         #expect(removed.action == .dontBackUp(pattern: pattern))
     }
 
+    @Test func aPrivateSpellingCountsAsAlreadyExcluded() throws {
+        let file = UnreadableItem(path: "/private/var/x/file", reason: "operation not permitted")
+        let pattern = DefaultExclusions.pattern(forFolder: "/var/x/file")
+        let row = try #require(rows([file], exclusions: [pattern], saved: [pattern]).first)
+        #expect(row.action == .excluded(unsaved: false))
+    }
+
     // MARK: Editing the plan's exclusions
 
     @Test func addingAppendsThePatternOnce() {
@@ -166,6 +173,17 @@ struct UnreadableItemsTests {
         let pattern = DefaultExclusions.pattern(forFolder: permission.path)
         #expect(UnreadableList.removing(permission.path, from: ["/x", pattern, "/y"]) == ["/x", "/y"])
         #expect(UnreadableList.removing(permission.path, from: ["/x"]) == ["/x"])
+    }
+
+    /// The row counts the other `/private` spelling as excluded, so Undo takes that spelling out too, or it would do
+    /// nothing (final review).
+    @Test func undoRemovesEitherFirmlinkSpelling() {
+        let short = DefaultExclusions.pattern(forFolder: "/var/x/file")
+        let long = DefaultExclusions.pattern(forFolder: "/private/var/x/file")
+        #expect(UnreadableList.removing("/private/var/x/file", from: ["/x", short, "/y"]) == ["/x", "/y"])
+        #expect(UnreadableList.removing("/var/x/file", from: [long, "/y"]) == ["/y"])
+        #expect(UnreadableList.removing("/var/x/file", from: ["/var/x/other", "/private/Users/x/file"])
+            == ["/var/x/other", "/private/Users/x/file"])
     }
 
     // MARK: The summary on the Overview and in History

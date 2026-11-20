@@ -35,6 +35,21 @@ struct HistoryPresentationTests {
         HistoryPresentation.row(record, planNames: names, now: now, calendar: calendar, locale: locale)
     }
 
+    // MARK: v0.1.2: a tidy held back by a jump in unreadable files
+
+    @Test func aTidyHeldBackReadsAsTheSentenceAndIsGrey() {
+        let held = Self.record(
+            .skipped(.forgetHeldBack(unreadable: 412, previous: 3)), .forget(dryRun: false), seconds: 0, logFile: "")
+        let row = Self.row(held)
+        #expect(row.operation == "Tidy")
+        #expect(row.outcome == "Old snapshots weren’t removed: 412 files couldn’t be read, up from 3 last time.")
+        #expect(row.kind == .skipped)
+        #expect(row.logFile == nil)
+        #expect(HistoryPresentation.rows(
+            [held], plan: nil, filter: .notRun, planNames: Self.names, now: Self.now, calendar: Self.calendar,
+            locale: Self.locale).count == 1)
+    }
+
     // MARK: Task 16b: the files that couldn't be read
 
     @Test func aWarningRowWithItemsCarriesThemForTheSheet() {

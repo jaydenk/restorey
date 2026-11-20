@@ -1,4 +1,6 @@
+import Dispatch
 import Foundation
+import Synchronization
 import Testing
 @testable import RestoreyCore
 
@@ -104,8 +106,11 @@ struct ShortcutRulesTests {
         #expect(ShortcutRules.isSettled(health: .healthy, hasStatus: true))
         #expect(ShortcutRules.isSettled(health: .switchedOff, hasStatus: false))
         #expect(ShortcutRules.isSettled(health: .notRunning(reachable: false), hasStatus: false))
+        #expect(ShortcutRules.isSettled(health: .waitingForRunningBackup(longWait: false), hasStatus: false))
+        #expect(ShortcutRules.isSettled(health: .waitingForRunningBackup(longWait: true), hasStatus: false))
         #expect(ShortcutRules.isSettled(health: .damaged, hasStatus: false))
         #expect(ShortcutRules.isSettled(health: .failed("x"), hasStatus: false))
+        #expect(ShortcutRules.isSettled(health: .signatureUntrusted, hasStatus: false))
     }
 
     // MARK: Back Up Now
@@ -221,6 +226,27 @@ struct ShortcutRulesTests {
         #expect(Self.cancel(UUID(), status) == .failure(ShortcutRefusal("That plan is no longer in Restorey.")))
         let paused = Self.status([Self.line(home, phase: .paused(until: Self.at(15, 0)))])
         #expect(Self.cancel(home.id, paused) == .failure(ShortcutRefusal("“Home” isn’t backing up.")))
+    }
+
+    /// The agent's reply says a pause was already stopping the run, so nothing was cancelled: the dialog says that
+    /// instead of claiming a cancel.
+    @Test func cancelSaysWhenAPauseWasAlreadyStoppingTheRun() {
+        let call = ShortcutCall(kind: .cancel([UUID()]), dialog: "Cancelled the backup of “Home”.")
+        #expect(ShortcutRules.cancelDialog(call, results: [("Home", .alreadyPausing)])
+            == "“Home” is already pausing, so there was nothing to cancel.")
+        #expect(ShortcutRules.cancelDialog(call, results: [("Home", .stoppedARun)]) == call.dialog)
+        // An agent that doesn't say (unknown), or a run that had just ended, keeps today's wording.
+        #expect(ShortcutRules.cancelDialog(call, results: [("Home", .unknown)]) == call.dialog)
+        #expect(ShortcutRules.cancelDialog(call, results: [("Home", .nothingToCancel)]) == call.dialog)
+    }
+
+    @Test func cancelAcrossPlansNamesTheOnesAPauseWon() {
+        let all = ShortcutCall(kind: .cancel([UUID(), UUID()]), dialog: "Cancelled every backup in progress.")
+        #expect(ShortcutRules.cancelDialog(all, results: [("Home", .alreadyPausing), ("Photos", .alreadyPausing)])
+            == "“Home” and “Photos” are already pausing, so there was nothing to cancel.")
+        #expect(ShortcutRules.cancelDialog(all, results: [("Home", .stoppedARun), ("Photos", .alreadyPausing)])
+            == "Cancelled the backup of “Home”. “Photos” is already pausing, so there was nothing to cancel.")
+        #expect(ShortcutRules.cancelDialog(all, results: [("Home", .stoppedARun), ("Photos", .unknown)]) == all.dialog)
     }
 
     @Test func cancelSaysWhyWhenRestoreyCantBeAsked() {
@@ -339,26 +365,117 @@ struct FolderDropTests {
         return root
     }
 
-    @Test func aLinkToAFolderIsAFolderAndKeepsThePathChosen() throws {
+    /// A resolver of its own (its own gate, a deadline no test reaches), so these never meet the app's shared one.
+    private static let resolver = LinkResolver(deadline: 3600)
+
+    @Test func aLinkToAFolderIsAFolderAndKeepsThePathChosen() async throws {
         let root = try Self.fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let names = ["Folder", "Folder link", "notes.txt", "notes link", "Tool.app", "Broken link", "Never there"]
-        let items = PickedItem.classify(names.map { root.appendingPathComponent($0) })
+        let items = await FolderDrop.look(at: names.map { root.appendingPathComponent($0) }, resolver: Self.resolver).items
         #expect(items.map(\.kind) == [.folder, .folder, .file, .file, .file, .missing, .missing])
         // The path the person chose, not where the link leads (the add rule compares sources by where they lead).
         #expect(items[1].path == root.appendingPathComponent("Folder link").path)
-        #expect(PickedItem.classify([URL(string: "https://example.com")!]).map(\.kind) == [.notOnDisk])
+        let web = await FolderDrop.look(at: [URL(string: "https://example.com")!], resolver: Self.resolver)
+        #expect(web.items.map(\.kind) == [.notOnDisk])
     }
 
-    @Test func aLinkedFolderIsAddedAndIsTheSamePlaceAsItsTarget() throws {
+    @Test func aLinkedFolderIsAddedAndIsTheSamePlaceAsItsTarget() async throws {
         let root = try Self.fixture()
         defer { try? FileManager.default.removeItem(at: root) }
-        let link = PickedItem.classify([root.appendingPathComponent("Folder link")])
-        let added = FolderDrop.addingSources(link, to: [], repository: nil)
+        let link = await FolderDrop.look(at: [root.appendingPathComponent("Folder link")], resolver: Self.resolver)
+        let added = FolderDrop.addingSources(link.items, to: [], repository: nil, leads: link.leads)
         #expect(added.problem == nil)
         #expect(added.list == [root.appendingPathComponent("Folder link").path])
-        let again = FolderDrop.addingSources(PickedItem.classify([root.appendingPathComponent("Folder")]), to: added.list, repository: nil)
+        let folder = await FolderDrop.look(
+            at: [root.appendingPathComponent("Folder")], against: added.list, resolver: Self.resolver)
+        let again = FolderDrop.addingSources(folder.items, to: added.list, repository: nil, leads: folder.leads)
         #expect(again.problem == "“Folder” is already in the list.")
+    }
+
+    /// A folder reached through a link into a listed folder is already backed up; the link's own path is outside it.
+    @Test func aFolderReachedThroughALinkIntoAListedFolderIsCovered() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("FolderDropTests-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        let home = root.appendingPathComponent("home")
+        let downloads = home.appendingPathComponent("Downloads")
+        try fm.createDirectory(at: downloads, withIntermediateDirectories: true)
+        let link = root.appendingPathComponent("link")
+        try fm.createSymbolicLink(at: link, withDestinationURL: downloads)
+        let look = await FolderDrop.look(at: [link], against: [home.path], resolver: Self.resolver)
+        let outcome = FolderDrop.addingSources(look.items, to: [home.path], repository: nil, home: "/Users/me", leads: look.leads)
+        #expect(outcome.list == [home.path])
+        #expect(outcome.problem == "“link” is already included in “home”.")
+        // Judged by the paths alone, the link is outside the listed folder.
+        #expect(FolderDrop.addingSources(look.items, to: [home.path], repository: nil, home: "/Users/me").problem == nil)
+    }
+
+    /// L157: reading what was dropped follows links, which a volume that stops answering can hold up for good. The
+    /// read runs on a thread of its own against the deadline, one outstanding at a time (`LinkResolver`): past the
+    /// deadline each item is judged by its path as written (a folder only when written as one, links not followed),
+    /// and a second add while the first is still stuck gives up at once rather than leave another blocked thread. Each
+    /// such add says so under the list. The follower is held until released, so a look that waited for it would never
+    /// return (handshake as in `LinkResolverTests`).
+    @Test func aLookPastItsDeadlineJudgesItemsByPathAndAStuckOneGivesUpAtOnce() async {
+        let release = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        let entered = DispatchSemaphore(value: 0)
+        let calls = FollowCount()
+        let resolver = LinkResolver(deadline: 0.05) { path in
+            if calls.add() == 1 {
+                entered.signal()
+                release.wait()
+                finished.signal()
+            }
+            return path
+        }
+        let urls = [
+            URL(fileURLWithPath: "/Volumes/Gone/Photos/", isDirectory: true),
+            URL(fileURLWithPath: "/Volumes/Gone/notes.txt", isDirectory: false), URL(string: "https://example.com")!,
+        ]
+        let byPath = FolderDrop.Look(
+            items: [
+                PickedItem(path: "/Volumes/Gone/Photos", kind: .folder), PickedItem(path: "/Volumes/Gone/notes.txt", kind: .file),
+                PickedItem(path: "https://example.com", kind: .notOnDisk),
+            ],
+            leads: [:], checkedInTime: false)
+        let pastDeadline = await FolderDrop.look(at: urls, against: ["/Volumes/Gone"], resolver: resolver)
+        #expect(pastDeadline == byPath)
+        guard resolver.gate.isBusy else {
+            Issue.record("the deadline passed before the look was admitted, so no work was held")
+            return
+        }
+        await OwnThread.run(named: "test wait", qualityOfService: .utility) { entered.wait() }
+        let whileStuck = await FolderDrop.look(at: urls, resolver: resolver)
+        #expect(whileStuck == byPath)
+        #expect(calls.value == 1, "no second thread was started behind the stuck one")
+
+        // The folder as written is added, the file isn't taken for one, and the list says the check didn't happen.
+        for look in [pastDeadline, whileStuck] {
+            let outcome = FolderDrop.addingSources(look, to: ["/Users/me/Music"], repository: nil, home: "/Users/me")
+            #expect(outcome.list == ["/Users/me/Music", "/Volumes/Gone/Photos"])
+            #expect(outcome.problem == "“notes.txt” isn’t a folder. Only folders and drives can be added. "
+                + "Only folders and drives on this Mac can be added.")
+            #expect(outcome.note == FolderDrop.uncheckedNote)
+            #expect(FolderDrop.addingExclusions(look, to: []).note == FolderDrop.uncheckedNote)
+        }
+        // Judged by path: inside the listed folder as written.
+        let covered = FolderDrop.addingSources(pastDeadline, to: ["/Volumes/Gone"], repository: nil, home: "/Users/me")
+        #expect(covered.problem?.hasSuffix("“Photos” is already included in “Gone”.") == true)
+
+        release.signal()
+        await OwnThread.run(named: "test wait", qualityOfService: .utility) { finished.wait() }
+        for _ in 0..<2000 where resolver.gate.isBusy { try? await Task.sleep(for: .milliseconds(1)) }
+        #expect(!resolver.gate.isBusy)
+    }
+
+    /// The note is exact, and only for a look that didn't check in time.
+    @Test func onlyAnUncheckedLookSaysSo() {
+        #expect(FolderDrop.uncheckedNote == "Restorey couldn’t check these in time, so they were added as chosen.")
+        let checked = FolderDrop.Look(items: [Self.folder("/Users/me/Music")], leads: [:], checkedInTime: true)
+        #expect(FolderDrop.addingSources(checked, to: [], repository: nil, home: "/Users/me").note == nil)
+        #expect(FolderDrop.addingExclusions(checked, to: []).note == nil)
     }
 
     @Test func aMissingItemSaysItCantBeFound() {
@@ -507,6 +624,14 @@ struct FolderDropTests {
         #expect(FolderDrop.addingExclusions([PickedItem(path: "/Users/me/a.txt", kind: .file)], to: []).problem
             == "“a.txt” isn’t a folder. Only folders and drives can be added.")
     }
+}
+
+/// How many times a test's link follower was called, from whichever thread calls it.
+private final class FollowCount: Sendable {
+    private let state = Mutex(0)
+    var value: Int { state.withLock { $0 } }
+    /// The count after this call.
+    func add() -> Int { state.withLock { $0 += 1; return $0 } }
 }
 
 /// Pause, Resume or Cancel across several plans where some calls fail (review 17e, Minor 2): the error names each.

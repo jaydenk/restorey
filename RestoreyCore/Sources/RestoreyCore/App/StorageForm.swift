@@ -220,14 +220,16 @@ public struct StorageForm: Sendable, Equatable {
         }
     }
 
-    /// A plan name for the new plan, from where it backs up to: "B2 · my-backups", "Local · Backup".
+    /// A plan name for the new plan, from where it backs up to: "B2 · my-backups", "Local · Backup". String handling
+    /// alone (`SourcePaths.lastComponent`): setup names the plan on the main actor, where a stat of a drive that stops
+    /// answering would hang the app (L157).
     public static func planName(for repository: Repository) -> String {
         switch repository {
         case .s3(let location): "\(location.provider == .b2 ? "B2" : "S3") · \(location.bucket)"
         case .raw(let raw, _):
             Repository.rawLocationNeedsNetwork(raw)
                 ? "restic · \(raw.prefix { $0 != ":" })"
-                : "Local · \(URL(fileURLWithPath: raw.hasPrefix("local:") ? String(raw.dropFirst(6)) : raw).lastPathComponent)"
+                : "Local · \(SourcePaths.lastComponent(raw.hasPrefix("local:") ? String(raw.dropFirst(6)) : raw))"
         }
     }
 

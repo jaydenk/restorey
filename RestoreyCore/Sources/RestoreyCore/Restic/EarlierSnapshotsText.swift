@@ -15,7 +15,7 @@ public enum EarlierSnapshotsText {
     ///
     /// Kept short on purpose (fix round 2, live finding L3): macOS lays a modern alert out in a narrow column with its
     /// buttons stacked, so every sentence adds lines, and the first wording (about 430 characters) made a 514 pt sheet,
-    /// taller than the setup window. The longest case stays under 240 characters (`DestructiveAlertTests`).
+    /// taller than the setup window. The longest case stays under 240 characters (`EarlierSnapshotsConfirmationLengthTests`).
     public static func confirmation(
         _ group: EarlierSnapshotGroup, pruneEnabled: Bool, afterFirstBackup: Bool, home: String = NSHomeDirectory()
     ) -> Confirmation {

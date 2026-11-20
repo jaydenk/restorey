@@ -191,8 +191,8 @@ public actor PlanRunner {
     private var networkedUploads: Set<UUID> = []
     /// When `pruneRunLogsIfDue` last pruned the run logs; nil until it has (Ruling R70).
     var lastRunLogPrune: Date?
-    /// The measurements queued after an adopt (PlanRunner+Actions.swift), waiting or running, by plan, so a
-    /// pause, a delete and a system stop reach them as they reach runs.
+    /// The measurements queued after an adopt (PlanRunner+Actions.swift), credential checks and recovery's
+    /// unlocks, waiting or running, by plan, so a pause, a delete and a system stop reach them as they reach runs.
     var measurementHandles: [UUID: [RunHandle]] = [:]
     /// The latest measurement queued after an adopt, by plan, for `waitForMeasurement`.
     var measurements: [UUID: Task<Void, Never>] = [:]
@@ -256,6 +256,38 @@ public actor PlanRunner {
         return BackUpNowReply(status: await deps.state.status(), alreadyRunning: alreadyRunning)
     }
 
+    /// Setup's Start (Task 9): confirms the kit the person saved (`kitDigest`, checked by the state) and starts the
+    /// plan's first backup, a manual one, in the background. The run's handle is registered first, as `begin` does, so a
+    /// pause or Cancel reaches it from the moment the plan shows confirmed; the state then saves the confirmation and
+    /// registers the run in one step (`AgentState.confirmKit`). Any refusal confirms nothing and starts nothing.
+    func startFirstBackup(planID: UUID, kitDigest: String?) async throws -> AgentStatus {
+        await recovery?.value
+        try await deps.state.requireRunnable(planID)
+        if handles[planID] != nil {
+            let name = (try? await deps.state.runInputs(planID).plan.name) ?? "This plan"
+            throw AgentError.alreadyRunning(name: name)
+        }
+        let handle = RunHandle(isBackup: true)
+        handles[planID] = handle
+        let confirmed: (status: AgentStatus, began: Bool)
+        do {
+            confirmed = try await deps.state.confirmKit(planID, kitDigest: kitDigest, beginningRun: true)
+        } catch {
+            if handles[planID] === handle { handles[planID] = nil }
+            throw error
+        }
+        guard confirmed.began else {
+            if handles[planID] === handle { handles[planID] = nil }
+            return confirmed.status
+        }
+        background[planID] = Task {
+            let record = await backup(planID: planID, trigger: .manual, handle: handle)
+            await end(planID, handle)
+            return record
+        }
+        return confirmed.status
+    }
+
     /// On agent start, before the runner is attached to the state: turns every run still marked in
     /// progress into an `.interrupted` record (an interrupted backup also sends its `/fail` ping), then
     /// runs a plain `unlock` once per repository, through its queue (Review Focus 3). Calling it again
@@ -305,10 +337,16 @@ public actor PlanRunner {
         where plan.validationErrors().isEmpty && (plan.recoveryKitConfirmedAt != nil || interrupted.contains(plan.id)) {
             let key = RepositoryQueues.key(for: plan.repository)
             guard !unlocked.contains(key) else { continue }
-            let handle: RunHandle
+            // Not a run of the plan (L168): registered like the measurement after an adopt, so a drain and the system
+            // stop wait for it or reach it, but the plan isn't shown backing up. A pause or delete can't reach it: the
+            // state gets the runner only after recovery, and refuses a delete meanwhile (`deletePlan`). Runs can't
+            // start alongside it: they wait for recovery (`begin`). The handle is registered first, as `begin` does.
+            let handle = RunHandle()
+            measurementHandles[plan.id, default: []].append(handle)
             do {
-                handle = try await begin(plan.id, waitForRecovery: false)
+                try await deps.state.beginMeasurement(planID: plan.id)
             } catch {
+                measurementEnded(planID: plan.id, handle: handle)
                 skippedUnlock(plan, reason: (error as? AgentError)?.message ?? "\(error)")
                 continue
             }
@@ -327,7 +365,9 @@ public actor PlanRunner {
             case .failed(_, let reason, _):
                 skippedUnlock(plan, reason: reason)
             }
-            await end(plan.id, handle)
+            // After its record is committed, so its plan is still there to record it.
+            await deps.state.endMeasurement(planID: plan.id)
+            measurementEnded(planID: plan.id, handle: handle)
         }
     }
 
@@ -357,11 +397,14 @@ public actor PlanRunner {
     /// Cancel Backup: stops the plan's run and drops the backup Resume queued behind a run still stopping, so the
     /// user who pressed Cancel doesn't get a new backup when that run ends. A run a pause is already stopping
     /// stays paused (the first stop wins).
-    /// Returns whether it stopped anything: a run, or the queued backup.
-    func cancel(planID: UUID) async -> Bool {
+    /// Says what it did: it stopped a run or the queued backup; a pause was already stopping the run (so nothing was
+    /// cancelled); or nothing was running.
+    func cancel(planID: UUID) async -> CancelOutcome {
         let droppedQueued = startWhenPausedRunEnds.remove(planID) != nil
+        let pausing = ([handles[planID]].compactMap { $0 } + (measurementHandles[planID] ?? [])).contains { $0.intent == .pause }
         let stopped = await interrupt(planID: planID, intent: .cancel)
-        return stopped || droppedQueued
+        if stopped || droppedQueued { return .stoppedARun }
+        return pausing ? .alreadyPausing : .nothingToCancel
     }
 
     /// Asks every run in flight (recovery's unlocks, backups, maintenance, create, adopt) to stop with
@@ -396,11 +439,11 @@ public actor PlanRunner {
         }
     }
 
-    /// Waits for recovery (unless this is recovery), then registers the run with `AgentState` (which
-    /// refuses while draining, for an unknown plan, a plan being deleted or already running) and gives it
-    /// a handle `pause` can reach from that moment on.
-    func begin(_ planID: UUID, waitForRecovery: Bool = true, isBackup: Bool = false) async throws -> RunHandle {
-        if waitForRecovery { await recovery?.value }
+    /// Waits for recovery, then registers the run with `AgentState` (which refuses while draining, for an
+    /// unknown plan, a plan being deleted or already running) and gives it a handle `pause` can reach from
+    /// that moment on.
+    func begin(_ planID: UUID, isBackup: Bool = false) async throws -> RunHandle {
+        await recovery?.value
         try await deps.state.requireRunnable(planID)
         if handles[planID] != nil {
             let name = (try? await deps.state.runInputs(planID).plan.name) ?? "This plan"
@@ -540,6 +583,8 @@ public actor PlanRunner {
         handle.backupStepEnded()
         if Self.savedData(backup.record.outcome) { backup.record.markedNotForBackupSkipped = marked.count }
         backup.record.cloudOnlySkipped = await countCloudOnly(after: backup.record, plan: plan)
+        // Read before this record replaces it as the plan's last backup.
+        let previousBackup = try? await deps.state.runInputs(plan.id).history.lastBackupRecord
         await commit(backup.record, plan: plan, fda: fda, stoppedReason: backup.stoppedReason)
         queueEndPing(backup, redactor: session.redactor)
 
@@ -556,7 +601,23 @@ public actor PlanRunner {
         {
             return backup
         }
-        for op in Self.maintenance(plan: plan, history: history, after: backup.record.outcome, now: deps.now()) {
+        // A backup that couldn't read many more files than the last holds back the tidy it would have followed with
+        // (and the prune after it). The skip is its own record, so the History list and the Overview can say why.
+        let heldBack = Self.forgetHeldBack(after: backup.record.outcome, previousBackup: previousBackup)
+        if let reason = heldBack,
+            Self.maintenance(plan: plan, history: history, after: backup.record.outcome, now: deps.now())
+                .contains(.forget(dryRun: false))
+        {
+            let at = deps.now()
+            await commit(
+                RunRecord(
+                    id: UUID(), planID: plan.id, operation: .forget(dryRun: false), trigger: trigger, startedAt: at,
+                    endedAt: at, outcome: .skipped(reason), summary: nil, logFile: ""),
+                plan: plan)
+        }
+        for op in Self.maintenance(
+            plan: plan, history: history, after: backup.record.outcome, now: deps.now(), forgetHeld: heldBack != nil)
+        {
             // Not started while winding down: the next agent runs it at its next backup.
             guard handle.intent == nil, !(await isWindingDown()) else { break }
             let step = await runStep(op, trigger: trigger, session: session, handle: handle)
@@ -835,7 +896,8 @@ public actor PlanRunner {
             outcome = classify(
                 operation: op, exitCode: finished.exitCode, interruptedByUs: intent,
                 terminatedBySignal: finished.terminatedBySignal, killedByUs: finished.killedByUs,
-                summary: finished.summary, errors: finished.messages, exitErrorMessage: finished.exitErrorMessage)
+                summary: finished.summary, errors: finished.messages,
+                droppedArchivalErrors: finished.droppedArchivalErrorCount, exitErrorMessage: finished.exitErrorMessage)
             if finished.terminatedBySignal != nil { needsUnlock.insert(session.key) }
         } catch {
             outcome = .failed(

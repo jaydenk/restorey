@@ -298,6 +298,16 @@ final class RunnerFixture: Sendable {
         return (state, runner)
     }
 
+    /// The agent starting again as `main.swift` wires it: the runner exists, but the state gets it only once
+    /// `recoverAfterStart()` has returned, so the caller attaches it.
+    func reloadedUnattached() async -> (AgentState, PlanRunner) {
+        let clock = clock
+        let state = await AgentState(directory: support, secrets: secrets, now: { clock.now })
+        var dependencies = dependencies
+        dependencies.state = state
+        return (state, PlanRunner(dependencies: dependencies))
+    }
+
     func status() async -> PlanStatus {
         await state.status().plans.first { $0.plan.id == planID }!
     }

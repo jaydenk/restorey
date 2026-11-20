@@ -20,8 +20,13 @@ public struct ResticTermination: Sendable, Equatable {
     public var exitErrorMessage: String?
     /// The last 20 lines restic wrote to stderr, as written.
     public var stderrTail: [String]
-    /// Every `error` message, in the order they arrived on stderr.
+    /// The `error` messages, in the order they arrived on stderr, up to `ResticProcess.storedErrorLimit`.
     public var messages: [ResticItemError]
+    /// How many `error` messages came after the limit and weren't kept.
+    public var droppedErrorCount: Int
+    /// How many of those were archival errors, which `classify` still counts as unreadable files. Counted as they
+    /// were drained, so they aren't de-duplicated by item (a whole-volume failure is the only way to reach the limit).
+    public var droppedArchivalErrorCount: Int
     public var summary: BackupSummary?
     public var pid: pid_t
 
@@ -29,7 +34,7 @@ public struct ResticTermination: Sendable, Equatable {
         exitCode: Int32, terminatedBySignal: Int32? = nil, killedByUs: Bool = false,
         neverStarted: Bool = false, interruptIntent: InterruptIntent? = nil,
         exitErrorMessage: String? = nil, stderrTail: [String] = [], messages: [ResticItemError] = [],
-        summary: BackupSummary? = nil, pid: pid_t
+        droppedErrorCount: Int = 0, droppedArchivalErrorCount: Int = 0, summary: BackupSummary? = nil, pid: pid_t
     ) {
         self.exitCode = exitCode
         self.terminatedBySignal = terminatedBySignal
@@ -39,6 +44,8 @@ public struct ResticTermination: Sendable, Equatable {
         self.exitErrorMessage = exitErrorMessage
         self.stderrTail = stderrTail
         self.messages = messages
+        self.droppedErrorCount = droppedErrorCount
+        self.droppedArchivalErrorCount = droppedArchivalErrorCount
         self.summary = summary
         self.pid = pid
     }
@@ -167,6 +174,16 @@ public actor ResticProcess {
         if let supervisedSince { await supervisor.remove(pid: pid, startTime: supervisedSince) }
         let stdoutResult = await out
         let stderrResult = await err
+        // Each stream kept up to the limit; together they keep it too, and the rest are counted.
+        var messages = stderrResult.errors + stdoutResult.errors
+        var droppedErrors = stderrResult.droppedErrors + stdoutResult.droppedErrors
+        var droppedArchival = stderrResult.droppedArchivalErrors + stdoutResult.droppedArchivalErrors
+        if messages.count > Self.storedErrorLimit {
+            let excess = messages[Self.storedErrorLimit...]
+            droppedErrors += excess.count
+            droppedArchival += excess.filter { $0.during == "archival" }.count
+            messages.removeSubrange(Self.storedErrorLimit...)
+        }
 
         exited = true
 
@@ -179,7 +196,7 @@ public actor ResticProcess {
             interruptIntent: intent,
             exitErrorMessage: stderrResult.exitErrorMessage ?? stdoutResult.exitErrorMessage,
             stderrTail: stderrResult.tail,
-            messages: stderrResult.errors + stdoutResult.errors,
+            messages: messages, droppedErrorCount: droppedErrors, droppedArchivalErrorCount: droppedArchival,
             summary: stdoutResult.summary ?? stderrResult.summary,
             pid: pid
         )
@@ -222,11 +239,18 @@ public actor ResticProcess {
     private struct Drained: Sendable {
         var tail: [String] = []
         var errors: [ResticItemError] = []
+        var droppedErrors = 0
+        var droppedArchivalErrors = 0
         var summary: BackupSummary?
         var exitErrorMessage: String?
     }
 
     private static let tailLength = 20
+
+    /// The most `error` messages a run keeps. A failing volume can raise one per file, millions of them, and each
+    /// kept message is memory held until the run ends; the rest are counted (`droppedErrorCount`), and the ones that
+    /// are archival errors still count as unreadable files.
+    public static let storedErrorLimit = 10_000
 
     /// Reads `handle` to end of file, parsing every line. The blocking `read` calls run on a dedicated
     /// dispatch queue for this stream, so neither stream waits for the other and nothing blocks the
@@ -250,7 +274,13 @@ public actor ResticProcess {
                     if result.tail.count > tailLength { result.tail.removeFirst() }
                     let message = ResticMessageParser.parse(line)
                     switch message {
-                    case .error(let error): result.errors.append(error)
+                    case .error(let error):
+                        if result.errors.count < storedErrorLimit {
+                            result.errors.append(error)
+                        } else {
+                            result.droppedErrors += 1
+                            if error.during == "archival" { result.droppedArchivalErrors += 1 }
+                        }
                     case .summary(let summary): result.summary = summary
                     case .exitError(_, let text): result.exitErrorMessage = text
                     default: break

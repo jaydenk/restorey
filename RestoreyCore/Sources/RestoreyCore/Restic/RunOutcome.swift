@@ -4,7 +4,7 @@ import Foundation
 /// that an agent being replaced won't start (`agentUpdating`, Ruling R55).
 /// JSON: `{"type":"onBattery"}`, `{"type":"batteryBelow","percent":20}`,
 /// `{"type":"volumeNotMounted","volume":"Backup"}`, `{"type":"agentUpdating"}`,
-/// `{"type":"skippedWiFi","name":"Home"}`.
+/// `{"type":"skippedWiFi","name":"Home"}`, `{"type":"forgetHeldBack","unreadable":412,"previous":3}`.
 public enum SkipReason: Codable, Sendable, Equatable {
     case onBattery
     case batteryBelow(Int)
@@ -17,6 +17,11 @@ public enum SkipReason: Codable, Sendable, Equatable {
     /// The Mac is on a Wi-Fi network in the Mac-wide skip list (`NetworkSettings.skippedWiFiNames`). Carries
     /// the network's name as the Mac reports it, not the list's spelling.
     case skippedWiFi(String)
+    /// A backup couldn't read many more files than the last one that saved data, so the `forget` (and the prune after
+    /// it) that would have followed was not run, in case a source has gone missing or unreadable and retention would
+    /// thin out the good snapshots (`PlanRunner.forgetHeldBack`). Carries this backup's unreadable count and the
+    /// previous one's. Recorded on the skipped `forget`, never on a backup.
+    case forgetHeldBack(unreadable: Int, previous: Int)
 
     /// The sentence shown for a skipped run, in the menu, run logs and alerts.
     public var summary: String {
@@ -29,10 +34,12 @@ public enum SkipReason: Codable, Sendable, Equatable {
         case .volumeNotMounted(let volume): "Skipped: \(volume) isn’t connected"
         case .agentUpdating: "Skipped: Restorey was updating"
         case .skippedWiFi(let name): "Skipped on Wi-Fi “\(name)”"
+        case .forgetHeldBack(let unreadable, let previous):
+            "Old snapshots weren’t removed: \(unreadable) files couldn’t be read, up from \(previous) last time."
         }
     }
 
-    private enum CodingKeys: String, CodingKey { case type, percent, volume, name }
+    private enum CodingKeys: String, CodingKey { case type, percent, volume, name, unreadable, previous }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -44,6 +51,9 @@ public enum SkipReason: Codable, Sendable, Equatable {
         case "volumeNotMounted": self = .volumeNotMounted(try c.decode(String.self, forKey: .volume))
         case "agentUpdating": self = .agentUpdating
         case "skippedWiFi": self = .skippedWiFi(try c.decode(String.self, forKey: .name))
+        case "forgetHeldBack":
+            self = .forgetHeldBack(
+                unreadable: try c.decode(Int.self, forKey: .unreadable), previous: try c.decode(Int.self, forKey: .previous))
         case let other: throw UnknownCase.error(kind: "skip reason", name: other, in: c, forKey: .type)
         }
     }
@@ -64,6 +74,10 @@ public enum SkipReason: Codable, Sendable, Equatable {
         case .skippedWiFi(let name):
             try c.encode("skippedWiFi", forKey: .type)
             try c.encode(name, forKey: .name)
+        case .forgetHeldBack(let unreadable, let previous):
+            try c.encode("forgetHeldBack", forKey: .type)
+            try c.encode(unreadable, forKey: .unreadable)
+            try c.encode(previous, forKey: .previous)
         }
     }
 }
@@ -256,6 +270,13 @@ public struct RunRecord: Codable, Sendable, Equatable, Identifiable {
         self.biggestAdditions = biggestAdditions
     }
 
+    /// True for the record of a `forget` that wasn't run because many more files couldn't be read than last time
+    /// (`SkipReason.forgetHeldBack`): a note on the tidy, not a skipped backup.
+    public var isForgetHeldBack: Bool {
+        if case .skipped(.forgetHeldBack) = outcome { return true }
+        return false
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, planID, operation, trigger, startedAt, endedAt, outcome, summary, logFile, droppedLogLines, cloudOnlySkipped
         case markedNotForBackupSkipped, unreadableItems, biggestAdditions
@@ -320,6 +341,7 @@ public func classify(
     killedByUs: Bool = false,
     summary: BackupSummary?,
     errors: [ResticItemError],
+    droppedArchivalErrors: Int = 0,
     exitErrorMessage: String?
 ) -> RunOutcome {
     if let interruptedByUs, killedByUs, terminatedBySignal == SIGKILL {
@@ -338,7 +360,7 @@ public func classify(
         // snapshot couldn't be removed (restic 0.19.1's documented exit codes), which is a failure of that
         // step, not unreadable files (final review M9). Any other operation has no documented 3.
         switch operation {
-        case .backup: return .warning(unreadable: unreadableFileCount(errors))
+        case .backup: return .warning(unreadable: unreadableFileCount(errors, droppedArchival: droppedArchivalErrors))
         case .forget, .forgetSnapshots:
             return .failed(exitCode: 3, reason: exitErrorMessage.map(errorSentence) ?? errors.first?.message
                 ?? "restic couldn’t remove every snapshot it was asked to forget")
@@ -376,10 +398,13 @@ func errorSentence(_ exitErrorMessage: String) -> String {
 /// archiver's error callback makes the backup exit 3). A directory both phases failed on is counted once.
 /// An exit 3 with no archival error still reports 1, so a restic wording change can't produce
 /// "0 files couldn't be read".
-func unreadableFileCount(_ errors: [ResticItemError]) -> Int {
+///
+/// `droppedArchival` is how many archival errors `ResticProcess` didn't keep past its limit. They can't be
+/// de-duplicated (their items were never stored), so each counts once.
+func unreadableFileCount(_ errors: [ResticItemError], droppedArchival: Int = 0) -> Int {
     let archival = errors.filter { $0.during == "archival" }
     // An archival error with no item (not seen in 0.19.1) can't be de-duplicated, so each counts once.
     let items = Set(archival.compactMap(\.item))
     let itemless = archival.filter { $0.item == nil }.count
-    return max(1, items.count + itemless)
+    return max(1, items.count + itemless + droppedArchival)
 }
