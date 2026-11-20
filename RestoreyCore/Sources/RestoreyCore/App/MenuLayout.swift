@@ -8,8 +8,12 @@ public enum MenuCommand: Sendable, Equatable {
     case openPlan(UUID)
     case backUpAll
     case backUp(UUID)
-    case pauseAll
-    case pause(UUID)
+    /// Pause every plan that can be, for this long.
+    case pauseAll(PauseLength)
+    case pause(UUID, PauseLength)
+    /// Cancel Backup: every running backup, this run only.
+    case cancelAll
+    case cancel(UUID)
     case resumeAll
     case resume(UUID)
     case restoreFiles(UUID)
@@ -207,9 +211,8 @@ public enum MenuLayout {
             }
             rows.append(perPlan(
                 "Back Up Now", submenus, enabled: actions.backUpNow, all: .backUpAll, plans, \.canBackUp, MenuCommand.backUp))
-            if actions.pause {
-                rows.append(perPlan("Pause", submenus, enabled: true, all: .pauseAll, plans, \.canPause, MenuCommand.pause))
-            }
+            if actions.pause { rows.append(pauseRow(submenus, plans)) }
+            if actions.cancel { rows.append(cancelRow(plans)) }
             let restorable = plans.filter(\.canRestore)
             if submenus, !restorable.isEmpty {
                 rows.append(.submenu(
@@ -235,6 +238,42 @@ public enum MenuLayout {
         if developer { rows.append(.item(MenuItem("Developer…", command: .developer))) }
         rows.append(.item(MenuItem("Quit Restorey", command: .quit, keyEquivalent: "q")))
         return rows
+    }
+
+    /// Pause, only while a backup runs (owner, 20 Nov 2026), in one submenu level (HIG): the three lengths for the one
+    /// running plan; with several running, a section header for all of them and one per running plan, each with the
+    /// three lengths. The headers aren't read with the items under them, so each length says what it pauses for
+    /// VoiceOver.
+    private static func pauseRow(_ submenus: Bool, _ plans: [PlanChoice]) -> MenuRow {
+        guard submenus else { return .submenu(title: "Pause", items: lengths({ .pauseAll($0) }, enabled: true, spoken: nil)) }
+        let running = plans.filter(\.canPause)
+        if running.count == 1, let only = running.first {
+            return .submenu(title: "Pause", items: lengths({ .pause(only.id, $0) }, enabled: true, spoken: only.name))
+        }
+        var items: [MenuRow] = [.header("All Plans")] + lengths({ .pauseAll($0) }, enabled: true, spoken: "all plans")
+        for plan in running {
+            items.append(.header(plan.name))
+            items += lengths({ .pause(plan.id, $0) }, enabled: plan.canPause, spoken: plan.name)
+        }
+        return .submenu(title: "Pause", items: items)
+    }
+
+    private static func lengths(_ command: (PauseLength) -> MenuCommand, enabled: Bool, spoken: String?) -> [MenuRow] {
+        PauseLength.allCases.map { length in
+            .item(MenuItem(
+                length.menuTitle, command: command(length), enabled: enabled,
+                accessibilityLabel: spoken.map { "Pause \($0) \(length.phrase)" }))
+        }
+    }
+
+    /// Cancel Backup, after Pause, only while a backup runs: a plain item for the one running, otherwise the
+    /// `perPlan` shape over the running plans.
+    private static func cancelRow(_ plans: [PlanChoice]) -> MenuRow {
+        let running = plans.filter(\.canCancel)
+        if running.count == 1, let only = running.first {
+            return .item(MenuItem("Cancel Backup", command: .cancel(only.id)))
+        }
+        return perPlan("Cancel Backup", true, enabled: true, all: .cancelAll, running, \.canCancel, MenuCommand.cancel)
     }
 
     /// A plan's status: the line's status as the title, its detail and destination as the subtitle, and its state's

@@ -89,9 +89,10 @@ struct MenuPresentationTests {
         #expect(line.progress == nil)
         #expect(line.severity == nil)
         #expect(!line.isPaused)
+        // Idle: nothing to pause (owner, 20 Nov 2026).
         #expect(content.actions == MenuActions(
-            backUpNow: true, pause: true, resume: false, perPlanSubmenus: false,
-            plans: [PlanChoice(id: plan.id, name: "MacBook", canBackUp: true, canPause: true, canResume: false, canRestore: true)]))
+            backUpNow: true, pause: false, resume: false, perPlanSubmenus: false,
+            plans: [PlanChoice(id: plan.id, name: "MacBook", canBackUp: true, canPause: false, canResume: false, canRestore: true)]))
     }
 
     @Test func destinationHasNoSizeBeforeTheFirstMeasurement() {
@@ -142,7 +143,7 @@ struct MenuPresentationTests {
     }
 
     /// Final review m6: a first backup that was cut short says it carries on, and that restic keeps what it uploaded.
-    @Test(arguments: [RunOutcome.stoppedBySystem, .interrupted, .paused])
+    @Test(arguments: [RunOutcome.stoppedBySystem, .interrupted, .paused, .cancelled])
     func aFirstBackupThatWasInterruptedSaysItCarriesOn(outcome: RunOutcome) {
         let plan = Self.plan()
         let interrupted = Self.record(plan, outcome, at: Self.at(10, 5))
@@ -197,10 +198,14 @@ struct MenuPresentationTests {
         #expect(content.plans[0].progress == nil)
         #expect(content.actions.perPlanSubmenus)
         #expect(content.actions.backUpNow)
-        // Per plan for the submenus: the running one can't be backed up again, but can be paused.
+        #expect(content.actions.cancel)
+        // Per plan for the submenus: the running one can't be backed up again, but can be paused or cancelled; the idle
+        // one has nothing to pause (owner, 20 Nov 2026).
         #expect(content.actions.plans == [
-            PlanChoice(id: idle.id, name: "MacBook", canBackUp: true, canPause: true, canResume: false, canRestore: true),
-            PlanChoice(id: photos.id, name: "Photos drive", canBackUp: false, canPause: true, canResume: false, canRestore: true),
+            PlanChoice(id: idle.id, name: "MacBook", canBackUp: true, canPause: false, canResume: false, canRestore: true),
+            PlanChoice(
+                id: photos.id, name: "Photos drive", canBackUp: false, canPause: true, canResume: false, canRestore: true,
+                canCancel: true),
         ])
     }
 
@@ -216,6 +221,28 @@ struct MenuPresentationTests {
         let kitContent = Self.make(Self.status([Self.line(needsKit)]))
         #expect(kitContent.actions.plans.first?.canRestore == true)
         #expect(!content.actions.backUpNow)
+    }
+
+    /// Cancel Backup is for a backup that is running now, and only while the agent can be asked.
+    @Test func cancelIsOfferedOnlyForARunningBackup() {
+        let idle = Self.plan("MacBook")
+        let running = Self.plan("Photos drive")
+        let quiet = Self.make(Self.status([Self.line(idle)]))
+        #expect(!quiet.actions.cancel)
+        #expect(quiet.actions.plans.map(\.canCancel) == [false])
+
+        let paused = Self.make(Self.status([Self.line(idle, phase: .paused(until: Self.at(15, 0)))]))
+        #expect(!paused.actions.cancel)
+
+        let busy = Self.make(Self.status([Self.line(idle), Self.line(running, phase: .running(nil, retrying: nil))]))
+        #expect(busy.actions.cancel)
+        #expect(busy.actions.plans.map(\.canCancel) == [false, true])
+
+        // Not while the agent can't be asked: no choices at all, so nothing to cancel.
+        let updating = Self.make(
+            Self.status([Self.line(running, phase: .running(nil, retrying: nil))]), health: .updating)
+        #expect(!updating.actions.cancel)
+        #expect(updating.actions.plans.isEmpty)
     }
 
     @Test func runningWithoutProgressOrRateYet() {
@@ -312,6 +339,16 @@ struct MenuPresentationTests {
             plans: [PlanChoice(id: plan.id, name: "MacBook", canBackUp: true, canPause: false, canResume: true, canRestore: true)]))
         #expect(!Self.text(of: content).contains("Failed"))
         #expect(!Self.text(of: content).contains("failed"))
+    }
+
+    @Test func resumesTomorrowSaysSo() {
+        let plan = Self.plan()
+        // 14:20 on Thursday 12 November, Brisbane. A pause until the next calendar day says so; the same day doesn't.
+        let tomorrow = Self.calendar.date(from: DateComponents(year: 2026, month: 11, day: 13, hour: 15, minute: 47))!
+        let content = Self.make(Self.status([Self.line(plan, phase: .paused(until: tomorrow), next: nil)]))
+        #expect(content.plans[0].detail == "Resumes by itself tomorrow at 15:47")
+        let today = Self.make(Self.status([Self.line(plan, phase: .paused(until: Self.at(15, 47)), next: nil)]))
+        #expect(today.plans[0].detail == "Resumes by itself at 15:47")
     }
 
     @Test func aSystemStoppedRunIsNeverFailed() {

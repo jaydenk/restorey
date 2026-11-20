@@ -1,12 +1,13 @@
 import AppKit
 import RestoreyCore
 
-/// The agent calls behind the menu's Back Up Now, Pause and Resume, shared by the menu and Settings' Overview tab
+/// The agent calls behind the menu's Back Up Now, Pause, Cancel and Resume, shared by the menu and Settings' Overview tab
 /// (Task 14c) so both ask the same way and show the same alert when one fails.
 @MainActor
 enum AgentActions {
     static let backUpFailed = "Restorey couldn’t start the backup"
     static let pauseFailed = "Restorey couldn’t pause the backup"
+    static let cancelFailed = "Restorey couldn’t cancel the backup"
     static let resumeFailed = "Restorey couldn’t resume the backup"
 
     /// `planID` nil: every plan (the menu's "All Plans").
@@ -14,8 +15,12 @@ enum AgentActions {
         run(backUpFailed) { [await connection.backUpNow(planID).map(\.status)] }
     }
 
-    static func pause(_ plans: [UUID], _ connection: AgentConnection) {
-        run(pauseFailed) { await each(plans, connection.pause) }
+    static func pause(_ plans: [UUID], for length: PauseLength, _ connection: AgentConnection) {
+        run(pauseFailed) { await each(plans) { await connection.pause($0, for: length) } }
+    }
+
+    static func cancel(_ plans: [UUID], _ connection: AgentConnection) {
+        run(cancelFailed) { await each(plans, connection.cancel) }
     }
 
     static func resume(_ plans: [UUID], _ connection: AgentConnection) {

@@ -224,11 +224,16 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
             AgentActions.backUpNow(nil, connection)
         case .backUp(let planID):
             AgentActions.backUpNow(planID, connection)
-        case .pauseAll:
+        case .pauseAll(let length):
             let plans = choices(supervisor).filter(\.canPause).map(\.id)
-            AgentActions.pause(plans, connection)
-        case .pause(let planID):
-            AgentActions.pause([planID], connection)
+            AgentActions.pause(plans, for: length, connection)
+        case .pause(let planID, let length):
+            AgentActions.pause([planID], for: length, connection)
+        case .cancelAll:
+            let plans = choices(supervisor).filter(\.canCancel).map(\.id)
+            AgentActions.cancel(plans, connection)
+        case .cancel(let planID):
+            AgentActions.cancel([planID], connection)
         case .resumeAll:
             let plans = choices(supervisor).filter(\.canResume).map(\.id)
             AgentActions.resume(plans, connection)

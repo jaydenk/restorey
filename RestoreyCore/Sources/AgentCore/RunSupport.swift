@@ -37,13 +37,20 @@ final class RunHandle: Sendable {
     /// The restic process the run currently has, if any.
     var process: ResticProcess? { state.withLock { $0.process } }
 
-    /// Records the request and returns the process to interrupt, or nil when there is none or the same
-    /// request was already made (a second SIGINT would make restic stop without removing its lock).
+    /// Records the request and returns the process to interrupt, or nil when there is none or the run is
+    /// already being stopped: the first request wins, so a Cancel after a pause leaves the run `.paused` (and
+    /// a second SIGINT would make restic stop without removing its lock).
     func request(_ intent: InterruptIntent) -> ResticProcess? {
+        requestStop(intent).process
+    }
+
+    /// `request`, also saying whether the request was taken (`accepted`): false when the run was already being
+    /// stopped. A request taken before restic has started stops the step from starting, with no process to return.
+    func requestStop(_ intent: InterruptIntent) -> (accepted: Bool, process: ResticProcess?) {
         state.withLock { state in
-            guard state.intent != intent else { return nil }
+            guard state.intent == nil else { return (false, nil) }
             state.intent = intent
-            return state.process
+            return (true, state.process)
         }
     }
 

@@ -35,6 +35,10 @@ public struct ResticContext: Sendable {
     /// This run's list of items apps mark as not for backup (`MarkedNotForBackup.excludeFile`), passed to `backup` as
     /// `--exclude-file`. Nil when there is nothing to skip: the flag is then left out.
     public var notForBackupExcludeFile: URL?
+    /// Where the plan's local repository folder leads once links are followed (`SourcePaths.resolvingLinks`), worked
+    /// out by the caller off its actor: a backup excludes it as well as the path as given. Nil when not resolved; the
+    /// builder never reads the file system itself (final review I1).
+    public var repositoryLinkTarget: String?
 
     public init(
         cacheDirectory: URL,
@@ -45,7 +49,8 @@ public struct ResticContext: Sendable {
         macWideUploadLimitKiB: Int? = nil,
         networkedBackupsRunning: Int = 1,
         maintenanceRetryLock: String = "5m",
-        notForBackupExcludeFile: URL? = nil
+        notForBackupExcludeFile: URL? = nil,
+        repositoryLinkTarget: String? = nil
     ) {
         self.cacheDirectory = cacheDirectory
         self.helperExecutable = helperExecutable
@@ -55,6 +60,7 @@ public struct ResticContext: Sendable {
         self.macWideUploadLimitKiB = macWideUploadLimitKiB
         self.networkedBackupsRunning = networkedBackupsRunning
         self.maintenanceRetryLock = maintenanceRetryLock
+        self.repositoryLinkTarget = repositoryLinkTarget
         self.notForBackupExcludeFile = notForBackupExcludeFile
     }
 }
@@ -197,6 +203,14 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
             : plan.uploadLimitKiB
         if let limit { args += ["--limit-upload", String(limit)] }
         for pattern in plan.exclusions { args.append("--exclude=\(pattern)") }
+        // A local repository is never part of its own backup, however the plan's folders are chosen: left out by the
+        // path as given and, if a link leads elsewhere, by the place it leads to (Task 1), which the caller resolved.
+        if let repositoryPath = plan.repository.localFolderPath {
+            let resolved = context.repositoryLinkTarget.map(SourcePaths.standardised) ?? repositoryPath
+            for path in resolved == repositoryPath ? [repositoryPath] : [repositoryPath, resolved] {
+                args.append("--exclude=\(DefaultExclusions.pattern(forFolder: path))")
+            }
+        }
         // Items apps mark as not for backup (Task 15c): literal patterns, one per line, written for this run.
         if let file = context.notForBackupExcludeFile { args.append("--exclude-file=\(file.path)") }
         // A relative pattern matches a whole path component at any depth (restic 0.19.1

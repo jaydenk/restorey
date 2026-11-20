@@ -143,14 +143,19 @@ public struct PlanChoice: Sendable, Equatable {
     /// Listed under Restore Files…: every plan but an unfinished one, which has no recovery kit and may have no
     /// repository yet.
     public var canRestore: Bool
+    /// A backup is running now (and the agent can be asked): Cancel Backup stops it, this run only.
+    public var canCancel: Bool
 
-    public init(id: UUID, name: String, canBackUp: Bool, canPause: Bool, canResume: Bool, canRestore: Bool) {
+    public init(
+        id: UUID, name: String, canBackUp: Bool, canPause: Bool, canResume: Bool, canRestore: Bool, canCancel: Bool = false
+    ) {
         self.id = id
         self.name = name
         self.canBackUp = canBackUp
         self.canPause = canPause
         self.canResume = canResume
         self.canRestore = canRestore
+        self.canCancel = canCancel
     }
 }
 
@@ -159,15 +164,20 @@ public struct MenuActions: Sendable, Equatable {
     public var backUpNow: Bool
     public var pause: Bool
     public var resume: Bool
+    /// A backup is running: the menu has Cancel Backup.
+    public var cancel: Bool
     /// More than one plan: Back Up Now and Pause also get a submenu to act on one plan.
     public var perPlanSubmenus: Bool
     /// Every plan, in the status's order. Empty when the agent can't be asked to act (anything but healthy).
     public var plans: [PlanChoice]
 
-    public init(backUpNow: Bool, pause: Bool, resume: Bool, perPlanSubmenus: Bool, plans: [PlanChoice] = []) {
+    public init(
+        backUpNow: Bool, pause: Bool, resume: Bool, cancel: Bool = false, perPlanSubmenus: Bool, plans: [PlanChoice] = []
+    ) {
         self.backUpNow = backUpNow
         self.pause = pause
         self.resume = resume
+        self.cancel = cancel
         self.perPlanSubmenus = perPlanSubmenus
         self.plans = plans
     }
@@ -338,12 +348,15 @@ public enum MenuPresentation {
             return PlanChoice(
                 id: plan.plan.id, name: plan.plan.name,
                 canBackUp: ready && !plan.phase.isRunning,
-                canPause: ready && !plan.phase.isPaused && !plan.phase.isStopped,
-                canResume: ready && plan.phase.isPaused, canRestore: plan.setupState != .unfinished)
+                // Only a backup in progress can be paused (owner, 20 Nov 2026), as only one can be cancelled.
+                canPause: ready && plan.phase.isRunning,
+                canResume: ready && plan.phase.isPaused, canRestore: plan.setupState != .unfinished,
+                canCancel: ready && plan.phase.isRunning)
         }
         return MenuActions(
             backUpNow: choices.contains(where: \.canBackUp), pause: choices.contains(where: \.canPause),
-            resume: choices.contains(where: \.canResume), perPlanSubmenus: plans.count > 1, plans: choices)
+            resume: choices.contains(where: \.canResume), cancel: choices.contains(where: \.canCancel),
+            perPlanSubmenus: plans.count > 1, plans: choices)
     }
 
     // MARK: Banners
@@ -592,7 +605,8 @@ public enum MenuPresentation {
     private static func rawDestination(_ repository: String) -> String {
         if !Repository.rawLocationNeedsNetwork(repository) {
             let path = repository.hasPrefix("local:") ? String(repository.dropFirst("local:".count)) : repository
-            return "Local · \(URL(fileURLWithPath: path).lastPathComponent)"
+            // Pure: `URL(fileURLWithPath:)` would stat the repository's folder on every menu build.
+            return "Local · \(SourcePaths.lastComponent(path))"
         }
         let scheme = repository.prefix { $0 != ":" }
         return backendNames[String(scheme)] ?? "Remote repository"
@@ -659,10 +673,11 @@ private enum Words {
         return "\(unreadable) \(unreadable == 1 ? "file" : "files") couldn’t be read"
     }
 
-    /// A backup that ended without a verdict because something stopped it (the system, the user's pause, a crash).
+    /// A backup that ended without a verdict because something stopped it (the system, the user's pause or Cancel
+    /// Backup, a crash).
     static func interruptsFirstBackup(_ outcome: RunOutcome) -> Bool {
         switch outcome {
-        case .stoppedBySystem, .interrupted, .paused: true
+        case .stoppedBySystem, .interrupted, .paused, .cancelled: true
         default: false
         }
     }
@@ -672,7 +687,8 @@ private enum Words {
     }
 
     static func resumes(_ until: Date, _ format: TextContext) -> String {
-        "Resumes by itself at \(format.time(until))"
+        let day = format.isTomorrow(until) ? " tomorrow" : ""
+        return "Resumes by itself\(day) at \(format.time(until))"
     }
 
     static func next(_ date: Date, _ format: TextContext) -> String {
@@ -691,6 +707,8 @@ public struct PlanOverview: Sendable, Equatable {
         public enum Kind: Sendable, Hashable {
             case backUpNow
             case pause
+            /// Cancel Backup: stops the run in progress; the schedule carries on.
+            case cancel
             case resume
             case restoreFiles
         }
@@ -703,6 +721,7 @@ public struct PlanOverview: Sendable, Equatable {
             switch kind {
             case .backUpNow: "Back Up Now"
             case .pause: "Pause"
+            case .cancel: "Cancel Backup"
             case .resume: "Resume"
             case .restoreFiles: "Restore Files…"
             }
@@ -801,7 +820,10 @@ extension MenuPresentation {
         }
 
         overview.buttons = [PlanOverview.Button(kind: .backUpNow, enabled: choice?.canBackUp ?? false)]
-        if plan.phase.isRunning { overview.buttons.append(.init(kind: .pause, enabled: choice?.canPause ?? false)) }
+        if plan.phase.isRunning {
+            overview.buttons.append(.init(kind: .pause, enabled: choice?.canPause ?? false))
+            overview.buttons.append(.init(kind: .cancel, enabled: choice?.canCancel ?? false))
+        }
         if plan.phase.isPaused { overview.buttons.append(.init(kind: .resume, enabled: choice?.canResume ?? false)) }
         overview.buttons.append(.init(kind: .restoreFiles, enabled: choice?.canRestore ?? false))
         return overview
@@ -945,6 +967,12 @@ struct TextContext {
     var now: Date
     var calendar: Calendar
     var locale: Locale
+
+    /// Whether `date` falls on the calendar day after `now`'s, in this context's calendar and time zone.
+    func isTomorrow(_ date: Date) -> Bool {
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: now) else { return false }
+        return calendar.isDate(date, inSameDayAs: tomorrow)
+    }
 
     func time(_ date: Date) -> String {
         DisplayFormat.time(date, calendar: calendar, locale: locale)

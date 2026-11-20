@@ -203,6 +203,25 @@ public enum PlanValidationError: Error, Equatable, Sendable {
     case invalidFileType(String)
     /// A per-plan upload limit of 0 or less. None is nil, not 0 (the Mac-wide limit has the same rule).
     case uploadLimitNotPositive(kiB: Int)
+    /// A source that is the plan's own local repository or lies inside it: backing it up would back up the backups.
+    case sourceInsideRepository(String)
+}
+
+extension PlanValidationError {
+    /// The sentence the agent refuses a plan with, and the app shows for it, without a closing full stop: the agent
+    /// joins several with ". " (`AgentError.invalidPlan`), and the app ends each one (`FormValidation.sentence`).
+    public var message: String {
+        switch self {
+        case .emptyHostLabel: "The host label can’t be empty"
+        case .noSources: "Choose at least one source folder"
+        case .relativeSource: "Source folders must be absolute paths"
+        case .intervalTooShort: "Backups can’t run more often than every 5 minutes"
+        case .invalidFileType(let entry): FormValidation.fileTypeProblem(rejected: [entry])
+        case .uploadLimitNotPositive: "The upload limit must be more than 0 KiB/s"
+        case .sourceInsideRepository(let path):
+            "“\(FolderDrop.name(path))” is inside this plan’s backup repository. Choose a different folder"
+        }
+    }
 }
 
 extension Plan {
@@ -210,11 +229,20 @@ extension Plan {
     /// plan before building restic invocations.
     public static let minimumIntervalSeconds = 300
 
+    /// Pure: compares paths as written and never reads the file system, since it runs wherever the agent works out a
+    /// plan's status or next run (`nextRunDate`). A source that reaches the repository through a link is found by
+    /// `sourcesInsideRepositoryFollowingLinks()`, which `AgentState.savePlan` adds.
     public func validationErrors() -> [PlanValidationError] {
         var errors: [PlanValidationError] = []
         if hostLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { errors.append(.emptyHostLabel) }
         if sources.isEmpty { errors.append(.noSources) }
         for source in sources where !source.hasPrefix("/") { errors.append(.relativeSource(source)) }
+        // By path only: this runs on every status and scheduler tick (final review I1). `savePlan` also follows links.
+        if let repositoryPath = repository.localFolderPath {
+            for source in sources where SourcePaths.containsByPath(repositoryPath, source) {
+                errors.append(.sourceInsideRepository(source))
+            }
+        }
         switch schedule {
         case .interval(let seconds):
             if seconds < Self.minimumIntervalSeconds { errors.append(.intervalTooShort(seconds: seconds)) }
@@ -224,6 +252,23 @@ extension Plan {
         }
         if let uploadLimitKiB, uploadLimitKiB <= 0 { errors.append(.uploadLimitNotPositive(kiB: uploadLimitKiB)) }
         return errors
+    }
+
+    /// The sources that lead into the plan's own local repository once links are followed: `sourceInsideRepository`
+    /// for each, in order. Reads the file system through `resolver` (its own thread, a deadline, one outstanding).
+    /// Nil when the file system didn't answer in time: the caller falls back to `validationErrors()`. Where the user
+    /// acts only (`AgentState.savePlan`), never on the status or scheduling path.
+    public func sourcesInsideRepositoryFollowingLinks(
+        resolver: LinkResolver = .live
+    ) async -> [PlanValidationError]? {
+        guard let repositoryPath = repository.localFolderPath else { return [] }
+        guard let resolved = await resolver.resolve([repositoryPath] + sources) else { return nil }
+        let repositoryTarget = resolved[0]
+        return zip(sources, resolved.dropFirst())
+            .filter { source, target in
+                SourcePaths.containsByPath(repositoryPath, source) || SourcePaths.containsByPath(repositoryTarget, target)
+            }
+            .map { PlanValidationError.sourceInsideRepository($0.0) }
     }
 
     /// `fileTypeExclusions` normalised as `config.json` stores them: each entry trimmed and lower-cased,
@@ -386,6 +431,24 @@ public enum Repository: Codable, Sendable, Equatable {
     var isS3: Bool {
         if case .s3 = self { return true }
         return false
+    }
+
+    /// The folder a local repository is in, standardised, read the way restic reads a location (see `needsNetwork`):
+    /// `local:/x` and a plain absolute path `/x` give `/x`. Nil for a storage service, another machine, and a
+    /// relative path (`../x`, `local:x`), which can't be placed reliably from the agent's working folder.
+    public var localFolderPath: String? {
+        guard case .raw(let repository, _) = self else { return nil }
+        let path: Substring
+        if repository.hasPrefix("/") {
+            path = repository[...]
+        } else if repository.hasPrefix("local:") {
+            path = repository.dropFirst("local:".count)
+        } else {
+            return nil
+        }
+        guard path.hasPrefix("/") else { return nil }
+        // Standardised without reading the disk: validation, and so the agent's status, reads this (final review I1).
+        return SourcePaths.standardised(String(path))
     }
 
     /// Whether restic needs the network to reach this repository (Ruling R69). An S3 or B2 location

@@ -673,8 +673,8 @@ struct AgentStateTests {
         let doomedINI = try CredentialsFile.write(planID: doomed.id, helper: helper, directory: dir.url)
         let keptINI = try CredentialsFile.write(planID: kept.id, helper: helper, directory: dir.url)
         // Pausing writes history for both plans.
-        _ = try await state.pause(doomed.id)
-        _ = try await state.pause(kept.id)
+        _ = try await state.pause(doomed.id, for: .oneHour)
+        _ = try await state.pause(kept.id, for: .oneHour)
         #expect(try String(contentsOf: dir.state, encoding: .utf8).contains(doomed.id.uuidString))
 
         let status = try await state.deletePlan(doomed.id)
@@ -789,7 +789,7 @@ struct AgentStateTests {
         _ = try await state.savePlan(Self.request(plan))
         #expect(await state.status().plans.first?.phase == .idle)
 
-        let paused = try await state.pause(plan.id)
+        let paused = try await state.pause(plan.id, for: .oneHour)
         #expect(paused.plans.first?.phase == .paused(until: clock.now.addingTimeInterval(3600)))
 
         // Pause auto-resumes after an hour.
@@ -798,7 +798,7 @@ struct AgentStateTests {
 
         // Resume on a paused plan starts a backup through Back Up Now (PlanRunnerTests); with no runner
         // attached that is refused, and the pause has been cleared first.
-        _ = try await state.pause(plan.id)
+        _ = try await state.pause(plan.id, for: .oneHour)
         await #expect(throws: AgentError.runnerUnavailable) { try await state.resume(plan.id) }
         #expect(await state.status().plans.first?.phase == .idle)
         // Resume on a plan that isn't paused starts nothing.
@@ -806,8 +806,71 @@ struct AgentStateTests {
         #expect(resumed.plans.first?.phase == .idle)
 
         await #expect {
-            try await state.pause(UUID())
+            try await state.pause(UUID(), for: .oneHour)
         } throws: { Self.message($0) == "There’s no plan with that ID" }
+    }
+
+    @Test func eachLengthPausesForItsTime() async throws {
+        for length in PauseLength.allCases {
+            let dir = try TempDirectory()
+            let clock = TestClock()
+            let state = await Self.makeState(dir, clock: clock)
+            let plan = Self.plan(now: clock.now)
+            _ = try await state.savePlan(Self.request(plan))
+            _ = try await state.pause(plan.id, for: length)
+            #expect(try await state.runInputs(plan.id).history.pausedUntil == clock.now.addingTimeInterval(length.seconds))
+        }
+    }
+
+    @Test func aFourHourPauseIsKeptAcrossAnAgentRestart() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        let until = clock.now.addingTimeInterval(14400)
+        _ = try await state.pause(plan.id, for: .fourHours)
+
+        let reloaded = await Self.makeState(dir, clock: clock)
+        #expect(await reloaded.status().plans.first?.phase == .paused(until: until))
+        await reloaded.clampStretchedPauses()
+        #expect(try await reloaded.runInputs(plan.id).history.pausedUntil == until)
+    }
+
+    /// Review focus 3: the tick cuts a pause the clock stretched back to a day from now.
+    @Test func aPauseIsNeverLongerThanADayEvenIfTheClockWentBack() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        try await state.updateHistory(plan.id) { $0.pausedUntil = clock.now.addingTimeInterval(3 * 86400) }
+        #expect(await state.status().plans.first?.phase == .paused(until: clock.now.addingTimeInterval(86400)))
+        await state.clampStretchedPauses()
+        #expect(try await state.runInputs(plan.id).history.pausedUntil == clock.now.addingTimeInterval(86400))
+    }
+
+    /// Review focus 5: a request from another build, or a malformed one, is refused with a sentence and pauses nothing.
+    @Test func anUnknownPauseLengthIsRefused() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+
+        let unknown = Data(#"{"planID":"\#(plan.id.uuidString)","length":"oneWeek"}"#.utf8)
+        let refusal = "Restorey can’t pause for that long. Choose 1 hour, 4 hours or until tomorrow."
+        #expect { try PauseRequest.decoded(from: unknown) } throws: { Self.message($0) == refusal }
+        #expect(try await state.runInputs(plan.id).history.pausedUntil == nil)
+        #expect(await state.status().plans.first?.phase == .idle)
+
+        // Any other fault keeps the generic reading error, and a known request decodes.
+        let malformed = Data(#"{"planID":"nope"}"#.utf8)
+        #expect { try PauseRequest.decoded(from: malformed) } throws: {
+            Self.message($0)?.hasPrefix("Restorey couldn’t read the request") == true
+        }
+        let known = Data(#"{"planID":"\#(plan.id.uuidString)","length":"fourHours"}"#.utf8)
+        #expect(try PauseRequest.decoded(from: known) == PauseRequest(planID: plan.id, length: .fourHours))
     }
 
     @Test func statusReportsNextRunOnlyOnceTheRecoveryKitIsConfirmed() async throws {
@@ -862,7 +925,7 @@ struct AgentStateTests {
         clock.advance(0.5)
         await state.updateRun(planID: plan.id, progress: BackupStatus(percentDone: 0.9), retrying: nil)
         await state.endRun(planID: plan.id)                           // phase change: pushed
-        _ = try await state.pause(plan.id)                            // phase change: pushed
+        _ = try await state.pause(plan.id, for: .oneHour)                            // phase change: pushed
 
         let phases = pushes.withLock { $0 }.map { $0.plans.first?.phase }
         #expect(phases == [
@@ -881,7 +944,7 @@ struct AgentStateTests {
         let plan = Self.plan(now: clock.now)
         _ = try await state.savePlan(Self.request(plan))
         _ = try await state.confirmRecoveryKit(plan.id)
-        _ = try await state.pause(plan.id)
+        _ = try await state.pause(plan.id, for: .oneHour)
         let pushes = Mutex<[AgentStatus]>([])
         await state.setStatusObserver { status in pushes.withLock { $0.append(status) } }
 
@@ -909,7 +972,7 @@ struct AgentStateTests {
         let plan = Self.plan(now: clock.now)
         let seeded = await Self.makeState(dir, clock: clock)
         _ = try await seeded.savePlan(Self.request(plan))
-        _ = try await seeded.pause(plan.id)
+        _ = try await seeded.pause(plan.id, for: .oneHour)
 
         // A newer Restorey wrote config.json.
         let newer = #"{"schemaVersion": 99, "payload": {"plans": [], "somethingNew": true}}"#
@@ -928,7 +991,8 @@ struct AgentStateTests {
         let refused = "Restorey can’t change its settings until the problem with them is fixed"
         await #expect { try await state.savePlan(Self.request(plan)) } throws: { Self.message($0) == refused }
         await #expect { try await state.deletePlan(plan.id) } throws: { Self.message($0) == refused }
-        await #expect { try await state.pause(plan.id) } throws: { Self.message($0) == refused }
+        await #expect { try await state.pause(plan.id, for: .oneHour) } throws: { Self.message($0) == refused }
+        await #expect { try await state.cancel(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.resume(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.confirmRecoveryKit(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.backUpNow(plan.id) } throws: { Self.message($0) == refused }
@@ -972,7 +1036,7 @@ struct AgentStateTests {
         #expect(reason.contains("state.json"))
         #expect(status.plans.first?.nextRunAt == nil)
         let refused = "Restorey can’t change its settings until the problem with them is fixed"
-        await #expect { try await state.pause(plan.id) } throws: { Self.message($0) == refused }
+        await #expect { try await state.pause(plan.id, for: .oneHour) } throws: { Self.message($0) == refused }
         await #expect { try await state.savePlan(Self.request(plan)) } throws: { Self.message($0) == refused }
         await #expect { try await state.deletePlan(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.beginRun(planID: plan.id) } throws: { Self.message($0) == refused }
@@ -1122,6 +1186,35 @@ struct AgentStateTests {
         while !(await state.isDraining) { try await Task.sleep(for: .milliseconds(10)) }
     }
 
+    /// Cancel only stops work, so a drain doesn't refuse it (like Pause), and it changes no pause.
+    @Test func cancelIsAllowedWhileDraining() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let plan = Self.plan(now: clock.now)
+        _ = try await state.savePlan(Self.request(plan))
+        try await state.beginRun(planID: plan.id)
+        let drain = Task { await state.prepareForRestart() }
+        try await Self.waitUntilDraining(state)
+
+        let before = await state.status()
+        let cancel = try await state.cancel(plan.id)
+        #expect(cancel.status.plans == before.plans, "no runner, so nothing to stop and nothing changes")
+        #expect(!cancel.stoppedARun)
+        #expect(try await state.runInputs(plan.id).history.pausedUntil == nil)
+
+        await state.endRun(planID: plan.id)
+        await drain.value
+    }
+
+    /// Like Pause, Cancel is refused when the settings can't be read, and for a plan that doesn't exist.
+    @Test func cancelIsRefusedForAnUnknownPlan() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        await #expect { _ = try await state.cancel(UUID()) } throws: { ($0 as? AgentError) == .unknownPlan }
+    }
+
     @Test func drainWaitsForInFlightRun() async throws {
         let dir = try TempDirectory()
         let clock = TestClock()
@@ -1151,7 +1244,7 @@ struct AgentStateTests {
         let other = Self.plan(now: clock.now)
         await #expect { try await state.beginRun(planID: other.id) } throws: { Self.message($0) == refused }
         // Pause is allowed, so the user can still stop a long first backup.
-        _ = try await state.pause(plan.id)
+        _ = try await state.pause(plan.id, for: .oneHour)
         #expect(await events.items.isEmpty)
 
         await run.value
@@ -1172,7 +1265,7 @@ struct AgentStateTests {
         let state = await Self.makeState(dir, configStore: store, secrets: secrets, clock: clock)
         let plan = Self.plan(now: clock.now)
         _ = try await state.savePlan(Self.request(plan))
-        _ = try await state.pause(plan.id)   // gives the plan a history entry
+        _ = try await state.pause(plan.id, for: .oneHour)   // gives the plan a history entry
         let ini = try CredentialsFile.write(
             planID: plan.id, helper: URL(fileURLWithPath: "/usr/bin/true"), directory: dir.url)
 
@@ -1403,5 +1496,170 @@ extension AgentStateTests {
         plan.hasCheckInURL = false
         await #expect(throws: AgentError.self) { try await state.savePlan(SavePlanRequest(plan: plan, secrets: [])) }
         #expect(try secrets.read(.checkInURL(plan.id)) == "https://hc.example/ping/abc")
+    }
+}
+
+// MARK: A source inside the plan's own repository (final review I1, I2, m3)
+
+extension AgentStateTests {
+    private static func localPlan(repository: URL, sources: [String], now: Date) -> Plan {
+        Plan.newHotPlan(
+            name: "Home", repository: .raw(repository: repository.path, environmentNames: []), origin: .created,
+            hostLabel: "mac", sources: sources, exclusions: [], now: now)
+    }
+
+    /// Validation compares paths only, so `savePlan` follows links itself before saving: a source that leads into the
+    /// plan's local repository through a link is still refused, and nothing is saved.
+    @Test func savePlanRefusesASourceThatReachesTheRepositoryThroughALink() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let fm = FileManager.default
+        let repository = dir.url.appendingPathComponent("repo")
+        try fm.createDirectory(at: repository.appendingPathComponent("data"), withIntermediateDirectories: true)
+        let link = dir.url.appendingPathComponent("shortcut")
+        try fm.createSymbolicLink(at: link, withDestinationURL: repository.appendingPathComponent("data"))
+        let plan = Self.localPlan(repository: repository, sources: [link.path], now: clock.now)
+        #expect(plan.validationErrors().isEmpty, "the comparison by path alone doesn't see it")
+
+        let request = SavePlanRequest(plan: plan, secrets: [SecretEntry(key: .repositoryPassword(plan.id), value: "pw")])
+        let refusal = "“shortcut” is inside this plan’s backup repository. Choose a different folder"
+        await #expect { _ = try await state.savePlan(request) } throws: { Self.message($0) == refusal }
+        #expect(await state.status().plans.isEmpty)
+    }
+
+    /// Final review I2: a plan v0.1 saved whose source is inside its local repository is invalid now. It never runs,
+    /// so it says why instead of going quiet: the agent reports it stopped, with the reason, and raises the settings
+    /// alert, and the menu's line shows "Stopped" and that reason.
+    ///
+    /// Round 2: the reason is built on every status, so the folder is named by string handling alone. The source is
+    /// written `…/repo/data/x/..`: named from the standardised path it is “data”, while `URL(fileURLWithPath:)`, which
+    /// stats the path, would name it “..”, so this fails if naming goes back to that (and `StatusPathPurityTests` pins
+    /// the source). Nothing exists on disk at these paths.
+    @Test func aStoredPlanThatFailsValidationIsReportedStoppedWithItsReason() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let repository = dir.url.appendingPathComponent("repo")
+        var plan = Self.localPlan(repository: repository, sources: [repository.appendingPathComponent("data/x/..").path],
+                                  now: clock.now)
+        plan.recoveryKitConfirmedAt = clock.now
+        plan.setupCompletedAt = clock.now
+        try await AgentState.configStore(in: dir.url).save(ConfigFile(plans: [plan]))
+        let state = await Self.makeState(dir, clock: clock)
+
+        let reason = "“data” is inside this plan’s backup repository. Choose a different folder"
+        let status = try #require(await state.status().plans.first)
+        #expect(status.phase == .stopped(reason: reason))
+        #expect(status.nextRunAt == nil)
+        #expect(status.alerts.contains(.configurationError))
+
+        let line = MenuPresentation.planLine(
+            for: status, now: clock.now, calendar: Calendar(identifier: .gregorian), locale: Locale(identifier: "en_AU"))
+        #expect(line.status == "Stopped")
+        #expect(line.detail == reason)
+    }
+
+    /// Final review m3: every validation sentence is joined with ". ", so none ends with its own full stop.
+    @Test func invalidPlanMessagesJoinWithoutADoubleFullStop() {
+        let error = AgentError.invalidPlan([.sourceInsideRepository("/Volumes/Disk/repo/data"), .emptyHostLabel])
+        #expect(error.message
+            == "“data” is inside this plan’s backup repository. Choose a different folder. The host label can’t be empty")
+    }
+}
+
+// MARK: Following links where the user acts (final review round 2)
+
+extension AgentStateTests {
+    /// A link resolver whose first check is held until `release`, for tests of the deadline and of ordering.
+    private final class HeldResolver: Sendable {
+        let release = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        let entered = Gate()
+        let gate = OneOutstandingGate()
+        private let calls = Mutex(0)
+        private let released = Mutex(false)
+
+        func resolver(deadline: TimeInterval) -> LinkResolver {
+            LinkResolver(gate: gate, deadline: deadline) { [self] path in
+                let first = calls.withLock { count in
+                    count += 1
+                    return count == 1
+                }
+                if first {
+                    entered.open()
+                    release.wait()
+                    finished.signal()
+                }
+                return path
+            }
+        }
+
+        /// Lets the held work go, once however often it is called: a test `defer`s it so a failing assertion or a
+        /// throw can't leave the work's thread blocked.
+        func letGo() {
+            if released.withLock({ let first = !$0; $0 = true; return first }) { release.signal() }
+        }
+
+        /// Lets the work go and waits for it to return, but only if it was admitted: a deadline that passed before
+        /// the gate admitted the check (`.expired`) starts no work, and nothing would ever signal `finished`. While
+        /// the gate is held the work's thread has been started and is blocked here, so it will signal.
+        func finish() async {
+            let admitted = gate.isBusy
+            letGo()
+            if admitted { await OwnThread.run(named: "test wait", qualityOfService: .utility) { self.finished.wait() } }
+        }
+    }
+
+    /// The link check has a deadline (the subject here: tiny, with the check held past it). When the file system
+    /// doesn't answer, the save goes ahead on the comparison by path, which passed, and the agent log says so.
+    @Test func aLinkCheckThatTimesOutFallsBackToThePathsAsWritten() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let held = HeldResolver()
+        defer { held.letGo() }
+        await state.attach(linkResolver: held.resolver(deadline: 0.05))
+        let log = Locked<[String]>([])
+        await state.attach(agentLog: { line in log.mutate { $0.append(line) } })
+        let plan = Self.localPlan(
+            repository: URL(fileURLWithPath: "/Volumes/Gone/repo", isDirectory: true), sources: ["/Users/me"],
+            now: clock.now)
+
+        let status = try await state.savePlan(
+            SavePlanRequest(plan: plan, secrets: [SecretEntry(key: .repositoryPassword(plan.id), value: "pw")]))
+        #expect(status.plans.map(\.plan.id) == [plan.id])
+        #expect(log.value.contains { $0.hasPrefix("Couldn’t check where the folders of plan \(plan.id.uuidString) lead") })
+        await held.finish()
+    }
+
+    /// Round 2: the link check runs inside the serialised section, so two overlapping saves of one plan finish in the
+    /// order they arrived. The first is held in its link check; the second (to a repository that needs none) arrives,
+    /// queues behind it, and wins once the first is released.
+    @Test func overlappingSavesOfAPlanCompleteInArrivalOrder() async throws {
+        let dir = try TempDirectory()
+        let clock = TestClock()
+        let state = await Self.makeState(dir, clock: clock)
+        let held = HeldResolver()
+        defer { held.letGo() }
+        await state.attach(linkResolver: held.resolver(deadline: 3600))
+        let local = Self.localPlan(
+            repository: dir.url.appendingPathComponent("repo"), sources: ["/Users/me"], now: clock.now)
+        var newer = Self.plan(id: local.id, now: clock.now)
+        newer.name = "Newer"
+
+        let first = Task {
+            try await state.savePlan(
+                SavePlanRequest(plan: local, secrets: [SecretEntry(key: .repositoryPassword(local.id), value: "pw")]))
+        }
+        await held.entered.wait()
+        let second = Task { try await state.savePlan(Self.request(newer)) }
+        #expect(await eventually { await state.queuedWrites == 1 }, "the second save waits its turn")
+
+        await held.finish()
+        _ = try await first.value
+        _ = try await second.value
+        #expect(await state.status().plans.map(\.plan.name) == ["Newer"])
+        let stored = try #require(try await AgentState.configStore(in: dir.url).load())
+        #expect(stored.plans.map(\.name) == ["Newer"])
     }
 }

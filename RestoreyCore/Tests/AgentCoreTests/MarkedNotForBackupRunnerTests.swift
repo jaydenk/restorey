@@ -196,7 +196,7 @@ struct MarkedNotForBackupRunnerTests {
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
         try await f.waitForPhase { $0.progress != nil }
         #expect(Self.listFiles(f) == ["\(f.planID.uuidString).txt"], "the list exists while restic runs")
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
         let record = try await run.value
         #expect(record.outcome == .paused)
         #expect(Self.listFiles(f).isEmpty)

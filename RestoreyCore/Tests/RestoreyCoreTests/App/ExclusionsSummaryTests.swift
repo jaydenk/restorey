@@ -66,4 +66,37 @@ import Testing
         #expect(DefaultExclusions.displayPattern("**/node_modules", home: Self.home) == "**/node_modules")
         #expect(DefaultExclusions.displayPattern("/Users/te\\[s\\]t", home: Self.home) == "~")
     }
+
+    // v0.1.1, Task 2: the Exclusions sheet's fixed row for the plan's own repository.
+
+    @Test func aLocalRepositoryInsideASourceGetsTheFixedRow() {
+        let repository = Repository.raw(repository: "/Volumes/Disk/repo", environmentNames: [])
+        #expect(ExclusionsSummary.repositoryRow(repository: repository, sources: ["/Volumes/Disk"]) == "/Volumes/Disk/repo")
+    }
+
+    /// Round 2: the sheet asks on every render, so this compares by path and never follows a link (the agent excludes
+    /// both spellings of the folder anyway): a source that is a link to the repository's parent gets no row.
+    @Test func theRowIsDecidedByPathWithoutFollowingLinks() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("ExclusionsSummaryTests-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        let disk = root.appendingPathComponent("disk")
+        try fm.createDirectory(at: disk.appendingPathComponent("repo"), withIntermediateDirectories: true)
+        let link = root.appendingPathComponent("link")
+        try fm.createSymbolicLink(at: link, withDestinationURL: disk)
+        let repository = Repository.raw(repository: disk.appendingPathComponent("repo").path, environmentNames: [])
+        #expect(ExclusionsSummary.repositoryRow(repository: repository, sources: [link.path]) == nil)
+        #expect(ExclusionsSummary.repositoryRow(repository: repository, sources: [disk.path]) != nil)
+    }
+
+    @Test func aRepositoryOutsideEverySourceGetsNoRow() {
+        let repository = Repository.raw(repository: "/Volumes/Backups/repo", environmentNames: [])
+        #expect(ExclusionsSummary.repositoryRow(repository: repository, sources: ["/Volumes/Backup", "/Users/me"]) == nil)
+    }
+
+    @Test func aRepositoryThatIsNotALocalFolderOrNotYetChosenGetsNoRow() {
+        let remote = Repository.raw(repository: "sftp:host:/repo", environmentNames: [])
+        #expect(ExclusionsSummary.repositoryRow(repository: remote, sources: ["/"]) == nil)
+        #expect(ExclusionsSummary.repositoryRow(repository: nil, sources: ["/"]) == nil)
+    }
 }

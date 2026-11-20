@@ -75,9 +75,10 @@ public enum DefaultExclusions {
     }
 
     /// The exclusion pattern for a folder the user picks: its path with glob characters escaped, so it
-    /// matches only itself.
+    /// matches only itself. Standardised without reading the disk (`SourcePaths.standardised`): the plan runner builds
+    /// the repository's exclusion with it, and one actor serves every plan (final review round 2).
     public static func pattern(forFolder path: String) -> String {
-        escapedGlob(URL(fileURLWithPath: path).standardizedFileURL.path)
+        escapedGlob(SourcePaths.standardised(path))
     }
 
     /// An exclusion pattern as the editor lists it: `~` for the home folder, otherwise as restic gets it (an

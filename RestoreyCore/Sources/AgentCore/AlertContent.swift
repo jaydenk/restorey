@@ -57,7 +57,7 @@ public struct AlertContent: Sendable, Equatable {
             let answer = checkInStatus.map { "returned HTTP \($0)" } ?? "rejected the last ping"
             body = "The monitoring service \(answer), so it won’t alert you if backups stop. Check the URL in this plan’s settings."
         case .configurationError:
-            title = "\(name) has stopped — \(history.stoppedReason ?? "a setting needs fixing")"
+            title = "\(name) has stopped — \(history.stopReason(for: plan) ?? "a setting needs fixing")"
             body = "Backups of this plan won’t run until it’s fixed in Restorey."
         case .fullDiskAccessMissing:
             title = "Full Disk Access is missing — Restorey can’t read your files"

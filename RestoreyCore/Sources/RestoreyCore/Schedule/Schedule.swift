@@ -17,9 +17,26 @@ public func isShortRetry(_ history: PlanRunHistory) -> Bool {
     }
 }
 
-/// How long Pause stops a plan (global constraints: 1 h). A stored `pausedUntil` is never more than this
-/// after now unless the clock went backwards, which `nextRunDate` and the agent's tick undo (M2).
-public let planPauseDuration: TimeInterval = 3600
+/// The `lastAttemptAt` a cancelled backup leaves behind, so that cancelling never moves the schedule (owner, 20 Nov
+/// 2026): with a backup every 4 hours, cancelling the 12:00 one still lets the 16:00 one run. Pure, like `nextRunDate`.
+///
+/// The schedule's slots are `previousAttempt` plus whole intervals.
+/// - Cancelled before the next slot was due (a Back Up Now or Resume between slots): `previousAttempt`, as if the run
+///   had never started.
+/// - Otherwise the newest slot at or before `cancelledAt`: the slot the run filled (a catch-up that started late still
+///   fills its slot), or, for a cancel after further slots went by, the newest of those, so the next backup is the
+///   next slot and never an immediate restart.
+/// - With no `previousAttempt`, one after `startedAt` (the clock went backwards) or no usable interval, there is no
+///   schedule to keep: `startedAt`, as for any other attempt.
+public func lastAttemptAfterCancel(
+    previousAttempt: Date?, startedAt: Date, cancelledAt: Date, interval: TimeInterval
+) -> Date {
+    guard let previous = previousAttempt, previous <= startedAt, interval > 0 else { return startedAt }
+    let due = previous.addingTimeInterval(interval)
+    guard cancelledAt >= due else { return previous }
+    let slotsSinceDue = (cancelledAt.timeIntervalSince(due) / interval).rounded(.down)
+    return due.addingTimeInterval(slotsSinceDue * interval)
+}
 
 /// When `plan` should next run, anacron-style. A pure function of its inputs: it never reads the
 /// clock or the time zone, and intervals are elapsed seconds, so a time zone or daylight saving
@@ -28,7 +45,7 @@ public let planPauseDuration: TimeInterval = 3600
 /// - A plan that must not run returns `.distantFuture`: it has validation errors, a `stoppedReason`,
 ///   or no confirmed recovery kit.
 /// - While `pausedUntil` is in the future, that is the answer, but never later than `now` plus
-///   `planPauseDuration`: a clock that went backwards must not stretch a pause. Once it has passed, the
+///   `PauseLength.longest` (a day): a clock that went backwards must not stretch a pause. Once it has passed, the
 ///   plan is due at once (`now`), as a catch-up, however recently it last ran.
 /// - When its newest backup record is `.skipped(.agentUpdating)`, the plan is due now: that backup never
 ///   ran, because the agent was being replaced (Ruling R55). Newer records of other operations (the next
@@ -46,7 +63,7 @@ public func nextRunDate(plan: Plan, history: PlanRunHistory, now: Date) -> Date 
         return .distantFuture
     }
     if let pausedUntil = history.pausedUntil {
-        return pausedUntil > now ? min(pausedUntil, now.addingTimeInterval(planPauseDuration)) : now
+        return pausedUntil > now ? min(pausedUntil, now.addingTimeInterval(PauseLength.longest.seconds)) : now
     }
     if history.recent.first(where: { $0.operation == .backup })?.outcome == .skipped(.agentUpdating) { return now }
     guard let lastAttemptAt = history.lastAttemptAt else { return now }

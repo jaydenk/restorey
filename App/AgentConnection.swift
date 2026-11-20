@@ -85,8 +85,17 @@ final class AgentConnection {
         return result
     }
 
-    func pause(_ planID: UUID) async -> Result<AgentStatus, AgentCallError> {
-        await statusCall(timeout: .seconds(60)) { $0.pause(planID.uuidString, withReply: $1) }
+    func pause(_ planID: UUID, for length: PauseLength) async -> Result<AgentStatus, AgentCallError> {
+        await statusCall(timeout: .seconds(60)) { proxy, reply in
+            guard let request = try? XPCCoding.encode(PauseRequest(planID: planID, length: length)) else {
+                return reply(nil, "Restorey couldn’t make the pause request")
+            }
+            proxy.pause(request, withReply: reply)
+        }
+    }
+
+    func cancel(_ planID: UUID) async -> Result<AgentStatus, AgentCallError> {
+        await statusCall(timeout: .seconds(60)) { $0.cancel(planID.uuidString, withReply: $1) }
     }
 
     func resume(_ planID: UUID) async -> Result<AgentStatus, AgentCallError> {

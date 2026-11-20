@@ -164,6 +164,19 @@ struct PlanEditTests {
         for problem in [edit.problem] { #expect(problem?.hasSuffix(".") == true) }
     }
 
+    /// Final review I2: a plan v0.1 saved with a source inside its local repository can't be saved as it is, so the
+    /// Folders tab says which folder to change, in the agent's words, until it is off the list.
+    @Test func aSavedSourceInsideTheRepositoryIsAFoldersProblem() {
+        var plan = Self.plan(.raw(repository: "/Volumes/Backup/restic", environmentNames: []))
+        plan.sources = ["/Users/me", "/Volumes/Backup/restic/data"]
+        var edit = PlanEdit(plan: plan)
+        let sentence = "“data” is inside this plan’s backup repository. Choose a different folder."
+        #expect(edit.sourcesProblem == sentence)
+        #expect(edit.problem == sentence)
+        edit.fields.sources = ["/Users/me"]
+        #expect(edit.sourcesProblem == nil)
+    }
+
     /// A rotated S3 or B2 key comes as a pair: one half alone would leave restic with a mismatched key.
     @Test func aNewStorageKeyNeedsBothHalves() throws {
         var edit = PlanEdit(plan: Self.plan())

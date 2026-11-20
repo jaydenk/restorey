@@ -62,8 +62,14 @@ struct ShortcutRulesTests {
         ShortcutRules.backUp(planID: planID, health: health, content: content(status, health: health), status: status)
     }
 
-    private static func pause(_ planID: UUID?, _ status: AgentStatus?) -> Result<ShortcutCall, ShortcutRefusal> {
-        ShortcutRules.pause(planID: planID, health: .healthy, content: content(status), status: status)
+    private static func pause(
+        _ planID: UUID?, _ status: AgentStatus?, length: PauseLength = .oneHour
+    ) -> Result<ShortcutCall, ShortcutRefusal> {
+        ShortcutRules.pause(planID: planID, length: length, health: .healthy, content: content(status), status: status)
+    }
+
+    private static func cancel(_ planID: UUID?, _ status: AgentStatus?) -> Result<ShortcutCall, ShortcutRefusal> {
+        ShortcutRules.cancel(planID: planID, health: .healthy, content: content(status), status: status)
     }
 
     private static func resume(_ planID: UUID?, _ status: AgentStatus?) -> Result<ShortcutCall, ShortcutRefusal> {
@@ -162,14 +168,79 @@ struct ShortcutRulesTests {
 
     // MARK: Pause and Resume
 
+    @Test func pauseSaysHowLongForEachLength() {
+        let home = Self.plan("Home"), photos = Self.plan("Photos")
+        let status = Self.status([
+            Self.line(home, phase: .running(nil, retrying: nil)), Self.line(photos, phase: .running(nil, retrying: nil)),
+        ])
+        let all: [PauseLength: String] = [
+            .oneHour: "Backups are paused for an hour.", .fourHours: "Backups are paused for 4 hours.",
+            .oneDay: "Backups are paused until tomorrow.",
+        ]
+        let one: [PauseLength: String] = [
+            .oneHour: "“Home” is paused for an hour.", .fourHours: "“Home” is paused for 4 hours.",
+            .oneDay: "“Home” is paused until tomorrow.",
+        ]
+        for length in PauseLength.allCases {
+            #expect(Self.pause(nil, status, length: length)
+                == .success(ShortcutCall(kind: .pause([home.id, photos.id]), dialog: all[length]!)))
+            #expect(Self.pause(home.id, status, length: length)
+                == .success(ShortcutCall(kind: .pause([home.id]), dialog: one[length]!)))
+        }
+    }
+
+    @Test func pauseKeepsItsRefusalsForEveryLength() {
+        let paused = Self.plan("Paused")
+        let status = Self.status([Self.line(paused, phase: .paused(until: Self.at(15, 0)))])
+        for length in PauseLength.allCases {
+            #expect(Self.pause(paused.id, status, length: length)
+                == .failure(ShortcutRefusal("“Paused” is already paused.")))
+            #expect(Self.pause(nil, status, length: length) == .failure(ShortcutRefusal("Nothing is backing up, so there’s nothing to pause.")))
+        }
+    }
+
+    // MARK: Cancel
+
+    @Test func cancelStopsWhatIsRunning() {
+        let home = Self.plan("Home"), photos = Self.plan("Photos"), docs = Self.plan("Docs")
+        let status = Self.status([
+            Self.line(home, phase: .running(nil, retrying: nil)), Self.line(photos, phase: .running(nil, retrying: nil)),
+            Self.line(docs),
+        ])
+        #expect(Self.cancel(nil, status)
+            == .success(ShortcutCall(kind: .cancel([home.id, photos.id]), dialog: "Cancelled every backup in progress.")))
+        #expect(Self.cancel(home.id, status)
+            == .success(ShortcutCall(kind: .cancel([home.id]), dialog: "Cancelled the backup of “Home”.")))
+    }
+
+    @Test func cancelIsRefusedWhenNothingIsBackingUp() {
+        let home = Self.plan("Home")
+        let status = Self.status([Self.line(home)])
+        #expect(Self.cancel(nil, status) == .failure(ShortcutRefusal("There’s no backup to cancel.")))
+        #expect(Self.cancel(home.id, status) == .failure(ShortcutRefusal("“Home” isn’t backing up.")))
+        #expect(Self.cancel(UUID(), status) == .failure(ShortcutRefusal("That plan is no longer in Restorey.")))
+        let paused = Self.status([Self.line(home, phase: .paused(until: Self.at(15, 0)))])
+        #expect(Self.cancel(home.id, paused) == .failure(ShortcutRefusal("“Home” isn’t backing up.")))
+    }
+
+    @Test func cancelSaysWhyWhenRestoreyCantBeAsked() {
+        let none = ShortcutRules.cancel(
+            planID: nil, health: .notRunning(reachable: true), content: Self.content(nil, health: .notRunning(reachable: true)),
+            status: nil)
+        #expect(none == .failure(ShortcutRefusal("Backups aren’t running.")))
+    }
+
     @Test func pauseIsTheMenusHourLongPause() {
         let home = Self.plan("Home"), photos = Self.plan("Photos"), paused = Self.plan("Paused")
         let status = Self.status([
             Self.line(home), Self.line(photos, phase: .running(nil, retrying: nil)),
             Self.line(paused, phase: .paused(until: Self.at(15, 0))),
         ])
+        // Only a backup in progress is paused (owner, 20 Nov 2026): the idle "Home" is left alone, and refused by name.
         #expect(Self.pause(nil, status)
-            == .success(ShortcutCall(kind: .pause([home.id, photos.id]), dialog: "Backups are paused for an hour.")))
+            == .success(ShortcutCall(kind: .pause([photos.id]), dialog: "Backups are paused for an hour.")))
+        #expect(Self.pause(home.id, status)
+            == .failure(ShortcutRefusal("“Home” isn’t backing up, so there’s nothing to pause.")))
         #expect(Self.pause(photos.id, status)
             == .success(ShortcutCall(kind: .pause([photos.id]), dialog: "“Photos” is paused for an hour.")))
         #expect(Self.pause(paused.id, status) == .failure(ShortcutRefusal("“Paused” is already paused.")))
@@ -181,7 +252,7 @@ struct ShortcutRulesTests {
         #expect(Self.pause(stopped.id, status)
             == .failure(ShortcutRefusal("“Stopped” is stopped, so there’s nothing to pause.")))
         #expect(Self.pause(unfinished.id, status) == .failure(ShortcutRefusal("“New” hasn’t finished setup.")))
-        #expect(Self.pause(nil, status) == .failure(ShortcutRefusal("There’s nothing to pause.")))
+        #expect(Self.pause(nil, status) == .failure(ShortcutRefusal("Nothing is backing up, so there’s nothing to pause.")))
     }
 
     @Test func resumeOnlyWhatIsPaused() {
@@ -283,36 +354,38 @@ struct FolderDropTests {
         let root = try Self.fixture()
         defer { try? FileManager.default.removeItem(at: root) }
         let link = PickedItem.classify([root.appendingPathComponent("Folder link")])
-        let added = FolderDrop.addingSources(link, to: [])
+        let added = FolderDrop.addingSources(link, to: [], repository: nil)
         #expect(added.problem == nil)
         #expect(added.list == [root.appendingPathComponent("Folder link").path])
-        let again = FolderDrop.addingSources(PickedItem.classify([root.appendingPathComponent("Folder")]), to: added.list)
+        let again = FolderDrop.addingSources(PickedItem.classify([root.appendingPathComponent("Folder")]), to: added.list, repository: nil)
         #expect(again.problem == "“Folder” is already in the list.")
     }
 
     @Test func aMissingItemSaysItCantBeFound() {
-        let outcome = FolderDrop.addingSources([PickedItem(path: "/Users/me/Gone", kind: .missing)], to: [])
+        let outcome = FolderDrop.addingSources([PickedItem(path: "/Users/me/Gone", kind: .missing)], to: [], repository: nil)
         #expect(outcome.list.isEmpty)
         #expect(outcome.problem == "“Gone” can’t be found.")
     }
 
     @Test func foldersAreAddedInOrderAndStandardised() {
         let outcome = FolderDrop.addingSources(
-            [Self.folder("/Users/me/Documents/"), Self.folder("/Volumes/Photos")], to: ["/Users/me/Pictures"])
+            [Self.folder("/Users/me/Documents/"), Self.folder("/Volumes/Photos")], to: ["/Users/me/Pictures"],
+            repository: nil)
         #expect(outcome == FolderDrop.Outcome(
             list: ["/Users/me/Pictures", "/Users/me/Documents", "/Volumes/Photos"], problem: nil))
     }
 
     @Test func filesAndThingsNotOnThisMacAreRefusedAndSaySo() {
         let outcome = FolderDrop.addingSources(
-            [PickedItem(path: "/Users/me/notes.txt", kind: .file), Self.folder("/Users/me/Music")], to: [])
+            [PickedItem(path: "/Users/me/notes.txt", kind: .file), Self.folder("/Users/me/Music")], to: [],
+            repository: nil)
         #expect(outcome.list == ["/Users/me/Music"])
         #expect(outcome.problem == "“notes.txt” isn’t a folder. Only folders and drives can be added.")
 
         let several = FolderDrop.addingSources([
             PickedItem(path: "/Applications/Mail.app", kind: .file), PickedItem(path: "/Users/me/a.pdf", kind: .file),
             PickedItem(path: "https://example.com", kind: .notOnDisk),
-        ], to: [])
+        ], to: [], repository: nil)
         #expect(several.list.isEmpty)
         #expect(several.problem
             == "2 items aren’t folders. Only folders and drives can be added. Only folders and drives on this Mac can be added.")
@@ -321,11 +394,102 @@ struct FolderDropTests {
     @Test func aFolderAlreadyListedIsNotAddedTwice() {
         let outcome = FolderDrop.addingSources(
             [Self.folder("/Users/me/Documents"), Self.folder("/Users/me/Documents/"), Self.folder("/Users/me/Movies")],
-            to: ["/Users/me/Documents"])
+            to: ["/Users/me/Documents"], repository: nil)
         #expect(outcome.list == ["/Users/me/Documents", "/Users/me/Movies"])
         #expect(outcome.problem == "2 folders are already in the list.")
-        #expect(FolderDrop.addingSources([Self.folder("/Users/me/Documents")], to: ["/Users/me/Documents"]).problem
+        #expect(FolderDrop.addingSources([Self.folder("/Users/me/Documents")], to: ["/Users/me/Documents"], repository: nil).problem
             == "“Documents” is already in the list.")
+    }
+
+    // MARK: Folders already covered, parents that replace, and the plan's own repository (Task 1)
+
+    private static let home = "/Users/me"
+    private static let disk = Repository.raw(repository: "/Volumes/Disk/repo", environmentNames: [])
+
+    private static func adding(
+        _ paths: [String], to list: [String] = [], repository: Repository? = nil
+    ) -> FolderDrop.Outcome {
+        FolderDrop.addingSources(paths.map(folder), to: list, repository: repository, home: home)
+    }
+
+    @Test func aFolderInsideAListedSourceIsRefused() {
+        let outcome = Self.adding(["/Users/me/Downloads"], to: ["/Users/me"])
+        #expect(outcome.list == ["/Users/me"])
+        #expect(outcome.problem == "“Downloads” is already included in your home folder.")
+    }
+
+    @Test func aFolderInsideAnotherListedFolderNamesIt() {
+        let outcome = Self.adding(["/Users/me/Pictures/Trips"], to: ["/Users/me/Pictures"])
+        #expect(outcome.list == ["/Users/me/Pictures"])
+        #expect(outcome.problem == "“Trips” is already included in “Pictures”.")
+    }
+
+    @Test func severalCoveredFoldersAreCounted() {
+        let outcome = Self.adding(["/Users/me/Pictures/Trips", "/Users/me/Pictures/Family"], to: ["/Users/me/Pictures"])
+        #expect(outcome.list == ["/Users/me/Pictures"])
+        #expect(outcome.problem == "2 folders are already included in folders in the list.")
+    }
+
+    @Test func aParentReplacesTheFoldersItCovers() {
+        let outcome = Self.adding(
+            ["/Users/me"], to: ["/Users/me/Downloads", "/Users/me/Documents", "/Volumes/Disk"])
+        #expect(outcome.list == ["/Volumes/Disk", "/Users/me"])
+        #expect(outcome.problem == nil)
+        #expect(outcome.note == "Your home folder includes “Downloads” and “Documents”, so they were taken off the list.")
+    }
+
+    @Test func aParentReplacingOneFolderSaysIt() {
+        let outcome = Self.adding(["/Users/me/Pictures"], to: ["/Users/me/Pictures/Trips"])
+        #expect(outcome.list == ["/Users/me/Pictures"])
+        #expect(outcome.note == "“Pictures” includes “Trips”, so it was taken off the list.")
+    }
+
+    @Test func aParentReplacingThreeOrMoreCountsThem() {
+        let outcome = Self.adding(
+            ["/Users/me"], to: ["/Users/me/Downloads", "/Users/me/Documents", "/Users/me/Music"])
+        #expect(outcome.list == ["/Users/me"])
+        #expect(outcome.note == "Your home folder includes 3 folders that were in the list, so they were taken off it.")
+    }
+
+    @Test func aNameThatOnlyStartsTheSameIsNeitherCoveredNorReplaced() {
+        #expect(Self.adding(["/Users/me/Documents"], to: ["/Users/me/Doc"]).list == ["/Users/me/Doc", "/Users/me/Documents"])
+        let outcome = Self.adding(["/Users/me/Doc"], to: ["/Users/me/Documents"])
+        #expect(outcome.list == ["/Users/me/Documents", "/Users/me/Doc"])
+        #expect(outcome.problem == nil && outcome.note == nil)
+    }
+
+    @Test func theRepositoryFolderIsRefused() {
+        let outcome = Self.adding(["/Volumes/Disk/repo"], repository: Self.disk)
+        #expect(outcome.list.isEmpty)
+        #expect(outcome.problem == "“repo” is where this plan’s backups are kept, so it can’t be backed up.")
+    }
+
+    @Test func aFolderInsideTheRepositoryIsRefused() {
+        let outcome = Self.adding(["/Volumes/Disk/repo/data"], repository: Self.disk)
+        #expect(outcome.list.isEmpty)
+        #expect(outcome.problem
+            == "“data” is inside the folder where this plan’s backups are kept, so it can’t be backed up.")
+    }
+
+    @Test func aFolderHoldingTheRepositoryIsAddedAndSaysTheRepositoryIsLeftOut() {
+        let outcome = Self.adding(["/Volumes/Disk"], repository: Self.disk)
+        #expect(outcome.list == ["/Volumes/Disk"])
+        #expect(outcome.problem == nil)
+        #expect(outcome.note == "This plan’s backups are kept inside “Disk”, so that folder is always left out.")
+    }
+
+    @Test func noRepositoryYetSkipsTheRepositoryRules() {
+        let outcome = Self.adding(["/Volumes/Disk/repo"], repository: nil)
+        #expect(outcome.list == ["/Volumes/Disk/repo"])
+        #expect(outcome.problem == nil && outcome.note == nil)
+    }
+
+    @Test func refusalsJoinWithASpaceInOrderWithTheRepositoryOnesLast() {
+        let outcome = Self.adding(
+            ["/Volumes/Disk/repo/data", "/Users/me/Gone", "/Users/me/Music"], to: ["/Users/me/Music"],
+            repository: Self.disk)
+        #expect(outcome.problem == "“Music” is already in the list. "
+            + "“data” is inside the folder where this plan’s backups are kept, so it can’t be backed up.")
     }
 
     @Test func exclusionsAreGlobEscapedPatternsAndRestoreysOwnFoldersAreDuplicates() throws {
@@ -345,7 +509,7 @@ struct FolderDropTests {
     }
 }
 
-/// Pause or Resume across several plans where some calls fail (review 17e, Minor 2): the error names each.
+/// Pause, Resume or Cancel across several plans where some calls fail (review 17e, Minor 2): the error names each.
 struct ShortcutPartialFailureTests {
     @Test func everyFailedPlanIsNamedAndTheOthersSaidDone() {
         let message = ShortcutRules.failureMessage(
@@ -365,6 +529,16 @@ struct ShortcutPartialFailureTests {
             .resume, outcomes: [.init(planName: "Home", failure: nil), .init(planName: "Docs", failure: "Busy.")])
         #expect(one == "Restorey couldn’t resume “Docs”: Busy. “Home” has resumed.")
         #expect(ShortcutRules.failureMessage(.pause, outcomes: [.init(planName: "Home", failure: nil)]) == nil)
+    }
+
+    @Test func cancelNamesEachFailedPlanAndThoseCancelled() {
+        let message = ShortcutRules.failureMessage(
+            .cancel, outcomes: [.init(planName: "Home", failure: nil), .init(planName: "Docs", failure: "Busy.")])
+        #expect(message == "Restorey couldn’t cancel “Docs”: Busy. The backup of “Home” was cancelled.")
+        let two = ShortcutRules.failureMessage(
+            .cancel, outcomes: [.init(planName: "Home", failure: nil), .init(planName: "Photos", failure: nil),
+                                .init(planName: "Docs", failure: "Busy.")])
+        #expect(two == "Restorey couldn’t cancel “Docs”: Busy. The backups of “Home” and “Photos” were cancelled.")
     }
 }
 

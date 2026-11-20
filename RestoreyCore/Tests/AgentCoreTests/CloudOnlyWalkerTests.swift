@@ -166,7 +166,7 @@ struct CloudOnlyWalkerTests {
 
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
         try await f.waitForPhase { $0.progress != nil }
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
         let record = try await run.value
 
         #expect(record.outcome == .paused)

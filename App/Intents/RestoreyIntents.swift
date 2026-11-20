@@ -1,7 +1,7 @@
 import AppIntents
 import RestoreyCore
 
-// Restorey's Shortcuts actions (Task 17e, audit T2): Back Up Now, Pause Backups, Resume Backups and Get Last Backup, in
+// Restorey's Shortcuts actions (Task 17e, audit T2): Back Up Now, Pause Backups, Cancel Backup, Resume Backups and Get Last Backup, in
 // the Shortcuts app and Spotlight with no other UI (not Siri voice: App Shortcuts can't be invoked by voice on macOS).
 // Each runs in the background (`supportedModes`), does what the menu's item of the same name does through the same XPC
 // calls, and is refused when the menu would refuse it (`ShortcutRules`, tested in RestoreyCore). Only plan ids and names cross an intent, never a secret.
@@ -79,29 +79,77 @@ struct BackUpNowIntent: AppIntent {
     }
 }
 
-/// The menu's Pause has one length, an hour (`planPauseDuration`), so this has no duration to choose.
+/// How long Pause Backups pauses for: `PauseLength`, with the menu's titles.
+enum PauseLengthOption: String, AppEnum {
+    case oneHour, fourHours, oneDay
+
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Length"
+    static let caseDisplayRepresentations: [PauseLengthOption: DisplayRepresentation] = [
+        .oneHour: DisplayRepresentation(title: "For 1 Hour"),
+        .fourHours: DisplayRepresentation(title: "For 4 Hours"),
+        .oneDay: DisplayRepresentation(title: "Until Tomorrow"),
+    ]
+
+    var length: PauseLength {
+        switch self {
+        case .oneHour: .oneHour
+        case .fourHours: .fourHours
+        case .oneDay: .oneDay
+        }
+    }
+}
+
 struct PauseBackupsIntent: AppIntent {
     static let title: LocalizedStringResource = "Pause Backups"
     static let description = IntentDescription(
-        "Pauses backups for an hour, as Pause in Restorey’s menu does, stopping a backup in progress. They resume by themselves. With no plan chosen, every plan is paused.")
+        "Stops a backup in progress and holds off backups for an hour, 4 hours or until tomorrow, as Pause in Restorey’s menu does. They resume by themselves. With no plan chosen, every backup in progress is paused; with nothing backing up, there’s nothing to pause.")
     static let supportedModes: IntentModes = .background
 
-    @Parameter(title: "Plan", description: "The plan to pause. Leave it empty to pause every plan.")
+    @Parameter(title: "Plan", description: "The plan to pause. Leave it empty to pause every backup in progress.")
     var plan: PlanEntity?
+
+    @Parameter(title: "Length", description: "How long to pause for.", default: .oneHour)
+    var length: PauseLengthOption
 
     @Dependency private var gateway: ShortcutGateway
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Pause \(\.$plan) for an hour")
+        Summary("Pause \(\.$plan) \(\.$length)")
     }
 
     @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
         let ready = try await gateway.ready()
         let call = try ShortcutRules.pause(
-            planID: plan?.id, health: ready.health, content: ready.content, status: ready.status
+            planID: plan?.id, length: length.length, health: ready.health, content: ready.content, status: ready.status
         ).get(orThrow: ShortcutError.init)
         guard case .pause(let plans) = call.kind else { return .result(dialog: "\(call.dialog)") }
-        try await perPlan(.pause, plans, ready, ready.connection.pause)
+        try await perPlan(.pause, plans, ready) { await ready.connection.pause($0, for: length.length) }
+        return .result(dialog: "\(call.dialog)")
+    }
+}
+
+struct CancelBackupIntent: AppIntent {
+    static let title: LocalizedStringResource = "Cancel Backup"
+    static let description = IntentDescription(
+        "Stops a backup in progress, as Cancel Backup in Restorey’s menu does. The schedule carries on. With no plan chosen, every backup in progress is cancelled.")
+    static let supportedModes: IntentModes = .background
+
+    @Parameter(title: "Plan", description: "The plan whose backup to cancel. Leave it empty to cancel every backup in progress.")
+    var plan: PlanEntity?
+
+    @Dependency private var gateway: ShortcutGateway
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Cancel the backup of \(\.$plan)")
+    }
+
+    @MainActor func perform() async throws -> some IntentResult & ProvidesDialog {
+        let ready = try await gateway.ready()
+        let call = try ShortcutRules.cancel(
+            planID: plan?.id, health: ready.health, content: ready.content, status: ready.status
+        ).get(orThrow: ShortcutError.init)
+        guard case .cancel(let plans) = call.kind else { return .result(dialog: "\(call.dialog)") }
+        try await perPlan(.cancel, plans, ready, ready.connection.cancel)
         return .result(dialog: "\(call.dialog)")
     }
 }
@@ -205,6 +253,10 @@ struct RestoreyShortcuts: AppShortcutsProvider {
             intent: PauseBackupsIntent(),
             phrases: ["Pause \(.applicationName)", "Pause backups in \(.applicationName)"],
             shortTitle: "Pause Backups", systemImageName: "pause.circle")
+        AppShortcut(
+            intent: CancelBackupIntent(),
+            phrases: ["Cancel \(.applicationName) backup", "Cancel backup in \(.applicationName)"],
+            shortTitle: "Cancel Backup", systemImageName: "xmark.circle")
         AppShortcut(
             intent: ResumeBackupsIntent(),
             phrases: ["Resume \(.applicationName)", "Resume backups in \(.applicationName)"],

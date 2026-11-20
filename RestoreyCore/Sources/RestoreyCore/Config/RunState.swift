@@ -60,6 +60,10 @@ public struct RepositorySize: Codable, Sendable, Equatable {
 public struct PlanRunHistory: Codable, Sendable, Equatable {
     public var lastSuccessAt: Date?
     public var lastAttemptAt: Date?
+    /// `lastAttemptAt` as it was before the backup in progress started, kept so a Cancel can put the schedule back
+    /// (`lastAttemptAfterCancel`). Set when a backup starts, cleared when its record is added. Nil in state written
+    /// before it existed.
+    public var attemptBeforeRun: Date?
     public var lastSnapshotAt: Date?
     public var lastForgetAt: Date?
     public var lastPruneAt: Date?
@@ -118,7 +122,7 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case lastSuccessAt, lastAttemptAt, lastSnapshotAt, lastForgetAt, lastPruneAt, lastCheckAt
+        case lastSuccessAt, lastAttemptAt, attemptBeforeRun, lastSnapshotAt, lastForgetAt, lastPruneAt, lastCheckAt
         case runningRecordID, runningRecord, recent, activeAlerts, stoppedReason, pausedUntil, repositorySize
         case lastBackupRecord, pendingEarlierRemoval, pendingEarlierRemovalFailures
     }
@@ -127,6 +131,7 @@ public struct PlanRunHistory: Codable, Sendable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         lastSuccessAt = try c.decodeIfPresent(Date.self, forKey: .lastSuccessAt)
         lastAttemptAt = try c.decodeIfPresent(Date.self, forKey: .lastAttemptAt)
+        attemptBeforeRun = try c.decodeIfPresent(Date.self, forKey: .attemptBeforeRun)
         lastSnapshotAt = try c.decodeIfPresent(Date.self, forKey: .lastSnapshotAt)
         lastForgetAt = try c.decodeIfPresent(Date.self, forKey: .lastForgetAt)
         lastPruneAt = try c.decodeIfPresent(Date.self, forKey: .lastPruneAt)

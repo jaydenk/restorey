@@ -124,7 +124,7 @@ final class DeveloperModel {
     func createRepository() { planAction("Create repository") { await $0.createRepository($1) } }
     func confirmRecoveryKit() { planAction("Recovery details saved") { await $0.confirmRecoveryKit($1) } }
     func backUpNow() { planAction("Back Up Now") { await $0.backUpNow($1) } }
-    func pause() { planAction("Pause") { await $0.pause($1) } }
+    func pause() { planAction("Pause") { await $0.pause($1, for: .oneHour) } }
     func resume() { planAction("Resume") { await $0.resume($1) } }
     func adopt() { planAction("Adopt") { await $0.adopt($1) } }
 

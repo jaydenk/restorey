@@ -132,9 +132,17 @@ struct PlansPane: View {
             .disabled(choice?.canBackUp != true)
         if choice?.canResume == true {
             Button("Resume") { AgentActions.resume([id], connection) }
-        } else {
-            Button("Pause") { AgentActions.pause([id], connection) }
-                .disabled(choice?.canPause != true)
+        }
+        // Only while a backup runs, like Cancel Backup: there's nothing to pause otherwise (owner, 20 Nov 2026).
+        if choice?.canPause == true {
+            Menu("Pause") {
+                ForEach(PauseLength.allCases, id: \.self) { length in
+                    Button(length.menuTitle) { AgentActions.pause([id], for: length, connection) }
+                }
+            }
+        }
+        if choice?.canCancel == true {
+            Button("Cancel Backup") { AgentActions.cancel([id], connection) }
         }
         Button("Restore Files…") { context.showRestoreFiles(id) }
             .disabled(choice?.canRestore != true)

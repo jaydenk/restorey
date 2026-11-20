@@ -1,0 +1,103 @@
+import Foundation
+
+/// Where one backup folder lies against another: the one place paths are compared for containment (Task 1).
+///
+/// Two entry points, so a caller can't follow links by accident (final review I1):
+/// - `containsByPath` compares the paths as written and never touches the file system. It is the one for validation
+///   and anything on the agent's status and scheduling path (`Plan.validationErrors()`, `nextRunDate`), which a
+///   repository on a hung network volume must not be able to stall.
+/// - `containsFollowingLinks` also compares where links lead, which reads the file system (an `lstat` per component)
+///   and can block for as long as a volume doesn't answer. It is for the app adding folders (`FolderDrop`). The agent
+///   follows links only through `LinkResolver`, on a thread of its own with a deadline.
+public enum SourcePaths {
+    /// Whether `inner` is `outer` or lies below it, by whole path components (`/Users/me/Doc` doesn't contain
+    /// `/Users/me/Documents`). Compared standardised (trailing slashes, `.` and `..` don't matter), as written: a link
+    /// is judged by its own path, not where it leads. Never reads the file system.
+    public static func containsByPath(_ outer: String, _ inner: String) -> Bool {
+        components(inner).starts(with: components(outer))
+    }
+
+    /// `containsByPath`, or the same comparison of where both paths lead once links are resolved (a folder reached
+    /// through a link is the place the link leads to). Reads the file system: never call it on the agent's actor.
+    public static func containsFollowingLinks(_ outer: String, _ inner: String) -> Bool {
+        containsByPath(outer, inner) || containsByPath(resolvingLinks(outer), resolvingLinks(inner))
+    }
+
+    /// `path` with `.`, `..` and repeated or trailing slashes removed, as written: `/a/x/../b/` is `/a/b`. Pure: unlike
+    /// `URL(fileURLWithPath:)`, which asks the file system whether the path is a folder, it reads nothing.
+    public static func standardised(_ path: String) -> String {
+        let parts = components(path)
+        return path.hasPrefix("/") ? "/" + parts.joined(separator: "/") : parts.joined(separator: "/")
+    }
+
+    /// Where `path` leads once every link in it is followed. Reads the file system.
+    public static func resolvingLinks(_ path: String) -> String {
+        URL(fileURLWithPath: standardised(path), isDirectory: true).resolvingSymlinksInPath().path
+    }
+
+    /// The last component of `path` once standardised, as a sentence names a folder: `/Volumes/Disk/repo/` is `repo`,
+    /// `/a/b/..` is `a`. Pure string handling: `URL(fileURLWithPath:)` (no `isDirectory:`) stats the path to learn
+    /// whether it is a folder, so it must not name folders anywhere the agent builds a status (final review round 2).
+    /// The root, or a path with no components, is returned as it is.
+    public static func lastComponent(_ path: String) -> String {
+        components(path).last.map(String.init) ?? path
+    }
+
+    private static func components(_ path: String) -> [Substring] {
+        var parts: [Substring] = []
+        for part in path.split(separator: "/", omittingEmptySubsequences: true) {
+            switch part {
+            case ".": continue
+            case "..": if !parts.isEmpty { parts.removeLast() }
+            default: parts.append(part)
+            }
+        }
+        return parts
+    }
+}
+
+/// Where paths lead once links are followed, for the agent (final review round 2): `AgentState.savePlan`'s check of a
+/// source reaching the repository through a link, and a backup's exclusion of where a link to its repository leads.
+///
+/// Following a link reads the disk, which a network volume that stops answering can hold up for good, so the work runs
+/// on a thread of its own (`OwnThread`), never on the cooperative pool, raced against `deadline`, with one outstanding
+/// at a time (`OneOutstandingGate`): a check that arrives while an earlier one is stuck past its deadline gives up at
+/// once rather than leave another blocked thread behind. Nil when the answer didn't come in time or an earlier check is
+/// still stuck; callers then fall back to the paths as written.
+public struct LinkResolver: Sendable {
+    /// The same bound as the agent's other blocking file-system looks (`MarkedNotForBackup.timeLimit`, 10 s).
+    public static let defaultDeadline: TimeInterval = MarkedNotForBackup.timeLimit
+    /// The agent's, with one gate for the whole process: every save and every backup share it.
+    public static let live = LinkResolver()
+
+    public let gate: OneOutstandingGate
+    public let deadline: TimeInterval
+    private let follow: @Sendable (String) -> String
+
+    /// `follow` is `SourcePaths.resolvingLinks` except in tests, which hold it to test the deadline.
+    public init(
+        gate: OneOutstandingGate = OneOutstandingGate(), deadline: TimeInterval = LinkResolver.defaultDeadline,
+        follow: @escaping @Sendable (String) -> String = SourcePaths.resolvingLinks
+    ) {
+        self.gate = gate
+        self.deadline = deadline
+        self.follow = follow
+    }
+
+    /// Where each of `paths` leads, in order; nil when the file system didn't answer within `deadline`, or an earlier
+    /// check is still outstanding past its own.
+    public func resolve(_ paths: [String]) async -> [String]? {
+        let end = ContinuousClock.now.advanced(by: .seconds(deadline))
+        let (gate, follow) = (gate, follow)
+        guard await gate.enter(until: end) else { return nil }
+        let remaining = max(0, ContinuousClock.now.duration(to: end) / .seconds(1))
+        return await OwnThread.run(
+            named: "Restorey link check", qualityOfService: .utility, deadline: remaining, orElse: nil
+        ) {
+            let resolved = paths.map(follow)
+            // Only when the work has really returned: a check abandoned at its deadline keeps the gate until then.
+            gate.leave()
+            return resolved
+        }
+    }
+}

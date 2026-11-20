@@ -57,6 +57,9 @@ public struct RunnerDependencies: Sendable {
     /// restic's `--retry-lock` for the maintenance commands (`ResticContext.maintenanceRetryLock`): five minutes;
     /// tests that hold a lock shorten it.
     public var maintenanceRetryLock: String
+    /// Follows a link to a local repository for its exclusion (`LinkResolver`: its own thread, a deadline, one
+    /// outstanding). Nil from it means only the path as given is excluded.
+    public var linkResolver: LinkResolver
 
     public init(
         state: AgentState, secrets: any SecretStore, queues: RepositoryQueues, supervisor: SupervisedProcesses,
@@ -75,7 +78,8 @@ public struct RunnerDependencies: Sendable {
         markedItems: (any MarkedItemsFinding)? = nil,
         markedItemsDeadline: TimeInterval = MarkedNotForBackup.timeLimit,
         notForBackupDirectory: URL? = nil,
-        maintenanceRetryLock: String = "5m"
+        maintenanceRetryLock: String = "5m",
+        linkResolver: LinkResolver = .live
     ) {
         self.state = state
         self.secrets = secrets
@@ -104,6 +108,7 @@ public struct RunnerDependencies: Sendable {
         self.notForBackupDirectory = notForBackupDirectory
             ?? credentialsDirectory.appendingPathComponent("not-for-backup", isDirectory: true)
         self.maintenanceRetryLock = maintenanceRetryLock
+        self.linkResolver = linkResolver
     }
 }
 
@@ -165,6 +170,9 @@ public actor PlanRunner {
     nonisolated let cloudOnlyWalkGate = OneOutstandingGate()
     /// Set once a backup has logged that an earlier cloud-only walk is still stuck; cleared by the next walk that runs.
     private var loggedStuckWalk = false
+    /// Set once a backup has logged that the repository's link check got no answer (timed out, or an earlier one is
+    /// stuck); cleared by the next check that does answer, so one stuck episode logs one line, not one per backup.
+    private var loggedStuckLinkCheck = false
     /// The latest background run `backUpNow` started, by plan.
     private var background: [UUID: Task<RunRecord, Never>] = [:]
     /// Plans to back up (trigger `.manual`) as soon as their run, being paused, has ended: a Resume that
@@ -209,8 +217,8 @@ public actor PlanRunner {
     /// and returns the status showing it running. A single plan that is invalid or has no confirmed
     /// recovery kit is refused with the reason; one already running is reported as such, not refused.
     ///
-    /// `afterPausedRun` is Resume's (Ruling R62): when the plan's run is still stopping for a pause, the
-    /// backup starts, through this same path, once that run has ended and recorded `.paused`, instead of
+    /// `afterPausedRun` is Resume's (Ruling R62): when the plan's run is still stopping (for a pause, or a Cancel
+    /// that a pause followed), the backup starts, through this same path, once that run has ended, instead of
     /// being refused as "already backing up". Back Up Now itself doesn't pass it.
     public func backUpNow(_ planID: UUID?, afterPausedRun: Bool = false) async throws -> BackUpNowReply {
         try await deps.state.requireRunnable(planID)
@@ -218,7 +226,7 @@ public actor PlanRunner {
         if let planID {
             let plan = try await deps.state.runInputs(planID).plan
             if let refusal = Self.refusal(plan) { throw refusal }
-            if afterPausedRun, handles[planID]?.intent == .pause {
+            if afterPausedRun, handles[planID]?.intent != nil {
                 startWhenPausedRunEnds.insert(planID)
             } else {
                 // A backup step already under way and carrying on (the scheduler got there first) is the backup
@@ -331,12 +339,29 @@ public actor PlanRunner {
     // MARK: Interrupts and background runs
 
     /// Asks the plan's run in progress, if any, to stop. A request repeated while it is pending is
-    /// ignored. `AgentState.pause` is the one way in.
-    func interrupt(planID: UUID, intent: InterruptIntent) async {
+    /// ignored, and so is any request once one is pending: a Cancel after a pause leaves the run paused.
+    /// `AgentState.pause` and `AgentState.cancel` are the ways in.
+    /// Returns whether any run took the request (false: none in flight, or each already being stopped).
+    @discardableResult
+    func interrupt(planID: UUID, intent: InterruptIntent) async -> Bool {
+        var accepted = false
         for handle in [handles[planID]].compactMap({ $0 }) + (measurementHandles[planID] ?? []) {
-            guard let process = handle.request(intent) else { continue }
+            let request = handle.requestStop(intent)
+            accepted = accepted || request.accepted
+            guard let process = request.process else { continue }
             await process.interrupt(intent, killAfter: deps.interruptGracePeriod)
         }
+        return accepted
+    }
+
+    /// Cancel Backup: stops the plan's run and drops the backup Resume queued behind a run still stopping, so the
+    /// user who pressed Cancel doesn't get a new backup when that run ends. A run a pause is already stopping
+    /// stays paused (the first stop wins).
+    /// Returns whether it stopped anything: a run, or the queued backup.
+    func cancel(planID: UUID) async -> Bool {
+        let droppedQueued = startWhenPausedRunEnds.remove(planID) != nil
+        let stopped = await interrupt(planID: planID, intent: .cancel)
+        return stopped || droppedQueued
     }
 
     /// Asks every run in flight (recovery's unlocks, backups, maintenance, create, adopt) to stop with
@@ -646,7 +671,7 @@ public actor PlanRunner {
                     + "names exactly (plan \(id)): " + unlogged.map(\.debugDescription).joined(separator: ", "))
         }
         guard !file.written.isEmpty else { return (nil, 0) }
-        let url = deps.notForBackupDirectory.appendingPathComponent("\(id).txt")
+        let url = deps.notForBackupDirectory.appendingPathComponent("\(id).txt", isDirectory: false)
         do {
             try FileManager.default.createDirectory(
                 at: deps.notForBackupDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -689,6 +714,25 @@ public actor PlanRunner {
         deps.agentLog(
             "Couldn't measure the repository size for plan \(plan.id.uuidString), so the last size measured is kept: \(problem)")
         return step.record.outcome
+    }
+
+    /// Where a link to the plan's local repository leads, for its exclusion. Following it reads the disk, which a volume
+    /// that doesn't answer can hold up for good, so it goes through `deps.linkResolver` (final review round 2). Nil for
+    /// a repository that isn't a local folder, or when the answer didn't come in time: the backup then excludes the
+    /// path as given only.
+    func repositoryLinkTarget(_ plan: Plan) async -> String? {
+        guard let repositoryPath = plan.repository.localFolderPath else { return nil }
+        guard let target = await deps.linkResolver.resolve([repositoryPath])?.first else {
+            if !loggedStuckLinkCheck {
+                loggedStuckLinkCheck = true
+                deps.agentInfo("Couldn’t find out where the repository folder of plan \(plan.id.uuidString) leads: the file "
+                    + "system didn’t answer, so only the folder as given is left out of this backup (not logged again "
+                    + "until a check answers)")
+            }
+            return nil
+        }
+        loggedStuckLinkCheck = false
+        return target
     }
 
     // MARK: Winding down (Ruling R55)
@@ -743,11 +787,15 @@ public actor PlanRunner {
             await write(plan.id) { history in
                 history.runningRecord = provisional
                 history.runningRecordID = id
-                if op == .backup { Self.noteAttempt(at: startedAt, in: &history) }
+                if op == .backup {
+                    history.attemptBeforeRun = history.lastAttemptAt
+                    Self.noteAttempt(at: startedAt, in: &history)
+                }
             }
         }
 
         var context = session.context
+        if op == .backup { context.repositoryLinkTarget = await repositoryLinkTarget(plan) }
         let uploadsToTheNetwork = op == .backup && plan.repository.needsNetwork
         if uploadsToTheNetwork {
             context.macWideUploadLimitKiB = await deps.state.networkSettings.uploadLimitKiB
@@ -873,7 +921,11 @@ public actor PlanRunner {
                 history.runningRecord = nil
             }
             history.record(record)
+            let attemptBeforeRun = history.attemptBeforeRun
             Self.apply(record, stoppedReason: stoppedReason, to: &history)
+            if record.operation == .backup, record.outcome == .cancelled {
+                Self.keepSchedule(after: record, attemptBeforeRun: attemptBeforeRun, plan: plan, in: &history)
+            }
             switch fda {
             case .missing?:
                 if history.activeAlerts[.fullDiskAccessMissing] == nil {

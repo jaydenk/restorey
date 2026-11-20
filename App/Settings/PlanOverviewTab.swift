@@ -111,7 +111,17 @@ struct PlanOverviewTab: View {
     }
 
     @ViewBuilder private func button(_ button: PlanOverview.Button) -> some View {
-        if button.kind == .backUpNow {
+        if button.kind == .pause {
+            // A pull-down menu button: Pause is a choice of how long.
+            Menu(button.title) {
+                ForEach(PauseLength.allCases, id: \.self) { length in
+                    Button(length.menuTitle) { AgentActions.pause([planID], for: length, supervisor.connection) }
+                }
+            }
+            .menuStyle(.button)
+            .fixedSize()
+            .disabled(!button.enabled)
+        } else if button.kind == .backUpNow {
             Button(button.title) { perform(button.kind) }
                 .buttonStyle(.borderedProminent)
                 .disabled(!button.enabled)
@@ -136,7 +146,8 @@ struct PlanOverviewTab: View {
         let connection = supervisor.connection
         switch kind {
         case .backUpNow: AgentActions.backUpNow(planID, connection)
-        case .pause: AgentActions.pause([planID], connection)
+        case .pause: break  // A menu of lengths, not a button: see `button(_:)`.
+        case .cancel: AgentActions.cancel([planID], connection)
         case .resume: AgentActions.resume([planID], connection)
         case .restoreFiles: context.showRestoreFiles(planID)
         }

@@ -14,11 +14,10 @@ import Synchronization
 /// XPC can never interleave across the stores' `await`s and lose an update.
 ///
 /// While draining (`prepareForRestart`, or `restartForReplacedBinary` when the agent finds its own
-/// executable replaced), every mutating call except `pause` is refused. Pause stays allowed so the user
+/// executable replaced), every mutating call except `pause` and `cancel` is refused. Both stay allowed so the user
 /// can still stop a long first backup; the next agent honours `pausedUntil`. The runner starts no new
 /// restic step while draining: the step in flight finishes, nothing after it (Ruling R55).
 public actor AgentState {
-    public static let pauseDuration: TimeInterval = planPauseDuration
     /// Progress pushes are at most this often; phase changes are always pushed.
     public static let progressPushInterval: TimeInterval = 0.5
     static let stateSchemaVersion = 1
@@ -76,6 +75,10 @@ public actor AgentState {
 
     private var writeInFlight = false
     private var writeWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Writes waiting their turn behind the one in flight, for tests.
+    var queuedWrites: Int { writeWaiters.count }
+    /// Follows links where the user acts (`savePlan`); tests attach one they can hold (`attach(linkResolver:)`).
+    private(set) var linkResolver: LinkResolver = .live
 
     /// Writes a line to the agent's own log (`agent.log`) for the run actions it refuses
     /// (`attach(agentLog:)`), so a Back Up Now that did nothing leaves a trace (final review M5).
@@ -174,13 +177,13 @@ public actor AgentState {
 
     public static func configStore(in directory: URL) -> VersionedStore<ConfigFile> {
         VersionedStore(
-            fileURL: directory.appendingPathComponent("config.json"),
+            fileURL: directory.appendingPathComponent("config.json", isDirectory: false),
             currentVersion: ConfigMigrations.currentVersion, migrations: ConfigMigrations.migrations)
     }
 
     public static func stateStore(in directory: URL) -> VersionedStore<RunState> {
         VersionedStore(
-            fileURL: directory.appendingPathComponent("state.json"),
+            fileURL: directory.appendingPathComponent("state.json", isDirectory: false),
             currentVersion: stateSchemaVersion, migrations: [:])
     }
 
@@ -274,10 +277,10 @@ public actor AgentState {
         let phase: PlanPhase
         if let run = running[plan.id] {
             phase = .running(run.progress, retrying: run.retrying)
-        } else if let reason = history.stoppedReason {
+        } else if let reason = history.stopReason(for: plan) {
             phase = .stopped(reason: reason)
         } else if let until = history.pausedUntil, until > now {
-            phase = .paused(until: min(until, now.addingTimeInterval(Self.pauseDuration)))
+            phase = .paused(until: min(until, now.addingTimeInterval(PauseLength.longest.seconds)))
         } else if case .skipped(let reason)? = history.recent.first?.outcome {
             phase = .skipped(reason)
         } else {
@@ -325,19 +328,19 @@ public actor AgentState {
         Dictionary(status.plans.map { ($0.plan.id, PushedPlan($0, now: status.generatedAt)) }) { first, _ in first }
     }
 
-    /// A pause can only be `pauseDuration` long. One that ends later than that from now was set before
+    /// A pause can only be `PauseLength.longest` (a day). One that ends later than that from now was set before
     /// the clock went backwards, and would last as long again as the clock moved: it is cut back to
-    /// `pauseDuration` from now and saved, so it then runs out normally (final review M2). The scheduler's
+    /// a day from now and saved, so it then runs out normally (final review M2). The scheduler's
     /// tick calls this. A save that fails is tried again at the next tick.
     public func clampStretchedPauses() async {
         let now = now()
-        let limit = now.addingTimeInterval(Self.pauseDuration)
+        let limit = now.addingTimeInterval(PauseLength.longest.seconds)
         let stretched = runState.plans.filter { _, history in (history.pausedUntil ?? .distantPast) > limit }.map(\.key)
         for id in stretched where config.plans.contains(where: { $0.id == id }) {
             _ = try? await updateHistory(id) { history in
                 if let until = history.pausedUntil, until > limit { history.pausedUntil = limit }
             }
-            restartLog("The clock went backwards during a pause, so plan \(id.uuidString) is now paused for an hour from now")
+            restartLog("The clock went backwards during a pause, so plan \(id.uuidString) is now paused for a day from now")
         }
     }
 
@@ -375,6 +378,10 @@ public actor AgentState {
             throw AgentError.invalidRequest("a check-in URL was sent for a plan saved without one")
         }
         return try await serialisedWrite {
+            // Validation compares paths only (it runs on every status); here, where the user acts, a source that
+            // reaches the repository through a link is refused too. Inside the serialised section, so saves still
+            // complete in the order they arrived (final review round 2).
+            try await refuseSourcesReachingTheRepositoryThroughLinks(request.plan)
             // A plan saved without a check-in URL loses any stored one, so it is never pinged.
             let planSecrets = try PlanSecrets(
                 store: secrets, entries: request.secrets,
@@ -585,14 +592,27 @@ public actor AgentState {
         }
     }
 
-    /// Pauses for `pauseDuration`, after which the plan is due at once, and asks the runner to stop a
+    /// Pauses for `length`, after which the plan is due at once, and asks the runner to stop a
     /// run in progress (SIGINT, then SIGKILL; the run ends `.paused`). Allowed while draining.
-    public func pause(_ id: UUID) async throws -> AgentStatus {
+    public func pause(_ id: UUID, for length: PauseLength) async throws -> AgentStatus {
         try requireLoaded()
-        let until = now().addingTimeInterval(Self.pauseDuration)
+        let until = now().addingTimeInterval(length.seconds)
         let status = try await updateHistory(id) { $0.pausedUntil = until }
         await runner?.interrupt(planID: id, intent: .pause)
         return status
+    }
+
+    /// Stops the plan's run in progress, this run only: the schedule carries on, so nothing is saved and
+    /// `pausedUntil` is left alone. The run ends `.cancelled`: no ping, no failure alert, no maintenance
+    /// after it, and the next backup falls at its normal time (not the short retry). With no run in progress
+    /// the status comes back unchanged. A run a pause is already stopping keeps the pause (`handle.request`
+    /// returns nil once an intent is set). Allowed while draining, like `pause`, since it only stops work.
+    /// `stoppedARun` says whether this Cancel stopped anything, for the agent's log; the app gets the status alone.
+    public func cancel(_ id: UUID) async throws -> CancelReply {
+        try requireLoaded()
+        _ = try requirePlan(id)
+        let stopped = await runner?.cancel(planID: id) ?? false
+        return CancelReply(status: status(), stoppedARun: stopped)
     }
 
     /// Clears the plan's pause. When it was paused (`pausedUntil` still in the future), Resume also starts
@@ -720,6 +740,10 @@ public actor AgentState {
     }
 
     /// Called once at startup with where the refused run actions are logged (`agent.log`).
+    public func attach(linkResolver: LinkResolver) {
+        self.linkResolver = linkResolver
+    }
+
     public func attach(agentLog: @escaping @Sendable (String) -> Void) {
         self.agentLog = agentLog
     }
@@ -771,7 +795,7 @@ public actor AgentState {
     }
 
     /// The same drain, for the app's `unregister()` then `register()`: the agent stays up, drained and
-    /// refusing every mutating call but `pause`, until `unregister()` stops it. Exiting instead would let
+    /// refusing every mutating call but `pause` and `cancel`, until `unregister()` stops it. Exiting instead would let
     /// launchd's `KeepAlive` start a fresh agent that `unregister()` could then kill mid-run.
     ///
     /// Refused with `restarting` while a restart drain is under way (the app's, or the agent's own for a
@@ -915,7 +939,7 @@ public actor AgentState {
         if loadError != nil { throw AgentError.configUnavailable }
     }
 
-    /// Loaded and not draining: the gate for every mutating call except `pause`.
+    /// Loaded and not draining: the gate for every mutating call except `pause` and `cancel`.
     func requireMutable() throws {
         try requireLoaded()
         guard !isDraining else { throw AgentError.draining }
@@ -924,6 +948,18 @@ public actor AgentState {
     func requirePlan(_ id: UUID) throws -> Plan {
         guard let plan = config.plans.first(where: { $0.id == id }) else { throw AgentError.unknownPlan }
         return plan
+    }
+
+    /// Follows the plan's links through `linkResolver` (its own thread, a deadline, one outstanding) and throws
+    /// `invalidPlan` for a source that leads into its local repository. When the file system doesn't answer in time
+    /// the save goes ahead on the comparison by path, which has already passed, and the agent log says so.
+    private func refuseSourcesReachingTheRepositoryThroughLinks(_ plan: Plan) async throws {
+        guard let throughLinks = await plan.sourcesInsideRepositoryFollowingLinks(resolver: linkResolver) else {
+            agentLog("Couldn’t check where the folders of plan \(plan.id.uuidString) lead: the file system didn’t "
+                + "answer, so they were checked as written")
+            return
+        }
+        guard throughLinks.isEmpty else { throw AgentError.invalidPlan(throughLinks) }
     }
 
     /// Writes the config and adopts it in memory only once the write succeeded.
@@ -989,4 +1025,25 @@ public enum DrainPurpose: Sendable, Equatable {
 
     /// Whether the agent exits afterwards.
     public var exitsAfterwards: Bool { self != .reregistration }
+}
+
+/// What `AgentState.cancel` did. The XPC reply is the status alone; whether a run was stopped is for the agent's log,
+/// which says so only when something was (final review m7).
+public struct CancelReply: Sendable {
+    public var status: AgentStatus
+    /// This Cancel stopped a run, or dropped the backup Resume queued behind one. False when nothing was running,
+    /// or the run was already being stopped (a pause wins).
+    public var stoppedARun: Bool
+}
+
+extension PlanRunHistory {
+    /// Why the plan won't back up until something is changed: the stop the agent recorded (a wrong password, a missing
+    /// repository), or else settings that fail validation, which only a plan saved by an earlier version can have
+    /// (final review I2: v0.1 allowed a source inside the plan's own repository). Nil when nothing stops it. The
+    /// status reports it as the phase (`stopped`), and `AlertContent` names it in the settings alert.
+    func stopReason(for plan: Plan) -> String? {
+        if let stoppedReason { return stoppedReason }
+        let errors = plan.validationErrors()
+        return errors.isEmpty ? nil : AgentError.invalidPlan(errors).message
+    }
 }

@@ -54,6 +54,64 @@ struct PlanRunnerTests {
         #expect(!log.contains(RunnerFixture.password))
     }
 
+    /// Final review I1: the runner resolves a linked local repository off its actor and restic gets both spellings
+    /// as exclusions, so the backups are never backed up whichever way the folders reach them.
+    @Test func aRepositoryReachedThroughALinkIsExcludedByWhereItLeads() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        try f.write("a.txt", "hello")
+        let link = f.root.appendingPathComponent("repo-link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: f.repository)
+        try await f.updatePlan { $0.repository = .raw(repository: link.path, environmentNames: []) }
+        _ = try await f.state.confirmRecoveryKit(f.planID)
+
+        let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        guard case .success = record.outcome else { Issue.record("expected a success, got \(record.outcome)"); return }
+        let log = try String(contentsOf: f.logs.appendingPathComponent(record.logFile), encoding: .utf8)
+        let resolved = link.resolvingSymlinksInPath().path
+        #expect(resolved != link.path)
+        #expect(log.contains("--exclude=\(DefaultExclusions.pattern(forFolder: link.path))"))
+        #expect(log.contains("--exclude=\(DefaultExclusions.pattern(forFolder: resolved)) "))
+    }
+
+    /// Round 2: following the repository's link has a deadline (the subject: tiny, the check held past it). When the
+    /// file system doesn't answer, the backup still runs and leaves out the folder as given, and the agent log says so.
+    @Test func aRepositoryLinkThatCantBeFollowedInTimeLeavesOutThePathAsGiven() async throws {
+        let release = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        let gate = OneOutstandingGate()
+        let resolver = LinkResolver(gate: gate, deadline: 0.05) { path in
+            release.wait()
+            release.signal() // a turnstile: one signal frees every check that was ever held
+            finished.signal()
+            return path + "-resolved"
+        }
+        let f = try await RunnerFixture.make(linkResolver: resolver)
+        defer {
+            f.remove()
+            release.signal() // never leaves a held thread behind, whatever fails above
+        }
+        try f.write("a.txt", "hello")
+        let plan = await f.plan()
+        let repositoryPath = try #require(plan.repository.localFolderPath)
+
+        #expect(await f.runner.repositoryLinkTarget(plan) == nil)
+        #expect(f.agentInfo.value.filter { $0.hasPrefix("Couldn’t find out where the repository folder of plan") }.count == 1)
+        let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        guard case .success = record.outcome else { Issue.record("expected a success, got \(record.outcome)"); return }
+        let log = try String(contentsOf: f.logs.appendingPathComponent(record.logFile), encoding: .utf8)
+        #expect(log.contains("--exclude=\(DefaultExclusions.pattern(forFolder: repositoryPath))"))
+        #expect(!log.contains("-resolved"))
+        // Round 3: a stuck check is logged once per episode, not once per backup.
+        #expect(f.agentInfo.value.filter { $0.hasPrefix("Couldn’t find out where the repository folder of plan") }.count == 1)
+
+        // Wait for the held work only if a check was admitted (the gate is held while its thread is blocked); a
+        // deadline that passed before admission starts no work, and nothing would signal `finished`.
+        let admitted = gate.isBusy
+        release.signal()
+        if admitted { await OwnThread.run(named: "test wait", qualityOfService: .utility) { finished.wait() } }
+    }
+
     /// Spec §8: idle sleep is held off while restic runs, and only then.
     @Test func resticStepsHoldTheSleepAssertionAndASkipTakesNone() async throws {
         let f = try await RunnerFixture.make()
@@ -811,7 +869,7 @@ struct PlanRunnerTests {
         let f = try await RunnerFixture.make()
         defer { f.remove() }
         try f.write("a.txt", "one")
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
         #expect(await f.history().pausedUntil != nil)
 
         let status = try await f.state.resume(f.planID)
@@ -859,7 +917,7 @@ struct PlanRunnerTests {
 
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
         try await f.waitForPhase { $0.progress != nil }
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
         // The paused run is still stopping (SIGKILL comes after 2 s): Resume returns without an error.
         _ = try await f.state.resume(f.planID)
 
@@ -912,7 +970,7 @@ struct PlanRunnerTests {
         // Running and carrying on: reported, not refused.
         let live = try await f.state.backUpNow(f.planID)
         #expect(live.alreadyRunning)
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
         await #expect { try await f.state.backUpNow(f.planID) } throws: {
             ($0 as? AgentError)?.message == "Fixture is already backing up"
         }
@@ -989,7 +1047,7 @@ struct PlanRunnerTests {
         defer { f.remove() }
         try f.write("a.txt", "one")
         try await f.state.updateHistory(f.planID) { $0.stoppedReason = "The repository password is wrong" }
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
 
         _ = try await f.state.resume(f.planID)
         #expect(await f.runner.waitForBackgroundRun(planID: f.planID) == nil)
@@ -1007,7 +1065,7 @@ struct PlanRunnerTests {
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
         try await f.waitForPhase { $0.progress != nil }
         let pausedAt = f.clock.now
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
         let record = try await run.value
 
         #expect(record.outcome == .paused)
@@ -1033,15 +1091,15 @@ struct PlanRunnerTests {
         #expect(await f.pings() == [.success])
     }
 
-    /// Final review M2: the scheduler's tick cuts a pause the clock stretched back to an hour from now and
-    /// saves it, so it runs out an hour later instead of sliding along with the clock.
+    /// Final review M2: the scheduler's tick cuts a pause the clock stretched back to a day from now and
+    /// saves it, so it runs out a day later instead of sliding along with the clock.
     @Test func theTickCutsBackAPauseTheClockStretched() async throws {
         let f = try await RunnerFixture.make(createRepository: false)
         defer { f.remove() }
-        try await f.state.updateHistory(f.planID) { [now = f.clock.now] in $0.pausedUntil = now.addingTimeInterval(5 * 3600) }
+        try await f.state.updateHistory(f.planID) { [now = f.clock.now] in $0.pausedUntil = now.addingTimeInterval(5 * 86400) }
 
         await f.runner.refreshStatus()
-        let limit = f.clock.now.addingTimeInterval(3600)
+        let limit = f.clock.now.addingTimeInterval(86400)
         #expect(await f.history().pausedUntil == limit)
         #expect(await f.status().phase == .paused(until: limit))
         let saved = try await AgentState.stateStore(in: f.support).load()
@@ -1049,7 +1107,7 @@ struct PlanRunnerTests {
 
         f.clock.advance(1800)
         await f.runner.refreshStatus()
-        #expect(await f.history().pausedUntil == limit, "a pause within the hour is left alone")
+        #expect(await f.history().pausedUntil == limit, "a pause within the day is left alone")
     }
 
     /// restic ignores SIGINT here, so our SIGKILL ends it: still a pause, but its lock is left behind,
@@ -1081,7 +1139,7 @@ struct PlanRunnerTests {
 
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
         try await f.waitForPhase { $0.progress != nil }
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
         #expect(try await run.value.outcome == .paused)
 
         try FileManager.default.removeItem(at: marker)
@@ -1408,6 +1466,216 @@ struct PlanRunnerTests {
         let record = try await run.value
         #expect(record.outcome == .success(snapshotID: "abc123"))
         #expect(await f.status().phase == .idle)
+    }
+
+    // MARK: Cancel Backup (v0.1.1)
+
+    private static let cancelStatus =
+        #"{"message_type":"status","percent_done":0.1,"total_files":2,"files_done":1,"total_bytes":10,"bytes_done":5}"#
+    private static let cancelSummary =
+        #"{"message_type":"summary","files_new":1,"files_changed":0,"files_unmodified":0,"data_added":1,"data_added_packed":1,"total_files_processed":1,"total_bytes_processed":1,"total_duration":1,"snapshot_id":"abc123"}"#
+
+    /// A backup held mid-run by a stepped stub: Cancel ends it `.cancelled`, with no ping, no alert and no
+    /// maintenance after it, and never touches the pause.
+    @Test func cancelStopsTheRunAsCancelled() async throws {
+        let stepped = try steppedBackupStub([.out(Self.cancelStatus), .out(Self.cancelSummary)])
+        defer { stepped.finish() }
+        let f = try await RunnerFixture.make(executable: stepped.stub)
+        defer { f.remove() }
+        let notifier = AgentStateAlertTests.FakeNotifier(authorised: true)
+        await f.state.attach(notifier: notifier, log: { _ in })
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
+
+        let cancel = try await f.state.cancel(f.planID)
+        let record = try await run.value
+
+        #expect(cancel.stoppedARun, "the agent log says a run was cancelled")
+        #expect(record.outcome == .cancelled)
+        #expect(await f.pings() == [], "neither a /fail nor a success ping")
+        await f.state.alertsDelivered()
+        #expect(await notifier.titles == [], "no Backup failed notification")
+        #expect(await f.operations() == [.catConfig, .initRepository, .backup], "no maintenance after a cancel")
+        let history = await f.history()
+        #expect(history.pausedUntil == nil)
+        #expect(history.runningRecordID == nil)
+        #expect(await f.status().phase == .idle)
+    }
+
+    /// Cancel isn't a failure and isn't a short retry: the plan runs again at its normal time.
+    @Test func aCancelledBackupRunsAgainAtItsNormalTime() async throws {
+        let stepped = try steppedBackupStub([.out(Self.cancelStatus), .out(Self.cancelSummary)])
+        defer { stepped.finish() }
+        let f = try await RunnerFixture.make(executable: stepped.stub)
+        defer { f.remove() }
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
+        _ = try await f.state.cancel(f.planID)
+        #expect(try await run.value.outcome == .cancelled)
+
+        let history = await f.history()
+        let plan = await f.plan()
+        let lastAttemptAt = try #require(history.lastAttemptAt)
+        guard case .interval(let seconds) = plan.schedule else { Issue.record("expected an interval schedule"); return }
+        #expect(!isShortRetry(history))
+        #expect(nextRunDate(plan: plan, history: history, now: f.clock.now)
+            == max(lastAttemptAt.addingTimeInterval(TimeInterval(seconds)), f.clock.now))
+    }
+
+    /// Owner, 20 Nov 2026: cancelling never moves the schedule. A Back Up Now half an hour after the last backup (the
+    /// plan runs hourly), cancelled, leaves the next backup at the last backup plus the interval, not the cancelled
+    /// run's start plus the interval.
+    @Test func cancellingABackUpNowLeavesTheScheduleWhereItWas() async throws {
+        let stepped = try steppedBackupStub([.out(Self.cancelStatus), .out(Self.cancelSummary)])
+        defer { stepped.finish() }
+        let f = try await RunnerFixture.make(executable: stepped.stub)
+        defer { f.remove() }
+        let lastBackup = f.clock.now.addingTimeInterval(-1800)
+        try await f.state.updateHistory(f.planID) { $0.lastAttemptAt = lastBackup }
+
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .manual) }
+        try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
+        _ = try await f.state.cancel(f.planID)
+        #expect(try await run.value.outcome == .cancelled)
+
+        let history = await f.history()
+        let plan = await f.plan()
+        guard case .interval(let seconds) = plan.schedule else { Issue.record("expected an interval schedule"); return }
+        #expect(history.lastAttemptAt == lastBackup)
+        #expect(history.attemptBeforeRun == nil, "cleared once the run has its record")
+        #expect(nextRunDate(plan: plan, history: history, now: f.clock.now)
+            == lastBackup.addingTimeInterval(TimeInterval(seconds)))
+    }
+
+    /// Review focus 4: a Cancel that arrives after the run ended changes nothing and records nothing.
+    @Test func cancelAfterTheRunEndedDoesNothing() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        let ended = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        guard case .success = ended.outcome else { Issue.record("expected a success, got \(ended.outcome)"); return }
+        let before = await f.state.status()
+        let recordsBefore = await f.history().recent.count
+
+        let after = try await f.state.cancel(f.planID)
+
+        #expect(!after.stoppedARun, "nothing was running, so the agent log doesn't say a run was cancelled")
+        // `generatedAt` and `sequence` move with every status built; everything else must stay as it was.
+        #expect(after.status.plans == before.plans)
+        #expect(await f.state.status().plans == before.plans)
+        #expect(await f.history().recent.count == recordsBefore, "no new record")
+        #expect(await f.pings() == [.success], "only the finished run’s ping")
+    }
+
+    /// A backup that traps SIGINT, counts each one in `ints`, and stays up until `release` exists: the run is held in
+    /// its stopping state however slow the machine is. Once released it exits 130 if it was interrupted (restic's
+    /// code), else finishes with a summary, so a second run of the same stub succeeds.
+    private struct HeldStopStub: Sendable {
+        let stub: URL
+        let dir: URL
+        func release() { FileManager.default.createFile(atPath: dir.appendingPathComponent("release").path, contents: nil) }
+        func interrupts() -> Int {
+            let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+            return files.filter { $0.hasPrefix("ints-") }.reduce(0) { total, name in
+                total + ((try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)) ?? "")
+                    .split(separator: "\n").count
+            }
+        }
+        func finish() { release(); try? FileManager.default.removeItem(at: dir) }
+    }
+
+    private func heldStopStub() throws -> HeldStopStub {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("restorey-heldstop-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let body = """
+            #!/bin/sh
+            [ "$1" = cat ] && exit 10
+            [ "$1" = backup ] || exit 0
+            trap "echo i >> '\(dir.path)/ints-$$'" INT
+            echo '\(Self.cancelStatus)'
+            while [ ! -f '\(dir.path)/release' ]; do [ -d '\(dir.path)' ] || exit 1; /bin/sleep 0.05; done
+            if [ -f "\(dir.path)/ints-$$" ]; then exit 130; fi
+            echo '\(Self.cancelSummary)'
+
+            """
+        let stub = dir.appendingPathComponent("restic.sh")
+        try body.write(to: stub, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+        return HeldStopStub(stub: stub, dir: dir)
+    }
+
+    /// Review focus 4: a pause already stopping the run wins; Cancel keeps its outcome and its `pausedUntil`, and
+    /// sends no second SIGINT. The stub holds the run stopping until released after Cancel returns.
+    @Test func cancelWhileAPauseIsStoppingTheRunKeepsThePause() async throws {
+        let held = try heldStopStub()
+        defer { held.finish() }
+        let f = try await RunnerFixture.make(executable: held.stub, gracePeriod: .seconds(60))
+        defer { f.remove() }
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
+
+        _ = try await f.state.pause(f.planID, for: .oneHour)
+        let until = try #require(await f.history().pausedUntil)
+        _ = try await f.state.cancel(f.planID)
+        held.release()
+        let record = try await run.value
+
+        #expect(record.outcome == .paused)
+        #expect(held.interrupts() == 1, "the pause’s SIGINT only, never a second")
+        #expect(await f.history().pausedUntil == until)
+        #expect(await f.status().phase == .paused(until: until))
+        #expect(await f.pings() == [])
+    }
+
+    /// The first stop wins at the handle itself: a Cancel after a pause is refused and the intent stays `.pause`.
+    @Test func aRunHandleKeepsItsFirstStop() {
+        let handle = RunHandle(isBackup: true)
+        #expect(handle.request(.pause) == nil, "no process attached, so nothing to interrupt, but the intent is recorded")
+        #expect(handle.intent == .pause)
+        #expect(handle.request(.cancel) == nil)
+        #expect(handle.intent == .pause)
+    }
+
+    /// Cancel then Pause while the run is stopping, then Resume: Resume queues its backup behind the stopping run
+    /// (any pending stop, not only a pause) instead of failing as "already backing up", and the pause is cleared.
+    @Test func resumeAfterCancelThenPauseQueuesTheBackup() async throws {
+        let held = try heldStopStub()
+        defer { held.finish() }
+        let f = try await RunnerFixture.make(executable: held.stub, gracePeriod: .seconds(60))
+        defer { f.remove() }
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
+
+        _ = try await f.state.cancel(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
+        _ = try await f.state.resume(f.planID)
+        #expect(await f.history().pausedUntil == nil)
+        held.release()
+        #expect(try await run.value.outcome == .cancelled)
+
+        let queued = try #require(await f.runner.waitForBackgroundRun(planID: f.planID), "the queued backup ran")
+        guard case .success = queued.outcome else { Issue.record("expected a success, got \(queued.outcome)"); return }
+    }
+
+    /// Pause, Resume (a backup queued behind the stopping run), then Cancel: the Cancel drops the queued backup, so
+    /// the user who pressed it gets no new backup when the paused run ends.
+    @Test func cancelDropsTheBackupResumeQueued() async throws {
+        let held = try heldStopStub()
+        defer { held.finish() }
+        let f = try await RunnerFixture.make(executable: held.stub, gracePeriod: .seconds(60))
+        defer { f.remove() }
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
+
+        _ = try await f.state.pause(f.planID, for: .oneHour)
+        _ = try await f.state.resume(f.planID)
+        _ = try await f.state.cancel(f.planID)
+        held.release()
+        #expect(try await run.value.outcome == .paused)
+
+        #expect(await f.runner.waitForBackgroundRun(planID: f.planID) == nil, "no queued backup started")
+        #expect(await f.operations().filter { $0 == .backup }.count == 1)
     }
 
     /// Task 16e: the progress carries whether restic has finished counting. A status before the `scan_finished` line
@@ -1739,7 +2007,7 @@ struct PlanRunnerTests {
                 #expect(await f.state.status().plans.isEmpty)
                 #expect(!FileManager.default.fileExists(atPath: f.logs.appendingPathComponent("runs/\(f.planID.uuidString)").path))
             } else {
-                _ = try await f.state.pause(f.planID)
+                _ = try await f.state.pause(f.planID, for: .oneHour)
                 await f.runner.waitForMeasurement(planID: f.planID)
                 let stats = try #require(await f.history().recent.first { $0.operation == .stats })
                 #expect(stats.outcome == .paused)
@@ -1775,7 +2043,7 @@ struct PlanRunnerTests {
             if deleting {
                 _ = try await f.state.deletePlan(f.planID)
             } else {
-                _ = try await f.state.pause(f.planID)
+                _ = try await f.state.pause(f.planID, for: .oneHour)
             }
             gate.open()
             await blocker.value()
@@ -2032,7 +2300,7 @@ struct PlanRunnerTests {
         await #expect { try await f.state.createRepository(f.planID) } throws: { ($0 as? AgentError)?.message == refused }
         await #expect { _ = try await f.state.adopt(f.planID) } throws: { ($0 as? AgentError)?.message == refused }
         // Pause stays allowed (Ruling R27).
-        _ = try await f.state.pause(f.planID)
+        _ = try await f.state.pause(f.planID, for: .oneHour)
     }
 
     // MARK: Maintenance schedule (pure)

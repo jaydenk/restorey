@@ -152,8 +152,14 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
 
     public var hostLabelProblem: String? { FormValidation.hostLabel(fields.hostLabel) }
 
+    /// Also a folder inside the plan's own local repository, by path, as the agent's validation judges it: v0.1 allowed
+    /// one, so a plan saved then stops until it is taken off the list (final review I2), and this tab says which.
     public var sourcesProblem: String? {
-        fields.sources.isEmpty ? "Add at least one folder or drive to back up." : nil
+        if fields.sources.isEmpty { return "Add at least one folder or drive to back up." }
+        guard let repositoryPath = saved.repository.localFolderPath,
+            let inside = fields.sources.first(where: { SourcePaths.containsByPath(repositoryPath, $0) })
+        else { return nil }
+        return FormValidation.sentence(PlanValidationError.sourceInsideRepository(inside).message)
     }
 
     public var retentionProblem: String? {
