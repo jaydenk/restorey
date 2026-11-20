@@ -1353,16 +1353,16 @@ struct PlanRunnerTests {
         }
         while !FileManager.default.fileExists(atPath: started.path) { try await Task.sleep(for: .milliseconds(10)) }
 
-        // The unlock is held for 3 s: a delete that waited for it would return only after that.
-        let releaser = Task {
-            try await Task.sleep(for: .seconds(3))
+        // The unlock is held until the test releases it after the refusal; the fallback release only stops a delete
+        // that waits for the unlock from hanging the test (it then finds the release file already there).
+        let fallback = Task {
+            try await Task.sleep(for: .seconds(30))
             try "".write(to: release, atomically: true, encoding: .utf8)
         }
-        let clock = ContinuousClock()
-        let asked = clock.now
         await #expect(throws: AgentError.runnerUnavailable) { _ = try await state.deletePlan(f.planID) }
-        #expect(clock.now - asked < .seconds(2), "the delete waited for the unlock")
-        try await releaser.value
+        #expect(!FileManager.default.fileExists(atPath: release.path), "the delete waited for the unlock")
+        try "".write(to: release, atomically: true, encoding: .utf8)
+        fallback.cancel()
         await recovery.value
         #expect(try await state.runInputs(f.planID).history.recent.first?.operation == .unlock)
     }
