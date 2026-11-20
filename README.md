@@ -257,8 +257,10 @@ beside the real one ("Why the keychain tests need a signed host" has the details
 interface only to the signed app: the listener requires the app's bundle ID and the
 team in `Config/Local.xcconfig`, so any other process is refused. The check runs the other way too: a signed app
 requires the agent's bundle ID and the same team on its connection, so it never sends a call to another process
-holding the agent's name. An unsigned or ad-hoc build (Debug and CI) has no team to require and connects unchecked;
-the app decides from its own signature, not the Info.plist, and logs which applies. If it can't read its own signature,
+holding the agent's name. Unsigned or ad-hoc builds (CI, Debug without `Local.xcconfig`) have no team to require and
+connect unchecked; the app decides from its own signature, not the Info.plist, and logs which applies. It reads that
+signature from its code on disk, not the running process, so a signed build under the debugger (whose breakpoints void
+the running code's validity) still talks to its agent; the agent checks the running app on its side. If it can't read its own signature,
 or the team differs from the Info.plist's, it admits no agent and repairs nothing (a repair could stop a running backup);
 the menu says "Restorey can’t verify its own signature" and asks for a reinstall. Only one call returns secrets: `recoveryKit`
 replies with a plan's repository password, its S3 keys or raw environment values, and its check-in URL, so the app

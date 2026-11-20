@@ -44,18 +44,33 @@ public enum OwnSignature: Equatable, Sendable {
     /// The signature couldn't be read or isn't valid: the `OSStatus`.
     case unreadable(Int32)
 
-    /// Reads this process's signature. `SecCodeCopySigningInformation` doesn't validate, so the running code is
-    /// checked first (Apple: "you must successfully call SecCodeCheckValidity ... before").
+    /// Reads this process's signature from its code on disk (`SecCodeCopyStaticCode`), not the running process.
+    /// The running code's dynamic validity can be lost while the app is still correctly signed: a debugger writing
+    /// breakpoints into its pages clears `CS_VALID`, and a team-signed Debug build under lldb would then refuse every
+    /// agent (final review). The agent's listener checks the app's running code on its side, so nothing is weakened.
+    ///
+    /// `SecCodeCopySigningInformation` doesn't validate (Apple, SecCode.h: "To ensure that only valid data is
+    /// returned ... you must successfully call one of the CheckValidity functions on the code before"), so the static
+    /// code is validated first with `SecStaticCodeCheckValidity`. `kSecCSDoNotValidateResources` skips hashing every
+    /// bundle resource (SecStaticCode.h: "Do not validate the presence and contents of all bundle resources"), which
+    /// would slow every launch; the signature and the main executable are still checked. `errSecCSUnsigned` is
+    /// unsigned code.
     public static func current() -> OwnSignature {
         var code: SecCode?
         var status = SecCodeCopySelf([], &code)
         guard status == errSecSuccess, let code else { return .unreadable(status) }
-        status = SecCodeCheckValidity(code, [], nil)
-        if status == errSecCSUnsigned { return .unsigned }
-        guard status == errSecSuccess else { return .unreadable(status) }
         var staticCode: SecStaticCode?
         status = SecCodeCopyStaticCode(code, [], &staticCode)
         guard status == errSecSuccess, let staticCode else { return .unreadable(status) }
+        return read(staticCode)
+    }
+
+    /// `staticCode`'s signature, validated as `current()` describes. Without `kSecCSDoNotValidateResources` an
+    /// unsigned (linker-signed) build fails with `errSecCSResourcesNotFound` rather than reading as ad-hoc.
+    static func read(_ staticCode: SecStaticCode) -> OwnSignature {
+        var status = SecStaticCodeCheckValidity(staticCode, SecCSFlags(rawValue: kSecCSDoNotValidateResources), nil)
+        if status == errSecCSUnsigned { return .unsigned }
+        guard status == errSecSuccess else { return .unreadable(status) }
         var information: CFDictionary?
         status = SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &information)
         guard status == errSecSuccess, let information = information as? [String: Any] else { return .unreadable(status) }
@@ -65,8 +80,9 @@ public enum OwnSignature: Equatable, Sendable {
 
 /// The check the app puts on its connection to the agent, decided once from its own signature.
 public enum AgentPeerCheck: Equatable, Sendable {
-    /// The app has no team signature (an unsigned or ad-hoc Debug or CI build), so there is no team to require
-    /// of the agent either: the connection is unchecked, so such builds still connect (Review Focus 5).
+    /// The app has no team signature (an unsigned or ad-hoc build: CI, Debug without `Local.xcconfig`), so there is
+    /// no team to require of the agent either: the connection is unchecked, so such builds still connect (Review
+    /// Focus 5).
     case unchecked
     /// The app is signed by its declared team: the agent must be too, with its own bundle ID.
     case required(String)
