@@ -8,8 +8,12 @@ extension PlanRunner {
     /// backup that didn't finish. `forget` follows one that made a snapshot (`.afterEachBackup`) or any
     /// successful one a day after the last forget (`.daily`); `prune` (if enabled) a week after the last
     /// prune, or the plan's creation; a plain `unlock` then `check` a week after the last check. A clock
-    /// that went backwards makes a step due rather than leaving it waiting.
-    static func maintenance(plan: Plan, history: PlanRunHistory, after outcome: RunOutcome, now: Date) -> [ResticOperation] {
+    /// that went backwards makes a step due rather than leaving it waiting. A backup that couldn't read many more files
+    /// than the last (`forgetHeld`, from `forgetHeldBack`) is followed by neither `forget` nor the `prune` that follows
+    /// it: `check` stays on its own schedule.
+    static func maintenance(
+        plan: Plan, history: PlanRunHistory, after outcome: RunOutcome, now: Date, forgetHeld: Bool = false
+    ) -> [ResticOperation] {
         let madeSnapshot: Bool
         switch outcome {
         case .success(let snapshotID): madeSnapshot = snapshotID != nil
@@ -22,13 +26,29 @@ extension PlanRunner {
             return now < last || now.timeIntervalSince(last) >= interval
         }
         var steps: [ResticOperation] = []
-        switch plan.forgetCadence {
-        case .afterEachBackup: if madeSnapshot { steps.append(.forget(dryRun: false)) }
-        case .daily: if due(since: history.lastForgetAt, every: day) { steps.append(.forget(dryRun: false)) }
+        if !forgetHeld {
+            switch plan.forgetCadence {
+            case .afterEachBackup: if madeSnapshot { steps.append(.forget(dryRun: false)) }
+            case .daily: if due(since: history.lastForgetAt, every: day) { steps.append(.forget(dryRun: false)) }
+            }
+            if plan.pruneEnabled, due(since: history.lastPruneAt ?? plan.createdAt, every: week) { steps.append(.prune) }
         }
-        if plan.pruneEnabled, due(since: history.lastPruneAt ?? plan.createdAt, every: week) { steps.append(.prune) }
         if due(since: history.lastCheckAt, every: week) { steps += [.unlock, .check] }
         return steps
+    }
+
+    /// Whether the `forget` after this backup is held back (v0.1.2, TODO L95): the backup is a warning that couldn't read `n`
+    /// files, the previous backup that saved data (`previousBackup`, `PlanRunHistory.lastBackupRecord` as it was before
+    /// this run's record replaced it) couldn't read `m` (none, if it wasn't a warning), and `n >= 2m && n >= m + 100`. A
+    /// source that has gone missing or unreadable would otherwise make retention thin out the good snapshots in favour
+    /// of an incomplete one. No previous backup, nothing to compare with: never held. The reason is what the skipped
+    /// `forget`'s record carries.
+    static func forgetHeldBack(after outcome: RunOutcome, previousBackup: RunRecord?) -> SkipReason? {
+        guard case .warning(let unreadable) = outcome, let previousBackup else { return nil }
+        let previous: Int
+        if case .warning(let count) = previousBackup.outcome { previous = count } else { previous = 0 }
+        guard unreadable >= 2 * previous, unreadable >= previous + 100 else { return nil }
+        return .forgetHeldBack(unreadable: unreadable, previous: previous)
     }
 
     /// The history fields one record moves.

@@ -760,7 +760,11 @@ The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`) runs
 4. Runs `restic backup` through the repository's queue, classifies the result, records it, and sends the
    success or `/fail` ping straight away, so maintenance never delays it.
 5. After a successful backup, in the same turn of the queue: `forget` (after every backup that made a
-   snapshot, or daily for an adopted repository), `prune` weekly when it is switched on, and a plain
+   snapshot, or daily for an adopted repository; skipped, with `prune`, after a warning backup that couldn't
+   read many more files than the previous backup that saved data: `n >= 2m && n >= m + 100`, `m` being 0 if that
+   backup wasn't a warning, and never skipped for a plan's first backup. The skip is its own History row, "Old
+   snapshots weren’t removed: 412 files couldn’t be read, up from 3 last time.", shown on the Overview until a
+   later tidy runs), `prune` weekly when it is switched on, and a plain
    `unlock` followed by `check` weekly. A successful prune is followed by `restic stats --mode raw-data`,
    whose total (the stored size of the data the snapshots use, a little under what the provider counts,
    which includes unused packs and indexes) is the repository size the menu shows with its age. Each is its

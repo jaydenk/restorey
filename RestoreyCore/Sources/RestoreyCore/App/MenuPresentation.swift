@@ -775,6 +775,10 @@ public struct PlanOverview: Sendable, Equatable {
     /// snapshots you chose: <reason>. Restorey will try again after the next backup."). Information: no colour, and the menu
     /// icon is unchanged. Nil otherwise.
     public var earlierRemovalNote: String?
+    /// Said while the plan's newest tidy was held back because many more files couldn't be read than last time ("Old
+    /// snapshots weren’t removed: 412 files couldn’t be read, up from 3 last time."), until a later tidy runs. Information:
+    /// no colour, and the menu icon is unchanged. Nil otherwise.
+    public var tidyHeldBackNote: String?
     /// The files the last backup couldn't read, for the "Show…" under the "N files couldn't be read" line (Task 16b). Set
     /// only where the reason carries that line (the settled headline, never a failure, a stop, a pause, a running backup
     /// or a plan waiting for a kit), and nil when the record kept no items (an older record). Information only.
@@ -807,7 +811,7 @@ extension MenuPresentation {
         var overview = PlanOverview(
             headline: "", reason: nil, progress: nil, severity: nil, isPaused: false,
             lastBackup: lastBackupRow(plan, format), cloudOnlyNote: cloudOnlyNote(plan, locale: locale),
-            earlierRemovalNote: earlierRemovalNote(plan),
+            earlierRemovalNote: earlierRemovalNote(plan), tidyHeldBackNote: plan.tidyHeldBack,
             biggestAdditions: biggestAdditions(plan, locale: locale),
             nextBackup: nextBackupRow(plan, format), buttons: [])
         if let line = content.plans.first(where: { $0.id == planID }) {

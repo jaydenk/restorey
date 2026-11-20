@@ -540,6 +540,8 @@ public actor PlanRunner {
         handle.backupStepEnded()
         if Self.savedData(backup.record.outcome) { backup.record.markedNotForBackupSkipped = marked.count }
         backup.record.cloudOnlySkipped = await countCloudOnly(after: backup.record, plan: plan)
+        // Read before this record replaces it as the plan's last backup.
+        let previousBackup = try? await deps.state.runInputs(plan.id).history.lastBackupRecord
         await commit(backup.record, plan: plan, fda: fda, stoppedReason: backup.stoppedReason)
         queueEndPing(backup, redactor: session.redactor)
 
@@ -556,7 +558,23 @@ public actor PlanRunner {
         {
             return backup
         }
-        for op in Self.maintenance(plan: plan, history: history, after: backup.record.outcome, now: deps.now()) {
+        // A backup that couldn't read many more files than the last holds back the tidy it would have followed with
+        // (and the prune after it). The skip is its own record, so the History list and the Overview can say why.
+        let heldBack = Self.forgetHeldBack(after: backup.record.outcome, previousBackup: previousBackup)
+        if let reason = heldBack,
+            Self.maintenance(plan: plan, history: history, after: backup.record.outcome, now: deps.now())
+                .contains(.forget(dryRun: false))
+        {
+            let at = deps.now()
+            await commit(
+                RunRecord(
+                    id: UUID(), planID: plan.id, operation: .forget(dryRun: false), trigger: trigger, startedAt: at,
+                    endedAt: at, outcome: .skipped(reason), summary: nil, logFile: ""),
+                plan: plan)
+        }
+        for op in Self.maintenance(
+            plan: plan, history: history, after: backup.record.outcome, now: deps.now(), forgetHeld: heldBack != nil)
+        {
             // Not started while winding down: the next agent runs it at its next backup.
             guard handle.intent == nil, !(await isWindingDown()) else { break }
             let step = await runStep(op, trigger: trigger, session: session, handle: handle)

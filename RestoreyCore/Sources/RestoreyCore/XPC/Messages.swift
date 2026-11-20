@@ -156,12 +156,17 @@ public struct PlanStatus: Codable, Sendable, Equatable {
     /// Why setup's choice to remove earlier snapshots keeps failing (`PendingRemovalFailures`), once it has failed three
     /// backups in a row; nil otherwise, and in a status from before it existed. Information only: no alert, no menu icon.
     public var earlierRemovalProblem: String?
+    /// The sentence for a tidy held back because many more files couldn't be read than last time ("Old snapshots weren’t
+    /// removed: 412 files couldn’t be read, up from 3 last time."), while that is the plan's newest tidy; nil otherwise,
+    /// and in a status from before it existed. Information only: no alert, no menu icon.
+    public var tidyHeldBack: String?
 
     /// `setupState` nil derives it from the plan (`PlanSetupState(plan:)`).
     public init(
         plan: Plan, phase: PlanPhase, lastRecord: RunRecord?, nextRunAt: Date?, alerts: [AlertCondition],
         lastBackup: RunRecord? = nil, repositorySize: RepositorySize? = nil, setupState: PlanSetupState? = nil,
-        latestBackupRecord: RunRecord? = nil, latestBackupVerdict: RunRecord? = nil, earlierRemovalProblem: String? = nil
+        latestBackupRecord: RunRecord? = nil, latestBackupVerdict: RunRecord? = nil, earlierRemovalProblem: String? = nil,
+        tidyHeldBack: String? = nil
     ) {
         self.plan = plan
         self.phase = phase
@@ -175,11 +180,12 @@ public struct PlanStatus: Codable, Sendable, Equatable {
         self.repositorySize = repositorySize
         self.setupState = setupState ?? PlanSetupState(plan: plan)
         self.earlierRemovalProblem = earlierRemovalProblem
+        self.tidyHeldBack = tidyHeldBack
     }
 
     private enum CodingKeys: String, CodingKey {
         case plan, phase, lastRecord, nextRunAt, alerts, lastBackup, repositorySize, setupState, latestBackupRecord
-        case latestBackupVerdict, earlierRemovalProblem
+        case latestBackupVerdict, earlierRemovalProblem, tidyHeldBack
     }
 
     private static func backupRecord(_ record: RunRecord?) -> RunRecord? {
@@ -207,6 +213,7 @@ public struct PlanStatus: Codable, Sendable, Equatable {
         repositorySize = try c.decodeIfPresent(RepositorySize.self, forKey: .repositorySize)
         setupState = try c.decodeIfPresent(PlanSetupState.self, forKey: .setupState) ?? PlanSetupState(plan: plan)
         earlierRemovalProblem = try c.decodeIfPresent(String.self, forKey: .earlierRemovalProblem)
+        tidyHeldBack = try c.decodeIfPresent(String.self, forKey: .tidyHeldBack)
     }
 }
 

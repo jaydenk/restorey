@@ -313,6 +313,19 @@ struct PlanOverviewTests {
         #expect(Self.enabled(unreachable)[.cancel] == false)
     }
 
+    /// v0.1.2: a tidy held back by a jump in unreadable files is said under the last backup, as information only.
+    @Test func theOverviewSaysWhenTheTidyWasHeldBack() {
+        var plan = Self.status()
+        #expect(Self.overview(plan).tidyHeldBackNote == nil)
+        let quiet = Self.overview(plan)
+        plan.tidyHeldBack = "Old snapshots weren’t removed: 412 files couldn’t be read, up from 3 last time."
+        let shown = Self.overview(plan)
+        #expect(shown.tidyHeldBackNote == "Old snapshots weren’t removed: 412 files couldn’t be read, up from 3 last time.")
+        #expect(shown.headline == quiet.headline)
+        #expect(shown.severity == quiet.severity)
+        #expect(shown.reason == quiet.reason)
+    }
+
     /// Final review I2: the Overview says a lasting failure to remove the chosen earlier snapshots, as information only.
     @Test func theOverviewSaysWhenTheChosenRemovalKeepsFailing() {
         var plan = Self.status()

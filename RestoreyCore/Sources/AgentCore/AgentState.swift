@@ -272,6 +272,15 @@ public actor AgentState {
     /// The Mac-wide network rules the preflight applies (Ruling P2-6).
     var networkSettings: NetworkSettings { config.network }
 
+    /// The sentence for a tidy that was held back, while it is the plan's newest `forget` (the next one that runs, or
+    /// is held back again, replaces it).
+    private static func tidyHeldBack(_ history: PlanRunHistory) -> String? {
+        guard let newest = history.recent.first(where: { $0.operation == .forget(dryRun: false) }),
+            case .skipped(let reason) = newest.outcome, newest.isForgetHeldBack
+        else { return nil }
+        return reason.summary
+    }
+
     private func planStatus(_ plan: Plan, now: Date) -> PlanStatus {
         let history = runState.plans[plan.id] ?? PlanRunHistory()
         let phase: PlanPhase
@@ -281,7 +290,8 @@ public actor AgentState {
             phase = .stopped(reason: reason)
         } else if let until = history.pausedUntil, until > now {
             phase = .paused(until: min(until, now.addingTimeInterval(PauseLength.longest.seconds)))
-        } else if case .skipped(let reason)? = history.recent.first?.outcome {
+        } else if case .skipped(let reason)? = history.recent.first(where: { !$0.isForgetHeldBack })?.outcome {
+            // A tidy held back for a jump in unreadable files is a note on the tidy, not a skipped backup.
             phase = .skipped(reason)
         } else {
             phase = .idle
@@ -302,7 +312,8 @@ public actor AgentState {
             latestBackupRecord: history.recent.first { $0.operation == .backup },
             latestBackupVerdict: history.recent.first { $0.operation == .backup && $0.outcome.isVerdict },
             earlierRemovalProblem: history.pendingEarlierRemoval == nil
-                ? nil : history.pendingEarlierRemovalFailures?.noticeReason)
+                ? nil : history.pendingEarlierRemovalFailures?.noticeReason,
+            tidyHeldBack: Self.tidyHeldBack(history))
     }
 
     /// Pushes the status and, unless `deliveringAlerts` is false, has the alerts delivered for it: every
