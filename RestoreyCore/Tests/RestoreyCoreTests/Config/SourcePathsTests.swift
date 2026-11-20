@@ -63,4 +63,20 @@ struct SourcePathsTests {
         #expect(SourcePaths.containsByPath("/a/b", "/a/x/../b/c"))
         #expect(!SourcePaths.containsByPath("/a/b", "/a/b/../c"))
     }
+
+    /// Seen live 20 Nov 2026: the folder picker stores `/tmp/…` while a typed repository path keeps `/private/tmp/…`.
+    /// Only the three firmlinks map, and the comparison reads nothing.
+    @Test func privateTmpVarAndEtcAreTheirShortForms() {
+        for name in ["tmp", "var", "etc"] {
+            #expect(SourcePaths.containsByPath("/\(name)/a", "/private/\(name)/a/repo"))
+            #expect(SourcePaths.containsByPath("/private/\(name)/a", "/\(name)/a/repo"))
+            #expect(SourcePaths.containsByPath("/private/\(name)/a", "/private/\(name)/a/repo"))
+        }
+        #expect(!SourcePaths.containsByPath("/tmp", "/private/tmpx"))
+        #expect(!SourcePaths.containsByPath("/tmp/a", "/private/tmp/b"))
+        #expect(!SourcePaths.containsByPath("/Users/me", "/private/Users/me"))
+        #expect(!SourcePaths.containsByPath("/private/Users/me", "/Users/me"))
+        #expect(SourcePaths.sameFirmlinkSpelling("/private/var/x", "/var/x/"))
+        #expect(!SourcePaths.sameFirmlinkSpelling("/private/var/x", "/var/y"))
+    }
 }

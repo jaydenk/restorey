@@ -153,6 +153,13 @@ struct UnreadableItemsTests {
         #expect(removed.action == .dontBackUp(pattern: pattern))
     }
 
+    @Test func aPrivateSpellingCountsAsAlreadyExcluded() throws {
+        let file = UnreadableItem(path: "/private/var/x/file", reason: "operation not permitted")
+        let pattern = DefaultExclusions.pattern(forFolder: "/var/x/file")
+        let row = try #require(rows([file], exclusions: [pattern], saved: [pattern]).first)
+        #expect(row.action == .excluded(unsaved: false))
+    }
+
     // MARK: Editing the plan's exclusions
 
     @Test func addingAppendsThePatternOnce() {

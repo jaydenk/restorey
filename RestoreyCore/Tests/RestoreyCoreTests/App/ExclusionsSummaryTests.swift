@@ -19,6 +19,12 @@ import Testing
             exclusions: DefaultExclusions.paths(home: home, identity: identity), now: Date(timeIntervalSince1970: 0))
     }
 
+    /// Seen live 20 Nov 2026: the picker stored `/tmp/x`, the typed repository kept `/private/tmp/x/repo`, and the fixed row vanished.
+    @Test func theRepositoryRowMatchesAcrossPrivateSpellings() {
+        let repository = Repository.raw(repository: "/private/tmp/x/repo", environmentNames: [])
+        #expect(ExclusionsSummary.repositoryRow(repository: repository, sources: ["/tmp/x"]) == "/private/tmp/x/repo")
+    }
+
     @Test func theDefaultsGetTheMockupsLine() {
         #expect(ExclusionsSummary.line(plan: Self.plan(), home: Self.home, identity: Self.identity)
             == "Skipped by default: caches, Trash, node_modules, VM and disk images, iCloud files not on this Mac, "

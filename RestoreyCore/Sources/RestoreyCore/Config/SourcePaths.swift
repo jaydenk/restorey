@@ -13,8 +13,17 @@ public enum SourcePaths {
     /// Whether `inner` is `outer` or lies below it, by whole path components (`/Users/me/Doc` doesn't contain
     /// `/Users/me/Documents`). Compared standardised (trailing slashes, `.` and `..` don't matter), as written: a link
     /// is judged by its own path, not where it leads. Never reads the file system.
+    ///
+    /// `/private/tmp`, `/private/var` and `/private/etc` are their short forms (`/tmp`, `/var`, `/etc`): macOS makes
+    /// them one place, and the folder picker stores one spelling where a typed path keeps the other (seen live 20 Nov
+    /// 2026). Only those three; `/Users/me` and `/private/Users/me` stay different.
     public static func containsByPath(_ outer: String, _ inner: String) -> Bool {
-        components(inner).starts(with: components(outer))
+        comparableComponents(inner).starts(with: comparableComponents(outer))
+    }
+
+    /// Whether `a` and `b` are the same path as `containsByPath` compares them (the firmlink spellings agree). Pure.
+    public static func sameFirmlinkSpelling(_ a: String, _ b: String) -> Bool {
+        comparableComponents(a) == comparableComponents(b)
     }
 
     /// `containsByPath`, or the same comparison of where both paths lead once links are resolved (a folder reached
@@ -41,6 +50,16 @@ public enum SourcePaths {
     /// The root, or a path with no components, is returned as it is.
     public static func lastComponent(_ path: String) -> String {
         components(path).last.map(String.init) ?? path
+    }
+
+    /// The three firmlinks under `/private` that macOS also reaches by a short path.
+    private static let firmlinkNames: Set<Substring> = ["tmp", "var", "etc"]
+
+    /// `components`, with a leading `private/tmp`, `private/var` or `private/etc` shortened to `tmp`, `var` or `etc`.
+    private static func comparableComponents(_ path: String) -> [Substring] {
+        var parts = components(path)
+        if parts.count >= 2, parts[0] == "private", firmlinkNames.contains(parts[1]) { parts.removeFirst() }
+        return parts
     }
 
     private static func components(_ path: String) -> [Substring] {
