@@ -63,12 +63,11 @@ struct MenuPresentationTests {
     }
 
     private static func make(
-        _ status: AgentStatus?, health: AgentHealthState = .healthy, notifications: Bool? = true,
-        backupStoppedByRepairAt: Date? = nil, now: Date = now
+        _ status: AgentStatus?, health: AgentHealthState = .healthy, notifications: Bool? = true, now: Date = now
     ) -> MenuContent {
         MenuPresentation.make(
-            health: health, status: status, notificationsAuthorised: notifications,
-            backupStoppedByRepairAt: backupStoppedByRepairAt, now: now, calendar: calendar, locale: locale)
+            health: health, status: status, notificationsAuthorised: notifications, now: now, calendar: calendar,
+            locale: locale)
     }
 
     // MARK: Idle
@@ -765,73 +764,44 @@ struct MenuPresentationTests {
             == "Until it can, it won’t talk to its background process or show your backups. Reinstall Restorey from the download.")
     }
 
-    // MARK: A backup stopped by a repair (owner, 20 Nov 2026)
+    // MARK: A long wait on a running backup (owner, 20 Nov 2026)
 
-    private static let stoppedNote = MenuBanner(
-        severity: .warning,
-        title: "Restorey restarted its background process, which hadn’t answered for 30 minutes",
-        detail: "The backup that was running was stopped and will run again at its next time.", action: nil,
-        dismiss: .dismissBackupStoppedNote)
+    private static let longWaitBanner = MenuBanner(
+        severity: .warning, title: "Restorey’s background process hasn’t answered for 30 minutes",
+        detail: "A backup is still running, so Restorey is waiting for it rather than stopping it. Restart Backups stops it now.",
+        action: .restartAgent)
 
-    /// The agent was re-registered after 30 minutes of silence, stopping the backup it was running: said until a plan
-    /// backs up, or tries to, after that.
-    @Test func aBackupStoppedByARepairIsSaidUntilTheNextAttempt() {
+    /// After 30 awake minutes without an answer while a backup runs, Restorey keeps waiting and warns; stopping the
+    /// backup is the person's choice (Restart Backups). The last state is still shown, however old it is.
+    @Test func aLongWaitOnARunningBackupWarnsAndOffersRestart() {
         let plan = Self.plan()
-        let stoppedAt = Self.at(14, 0)
-        let before = Self.status([Self.line(plan, backedUpAt: Self.at(13, 0))])
-        let content = Self.make(before, backupStoppedByRepairAt: stoppedAt)
-        #expect(content.banners == [Self.stoppedNote])
+        // Older than `notAnsweringGrace`, which alone would make the menu an error.
+        let running = Self.status([Self.line(plan, phase: .running(nil, retrying: nil))], generatedAt: Self.at(13, 30))
+        let content = Self.make(running, health: .longWaitForRunningBackup)
+        #expect(content.banners == [Self.longWaitBanner])
+        #expect(content.banners.first?.action.menuTitle == "Restart Backups")
         #expect(content.icon == .warning)
-        #expect(MenuPresentation.backupStoppedNoteStands(stoppedAt: stoppedAt, status: before))
-        #expect(Self.make(before).banners.isEmpty, "nothing stopped")
+        #expect(content.plans.map(\.status) == ["Backing up (not responding)"])
+        #expect(content.actions == MenuActions(backUpNow: false, pause: false, resume: false, perPlanSubmenus: false))
+        #expect(content.toolTip == "Restorey’s background process hasn’t answered for 30 minutes")
 
-        // The stopped run's own record, written when the agent next started, began before the stop: still said.
-        var recovered = Self.record(plan, .interrupted, at: Self.at(14, 1))
-        recovered.startedAt = Self.at(13, 30)
-        let interrupted = Self.line(plan, backedUpAt: Self.at(13, 0), last: recovered)
-        #expect(Self.make(Self.status([interrupted]), backupStoppedByRepairAt: stoppedAt).banners == [Self.stoppedNote])
-
-        // A backup since: gone.
-        let since = Self.status([Self.line(plan, backedUpAt: Self.at(14, 10))])
-        #expect(Self.make(since, backupStoppedByRepairAt: stoppedAt).banners.isEmpty)
-        #expect(!MenuPresentation.backupStoppedNoteStands(stoppedAt: stoppedAt, status: since))
-
-        // A later attempt that failed: gone too.
-        let failed = Self.line(plan, backedUpAt: Self.at(13, 0), last: Self.record(plan, .failed(exitCode: 1, reason: "x"), at: Self.at(14, 10)))
-        #expect(Self.make(Self.status([failed]), backupStoppedByRepairAt: stoppedAt).banners.isEmpty)
-
-        // Any plan will do.
-        let other = Self.plan("Photos")
-        let either = Self.status([Self.line(plan, backedUpAt: Self.at(13, 0)), Self.line(other, backedUpAt: Self.at(14, 10))])
-        #expect(Self.make(either, backupStoppedByRepairAt: stoppedAt).banners.isEmpty)
+        // Nothing known about the plans (the app was relaunched during the wait): the warning still stands.
+        let unknown = Self.make(nil, health: .longWaitForRunningBackup)
+        #expect(unknown.banners == [Self.longWaitBanner])
+        #expect(unknown.icon == .warning)
     }
 
-    /// No plan could back up to clear the note (final review): none left, or every one stopped or waiting for its
-    /// recovery kit. The note goes, rather than hold the icon at a warning for good.
-    @Test func theStopNoteGoesWhenNoPlanCouldRun() {
+    /// Derived from the current health, not stored: absent before 30 minutes, gone once the agent answers.
+    @Test func theLongWaitWarningIsOnlyShownDuringTheLongWait() {
         let plan = Self.plan()
-        let stoppedAt = Self.at(14, 0)
-        func stands(_ plans: [PlanStatus]) -> Bool {
-            MenuPresentation.backupStoppedNoteStands(stoppedAt: stoppedAt, status: Self.status(plans))
-        }
-        let waiting = Self.line(plan, backedUpAt: Self.at(13, 0))
-        let stopped = Self.line(plan, phase: .stopped(reason: "Wrong password"), backedUpAt: Self.at(13, 0), next: nil)
-        let newKit = Self.line(plan, backedUpAt: Self.at(13, 0), next: nil, setupState: .needsNewKit)
-        let unfinished = Self.line(Self.plan("Photos", setup: false), backedUpAt: nil, next: nil)
-        let paused = Self.line(plan, phase: .paused(until: Self.at(16, 0)), backedUpAt: Self.at(13, 0))
+        let running = Self.status([Self.line(plan, phase: .running(nil, retrying: nil))], generatedAt: Self.at(14, 0))
+        let before = Self.make(running, health: .notRunning(reachable: false))
+        #expect(!before.banners.contains(Self.longWaitBanner))
+        #expect(before.banners.map(\.title) == ["Backups aren’t responding"])
 
-        #expect(stands([waiting]))
-        #expect(stands([paused]), "a paused plan runs again when the pause ends")
-        #expect(!stands([]), "the plan was deleted")
-        #expect(!stands([stopped]))
-        #expect(!stands([newKit]))
-        #expect(!stands([unfinished]))
-        #expect(!stands([stopped, newKit, unfinished]))
-        #expect(stands([stopped, waiting]), "one plan can still run")
-
-        #expect(!Self.make(Self.status([]), backupStoppedByRepairAt: stoppedAt).banners.contains(Self.stoppedNote))
-        let content = Self.make(Self.status([stopped]), backupStoppedByRepairAt: stoppedAt)
-        #expect(!content.banners.contains(Self.stoppedNote))
+        let answered = Self.make(Self.status([Self.line(plan, phase: .running(nil, retrying: nil))]), health: .healthy)
+        #expect(!answered.banners.contains(Self.longWaitBanner))
+        #expect(answered.banners.isEmpty)
     }
 
     @Test func aConfigurationErrorStopsEverything() {

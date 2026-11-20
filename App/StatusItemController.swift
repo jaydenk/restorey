@@ -107,7 +107,6 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
             health: supervisor.health,
             status: menuStatus(health: supervisor.health, live: supervisor.status, lastKnown: supervisor.lastKnownStatus),
             notificationsAuthorised: supervisor.lastHello?.notificationsAuthorised,
-            backupStoppedByRepairAt: supervisor.backupStoppedByRepairAt,
             now: Date(), calendar: .autoupdatingCurrent,
             locale: .autoupdatingCurrent)
     }
@@ -294,8 +293,6 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
             router.showSettings(section: .history, planID: planID)
         case .showSettingsError:
             router.showSettings(section: .plans)
-        case .dismissBackupStoppedNote:
-            supervisor.dismissBackupStoppedNote()
         }
     }
 

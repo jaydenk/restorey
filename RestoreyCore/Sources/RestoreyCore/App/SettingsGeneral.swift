@@ -69,7 +69,7 @@ public enum SettingsGeneral {
         case .updating, .waitingForUpdate: return Line("Updating" + version)
         case .switchedOff:
             return Line("Switched off — no backups will happen", severity: .error, action: .openLoginItems)
-        case .notRunning:
+        case .notRunning, .longWaitForRunningBackup:
             return Line("Not running — no backups will happen", severity: .error, action: .restartAgent)
         case .damaged:
             return Line("Restorey’s installation is damaged — reinstall it from the download", severity: .error)

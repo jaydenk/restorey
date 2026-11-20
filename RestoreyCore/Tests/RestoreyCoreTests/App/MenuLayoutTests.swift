@@ -282,25 +282,18 @@ struct MenuLayoutTests {
         ] + Self.tail)
     }
 
-    /// A banner with no fix (the backup a repair stopped) is a line that says so, its detail under it.
-    @Test func aBannerWithoutAFixIsALine() {
+    /// The long wait on a running backup (owner, 20 Nov 2026) is an item named for its fix, Restart Backups, with the
+    /// problem under it and why in its tooltip, and nothing to dismiss: it goes once the agent answers.
+    @Test func theLongWaitBannerOffersRestartBackups() {
         let banner = MenuBanner(
-            severity: .warning, title: "Restorey restarted its background process, which hadn’t answered for 30 minutes",
-            detail: "The backup that was running was stopped and will run again at its next time.", action: nil)
-        let line = MenuRow.item(MenuItem(
-            "Restorey restarted its background process, which hadn’t answered for 30 minutes",
-            subtitle: "The backup that was running was stopped and will run again at its next time.", symbol: .warning,
-            enabled: false,
-            accessibilityLabel: "Warning: Restorey restarted its background process, which hadn’t answered for 30 minutes. "
-                + "The backup that was running was stopped and will run again at its next time."))
-        #expect(MenuLayout.bannerRows(banner) == [line])
-
-        // With a dismiss, that follows as an item of its own (final review).
-        var dismissible = banner
-        dismissible.dismiss = .dismissBackupStoppedNote
-        #expect(MenuLayout.bannerRows(dismissible) == [
-            line, .item(MenuItem("Dismiss", symbol: .dismiss, command: .banner(.dismissBackupStoppedNote))),
-        ])
+            severity: .warning, title: "Restorey’s background process hasn’t answered for 30 minutes",
+            detail: "A backup is still running, so Restorey is waiting for it rather than stopping it. Restart Backups stops it now.",
+            action: .restartAgent)
+        #expect(MenuLayout.bannerRows(banner) == [.item(MenuItem(
+            "Restart Backups", subtitle: "Restorey’s background process hasn’t answered for 30 minutes", symbol: .warning,
+            toolTip: "A backup is still running, so Restorey is waiting for it rather than stopping it. Restart Backups stops it now.",
+            command: .banner(.restartAgent),
+            accessibilityLabel: "Warning: Restorey’s background process hasn’t answered for 30 minutes. Restart Backups"))])
     }
 
     /// A message's full sentence is its tooltip (audit P5).
@@ -384,6 +377,7 @@ struct MenuLayoutTests {
             (.checking, "Background process: connecting"),
             (.switchedOff, "Background process: switched off"),
             (.notRunning(reachable: false), "Background process: not running"),
+            (.longWaitForRunningBackup, "Background process: not running"),
             (.damaged, "Background process: missing from the app"),
             (.failed("x"), "Background process: couldn’t be registered"),
             (.signatureUntrusted, "Background process: not contacted, as the app’s signature can’t be verified"),
@@ -446,7 +440,6 @@ struct MenuLayoutTests {
         #expect(BannerAction.saveRecoveryKit(id).buttonTitle == "Save Recovery Kit…")
         #expect(BannerAction.showDetails(id).buttonTitle == "Show Details…")
         #expect(BannerAction.showSettingsError.buttonTitle == "Show in Settings…")
-        #expect(BannerAction.dismissBackupStoppedNote.buttonTitle == "Dismiss")
     }
 
     /// The menu names each fix as a command (audit P4).
@@ -462,7 +455,6 @@ struct MenuLayoutTests {
         #expect(BannerAction.setUp.menuTitle == "Finish Setup…")
         #expect(BannerAction.saveRecoveryKit(id).menuTitle == "Save Recovery Kit…")
         #expect(BannerAction.showDetails(id).menuTitle == "Show Details…")
-        #expect(BannerAction.dismissBackupStoppedNote.menuTitle == "Dismiss")
         #expect(BannerAction.showSettingsError.menuTitle == "Show in Settings…")
     }
 

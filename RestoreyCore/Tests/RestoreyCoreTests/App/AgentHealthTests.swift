@@ -164,7 +164,7 @@ struct AgentHealthTests {
             input.resticRunningUnderAgent = running
             return decideAgentHealth(input)
         }
-        #expect(decide(running: true, for: 600) == .waitForRunningRestic)
+        #expect(decide(running: true, for: 600) == .waitForRunningRestic(longWait: false))
         #expect(decide(running: true, for: 10) == .showNotRunning(canRepair: true), "inside the grace, as before")
         // The backup has finished: the next heartbeat repairs.
         #expect(decide(running: false, for: 610) == .reregisterAfterDrain)
@@ -174,30 +174,33 @@ struct AgentHealthTests {
         #expect(decideAgentHealth(reachable) == .reregisterAfterDrain)
     }
 
-    /// Owner, 20 Nov 2026: a hung backup is waited on for at most `hungResticCap`, measured from
-    /// the first failed heartbeat in awake time, like the grace; then the re-registration goes ahead and stops it.
-    @Test func aHungBackupIsWaitedOnForThirtyMinutes() {
+    /// Owner, 20 Nov 2026 (correction): Restorey can't tell a stuck restic from a busy one, so a backup running under an
+    /// unreachable agent is waited on for as long as it runs and never stopped automatically. From `longWaitWarning` of
+    /// awake time on, the wait is flagged so the menu warns; the hourly repair limit has no part in it.
+    @Test func aBackupUnderAnUnreachableAgentIsNeverStoppedAutomatically() {
         func decide(running: Bool, for seconds: TimeInterval, repairs: [RepairRecord] = []) -> AgentHealthAction {
             var input = Self.input(heartbeat: .unreachable, lastRepairs: repairs, unreachableFor: seconds)
             input.resticRunningUnderAgent = running
             return decideAgentHealth(input)
         }
-        #expect(AgentHealthPolicy.hungResticCap == 30 * 60)
-        #expect(decide(running: true, for: 30 * 60 - 1) == .waitForRunningRestic)
-        #expect(decide(running: true, for: 30 * 60) == .reregisterStoppingBackup)
-        #expect(decide(running: true, for: 4 * 3600) == .reregisterStoppingBackup)
-        // Under the same hourly limit as any re-registration.
-        #expect(decide(running: true, for: 30 * 60, repairs: [Self.recent(.reregister)]) == .showNotRunning(canRepair: true))
-        #expect(decide(running: true, for: 30 * 60, repairs: [Self.recent(.restart)]) == .reregisterStoppingBackup)
-        // No restic: nothing to stop, as before.
+        #expect(AgentHealthPolicy.longWaitWarning == 30 * 60)
+        #expect(decide(running: true, for: 30 * 60 - 1) == .waitForRunningRestic(longWait: false))
+        #expect(decide(running: true, for: 30 * 60) == .waitForRunningRestic(longWait: true))
+        #expect(decide(running: true, for: 10 * 3600) == .waitForRunningRestic(longWait: true), "never a repair")
+        // The hourly limit is irrelevant: with or without a recent repair of either kind, it is the same wait.
+        for repairs in [[Self.recent(.reregister)], [Self.recent(.restart)], [Self.recent(.reregister), Self.recent(.restart)]] {
+            #expect(decide(running: true, for: 600, repairs: repairs) == .waitForRunningRestic(longWait: false))
+            #expect(decide(running: true, for: 10 * 3600, repairs: repairs) == .waitForRunningRestic(longWait: true))
+        }
+        // No restic: nothing to stop, so the repair goes ahead as before.
         #expect(decide(running: false, for: 30 * 60) == .reregisterAfterDrain)
     }
 
-    /// Fix round 1: the grace and the cap count only time the Mac was awake while the agent kept failing. A hello that
-    /// failed just before an 8-hour sleep and the first after waking are seconds of awake time apart, so neither the
-    /// grace nor the cap is reached and a healthy backup isn't stopped; a forward clock change can't reach them either,
-    /// as no wall-clock time is read. Awake time is a `SuspendingClock` reading, here a plain `Duration`.
-    @Test func onlyAwakeTimeCountsTowardsTheGraceAndTheCap() {
+    /// Fix round 1: the grace and the long-wait warning count only time the Mac was awake while the agent kept failing.
+    /// A hello that failed just before an 8-hour sleep and the first after waking are seconds of awake time apart, so
+    /// neither the grace nor the warning is reached; a forward clock change can't reach them either, as no wall-clock
+    /// time is read. Awake time is a `SuspendingClock` reading, here a plain `Duration`.
+    @Test func onlyAwakeTimeCountsTowardsTheGraceAndTheWarning() {
         func decide(_ run: inout UnreachableRun, failing: Bool, askedAt: Duration, now: Duration) -> AgentHealthAction {
             var input = Self.input(heartbeat: .unreachable)
             input.unreachableAwakeFor = run.heartbeat(failing: failing, askedAt: askedAt, now: now)
@@ -210,13 +213,16 @@ struct AgentHealthTests {
         #expect(slept.heartbeat(failing: true, askedAt: .seconds(1003), now: .seconds(1005)) == 5)
         #expect(decide(&slept, failing: true, askedAt: .seconds(1013), now: .seconds(1015)) == .showNotRunning(canRepair: true))
         // Past the grace in awake time, restic still running: waited on.
-        #expect(decide(&slept, failing: true, askedAt: .seconds(1040), now: .seconds(1042)) == .waitForRunningRestic)
+        #expect(decide(&slept, failing: true, askedAt: .seconds(1040), now: .seconds(1042))
+            == .waitForRunningRestic(longWait: false))
 
-        // 30 awake minutes of failures reach the cap.
-        var hung = UnreachableRun()
-        _ = hung.heartbeat(failing: true, askedAt: .seconds(0), now: .seconds(2))
-        #expect(decide(&hung, failing: true, askedAt: .seconds(1797), now: .seconds(1799)) == .waitForRunningRestic)
-        #expect(decide(&hung, failing: true, askedAt: .seconds(1798), now: .seconds(1800)) == .reregisterStoppingBackup)
+        // 30 awake minutes of failures reach the warning, 29:59 doesn't; the wait goes on either way.
+        var long = UnreachableRun()
+        _ = long.heartbeat(failing: true, askedAt: .seconds(0), now: .seconds(2))
+        #expect(decide(&long, failing: true, askedAt: .seconds(1797), now: .seconds(1799))
+            == .waitForRunningRestic(longWait: false))
+        #expect(decide(&long, failing: true, askedAt: .seconds(1798), now: .seconds(1800))
+            == .waitForRunningRestic(longWait: true))
 
         // Measured from when the first failing hello was asked, not when it gave up; an answer ends the run.
         var answered = UnreachableRun()

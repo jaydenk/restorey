@@ -9,8 +9,6 @@ import RestoreyCore
 final class AgentSupervisor {
     /// The last automatic repair of each kind, as `[RepairRecord]` JSON in the app's `UserDefaults`.
     static let repairRecordKey = "lastAgentRepairs"
-    /// When an automatic re-registration last stopped a hung backup (`backupStoppedByRepairAt`), as a `Date`.
-    static let backupStoppedByRepairKey = "backupStoppedByRepairAt"
 
     private(set) var health: AgentHealthState = .checking
     /// The latest status from the agent. Cleared whenever the health leaves `.healthy`, and fetched
@@ -20,10 +18,6 @@ final class AgentSupervisor {
     /// (`menuStatus`). Also what a new status is ordered against.
     private(set) var lastKnownStatus: AgentStatus?
     private(set) var lastHello: HelloReply?
-    /// When the app last re-registered an agent that hadn't answered for `AgentHealthPolicy.hungResticCap`, stopping
-    /// the backup it was running; the menu says so until a plan backs up, or tries to, since
-    /// (`MenuPresentation.backupStoppedNoteStands`). Kept in `UserDefaults` beside the repair records.
-    private(set) var backupStoppedByRepairAt: Date?
     /// Ruling R76: agent processes seen replaced. A status from one of them is dropped.
     var retiredAgentRuns: Set<UUID> { runs.retired }
 
@@ -47,9 +41,9 @@ final class AgentSupervisor {
     /// After a drain call fails, re-registration waits until then (10 s doubling to 10 min).
     @ObservationIgnored private var drainRetryAfter: Date?
     /// The current run of failed heartbeats from an `enabled` agent, timed in awake time (see
-    /// `AgentHealthPolicy.unreachableGrace` and `hungResticCap`).
+    /// `AgentHealthPolicy.unreachableGrace` and `longWaitWarning`).
     @ObservationIgnored private var unreachable = UnreachableRun()
-    /// Stops while the Mac sleeps and ignores wall-clock changes, so neither counts towards the grace or the cap.
+    /// Stops while the Mac sleeps and ignores wall-clock changes, so neither counts towards the grace or the warning.
     @ObservationIgnored private let awakeOrigin = SuspendingClock().now
     /// The last `register()` failure logged, so one repeated every heartbeat is logged once.
     @ObservationIgnored private var lastRegisterFailure: String?
@@ -68,7 +62,6 @@ final class AgentSupervisor {
             appVersion: info["CFBundleShortVersionString"] as? String ?? "unknown",
             appBuild: info["CFBundleVersion"] as? String ?? "unknown")
         lastRepairs = loadRepairRecords()
-        backupStoppedByRepairAt = defaults.object(forKey: Self.backupStoppedByRepairKey) as? Date
         connection.onStatus = { [weak self] status in self?.received(status) }
     }
 
@@ -102,15 +95,6 @@ final class AgentSupervisor {
 
     func openLoginItems() {
         registration.openLoginItems()
-    }
-
-    /// The menu's "Dismiss" under the note that a repair stopped a backup: forgets the stop, so the note stays gone
-    /// after a relaunch too.
-    func dismissBackupStoppedNote() {
-        guard backupStoppedByRepairAt != nil else { return }
-        log.info("The note that a repair stopped a backup was dismissed")
-        noteBackupStoppedByRepair(nil)
-        notify()
     }
 
     /// A hello outside the heartbeat, for setup's permissions step: the notification answer the agent holds can
@@ -163,8 +147,13 @@ final class AgentSupervisor {
         let action = decideAgentHealth(input)
         if action != lastAction {
             log.info("Agent health: \(describe(input)) → \(action)")
-            if action == .waitForRunningRestic {
-                log.info("Not re-registering the unreachable agent: a restic it started is still running, and unregister() without a drain would kill it. Checking again at each heartbeat, for up to \(Int(AgentHealthPolicy.hungResticCap / 60)) minutes")
+            switch action {
+            case .waitForRunningRestic(longWait: false):
+                log.info("Not re-registering the unreachable agent: a restic it started is still running, and unregister() without a drain would kill it. Checking again at each heartbeat for as long as it runs")
+            case .waitForRunningRestic(longWait: true):
+                log.error("The agent hasn't answered for \(Int(AgentHealthPolicy.longWaitWarning / 60)) minutes while a restic it started is still running. Still waiting rather than stopping it: the menu warns, and only Restart Backups stops it")
+            default:
+                break
             }
             lastAction = action
         }
@@ -209,15 +198,12 @@ final class AgentSupervisor {
             if let retryAfter = drainRetryAfter, Date() < retryAfter { return }
             busy = true
             if case .ok = heartbeat { await reregister(reachable: true) } else { await reregister(reachable: false) }
-        case .reregisterStoppingBackup:
-            busy = true
-            log.error("The agent hasn't answered for \(Int(AgentHealthPolicy.hungResticCap / 60)) minutes while a restic it started is still running: re-registering it, which stops that backup")
-            await reregister(reachable: false, stoppingBackup: true)
         case .waitForUpdate:
             await waitForUpdate()
-        case .waitForRunningRestic:
-            // Re-decided at every heartbeat; `heartbeat` logs why when the action begins.
-            set(.notRunning(reachable: false))
+        case .waitForRunningRestic(let longWait):
+            // Re-decided at every heartbeat; `heartbeat` logs why when the action begins. Never repaired: only the
+            // user's Restart Backups stops that backup.
+            set(longWait ? .longWaitForRunningBackup : .notRunning(reachable: false))
         case .showSwitchedOff:
             set(.switchedOff)
         case .showNotRunning:
@@ -263,9 +249,8 @@ final class AgentSupervisor {
     }
 
     /// Spike phase B: drain without exiting, then `unregister()` then `register()`. Fixes a re-pointed
-    /// registration, a changed plist and a job launchd removed. The caller has set `busy`. `stoppingBackup`: the agent
-    /// is unreachable with a restic it started still running, which `unregister()` stops; noted for the menu once it has.
-    private func reregister(reachable: Bool, stoppingBackup: Bool = false) async {
+    /// registration, a changed plist and a job launchd removed. The caller has set `busy`.
+    private func reregister(reachable: Bool) async {
         defer { busy = false; checkSoon() }
         if reachable {
             // unregister() stops the agent and kills restic mid-run, so drain first. The agent stays up
@@ -288,7 +273,6 @@ final class AgentSupervisor {
         set(.checking)
         do {
             try await registration.unregister()
-            if stoppingBackup { noteBackupStoppedByRepair(Date()) }
         } catch {
             log.error("unregister() failed: \(error)")
             if reachable {
@@ -360,15 +344,6 @@ final class AgentSupervisor {
         if let data = try? XPCCoding.encode(records) { defaults.set(data, forKey: Self.repairRecordKey) }
     }
 
-    /// Persisted, so the menu still says so after a relaunch; nil clears it. The menu shows it only once the agent is
-    /// healthy again, and that change notifies; a clear happens in `received` or `dismissBackupStoppedNote`, which do.
-    private func noteBackupStoppedByRepair(_ at: Date?) {
-        backupStoppedByRepairAt = at
-        if let at { defaults.set(at, forKey: Self.backupStoppedByRepairKey) } else {
-            defaults.removeObject(forKey: Self.backupStoppedByRepairKey)
-        }
-    }
-
     // MARK: State
 
     private func set(_ next: AgentHealthState) {
@@ -405,11 +380,6 @@ final class AgentSupervisor {
         runs.statusAccepted(status.agentRun)
         self.status = status
         lastKnownStatus = status
-        if let stoppedAt = backupStoppedByRepairAt,
-           !MenuPresentation.backupStoppedNoteStands(stoppedAt: stoppedAt, status: status) {
-            log.info("A plan has backed up or tried to since the repair that stopped a backup, or none is left that could: the menu no longer says so")
-            noteBackupStoppedByRepair(nil)
-        }
         notify()
     }
 

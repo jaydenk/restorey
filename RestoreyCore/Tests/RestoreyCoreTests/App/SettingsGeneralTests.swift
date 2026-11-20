@@ -39,6 +39,8 @@ struct SettingsGeneralTests {
             == .init("Switched off — no backups will happen", severity: .error, action: .openLoginItems))
         #expect(SettingsGeneral.agent(health: .notRunning(reachable: false), hello: nil)
             == .init("Not running — no backups will happen", severity: .error, action: .restartAgent))
+        #expect(SettingsGeneral.agent(health: .longWaitForRunningBackup, hello: nil)
+            == .init("Not running — no backups will happen", severity: .error, action: .restartAgent))
         #expect(SettingsGeneral.agent(health: .damaged, hello: nil)
             == .init("Restorey’s installation is damaged — reinstall it from the download", severity: .error))
         #expect(SettingsGeneral.agent(health: .signatureUntrusted, hello: nil)

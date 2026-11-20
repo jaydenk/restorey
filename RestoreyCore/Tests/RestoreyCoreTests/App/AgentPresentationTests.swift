@@ -5,7 +5,7 @@ import Testing
 struct AgentPresentationTests {
     private static let all: [AgentHealthState] = [
         .checking, .healthy, .updating, .waitingForUpdate, .switchedOff, .notRunning(reachable: false),
-        .notRunning(reachable: true), .damaged, .failed("x"),
+        .notRunning(reachable: true), .longWaitForRunningBackup, .damaged, .failed("x"),
     ]
 
     // MARK: Refetching status

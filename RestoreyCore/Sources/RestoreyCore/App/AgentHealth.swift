@@ -108,16 +108,14 @@ public enum AgentHealthAction: Sendable, Equatable {
     /// `prepareForReregistration` (drain, don't exit), then `unregister()` then `register()`. An unreachable
     /// agent has nothing to drain.
     case reregisterAfterDrain
-    /// `reregisterAfterDrain` for an agent that hasn't answered for `AgentHealthPolicy.hungResticCap` while a restic
-    /// it started is running: the undrained `unregister()` stops that backup (owner, 20 Nov 2026). Under the same
-    /// hourly limit as any re-registration.
-    case reregisterStoppingBackup
     /// `prepareForRestart`; launchd's `KeepAlive` starts the new binary.
     case restartAfterDrain
     /// The agent doesn't answer, but a restic it started is running, so an undrained `unregister()` would
     /// kill a live backup (Ruling R68): shown as not running, logged, and decided again at the next
-    /// heartbeat, for at most `AgentHealthPolicy.hungResticCap`.
-    case waitForRunningRestic
+    /// heartbeat, for as long as that restic runs. Restorey can't tell a stuck restic from a busy one (a first backup,
+    /// a slow hourly run), so it never stops it on its own (owner, 20 Nov 2026). `longWait` from
+    /// `AgentHealthPolicy.longWaitWarning` on: the menu warns and offers Restart Backups, the person's choice.
+    case waitForRunningRestic(longWait: Bool)
     /// The agent is already draining: "Updating the background agent…", with Back Up Now disabled. The
     /// app asks it to restart once drained, which also frees an agent left drained by an app that quit
     /// half-way through a re-registration.
@@ -150,10 +148,10 @@ public enum AgentHealthPolicy: Sendable, Equatable {
     /// trigger it: three heartbeats.
     public static let unreachableGrace: TimeInterval = 30
 
-    /// How long an `enabled` agent that doesn't answer is waited on while a restic it started runs, measured from
-    /// `unreachableAwakeFor` like the grace (owner, 20 Nov 2026). A backup that runs on past it is taken as hung: the
-    /// re-registration goes ahead, stopping it, and the menu says so.
-    public static let hungResticCap: TimeInterval = 30 * 60
+    /// How long an `enabled` agent that doesn't answer is waited on, while a restic it started runs, before the menu
+    /// warns, measured from `unreachableAwakeFor` like the grace (owner, 20 Nov 2026). The wait goes on past it: only
+    /// the person's Restart Backups stops that backup.
+    public static let longWaitWarning: TimeInterval = 30 * 60
 
     /// At most one automatic repair of each kind an hour.
     public static let repairInterval: TimeInterval = 3600
@@ -216,11 +214,10 @@ public func decideAgentHealth(
                 guard unreachableFor >= AgentHealthPolicy.unreachableGrace else {
                     return .showNotRunning(canRepair: true)
                 }
-                // An unreachable agent can't be drained, so the re-registration would kill the restic: waited on,
-                // but not for ever.
+                // An unreachable agent can't be drained, so the re-registration would kill the restic: waited on for
+                // as long as it runs, never repaired, whatever the hourly limit says.
                 if input.resticRunningUnderAgent {
-                    guard unreachableFor >= AgentHealthPolicy.hungResticCap else { return .waitForRunningRestic }
-                    return repair(.reregisterStoppingBackup)
+                    return .waitForRunningRestic(longWait: unreachableFor >= AgentHealthPolicy.longWaitWarning)
                 }
                 return repair(.reregisterAfterDrain)
             case .offerRestart: return .showNotRunning(canRepair: true)

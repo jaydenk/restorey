@@ -156,7 +156,7 @@ public struct MenuDiagnostics: Sendable, Equatable {
             return "Background process \(agentVersion) (\(agentBuild))\(state)"
         case .checking: return "Background process: connecting"
         case .switchedOff: return "Background process: switched off"
-        case .notRunning: return "Background process: not running"
+        case .notRunning, .longWaitForRunningBackup: return "Background process: not running"
         case .damaged: return "Background process: missing from the app"
         case .signatureUntrusted: return "Background process: not contacted, as the app’s signature can’t be verified"
         case .failed: return "Background process: couldn’t be registered"
@@ -305,21 +305,13 @@ public enum MenuLayout {
 
     /// A problem as an item named for its fix, with the problem under it and why it matters in its tooltip
     /// (audit P4); the off-Mac note's dismiss follows as an item of its own (audit P2: no indenting; HIG: an
-    /// Option-only item mustn't be the only way to do something, so it isn't hidden behind Option). One with no fix
-    /// is a line that says what happened, with why under it, and its dismiss (the backup a repair stopped) after it.
+    /// Option-only item mustn't be the only way to do something, so it isn't hidden behind Option).
     static func bannerRows(_ banner: MenuBanner) -> [MenuRow] {
         let symbol: MenuSymbol = banner.severity == .error ? .error : .warning
-        var rows: [MenuRow]
-        if let action = banner.action {
-            rows = [.item(MenuItem(
-                action.menuTitle, subtitle: banner.title, symbol: symbol, toolTip: banner.detail,
-                command: .banner(action),
-                accessibilityLabel: "\(banner.severity.accessibilityLabel): \(banner.title). \(action.menuTitle)"))]
-        } else {
-            rows = [.item(MenuItem(
-                banner.title, subtitle: banner.detail, symbol: symbol, enabled: false,
-                accessibilityLabel: "\(banner.severity.accessibilityLabel): \(banner.title). \(banner.detail)"))]
-        }
+        var rows: [MenuRow] = [.item(MenuItem(
+            banner.action.menuTitle, subtitle: banner.title, symbol: symbol, toolTip: banner.detail,
+            command: .banner(banner.action),
+            accessibilityLabel: "\(banner.severity.accessibilityLabel): \(banner.title). \(banner.action.menuTitle)"))]
         if let dismiss = banner.dismiss {
             rows.append(.item(MenuItem(dismiss.menuTitle, symbol: .dismiss, command: .banner(dismiss))))
         }
