@@ -75,8 +75,9 @@ enum StatusIcon {
         return image
     }
 
-    /// Nil only on a build for an older macOS than the target, since the names are fixed and checked. Logged; the icon
-    /// then goes without its badge (the plain drive), and the tooltip and accessibility description still say the state.
+    /// Nil only on a build for an older macOS than the target, since the names are fixed and checked. Logged. A missing
+    /// badge leaves the plain drive (the tooltip and accessibility description still say the state); a missing drive
+    /// leaves an empty image.
     private static func symbol(_ name: String) -> NSImage? {
         if let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) { return image }
         Logger(subsystem: Bundle.main.bundleIdentifier ?? "Restorey", category: "app")

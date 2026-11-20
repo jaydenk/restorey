@@ -28,8 +28,8 @@ public func shouldRefetchStatus(previous: AgentHealthState, next: AgentHealthSta
 /// (`max`). `MenuPresentation.make` is the only thing that decides it.
 ///
 /// `.ok` is up to date (the tick): every plan has a backup that saved the data and nothing ranks higher. `.idle` is
-/// nothing to report yet: no problem, but a plan has no backup yet, there are no plans, or Restorey is still connecting
-/// to or updating its background process (owner, 20 Nov 2026: the tick must not claim backups that don't exist).
+/// nothing to report yet: no problem, but a plan has no backup yet, or Restorey is still connecting to or updating its
+/// background process (no plans at all is a warning, "No backup plan yet", so never the tick either) (owner, 20 Nov 2026: the tick must not claim backups that don't exist).
 public enum StatusIconState: Sendable, Comparable {
     case idle
     case ok

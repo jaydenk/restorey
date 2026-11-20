@@ -37,7 +37,8 @@ upload or pause badge, so they don't fit.
 | State | Image |
 |---|---|
 | Up to date: every plan has a backup and nothing is wrong | `externaldrive` + `checkmark.circle.fill` |
-| Nothing to report yet: no problem, but a plan has no backup yet, or there are no plans | `externaldrive`, no badge |
+| Nothing to report yet: no problem, but a plan has no backup yet, or Restorey is still connecting | `externaldrive`, no badge |
+| No plans at all | a warning ("No backup plan yet"): `externaldrive` + "!" |
 | Backing up | `externaldrive` + `arrow.up.circle.fill` |
 | Paused | `externaldrive` + `pause.circle.fill` |
 | Needs attention | `externaldrive` + `exclamationmark.circle.fill` |
@@ -47,7 +48,7 @@ upload or pause badge, so they don't fit.
   drive (destination-out), so the badge reads as separate from the drive outline. All six symbol names exist on macOS
   27.2 (checked with `NSImage(systemSymbolName:)`, 20 Nov 2026).
 - **One canvas for every state** (drive plus room for the badge), so the icon doesn't change width or move between
-  states. The drive sits at the same place in all five.
+  states. The drive sits at the same place in all six.
 - **Size and weight:** the drive at the weight and size of the system's menu bar icons (Wi-Fi, battery); the badge
   about 60 % of the icon's height. Tuned against a real menu bar, not guessed. **Chosen (20 Nov 2026):** the drive at
   SF Symbols' default size (18 × 13 pt, the same as `wifi`), the badge 72 % of the drive's height (62 % made the marks
@@ -55,8 +56,8 @@ upload or pause badge, so they don't fit.
 - **Template image** (`isTemplate = true`): the menu bar tints it for light and dark and dims it on an inactive
   display.
 - **Up to date has to say so (owner, 20 Nov 2026: "we need some state to say it's up to date").** Today's `.ok`
-  also covers "No backup yet" (just after setup) and no plans at all, where a tick would claim backups that don't
-  exist. So `StatusIconState` gains a case for that: the icon is up to date (tick) only when every plan has a backup
+  also covers "No backup yet" (just after setup), where a tick would claim backups that don't exist (no plans at all
+  is already a warning). So `StatusIconState` gains a case for that: the icon is up to date (tick) only when every plan has a backup
   that saved data (`PlanStatus.lastBackup`, the same record the menu's "Backed up at …" line reads) and nothing ranks
   higher; otherwise, with no problem, running or paused plan, it is the plain drive. A backup that has gone stale is
   already a warning ("No successful backup in N days"), so the tick never sits on an old backup. Its tooltip stays
@@ -78,7 +79,7 @@ upload or pause badge, so they don't fit.
 
 ## Checks
 
-- An off-screen render of all five states on a light and a dark bar, compared side by side.
+- An off-screen render of all six states on a light and a dark bar, compared side by side.
 - On the owner's Mac (RestoreyDev): the live icon in its idle state beside the system icons.
 - `scripts/ci.sh` once.
 

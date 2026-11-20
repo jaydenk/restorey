@@ -16,3 +16,4 @@ The code record is `git log`; the plans are in `docs/superpowers/plans/`.
   - `global-constraints.md`: the rules every task followed.
 
 Per-task briefs, reports, review diffs, CI logs and screenshots were working files and weren't kept.
+- `2026-11-20-menu-bar-icon/`: the drive-and-badge menu bar icon. `progress.md`: the ledger, rulings and final review.
