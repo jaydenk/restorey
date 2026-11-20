@@ -93,7 +93,8 @@ lid. Siri can't run them by voice on the Mac: Apple says voice invocation of App
   source is shown "Stopped" with the reason, "“data” is inside this plan’s backup repository. Choose a different
   folder", and the Folders tab says the same until the folder is taken off), while a folder holding it is added with a
   note (shown under the list, and cleared by the next change). Every backup to a local repository excludes the
-  repository's own folder, whatever the list holds, so when it is inside a source (by path, with `/private/tmp`, `/private/var` and `/private/etc` the same as `/tmp`, `/var` and `/etc`) the Exclusions sheet shows
+  repository's own folder, whatever the list holds, so when it is inside a source (by path, with `/private/tmp`,
+  `/private/var` and `/private/etc` the same as `/tmp`, `/var` and `/etc`) the Exclusions sheet shows
   it as a fixed first row, “This plan’s backups”, that can't be selected or removed; **Schedule**
   (how often, the battery rule, the plan's own upload limit, and its alerts: the check-in URL and "no successful backup in N days");
   **Storage** (the address, read-only, the password and keys, the host label, and "Show Recovery Kit…");

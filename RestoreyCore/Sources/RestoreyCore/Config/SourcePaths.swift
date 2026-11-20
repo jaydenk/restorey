@@ -16,9 +16,11 @@ public enum SourcePaths {
     ///
     /// `/private/tmp`, `/private/var` and `/private/etc` are their short forms (`/tmp`, `/var`, `/etc`): macOS makes
     /// them one place, and the folder picker stores one spelling where a typed path keeps the other (seen live 20 Nov
-    /// 2026). Only those three; `/Users/me` and `/private/Users/me` stay different.
+    /// 2026). Only those three; `/Users/me` and `/private/Users/me` stay different. A path as written still counts, so
+    /// `/private` contains `/private/tmp/x`.
     public static func containsByPath(_ outer: String, _ inner: String) -> Bool {
         comparableComponents(inner).starts(with: comparableComponents(outer))
+            || components(inner).starts(with: components(outer))
     }
 
     /// Whether `a` and `b` are the same path as `containsByPath` compares them (the firmlink spellings agree). Pure.

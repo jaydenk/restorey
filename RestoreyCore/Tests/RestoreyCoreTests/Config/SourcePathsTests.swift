@@ -72,6 +72,8 @@ struct SourcePathsTests {
             #expect(SourcePaths.containsByPath("/private/\(name)/a", "/\(name)/a/repo"))
             #expect(SourcePaths.containsByPath("/private/\(name)/a", "/private/\(name)/a/repo"))
         }
+        #expect(SourcePaths.containsByPath("/private", "/private/tmp/x"))
+        #expect(SourcePaths.containsByPath("/private/", "/private/var/backups/repo"))
         #expect(!SourcePaths.containsByPath("/tmp", "/private/tmpx"))
         #expect(!SourcePaths.containsByPath("/tmp/a", "/private/tmp/b"))
         #expect(!SourcePaths.containsByPath("/Users/me", "/private/Users/me"))
