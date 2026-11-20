@@ -52,7 +52,7 @@ final class AgentSupervisor {
         self.log = log
         self.defaults = defaults
         registration = AgentRegistration(installed: installed, identity: identity, defaults: defaults)
-        connection = AgentConnection(installed: installed, identity: identity)
+        connection = AgentConnection(installed: installed, identity: identity, log: log)
         let info = Bundle.main.infoDictionary ?? [:]
         request = HelloRequest(
             appVersion: info["CFBundleShortVersionString"] as? String ?? "unknown",

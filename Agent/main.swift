@@ -77,7 +77,7 @@ do {
     MXMetricManager.shared.add(diagnostics)
     keptAlive.append(diagnostics)
 
-    if let team = AgentListener.teamID(in: .main) {
+    if let team = CodeSigning.teamID(in: .main) {
         // Started now, so the network path is known by the first run.
         let observers = SystemObservers(log: log)
         keptAlive.append(observers)

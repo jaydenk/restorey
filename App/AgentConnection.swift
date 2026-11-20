@@ -22,10 +22,13 @@ enum AgentCallError: Error, Equatable, CustomStringConvertible {
 
 /// The XPC client for the agent (ported from the spike's `AgentClient`). It exports an `AgentClientXPC`
 /// object so the agent can push status, and after an interruption or invalidation it fetches `status`
-/// again with back-off (1 s doubling to 60 s), which reconnects and resubscribes.
+/// again with back-off (1 s doubling to 60 s), which reconnects and resubscribes. A team-signed app talks
+/// only to an agent signed by the same team with the agent's bundle ID (`AgentPeerCheck`).
 @MainActor
 final class AgentConnection {
     private let serviceName: String
+    /// Decided once, from the app's own signature: every connection made gets the same check.
+    private let peerCheck: AgentPeerCheck
     private let receiver: StatusReceiver
     private var connection: NSXPCConnection?
     private var resubscribe: Task<Void, Never>?
@@ -33,9 +36,20 @@ final class AgentConnection {
     /// Every status the agent sends: pushes, `status` replies and the replies to mutating calls.
     var onStatus: ((AgentStatus) -> Void)?
 
-    init(installed: InstalledCopy, identity: Identity) {
+    init(installed: InstalledCopy, identity: Identity, log: AppLog) {
         _ = installed
         serviceName = identity.agentLabel
+        peerCheck = AgentPeerCheck.decide(
+            agentBundleID: identity.agentBundleID, own: OwnSignature.current(),
+            declaredTeam: CodeSigning.teamID(in: .main))
+        switch peerCheck {
+        case .unchecked:
+            log.info("The app isn't signed by a team, so its connection to the agent doesn't check the agent's signature")
+        case .required:
+            log.info("The app's connection to the agent requires \(identity.agentBundleID) signed by its team")
+        case .refuseAll(let reason):
+            log.error("The app won't talk to any agent: \(reason)")
+        }
         receiver = StatusReceiver()
         receiver.connection = self
     }
@@ -255,6 +269,9 @@ final class AgentConnection {
     private func current() -> NSXPCConnection {
         if let connection { return connection }
         let made = NSXPCConnection(machServiceName: serviceName, options: [])
+        // Before resume(): setting it again, or after, is an XPC error. A peer that fails it invalidates the
+        // connection, which `lost` handles like any other.
+        if let requirement = peerCheck.requirement { made.setCodeSigningRequirement(requirement) }
         made.remoteObjectInterface = NSXPCInterface(with: AgentXPC.self)
         made.exportedInterface = NSXPCInterface(with: AgentClientXPC.self)
         made.exportedObject = receiver

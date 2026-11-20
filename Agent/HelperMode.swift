@@ -52,7 +52,7 @@ enum HelperMode {
             logger.error("The helper can't read its identity from Info.plist")
             return 1
         }
-        guard let team = AgentListener.teamID(in: .main) else {
+        guard let team = CodeSigning.teamID(in: .main) else {
             logger.error("RestoreyTeamID is missing or malformed in Info.plist")
             return 1
         }
@@ -104,7 +104,7 @@ enum HelperMode {
         let connection = NSXPCConnection(machServiceName: identity.helperServiceName, options: [])
         // Talk only to our own agent, never to whatever else might hold the name.
         connection.setCodeSigningRequirement(
-            AgentListener.codeSigningRequirement(bundleID: identity.agentBundleID, team: team))
+            CodeSigning.requirement(bundleID: identity.agentBundleID, team: team))
         connection.remoteObjectInterface = NSXPCInterface(with: HelperXPC.self)
         connection.resume()
         defer { connection.invalidate() }

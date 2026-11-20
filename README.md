@@ -253,7 +253,10 @@ The agent runs only as its launchd job: started any other way (double-clicked, r
 hosted tests' XCTest host) it touches none of its files and starts nothing, so there is never a second agent
 beside the real one ("Why the keychain tests need a signed host" has the details). The agent serves its XPC
 interface only to the signed app: the listener requires the app's bundle ID and the
-team in `Config/Local.xcconfig`, so any other process is refused. Only one call returns secrets: `recoveryKit`
+team in `Config/Local.xcconfig`, so any other process is refused. The check runs the other way too: a signed app
+requires the agent's bundle ID and the same team on its connection, so it never sends a call to another process
+holding the agent's name. An unsigned or ad-hoc build (Debug and CI) has no team to require and connects unchecked;
+the app decides from its own signature, not the Info.plist, and logs which applies. Only one call returns secrets: `recoveryKit`
 replies with a plan's repository password, its S3 keys or raw environment values, and its check-in URL, so the app
 can show the recovery kit; it goes only to the signed Restorey app over that XPC connection, the agent logs just the
 plan and how many secrets it sent, and the app keeps them only while the kit or the Restore Files window is open

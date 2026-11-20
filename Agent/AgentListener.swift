@@ -15,27 +15,12 @@ final class AgentListener: NSObject, NSXPCListenerDelegate, Sendable {
         self.log = log
     }
 
-    /// A code requirement for `bundleID` signed by our team. The app listener requires the app's bundle
-    /// ID, the helper listener and the helper's client the agent's.
-    static func codeSigningRequirement(bundleID: String, team: String) -> String {
-        "identifier \"\(bundleID)\" and anchor apple generic and certificate leaf[subject.OU] = \"\(team)\""
-    }
-
-    /// The team ID from the `RestoreyTeamID` Info.plist key (set from `DEVELOPMENT_TEAM`), or nil when it
-    /// is missing or not ten upper-case letters and digits. Without it there is no listener: fail closed.
-    static func teamID(in bundle: Bundle) -> String? {
-        guard let team = bundle.object(forInfoDictionaryKey: "RestoreyTeamID") as? String,
-              team.range(of: "^[A-Z0-9]{10}$", options: .regularExpression) != nil
-        else { return nil }
-        return team
-    }
-
     /// Creates and resumes the listener. The caller keeps both the listener and this delegate alive
     /// (`NSXPCListener.delegate` is weak).
     func listen(identity: Identity, team: String) -> NSXPCListener {
         let listener = NSXPCListener(machServiceName: identity.agentLabel)
         listener.setConnectionCodeSigningRequirement(
-            Self.codeSigningRequirement(bundleID: identity.appBundleID, team: team))
+            CodeSigning.requirement(bundleID: identity.appBundleID, team: team))
         listener.delegate = self
         listener.resume()
         log.info("Listening on \(identity.agentLabel) for \(identity.appBundleID)")
