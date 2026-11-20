@@ -17,3 +17,8 @@ The code record is `git log`; the plans are in `docs/superpowers/plans/`.
 
 Per-task briefs, reports, review diffs, CI logs and screenshots were working files and weren't kept.
 - `2026-11-20-menu-bar-icon/`: the drive-and-badge menu bar icon. `progress.md`: the ledger, rulings and final review.
+- `2026-11-20-v0.1.2-fixes/`: the v0.1.2 fixes (12 tasks: restic cache and error cap, held-back tidy, `/private` paths,
+  wording, off-main link checks, icon follow-ups, the app's signature check, AppKit out of RestoreyCore, setup's
+  atomic first backup, CI test log, the 30-minute hung-backup cap, new defaults for existing plans).
+  - `progress.md`: the ledger, every `Ruling:`, the deferred minors and the final review.
+  - `constraints.md`: the rules every task followed.
