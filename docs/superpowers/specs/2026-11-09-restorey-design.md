@@ -107,7 +107,7 @@ Mockup: `docs/mockups/menubar-and-restore.html` (copied from the AGENT brainstor
   - The icon shows the worst state across all plans.
   - The menu lists each plan with its own status line.
   - Back Up Now applies to all plans, with a submenu for individual plans.
-- **Icon states** (my call): idle/OK, backing up, paused, warning (e.g. skipped files, check overdue), error. Error must be visually distinct at a glance.
+- **Icon states** (my call): idle/OK, backing up, paused, warning (e.g. skipped files, check overdue), error. Error must be visually distinct at a glance. **(Owner, 20 Nov 2026)** Drawn as the system drive symbol with the state as a badge in its bottom-right corner: a tick only when every plan has a backup and nothing is wrong, the drive alone when there is nothing to report yet (UI design §5, Icon).
 - **(12 Nov 2026) Mocked up and approved for v0.1:** the menu with several plans and the Back Up Now submenu; the paused, warning and error states and icon; the agent-not-running, notifications-off, Full Disk Access missing, updating and "No off-Mac monitoring" states; and the Move to Applications screen. See `docs/mockups/v0.1-menu-states.html` and the [v0.1 UI design](2026-11-12-restorey-v0.1-ui-design.md). The restore-window items below (timeline markers, thaw label, host picker) remain for v0.2–v0.3.
 - **Not yet mocked up (my call; mockups needed before building these screens).** The approved mockup was drawn before the decisions below and shows only a single plan in the idle and in-progress states. The following need a mockup and the owner's sign-off first:
   - the menu with several plans, each with its own status line, and the Back Up Now submenu

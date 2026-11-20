@@ -25,8 +25,13 @@ public func shouldRefetchStatus(previous: AgentHealthState, next: AgentHealthSta
 }
 
 /// The menu bar icon's states, least to most severe: the worst state across all plans is the largest
-/// (`max`). Error is the only filled icon. `MenuPresentation.make` is the only thing that decides it.
+/// (`max`). `MenuPresentation.make` is the only thing that decides it.
+///
+/// `.ok` is up to date (the tick): every plan has a backup that saved the data and nothing ranks higher. `.idle` is
+/// nothing to report yet: no problem, but a plan has no backup yet, or Restorey is still connecting to or updating its
+/// background process (no plans at all is a warning, "No backup plan yet", so never the tick either) (owner, 20 Nov 2026: the tick must not claim backups that don't exist).
 public enum StatusIconState: Sendable, Comparable {
+    case idle
     case ok
     case backingUp
     case paused

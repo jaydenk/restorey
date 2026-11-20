@@ -2,16 +2,16 @@ import AppKit
 import OSLog
 import RestoreyCore
 
-/// The menu bar icon for each `StatusIconState` (UI design §5): the "Layers" glyph, which matches the app icon. Three
-/// stacked snapshot layers fade back in time (the newest full, the next 70 %, the oldest 45 %); the top slot says what
-/// is happening. Idle shows the newest layer; while backing up it lifts away as an arrow; paused shows a pause mark;
-/// needs attention a "!"; and a problem that stops backups an "×". The two older layers never change, so the icon
-/// keeps its size and place in the menu bar from state to state.
+/// The menu bar icon for each `StatusIconState`: the system's drive symbol with the state as a badge in its bottom-right
+/// corner (owner, 20 Nov 2026; `docs/superpowers/specs/2026-11-20-menu-bar-icon-design.md`). Up to date shows a tick;
+/// backing up an up arrow; paused a pause mark; needs attention a "!"; a problem that stops backups an "×". Nothing to
+/// report yet (`.idle`: a plan with no backup yet, or Restorey still connecting) is the drive alone.
 ///
-/// The art is in `App/Assets.xcassets` as vector SVG template images (black with partial alpha). A template image is
-/// drawn from its alpha channel ("You can use the alpha channel in the image to adjust the opacity of black content",
-/// `NSImage.isTemplate`), so the menu bar tints it for light and dark, dims it on an inactive display, and keeps the
-/// fade. `verify-bundle.sh` checks every name below is in the built `Assets.car`.
+/// The drive is SF Symbols' `externaldrive` at its default size, which is the size and weight of the system's own menu
+/// bar symbols (`wifi` is 18 × 13 pt too). The badge is a filled circle symbol, 72 % of the drive's height, drawn over a
+/// circle cleared out of the drive with a 1.5 pt gap, so it reads apart from the outline. Every state uses one canvas,
+/// with the drive in the same place, so the icon never changes width or moves. The images are templates: the menu bar
+/// tints them for light and dark and dims them on an inactive display (owner, 12 Nov 2026: a monochrome menu bar).
 @MainActor
 enum StatusIcon {
     static func image(for state: StatusIconState) -> NSImage {
@@ -25,7 +25,7 @@ enum StatusIcon {
 
     static func accessibilityDescription(for state: StatusIconState) -> String {
         switch state {
-        case .ok: "Restorey"
+        case .idle, .ok: "Restorey"
         case .backingUp: "Restorey: backing up"
         case .paused: "Restorey: paused"
         case .warning: "Restorey: needs attention"
@@ -33,32 +33,55 @@ enum StatusIcon {
         }
     }
 
-    /// The asset catalog image for each state.
-    static func assetName(for state: StatusIconState) -> String {
+    /// The SF Symbol drawn in the drive's bottom-right corner, or nil for the drive alone. Every name was checked to
+    /// exist on macOS 27.2 with `NSImage(systemSymbolName:accessibilityDescription:)` (20 Nov 2026).
+    static func badgeName(for state: StatusIconState) -> String? {
         switch state {
-        case .ok: "StatusIdle"
-        case .backingUp: "StatusBackingUp"
-        case .paused: "StatusPaused"
-        case .warning: "StatusAttention"
-        case .error: "StatusError"
+        case .idle: nil
+        case .ok: "checkmark.circle.fill"
+        case .backingUp: "arrow.up.circle.fill"
+        case .paused: "pause.circle.fill"
+        case .warning: "exclamationmark.circle.fill"
+        case .error: "xmark.circle.fill"
         }
     }
 
+    static let driveName = "externaldrive"
+    /// The badge's side as a share of the drive's height, and the gap cleared around it (pt), chosen against the
+    /// system's `wifi` and `battery.100percent` symbols at menu bar size.
+    private static let badgeRatio: CGFloat = 0.72
+    private static let badgeGap: CGFloat = 1.5
+
     private static func make(_ state: StatusIconState) -> NSImage {
-        let name = assetName(for: state)
-        let image: NSImage
-        if let asset = NSImage(named: name)?.copy() as? NSImage {
-            image = asset
-        } else {
-            // A missing image is a broken build, which verify-bundle.sh rejects. Should one ship anyway, the status item
-            // still needs something to click, so log it and fall back to the nearest system symbol.
-            Logger(subsystem: Bundle.main.bundleIdentifier ?? "Restorey", category: "app")
-                .fault("\(name, privacy: .public) is missing from the app's asset catalog")
-            image = NSImage(systemSymbolName: "square.3.layers.3d", accessibilityDescription: nil) ?? NSImage()
+        let drive = symbol(driveName) ?? NSImage()
+        let side = (drive.size.height * badgeRatio).rounded()
+        // Room for the badge to overhang the drive's bottom-right corner, the same for every state.
+        let size = NSSize(
+            width: (drive.size.width + side * 0.45).rounded(), height: (drive.size.height + side * 0.3).rounded())
+        let badge = badgeName(for: state).flatMap(symbol)
+        let image = NSImage(size: size, flipped: false) { rect in
+            drive.draw(in: NSRect(
+                x: 0, y: rect.maxY - drive.size.height, width: drive.size.width, height: drive.size.height))
+            guard let badge else { return true }
+            let badgeRect = NSRect(x: rect.maxX - side, y: 0, width: side, height: side)
+            NSGraphicsContext.current?.compositingOperation = .destinationOut
+            NSBezierPath(ovalIn: badgeRect.insetBy(dx: -badgeGap, dy: -badgeGap)).fill()
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
+            badge.draw(in: badgeRect)
+            return true
         }
-        // The catalog marks these as templates; set it again so the tinting never depends on that one setting.
         image.isTemplate = true
         image.accessibilityDescription = accessibilityDescription(for: state)
         return image
+    }
+
+    /// Nil only on a build for an older macOS than the target, since the names are fixed and checked. Logged. A missing
+    /// badge leaves the plain drive (the tooltip and accessibility description still say the state); a missing drive
+    /// leaves an empty image.
+    private static func symbol(_ name: String) -> NSImage? {
+        if let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) { return image }
+        Logger(subsystem: Bundle.main.bundleIdentifier ?? "Restorey", category: "app")
+            .fault("SF Symbol \(name, privacy: .public) is missing")
+        return nil
     }
 }

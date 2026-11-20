@@ -83,7 +83,7 @@ wordlist_lines=$(wc -l <"$wordlist" | tr -d ' ')
 
 # The app icon (Resources/AppIcon.icon, from Icon Composer), in the app and in the agent, whose bundle icon is the one
 # notifications show. actool compiles the layered icon into Assets.car (macOS 26 and later) plus AppIcon.icns, and
-# names it in the built Info.plist. Then the menu bar glyphs, which must be template images (tinted from their alpha).
+# names it in the built Info.plist. (The menu bar icon is drawn from SF Symbols at run time, so there is no glyph to check.)
 assets_info() { xcrun assetutil --info "$1" 2>/dev/null || true; }
 for part in "$APP" "$AGENT"; do
   part_name=$(basename "$part")
@@ -93,13 +93,6 @@ for part in "$APP" "$AGENT"; do
   car="$part/Contents/Resources/Assets.car"
   [[ -f "$car" ]] || fail "$part_name has no Assets.car"
   [[ "$(assets_info "$car")" == *'"Name" : "AppIcon"'* ]] || fail "$part_name's Assets.car has no AppIcon"
-done
-app_assets=$(assets_info "$APP/Contents/Resources/Assets.car")
-for glyph in StatusIdle StatusBackingUp StatusPaused StatusAttention StatusError; do
-  [[ "$app_assets" == *"\"Name\" : \"$glyph\""* ]] || fail "the app's Assets.car has no $glyph"
-  # Capture before matching (pipefail and an early-exiting grep -q, as for restic below).
-  glyph_entries=$(grep -A12 "\"Name\" : \"$glyph\"" <<<"$app_assets" || true)
-  [[ "$glyph_entries" == *'"Template Mode" : "template"'* ]] || fail "$glyph is not a template image"
 done
 
 # The About panel's copyright line and credits (restic's BSD 2-Clause licence, which binary redistribution must
