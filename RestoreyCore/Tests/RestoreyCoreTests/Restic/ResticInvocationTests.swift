@@ -229,7 +229,7 @@ struct ResticInvocationTests {
     @Test func forgetIsScopedToRestoreyTagAndHost() {
         let args = inv(.forget(dryRun: false)).arguments
         #expect(args == [
-            "forget", "--json", "--cache-dir", Self.cache, "--host=pepper", "--tag=\(tag)",
+            "forget", "--json", "--cache-dir", Self.cache, "--cleanup-cache", "--host=pepper", "--tag=\(tag)",
             "--group-by", "host,paths,tags",
             "--keep-hourly", "24", "--keep-daily", "30", "--keep-weekly", "52", "--keep-monthly", "120",
             "--retry-lock", "5m",
@@ -295,10 +295,20 @@ struct ResticInvocationTests {
         }
     }
 
+    /// Maintenance runs clear out old cache directories (product spec, restic cache); a backup or restore doesn't.
+    @Test func maintenanceRunsCleanUpTheCache() {
+        for op in [ResticOperation.forget(dryRun: false), .forget(dryRun: true), .prune, .check] {
+            #expect(inv(op).arguments.filter { $0 == "--cleanup-cache" }.count == 1, "\(op)")
+        }
+        for op in [ResticOperation.backup, .snapshots(allHosts: true), .stats] {
+            #expect(!inv(op).arguments.contains("--cleanup-cache"), "\(op)")
+        }
+    }
+
     @Test func pruneAndCheckRetryLock() {
         #expect(inv(.prune).arguments.starts(with: ["prune", "--json", "--cache-dir", Self.cache]))
         #expect(inv(.prune).arguments.contains("--retry-lock"))
-        #expect(inv(.check).arguments == ["check", "--json", "--cache-dir", Self.cache, "--retry-lock", "5m"])
+        #expect(inv(.check).arguments == ["check", "--json", "--cache-dir", Self.cache, "--cleanup-cache", "--retry-lock", "5m"])
     }
 
     /// Ruling P2-9: the repository's size, repository-wide (no `--host`), waiting for a lock like maintenance.

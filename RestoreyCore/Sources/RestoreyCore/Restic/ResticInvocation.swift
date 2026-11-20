@@ -222,7 +222,7 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
         args += ["--"] + plan.sources
     case .forget(let dryRun):
         let r = plan.retention
-        args = ["forget"] + common(context)
+        args = ["forget"] + common(context) + cleanupCache
             + ["--host=\(plan.hostLabel)", "--tag=\(tag)", "--group-by", "host,paths,tags",
                "--keep-hourly", String(r.hourly), "--keep-daily", String(r.daily),
                "--keep-weekly", String(r.weekly), "--keep-monthly", String(r.monthly)]
@@ -245,9 +245,9 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
         // filter, and skips an ID it can't find ("Ignoring …"), still exiting 0 (restic 0.19.1, verified).
         args = ["forget"] + common(context) + ["--retry-lock", context.maintenanceRetryLock, "--"] + ids
     case .prune:
-        args = ["prune"] + common(context) + packSize(plan) + ["--retry-lock", context.maintenanceRetryLock]
+        args = ["prune"] + common(context) + cleanupCache + packSize(plan) + ["--retry-lock", context.maintenanceRetryLock]
     case .check:
-        args = ["check"] + common(context) + ["--retry-lock", context.maintenanceRetryLock]
+        args = ["check"] + common(context) + cleanupCache + ["--retry-lock", context.maintenanceRetryLock]
     case .snapshots(let allHosts):
         args = ["snapshots"] + common(context)
         if !allHosts { args.append("--host=\(plan.hostLabel)") }
@@ -263,6 +263,11 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
 
     return ResticInvocation(arguments: args, environment: environment(plan: plan, context: context))
 }
+
+/// restic's `--cleanup-cache` removes its old cache directories (restic's global flag, present in 0.19.1), so the cache
+/// of a repository the Mac has stopped using doesn't stay for ever. Maintenance runs carry it (product spec,
+/// "maintenance runs clean the cache"); a backup does not, to keep it off the hot path.
+private let cleanupCache = ["--cleanup-cache"]
 
 private func common(_ context: ResticContext) -> [String] {
     ["--json", "--cache-dir", context.cacheDirectory.path]

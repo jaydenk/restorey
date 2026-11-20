@@ -844,6 +844,14 @@ unsaved edit, with Save, Revert and the close and quit guard as in the Folders t
 from the next backup" with Undo, which removes it again; nothing changes until you save the plan. A file deleted while the backup ran has no button, and a path
 the plan already excludes reads "Already not backed up". This is information only: no outcome, icon, alert or ping changes.
 
+The agent keeps at most 10,000 of a run's `error` messages in memory (`ResticProcess.storedErrorLimit`); a volume
+failing on every file could otherwise raise millions. The rest are counted (`droppedErrorCount`), and the archival ones
+among them still add to the warning's unreadable count (one each, as their items aren't kept to de-duplicate). The list
+above shows the first 100 items and "and N more" as before.
+
+Maintenance runs (`forget`, `prune` and `check`, not `backup`) pass restic's `--cleanup-cache`, which removes old cache
+directories under Restorey's own `--cache-dir`, so a repository you no longer use doesn't keep its cache.
+
 **What each backup added** (Task 16d). Every backup runs with restic's `--verbose`, so `backup --json` prints a
 `verbose_status` line for each file and folder it finishes (restic 0.19.1 `internal/ui/backup/json.go`); a new or
 changed file's line carries `data_size_in_repo`, what its data took in the repository after compression and

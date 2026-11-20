@@ -835,7 +835,8 @@ public actor PlanRunner {
             outcome = classify(
                 operation: op, exitCode: finished.exitCode, interruptedByUs: intent,
                 terminatedBySignal: finished.terminatedBySignal, killedByUs: finished.killedByUs,
-                summary: finished.summary, errors: finished.messages, exitErrorMessage: finished.exitErrorMessage)
+                summary: finished.summary, errors: finished.messages,
+                droppedArchivalErrors: finished.droppedArchivalErrorCount, exitErrorMessage: finished.exitErrorMessage)
             if finished.terminatedBySignal != nil { needsUnlock.insert(session.key) }
         } catch {
             outcome = .failed(

@@ -283,6 +283,42 @@ struct ResticProcessTests {
         ])
     }
 
+    /// A whole-volume failure can raise an error per file, millions of them: the stored list stops at
+    /// `storedErrorLimit`, the rest are counted, and the unreadable count stays exact.
+    @Test(.timeLimit(.minutes(3))) func aFloodOfItemErrorsIsCappedButCounted() async throws {
+        let repo = try TempRepository()
+        defer { repo.remove() }
+        let fake = try script("""
+            i=0; while [ $i -lt 50000 ]; do
+              echo '{"message_type":"error","error":{"message":"open /f/'$i': permission denied"},"during":"archival","item":"/f/'$i'"}' >&2
+              i=$((i+1))
+            done
+            exit 3
+            """, in: repo)
+        let run = try await repo.finish(
+            repo.process(try repo.invocation(.backup), executable: fake), op: .backup, log: MessageLog())
+        #expect(run.termination.messages.count == ResticProcess.storedErrorLimit)
+        #expect(run.termination.droppedErrorCount == 40_000)
+        #expect(run.termination.droppedArchivalErrorCount == 40_000)
+        #expect(run.outcome == .warning(unreadable: 50_000))
+    }
+
+    @Test(.timeLimit(.minutes(3))) func aRunBelowTheLimitStoresEveryError() async throws {
+        let repo = try TempRepository()
+        defer { repo.remove() }
+        let fake = try script("""
+            for n in a b c; do
+              echo '{"message_type":"error","error":{"message":"open /f/'$n': permission denied"},"during":"archival","item":"/f/'$n'"}' >&2
+            done
+            exit 3
+            """, in: repo)
+        let run = try await repo.finish(
+            repo.process(try repo.invocation(.backup), executable: fake), op: .backup, log: MessageLog())
+        #expect(run.termination.messages.count == 3)
+        #expect(run.termination.droppedErrorCount == 0)
+        #expect(run.outcome == .warning(unreadable: 3))
+    }
+
     @Test(.timeLimit(.minutes(3))) func cancellingTheAwaitingTaskInterruptsAndWaitsForExit() async throws {
         let repo = try TempRepository()
         defer { repo.remove() }

@@ -320,6 +320,7 @@ public func classify(
     killedByUs: Bool = false,
     summary: BackupSummary?,
     errors: [ResticItemError],
+    droppedArchivalErrors: Int = 0,
     exitErrorMessage: String?
 ) -> RunOutcome {
     if let interruptedByUs, killedByUs, terminatedBySignal == SIGKILL {
@@ -338,7 +339,7 @@ public func classify(
         // snapshot couldn't be removed (restic 0.19.1's documented exit codes), which is a failure of that
         // step, not unreadable files (final review M9). Any other operation has no documented 3.
         switch operation {
-        case .backup: return .warning(unreadable: unreadableFileCount(errors))
+        case .backup: return .warning(unreadable: unreadableFileCount(errors, droppedArchival: droppedArchivalErrors))
         case .forget, .forgetSnapshots:
             return .failed(exitCode: 3, reason: exitErrorMessage.map(errorSentence) ?? errors.first?.message
                 ?? "restic couldn’t remove every snapshot it was asked to forget")
@@ -376,10 +377,13 @@ func errorSentence(_ exitErrorMessage: String) -> String {
 /// archiver's error callback makes the backup exit 3). A directory both phases failed on is counted once.
 /// An exit 3 with no archival error still reports 1, so a restic wording change can't produce
 /// "0 files couldn't be read".
-func unreadableFileCount(_ errors: [ResticItemError]) -> Int {
+///
+/// `droppedArchival` is how many archival errors `ResticProcess` didn't keep past its limit. They can't be
+/// de-duplicated (their items were never stored), so each counts once.
+func unreadableFileCount(_ errors: [ResticItemError], droppedArchival: Int = 0) -> Int {
     let archival = errors.filter { $0.during == "archival" }
     // An archival error with no item (not seen in 0.19.1) can't be de-duplicated, so each counts once.
     let items = Set(archival.compactMap(\.item))
     let itemless = archival.filter { $0.item == nil }.count
-    return max(1, items.count + itemless)
+    return max(1, items.count + itemless + droppedArchival)
 }
