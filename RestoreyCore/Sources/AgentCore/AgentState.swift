@@ -241,6 +241,44 @@ public actor AgentState {
         }
     }
 
+    // MARK: New default exclusions
+
+    /// Adds to each plan the default folder exclusions added since its `exclusionDefaultsRevision`
+    /// (`DefaultExclusions.additions(after:home:)`) that it doesn't already list, word for word, at the end of its
+    /// `exclusions`, and moves its revision on to `DefaultExclusions.revision` (owner, 20 Nov 2026). Nothing is
+    /// removed or changed, so a default the person removed later stays removed. Called once at startup, after the
+    /// config is loaded and before the agent listens (`main.swift`): the agent knows the home folder, the schema
+    /// migration doesn't. One write for all the plans, none when no plan is behind, and none in the config-error
+    /// state. Each plan given a pattern gets a line in the agent's log; a failed write is logged and changes nothing,
+    /// so the next start tries again.
+    public func addNewDefaultExclusions(home: URL) async {
+        guard loadError == nil else { return }
+        do {
+            let added = try await serialisedWrite { () async throws -> [(plan: String, patterns: [String])] in
+                var updated = config
+                var added: [(plan: String, patterns: [String])] = []
+                for index in updated.plans.indices {
+                    let plan = updated.plans[index]
+                    guard plan.exclusionDefaultsRevision < DefaultExclusions.revision else { continue }
+                    let missing = DefaultExclusions.additions(after: plan.exclusionDefaultsRevision, home: home)
+                        .filter { !plan.exclusions.contains($0) }
+                    updated.plans[index].exclusions += missing
+                    updated.plans[index].exclusionDefaultsRevision = DefaultExclusions.revision
+                    if !missing.isEmpty { added.append((plan.name, missing)) }
+                }
+                if updated != config { try await saveConfig(updated) }
+                return added
+            }
+            for (plan, patterns) in added {
+                agentLog("Added the new default exclusions to plan “\(plan)”: \(patterns.joined(separator: ", "))")
+            }
+        } catch {
+            let detail = (error as? AgentError)?.message ?? "\(error)"
+            agentLog("Restorey couldn’t add the new default exclusions to the plans, and will try again at the next "
+                + "start: \(detail)")
+        }
+    }
+
     // MARK: Status
 
     /// Called with the new status after every phase change, and for progress at most every
@@ -367,7 +405,9 @@ public actor AgentState {
     /// an existing plan keeps the stored values, whatever the request says (Ruling P2-3). Only
     /// `confirmRecoveryKit` and `dismissOffMacNote` set them. So is `credentialsVersion`: 0 for a new plan, and one
     /// more whenever the save changes the repository or a secret that opens it (the change that clears the
-    /// confirmation), which is what makes a kit shown before the change refuse to confirm (Task 9).
+    /// confirmation), which is what makes a kit shown before the change refuse to confirm (Task 9). An existing plan
+    /// keeps its stored `exclusionDefaultsRevision` (`addNewDefaultExclusions` moves it on); a new plan keeps the
+    /// request's, the revision of the defaults the app made its list from.
     ///
     /// The same change also clears a stop (`stoppedReason`, e.g. after a wrong password) and refreshes the
     /// plan's alerts: the user has changed what restic opens the repository with, so the next run tries it
@@ -419,6 +459,9 @@ public actor AgentState {
                 plan.setupCompletedAt = stored.setupCompletedAt
                 plan.offMacNoteDismissed = stored.offMacNoteDismissed
                 plan.credentialsVersion = stored.credentialsVersion + (credentialsChanged ? 1 : 0)
+                // The agent's (`addNewDefaultExclusions`): an editor opened before a default was added mustn't lower it,
+                // or a default the person then removed would be added again.
+                plan.exclusionDefaultsRevision = stored.exclusionDefaultsRevision
                 updated.plans[index] = plan
             } else {
                 plan.recoveryKitConfirmedAt = nil

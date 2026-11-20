@@ -956,14 +956,18 @@ reasons are in the design spec, §5.7):
 restic also skips folders tagged with `CACHEDIR.TAG` (`--exclude-caches`) and iCloud files that aren't
 downloaded to this Mac (`--exclude-cloud-files`). Time Machine's own exclusion list can't be read on macOS 27,
 so Restorey doesn't try. Plans saved by an earlier build get the file types and the one-file-system setting when
-`config.json` is upgraded to schema 2; their folder exclusions are kept as they were (defaults added later, such as the CoreSpeech folder, reach new plans
-only: add them to an existing plan under Settings → Folders, Review Exclusions…). Before a file is
+`config.json` is upgraded to schema 2. A default folder added after a plan was made, such as the CoreSpeech folder, is
+added to that plan once: each plan records the revision of the default list it has been given
+(`exclusionDefaultsRevision`; schema 4 gives older plans revision 1, new plans start at the current one), and when the
+agent starts it adds the later defaults the plan doesn't already list to the end of its exclusions, saves once and
+logs the plan and patterns in `agent.log`. Nothing is ever removed or changed, so a default you remove (Settings →
+Folders, Review Exclusions…) stays removed. Before a file is
 rewritten by an upgrade, the old one is kept beside it as `config.json.v1.bak` (`<file>.v<schema>.bak`, readable
 only by you). If an upgrade fails, the agent says so and leaves the file alone.
 
 ## `config.json`
 
-`config.json` (schema 3) holds the plans and, beside them, the Mac-wide network settings (`network`): an upload
+`config.json` (schema 4) holds the plans and, beside them, the Mac-wide network settings (`network`): an upload
 limit shared by the backups to networked repositories (none by default), whether to skip a backup on a
 constrained or expensive network (on by default), and Wi-Fi network names to skip backups on (none by default).
 These rules apply only to a repository on another machine; a backup to a folder or an external drive ignores them.
@@ -1005,7 +1009,8 @@ finished, and whether the "No off-Mac monitoring" note was dismissed. The agent 
 dismissed note; a saved plan can't change them (only confirming the recovery kit and `dismissOffMacNote` do).
 Upgrading from schema 2 moves the per-plan "skip on a constrained network" setting to the Mac-wide one, which
 stays on if any plan had it on (an upgrade with every plan's setting off turns it off), and marks every plan
-whose recovery kit was already confirmed as having finished setup.
+whose recovery kit was already confirmed as having finished setup. Upgrading from schema 3 gives every plan
+`exclusionDefaultsRevision` 1, so the agent adds the defaults since then once (What a backup leaves out, above).
 
 ## Alerts
 

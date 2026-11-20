@@ -103,6 +103,8 @@ do {
             await state.attach(notifier: notifier, log: { log.info($0) })
             // Refused run actions (final review M5). Info, as before: a refusal is an answer, not a fault.
             await state.attach(agentLog: { log.info($0) })
+            // Before anything can read or save a plan: a default exclusion added since a plan was made reaches it once.
+            await state.addNewDefaultExclusions(home: FileManager.default.homeDirectoryForCurrentUser)
             // Made here, on the main thread, whose run loop delivers Core Location's reports.
             let location = LocationPermission()
             let service = AgentService(

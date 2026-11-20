@@ -36,6 +36,7 @@ struct PlanCodingTests {
         #expect(created.recoveryKitConfirmedAt == nil)
         #expect(created.setupCompletedAt == nil)
         #expect(!created.offMacNoteDismissed)
+        #expect(created.exclusionDefaultsRevision == DefaultExclusions.revision)
         #expect(created.createdAt == Self.now)
 
         let adopted = plan(.s3(Self.s3), .adopted)
@@ -95,6 +96,7 @@ struct PlanCodingTests {
         original.setupCompletedAt = Self.now
         original.offMacNoteDismissed = true
         original.credentialsVersion = 3
+        original.exclusionDefaultsRevision = 1
         original.conditions.battery = .neverOnBattery
         var rawPlan = plan(.raw(repository: "rest:http://nas/repo", environmentNames: ["A", "B"]), .adopted)
         rawPlan.conditions.battery = .minimumPercent(35)
@@ -115,6 +117,18 @@ struct PlanCodingTests {
         object["credentialsVersion"] = nil
         let older = try JSONSerialization.data(withJSONObject: object)
         #expect(try VersionedStore<PlanBox>.makeDecoder().decode(Plan.self, from: older).credentialsVersion == 0)
+    }
+
+    /// `config.json` always has `exclusionDefaultsRevision` (schema 4). A plan without it (in a request from a build
+    /// before it) reads as revision 1, the list every plan had before the field: a later default is then offered to it
+    /// once, never lost.
+    @Test func aPlanWithoutTheExclusionDefaultsRevisionReadsAsOne() throws {
+        let data = try VersionedStore<PlanBox>.makeEncoder().encode(plan(.s3(Self.s3), .created))
+        var object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["exclusionDefaultsRevision"] as? Int == DefaultExclusions.revision)
+        object["exclusionDefaultsRevision"] = nil
+        let older = try JSONSerialization.data(withJSONObject: object)
+        #expect(try VersionedStore<PlanBox>.makeDecoder().decode(Plan.self, from: older).exclusionDefaultsRevision == 1)
     }
 
     @Test func subSecondDatesRoundTrip() throws {
