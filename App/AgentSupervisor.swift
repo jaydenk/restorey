@@ -26,7 +26,8 @@ final class AgentSupervisor {
     @ObservationIgnored let connection: AgentConnection
     @ObservationIgnored private let registration: AgentRegistration
     @ObservationIgnored private let installed: InstalledCopy
-    @ObservationIgnored private let log: AppLog
+    /// The app's log, also handed to the windows' views (`EnvironmentValues.appLog`).
+    @ObservationIgnored let log: AppLog
     @ObservationIgnored private let request: HelloRequest
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var observers: [() -> Void] = []

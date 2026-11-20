@@ -35,6 +35,14 @@ struct FolderDropTarget: ViewModifier {
     }
 }
 
+/// Records an add judged by the paths as written (`FolderDrop.Look.checkedInTime` false), naming them, as the agent
+/// logs its own link checks that don't answer.
+func logUnchecked(_ look: FolderDrop.Look, log: AppLog?, list: String) {
+    let paths = look.items.map(\.path).joined(separator: ", ")
+    log?.info("\(list) list: the disk wasn’t checked in time (or an earlier check is stuck), so these were judged by "
+        + "their paths, links not followed: \(paths)")
+}
+
 extension View {
     func acceptsDroppedFolders(isEnabled: Bool = true, _ onDrop: @escaping ([URL]) -> Void) -> some View {
         modifier(FolderDropTarget(isEnabled: isEnabled, onDrop: onDrop))

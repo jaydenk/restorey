@@ -22,7 +22,8 @@ final class DeveloperWindowController: NSObject, NSWindowDelegate {
 
     func show() {
         if window == nil {
-            let made = NSWindow(contentViewController: NSHostingController(rootView: DeveloperView(model: model)))
+            let made = NSWindow(contentViewController: NSHostingController(
+                rootView: DeveloperView(model: model).environment(\.appLog, model.supervisor.log)))
             made.title = "Restorey Developer"
             made.setContentSize(NSSize(width: 980, height: 720))
             made.isReleasedWhenClosed = false

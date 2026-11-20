@@ -50,14 +50,15 @@ extension PickedItem {
         }
     }
 
-    /// Each URL judged by its path as written, reading nothing: a file URL is taken as the folder the person chose
-    /// (the open panel offers only folders; Finder's drag was of something there), anything else isn't on this Mac.
-    /// The answer when the disk didn't answer in time.
+    /// Each URL judged by its path as written, reading nothing: a file URL written as a folder (`hasDirectoryPath`, a
+    /// trailing slash, string handling only) is taken as the folder chosen; any other file URL is refused as not a
+    /// folder, so a file or an app is never added in its place (a link to a folder, written without the slash, is
+    /// refused too, and can be added again once the disk answers); anything else isn't on this Mac. The answer when
+    /// the disk didn't answer in time.
     static func byPath(_ urls: [URL]) -> [PickedItem] {
         urls.map { url in
-            url.isFileURL
-                ? PickedItem(path: SourcePaths.standardised(url.path), kind: .folder)
-                : PickedItem(path: url.absoluteString, kind: .notOnDisk)
+            guard url.isFileURL else { return PickedItem(path: url.absoluteString, kind: .notOnDisk) }
+            return PickedItem(path: SourcePaths.standardised(url.path), kind: url.hasDirectoryPath ? .folder : .file)
         }
     }
 }
@@ -76,15 +77,22 @@ public enum FolderDrop {
         /// Each item, in the order given.
         public var items: [PickedItem]
         /// Where each folder among `items`, and each path it was asked to compare them with, leads once links are
-        /// followed, keyed by its standardised path. Empty when the disk didn't answer in time (or an earlier look is
-        /// still stuck): every item is then judged by its path as written (`PickedItem.byPath`) and compared by path.
+        /// followed, keyed by its standardised path. Empty when the disk wasn't checked in time.
         public var leads: [String: String]
+        /// False when the disk didn't answer within the deadline, or an earlier look is still stuck past its own: every
+        /// item is then judged by its path as written (`PickedItem.byPath`) and compared by path, and adding says so
+        /// (`uncheckedNote`).
+        public var checkedInTime: Bool
 
-        public init(items: [PickedItem], leads: [String: String]) {
+        public init(items: [PickedItem], leads: [String: String], checkedInTime: Bool = true) {
             self.items = items
             self.leads = leads
+            self.checkedInTime = checkedInTime
         }
     }
+
+    /// Said under the list when an add was judged by the paths as written because the disk wasn't checked in time.
+    public static let uncheckedNote = "Restorey couldn’t check these in time, so they were added as chosen."
 
     /// What each of `urls` is, and where the folders among them and `paths` lead (for sources: the list, the plan's
     /// local repository folder and the home folder), read on `resolver`'s thread within its deadline. Past the
@@ -100,7 +108,7 @@ public enum FolderDrop {
             for path in others where leads[path] == nil { leads[path] = follow(path) }
             return Look(items: read.map(\.item), leads: leads)
         }
-        return found ?? Look(items: PickedItem.byPath(urls), leads: [:])
+        return found ?? Look(items: PickedItem.byPath(urls), leads: [:], checkedInTime: false)
     }
 
     public struct Outcome: Sendable, Equatable {
@@ -117,6 +125,27 @@ public enum FolderDrop {
             self.problem = problem
             self.note = note
         }
+    }
+
+    /// `addingSources` with what `look` found, and `uncheckedNote` after any other note when it wasn't checked in time
+    /// and something was added.
+    public static func addingSources(
+        _ look: Look, to sources: [String], repository: Repository?, home: String = NSHomeDirectory()
+    ) -> Outcome {
+        unchecked(look, addingSources(look.items, to: sources, repository: repository, home: home, leads: look.leads), sources)
+    }
+
+    /// `addingExclusions` with what `look` found, and `uncheckedNote` when it wasn't checked in time and something was
+    /// added.
+    public static func addingExclusions(_ look: Look, to exclusions: [String]) -> Outcome {
+        unchecked(look, addingExclusions(look.items, to: exclusions), exclusions)
+    }
+
+    private static func unchecked(_ look: Look, _ outcome: Outcome, _ before: [String]) -> Outcome {
+        guard !look.checkedInTime, outcome.list != before else { return outcome }
+        var outcome = outcome
+        outcome.note = [outcome.note, uncheckedNote].compactMap { $0 }.joined(separator: " ")
+        return outcome
     }
 
     /// Sources, as the agent stores them: absolute, standardised paths, deduplicated by the place they lead to

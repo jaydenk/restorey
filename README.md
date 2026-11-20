@@ -494,8 +494,10 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   sources compared by where they lead). Each item is judged where it leads (`FolderDrop.look`): a link to a folder
   is a folder and is kept as the path chosen, a link to a file is a file, and a broken link "can't be found". That
   look reads the disk, so it runs off the main actor through `LinkResolver`, with the agent's 10 s bound (see "Links
-  are followed only through `LinkResolver`" below); past it, or while an earlier look is stuck, each item is taken as
-  the folder chosen and compared by its path as written, links not followed. What the
+  are followed only through `LinkResolver`" below); past it, or while an earlier look is stuck, each item is judged
+  by its path as written, links not followed: one written as a folder (a trailing slash) is added as chosen, anything
+  else "isn't a folder", the list says "Restorey couldn’t check these in time, so they were added as chosen.", and
+  `app.log` names the paths. What the
   rule leaves out is said under the list ("“notes.txt” isn't a
   folder. Only folders and drives can be added."). The list is ringed in the accent colour while a drag is over it
   (`dropDestination(for:isEnabled:action:)` and `onDropSessionUpdated`, macOS 26). Delete (⌫ or ⌦,

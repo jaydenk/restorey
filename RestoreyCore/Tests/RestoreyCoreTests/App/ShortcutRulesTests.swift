@@ -410,9 +410,10 @@ struct FolderDropTests {
 
     /// L157: reading what was dropped follows links, which a volume that stops answering can hold up for good. The
     /// read runs on a thread of its own against the deadline, one outstanding at a time (`LinkResolver`): past the
-    /// deadline each item is judged by its path as written (a folder there, links not followed), and a second add
-    /// while the first is still stuck gives up at once rather than leave another blocked thread. The follower is held
-    /// until released, so a look that waited for it would never return (handshake as in `LinkResolverTests`).
+    /// deadline each item is judged by its path as written (a folder only when written as one, links not followed),
+    /// and a second add while the first is still stuck gives up at once rather than leave another blocked thread. Each
+    /// such add says so under the list. The follower is held until released, so a look that waited for it would never
+    /// return (handshake as in `LinkResolverTests`).
     @Test func aLookPastItsDeadlineJudgesItemsByPathAndAStuckOneGivesUpAtOnce() async {
         let release = DispatchSemaphore(value: 0)
         let finished = DispatchSemaphore(value: 0)
@@ -426,26 +427,52 @@ struct FolderDropTests {
             }
             return path
         }
-        let urls = [URL(fileURLWithPath: "/Volumes/Gone/Photos/", isDirectory: true), URL(string: "https://example.com")!]
+        let urls = [
+            URL(fileURLWithPath: "/Volumes/Gone/Photos/", isDirectory: true),
+            URL(fileURLWithPath: "/Volumes/Gone/notes.txt", isDirectory: false), URL(string: "https://example.com")!,
+        ]
         let byPath = FolderDrop.Look(
-            items: [PickedItem(path: "/Volumes/Gone/Photos", kind: .folder), PickedItem(path: "https://example.com", kind: .notOnDisk)],
-            leads: [:])
-        #expect(await FolderDrop.look(at: urls, against: ["/Volumes/Gone"], resolver: resolver) == byPath)
+            items: [
+                PickedItem(path: "/Volumes/Gone/Photos", kind: .folder), PickedItem(path: "/Volumes/Gone/notes.txt", kind: .file),
+                PickedItem(path: "https://example.com", kind: .notOnDisk),
+            ],
+            leads: [:], checkedInTime: false)
+        let pastDeadline = await FolderDrop.look(at: urls, against: ["/Volumes/Gone"], resolver: resolver)
+        #expect(pastDeadline == byPath)
         guard resolver.gate.isBusy else {
             Issue.record("the deadline passed before the look was admitted, so no work was held")
             return
         }
         await OwnThread.run(named: "test wait", qualityOfService: .utility) { entered.wait() }
-        #expect(await FolderDrop.look(at: urls, resolver: resolver) == byPath)
+        let whileStuck = await FolderDrop.look(at: urls, resolver: resolver)
+        #expect(whileStuck == byPath)
         #expect(calls.value == 1, "no second thread was started behind the stuck one")
+
+        // The folder as written is added, the file isn't taken for one, and the list says the check didn't happen.
+        for look in [pastDeadline, whileStuck] {
+            let outcome = FolderDrop.addingSources(look, to: ["/Users/me/Music"], repository: nil, home: "/Users/me")
+            #expect(outcome.list == ["/Users/me/Music", "/Volumes/Gone/Photos"])
+            #expect(outcome.problem == "“notes.txt” isn’t a folder. Only folders and drives can be added. "
+                + "Only folders and drives on this Mac can be added.")
+            #expect(outcome.note == FolderDrop.uncheckedNote)
+            #expect(FolderDrop.addingExclusions(look, to: []).note == FolderDrop.uncheckedNote)
+        }
         // Judged by path: inside the listed folder as written.
-        let outcome = FolderDrop.addingSources(byPath.items, to: ["/Volumes/Gone"], repository: nil, home: "/Users/me")
-        #expect(outcome.problem == "Only folders and drives on this Mac can be added. “Photos” is already included in “Gone”.")
+        let covered = FolderDrop.addingSources(pastDeadline, to: ["/Volumes/Gone"], repository: nil, home: "/Users/me")
+        #expect(covered.problem?.hasSuffix("“Photos” is already included in “Gone”.") == true)
 
         release.signal()
         await OwnThread.run(named: "test wait", qualityOfService: .utility) { finished.wait() }
         for _ in 0..<2000 where resolver.gate.isBusy { try? await Task.sleep(for: .milliseconds(1)) }
         #expect(!resolver.gate.isBusy)
+    }
+
+    /// The note is exact, and only for a look that didn't check in time.
+    @Test func onlyAnUncheckedLookSaysSo() {
+        #expect(FolderDrop.uncheckedNote == "Restorey couldn’t check these in time, so they were added as chosen.")
+        let checked = FolderDrop.Look(items: [Self.folder("/Users/me/Music")], leads: [:], checkedInTime: true)
+        #expect(FolderDrop.addingSources(checked, to: [], repository: nil, home: "/Users/me").note == nil)
+        #expect(FolderDrop.addingExclusions(checked, to: []).note == nil)
     }
 
     @Test func aMissingItemSaysItCantBeFound() {

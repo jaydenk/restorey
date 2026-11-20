@@ -192,9 +192,9 @@ public enum FormValidation {
 
     /// `existing` followed by each new path that isn't already in it. Paths are compared as written, by string
     /// handling alone (`SourcePaths`): `/tmp` and `/private/tmp`, a trailing slash and `..` all count as one, but a link
-    /// and where it leads are two paths, as restic records them. It never reads the disk, since the app runs it on its
-    /// main actor (L157); adding folders also compares where links lead, off the main actor (`FolderDrop.look`). A path
-    /// is stored in its standardised form (no trailing slash).
+    /// and where it leads are two paths: links are never followed. It never reads the disk, since the app runs it on
+    /// its main actor (L157); adding folders also compares where links lead, off the main actor (`FolderDrop.look`). A
+    /// path is stored in its standardised form (no trailing slash).
     public static func addingSources(_ paths: [String], to existing: [String]) -> [String] {
         var result = existing
         for path in paths {
