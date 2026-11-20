@@ -402,7 +402,7 @@ off by default. Switched on, "Use This Repository" adopts as usual, then asks th
 (`previewEarlierSnapshots`: a `forget --dry-run` that takes no lock and records nothing) and shows its own
 confirmation, "Remove N snapshots from before Restorey?", with how many the plan's retention keeps, whether prune will
 free the space, that they go after the first successful backup, and that it can't be undone, in a few short sentences so the sheet fits the setup window. Cancel is
-the default button (Return, and Escape too); "Remove N Snapshots" is never the default (`DestructiveAlert`). The confirmed snapshot IDs are
+the default button (Return, and Escape too); "Remove N Snapshots" is never the default (`DestructiveAlert`, app-only: it is in `App/Controls`, not RestoreyCore, so the agent does not link AppKit for it). The confirmed snapshot IDs are
 kept in the setup progress (`earlierRemoval`), and Done hands them to the agent before it confirms the kit
 (`removeEarlierSnapshotsAfterNextBackup`); the agent removes them only after the plan's first backup that succeeds
 with every file, so a setup that fails never deletes anything. The confirmation says that other tools' snapshots of
