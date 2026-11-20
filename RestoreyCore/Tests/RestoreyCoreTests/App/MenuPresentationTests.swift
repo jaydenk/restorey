@@ -586,7 +586,19 @@ struct MenuPresentationTests {
         let paused = Self.status([Self.line(fresh, backedUpAt: nil), Self.line(done, phase: .paused(until: Self.at(15, 0)))])
         #expect(Self.make(paused).icon == .paused)
         let failed = Self.status([Self.line(done, outcome: .failed(exitCode: 1, reason: "x"), alerts: [.backupFailed])])
-        #expect(Self.make(failed).icon > .ok)
+        #expect(Self.make(failed).icon == .error)
+    }
+
+    /// A plan whose only records failed or were skipped has no backup that saved the data (`lastBackup` nil), so no
+    /// tick: the plain drive, unless an alert or a skip that is a warning says there's a problem.
+    @Test func aFailedOrSkippedOnlyPlanIsIdle() {
+        let plan = Self.plan()
+        let failed = Self.record(plan, .failed(exitCode: 1, reason: "x"), at: Self.at(14, 16))
+        #expect(Self.make(Self.status([Self.line(plan, backedUpAt: nil, last: failed)])).icon == .idle)
+        // Skipped for an update: the one skip that isn't itself a warning (`settledFacts`).
+        let skipped = Self.record(plan, .skipped(.agentUpdating), at: Self.at(14, 16))
+        let skippedLine = Self.line(plan, phase: .skipped(.agentUpdating), backedUpAt: nil, last: skipped)
+        #expect(Self.make(Self.status([skippedLine])).icon == .idle)
     }
 
     /// While Restorey connects to or updates its background process it knows nothing yet, so no tick.

@@ -1304,6 +1304,24 @@ struct PlanRunnerTests {
         #expect(await f.history().runningRecordID == nil)
     }
 
+    /// Recovery's `unlock` after a start isn't a run of the plan (L168): the status never shows the plan running, so
+    /// the menu bar icon doesn't say "backing up" for the seconds a remote unlock takes after every restart.
+    @Test func recoveryUnlockDoesNotShowThePlanRunning() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        let (state, runner) = await f.reloaded() // the agent starting again
+        let phases = Locked<[PlanPhase]>([])
+        await state.setStatusObserver { status in
+            phases.mutate { $0 += status.plans.map(\.phase) }
+        }
+        await runner.recoverAfterStart()
+        let history = try await state.runInputs(f.planID).history
+        #expect(history.recent.first?.operation == .unlock, "recovery ran its unlock")
+        #expect(!phases.value.isEmpty, "the unlock's record was pushed")
+        #expect(!phases.value.contains { $0.isRunning }, "pushed phases: \(phases.value)")
+        #expect(history.runningRecord == nil)
+    }
+
     @Test func recoveryLogsAnUnlockItHasToSkip() async throws {
         let f = try await RunnerFixture.make(createRepository: false) { plan in
             if case .raw(let repository, _) = plan.repository {

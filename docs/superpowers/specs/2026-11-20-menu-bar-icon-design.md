@@ -70,8 +70,18 @@ upload or pause badge, so they don't fit.
 - `RestoreyCore`: `StatusIconState` gets the new case (ranked lowest), `MenuPresentation.icon` decides it, and
   `MenuPresentationTests` pin both: a fresh plan with no backup is the plain drive, every plan backed up is the tick,
   and any problem, run or pause still wins over both.
-- `App/StatusIcon.swift`: draws the images from SF Symbols instead of loading the asset catalog. A missing symbol name
-  falls back to the plain drive and logs a fault, as the asset lookup does today.
+- `App/StatusIcon.swift`: draws the images from SF Symbols instead of loading the asset catalog. A missing badge
+  symbol falls back to the plain drive and logs a fault, as the asset lookup does today. **Follow-up (v0.1.2, 20 Nov
+  2026):** a missing `externaldrive` falls back to the letter "R" in the system menu bar font on the fixed 22 × 16 pt
+  canvas, so the item stays clickable (it was an empty image); the drive and its destination-out cut-out are drawn in
+  a transparency layer (`CGContext.beginTransparencyLayer`), so the cut-out clears only the drive, never what the
+  image is drawn over.
+- **Start-up recovery isn't a backup (L168, v0.1.2):** after a restart the icon showed "backing up" for about 6 s
+  with no backup in History. The cause was the agent: start-up recovery registered its `restic unlock` as a run of
+  the plan (`PlanRunner.begin` → `AgentState.beginRun`), so the plan's phase was `.running` for the unlock (the dev
+  agent's 20 Nov 05:42 restart: `unlock` 05:42:50.06–05:42:55.40). It now registers the unlock like the measurement
+  after an adopt (`beginMeasurement`): drains, deletes, pauses and the system stop still reach it, but the phase is
+  untouched. The fix is in the agent, where the phase is decided, not in the icon.
 - `App/Assets.xcassets`: the five `Status*` image sets are removed.
 - `scripts/verify-bundle.sh`: drops its check that the five glyphs are template images in `Assets.car`.
 - Docs: the menu bar icon passages in the UI spec (§ menu bar, Icon), the README ("The menu bar"), and the product

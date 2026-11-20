@@ -191,8 +191,8 @@ public actor PlanRunner {
     private var networkedUploads: Set<UUID> = []
     /// When `pruneRunLogsIfDue` last pruned the run logs; nil until it has (Ruling R70).
     var lastRunLogPrune: Date?
-    /// The measurements queued after an adopt (PlanRunner+Actions.swift), waiting or running, by plan, so a
-    /// pause, a delete and a system stop reach them as they reach runs.
+    /// The measurements queued after an adopt (PlanRunner+Actions.swift), credential checks and recovery's
+    /// unlocks, waiting or running, by plan, so a pause, a delete and a system stop reach them as they reach runs.
     var measurementHandles: [UUID: [RunHandle]] = [:]
     /// The latest measurement queued after an adopt, by plan, for `waitForMeasurement`.
     var measurements: [UUID: Task<Void, Never>] = [:]
@@ -305,13 +305,17 @@ public actor PlanRunner {
         where plan.validationErrors().isEmpty && (plan.recoveryKitConfirmedAt != nil || interrupted.contains(plan.id)) {
             let key = RepositoryQueues.key(for: plan.repository)
             guard !unlocked.contains(key) else { continue }
-            let handle: RunHandle
+            // Not a run of the plan (L168): registered like the measurement after an adopt, so a drain waits for it
+            // and a pause, delete or system stop reaches it, but the plan isn't shown backing up. Runs can't start
+            // alongside it: they wait for recovery (`begin`).
             do {
-                handle = try await begin(plan.id, waitForRecovery: false)
+                try await deps.state.beginMeasurement(planID: plan.id)
             } catch {
                 skippedUnlock(plan, reason: (error as? AgentError)?.message ?? "\(error)")
                 continue
             }
+            let handle = RunHandle()
+            measurementHandles[plan.id, default: []].append(handle)
             switch prepare(plan) {
             case .ready(let session):
                 unlocked.insert(key)
@@ -327,7 +331,9 @@ public actor PlanRunner {
             case .failed(_, let reason, _):
                 skippedUnlock(plan, reason: reason)
             }
-            await end(plan.id, handle)
+            // After its record is committed: a delete waits for the registration to end before the plan goes.
+            await deps.state.endMeasurement(planID: plan.id)
+            measurementEnded(planID: plan.id, handle: handle)
         }
     }
 
@@ -399,11 +405,11 @@ public actor PlanRunner {
         }
     }
 
-    /// Waits for recovery (unless this is recovery), then registers the run with `AgentState` (which
-    /// refuses while draining, for an unknown plan, a plan being deleted or already running) and gives it
-    /// a handle `pause` can reach from that moment on.
-    func begin(_ planID: UUID, waitForRecovery: Bool = true, isBackup: Bool = false) async throws -> RunHandle {
-        if waitForRecovery { await recovery?.value }
+    /// Waits for recovery, then registers the run with `AgentState` (which refuses while draining, for an
+    /// unknown plan, a plan being deleted or already running) and gives it a handle `pause` can reach from
+    /// that moment on.
+    func begin(_ planID: UUID, isBackup: Bool = false) async throws -> RunHandle {
+        await recovery?.value
         try await deps.state.requireRunnable(planID)
         if handles[planID] != nil {
             let name = (try? await deps.state.runInputs(planID).plan.name) ?? "This plan"

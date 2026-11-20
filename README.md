@@ -607,7 +607,10 @@ backups. With nothing to report yet (a plan before its first backup, or Restorey
 process) it is the drive alone, so the tick never claims backups that don't exist; no plans at all is a "!" ("No
 backup plan yet"). `App/StatusIcon.swift` draws the six images from SF Symbols at run time: the drive at the system's
 menu bar size and weight (18 × 13 pt, like `wifi`), a filled circle badge 72 % of its height over a circle cleared out
-of it with a 1.5 pt gap, on one 22 × 16 pt canvas for every state so the icon never changes width. They are template
+of it with a 1.5 pt gap, on one 22 × 16 pt canvas for every state so the icon never changes width. The cut-out is
+drawn with the drive in a transparency layer of its own, so it clears only the drive. Should the drive symbol ever be
+missing, the icon is the letter "R" in the menu bar's font on the same canvas, so the item stays visible and
+clickable (the tooltip still says the state). They are template
 images, monochrome like the rest of the menu bar (owner, 12 Nov 2026), so the menu bar tints and dims them like its
 own; colour is kept for the severity symbols inside the open menu.
 The icon's tooltip says the state in words, updated with the icon (`MenuContent.toolTip`): the worst problem when
@@ -904,7 +907,7 @@ system, which is not a failure (no alert, no check-in ping; the backup is tried 
 started), and exits within 4 seconds, before launchd's 5-second limit (restic gets 2.5 seconds to honour
 SIGINT). A run already being paused keeps its pause, but its restic gets the same 2.5 seconds instead of the pause's 10. If the agent stops mid-run any other way (a crash, `kill -9`), its next start records
 that run as interrupted (an interrupted backup is a failure and sends its `/fail` ping) and runs a plain
-`restic unlock` (never `--remove-all`) once per repository, before it accepts any run. Before exiting for an update, the agent finishes the restic step in
+`restic unlock` (never `--remove-all`) once per repository, before it accepts any run. That unlock isn't a run of the plan: the menu and its icon don't show the plan backing up while it runs (a drain waits for it; deleting the plan stops it). Before exiting for an update, the agent finishes the restic step in
 progress (a backup's maintenance waits for the next backup) and then waits up to 3 minutes for queued check-in
 pings.
 

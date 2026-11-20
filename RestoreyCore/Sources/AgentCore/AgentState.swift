@@ -700,8 +700,10 @@ public actor AgentState {
         pushStatus(deliveringAlerts: false)
     }
 
-    /// Registers the measurement after an adopt (`PlanRunner`), as it reaches its turn in the queue.
-    /// Refused while draining, in the config-error state, for an unknown plan or one being deleted.
+    /// Registers a repository job that isn't a run of the plan (`PlanRunner`: the measurement after an adopt, as it
+    /// reaches its turn in the queue, a credential check, recovery's unlock), so a drain and a delete wait for it while
+    /// the plan's phase stays as it was. Refused while draining, in the config-error state, for an unknown plan or one
+    /// being deleted.
     func beginMeasurement(planID: UUID) throws {
         try requireRunnable(planID)
         let plan = try requirePlan(planID)
