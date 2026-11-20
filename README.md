@@ -273,7 +273,7 @@ back; clicking Restorey's app icon in the Dock is a reopen, which opens Settings
 window that asked, and the About panel counts while it is up, so no Restorey window is left on screen in a menu bar
 app. As an accessory app it had no menu bar, so Quit and Edit weren't there while its window was in
 use, and macOS passed it over when a Touch ID prompt went away, so the window that asked fell behind the app before
-(diagnosis in `.superpowers/sdd/2026-11-12-v0.1-ui/o1-diagnosis.md`). The main menu is the app menu (About Restorey,
+(diagnosis in `docs/build-records/2026-11-12-v0.1-ui/o1-diagnosis.md`). The main menu is the app menu (About Restorey,
 Settings… ⌘, which opens Settings from any of the windows and is dimmed in a copy outside /Applications, which has
 none, Services, Hide, Hide Others, Show All, Quit), an Edit menu (Undo, Redo, Cut, Copy, Paste, Paste and Match
 Style, Delete, Select All), a Window menu (Minimise, Zoom, Close, Bring All to Front; Minimise and Zoom dim for a
