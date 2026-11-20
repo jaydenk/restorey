@@ -491,8 +491,11 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   "Show…", a sheet with the plan's switch for them and the list, each with "Back up anyway". Folders and drives
   dragged from Finder onto the Folders list, or onto the exclusions sheet's list, are added by the same rule as its add
   button (`FolderDrop`, RestoreyCore: only folders and drives, so a file or an app is refused, and nothing listed twice,
-  sources compared by where they lead). Each item is judged where it leads (`PickedItem.classify`): a link to a folder
-  is a folder and is kept as the path chosen, a link to a file is a file, and a broken link "can't be found". What the
+  sources compared by where they lead). Each item is judged where it leads (`FolderDrop.look`): a link to a folder
+  is a folder and is kept as the path chosen, a link to a file is a file, and a broken link "can't be found". That
+  look reads the disk, so it runs off the main actor through `LinkResolver`, with the agent's 10 s bound (see "Links
+  are followed only through `LinkResolver`" below); past it, or while an earlier look is stuck, each item is taken as
+  the folder chosen and compared by its path as written, links not followed. What the
   rule leaves out is said under the list ("“notes.txt” isn't a
   folder. Only folders and drives can be added."). The list is ringed in the accent colour while a drag is over it
   (`dropDestination(for:isEnabled:action:)` and `onDropSessionUpdated`, macOS 26). Delete (⌫ or ⌦,
@@ -789,7 +792,9 @@ disk, since it runs on every status and scheduler tick and a repository on a net
 not hold up the agent (`StatusPathPurityTests` pins those files). Links are followed only through `LinkResolver`: on a
 thread of its own (`OwnThread`) with a 10 s deadline (`MarkedNotForBackup.timeLimit`, as for the agent's other
 file-system looks) and one check outstanding in the process (`OneOutstandingGate`), so a stuck one leaves a single
-blocked thread. Saving a plan uses it, inside the serialised write so saves still finish in the order they came, to
+blocked thread. The app does the same when folders are added to a plan's lists (`FolderDrop.look`, its own process's
+gate), so its main actor never waits on a volume; the form rules it runs there (`FormValidation.addingSources`,
+`StorageForm.planName`) are string handling, pinned by `StatusPathPurityTests` too. Saving a plan uses it, inside the serialised write so saves still finish in the order they came, to
 refuse a source that reaches the repository through a link; when the check doesn't answer in time (or an earlier one
 is stuck) the save goes ahead on the comparison by path and the agent log says so. While a link check hangs, all of the agent's config writes (saves, alerts' state, run starts) can wait up to 10 s, after which later checks are skipped and logged. A backup uses it to also exclude
 where a link to its repository leads; when it doesn't answer, only the folder as given is excluded, and the log says

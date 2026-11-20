@@ -79,16 +79,24 @@ struct SourcesEditor: View {
         panel.message = "Choose the folders and drives to back up."
         Task { @MainActor in
             guard await panel.presentForKeyWindow() == .OK else { return }
-            add(PickedItem.classify(panel.urls))
+            add(panel.urls)
         }
     }
 
-    /// The button's and a drop's one way in.
-    private func add(_ items: [PickedItem]) {
-        let outcome = FolderDrop.addingSources(items, to: sources, repository: repository)
-        sources = outcome.list
-        addProblem = outcome.problem
-        addNote = outcome.note
+    /// The button's and a drop's one way in. What the items are, and where they and the folders they are compared
+    /// with lead, is read off the main actor (`FolderDrop.look`, within its 10 s deadline, L157); the rule is then
+    /// applied to the list as it is by then.
+    private func add(_ urls: [URL]) {
+        let home = NSHomeDirectory()
+        let compared = sources + [repository?.localFolderPath, home].compactMap { $0 }
+        Task { @MainActor in
+            let look = await FolderDrop.look(at: urls, against: compared)
+            let outcome = FolderDrop.addingSources(
+                look.items, to: sources, repository: repository, home: home, leads: look.leads)
+            sources = outcome.list
+            addProblem = outcome.problem
+            addNote = outcome.note
+        }
     }
 
     private func remove(_ paths: Set<String>) {

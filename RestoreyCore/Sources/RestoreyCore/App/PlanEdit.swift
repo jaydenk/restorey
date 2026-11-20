@@ -130,7 +130,8 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
             + "commands name the host label."
     }
 
-    /// A different set of folders (compared as places: a trailing slash is the same folder) starts a new group.
+    /// A different set of folders starts a new group. Compared as written, as restic records them
+    /// (`FormValidation.addingSources`): a trailing slash is the same folder, a link to it isn't.
     public var sourcesWarning: String? {
         guard !fields.sources.isEmpty, fields.sources != started.sources else { return nil }
         let before = Set(FormValidation.addingSources(saved.sources, to: []))

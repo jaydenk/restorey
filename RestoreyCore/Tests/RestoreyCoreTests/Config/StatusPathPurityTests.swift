@@ -25,11 +25,13 @@ struct StatusPathPurityTests {
         "AgentCore", "RestoreyCore/Config", "RestoreyCore/Schedule", "RestoreyCore/Alerts", "RestoreyCore/Restic",
     ]
 
-    /// `RestoreyCore/App` is the app's own code, much of which reads the disk on purpose (`AppMove`, `PrivateFile`, the
-    /// form checks, opening a run log), so it is scanned by name: the files whose text reaches a status, a menu or an
-    /// alert, which the agent's code also uses.
+    /// `RestoreyCore/App` is the app's own code, much of which reads the disk on purpose (`AppMove`, `PrivateFile`,
+    /// opening a run log), so it is scanned by name: the files whose text reaches a status, a menu or an alert, which the
+    /// agent's code also uses, and the form rules the app runs on its main actor as folders and repositories are chosen
+    /// (L157: a volume that stops answering must not hang the app either).
     private static let appFiles = [
         "RestoreyCore/App/MenuPresentation.swift", "RestoreyCore/App/PlanNote.swift", "RestoreyCore/App/FolderDrop.swift",
+        "RestoreyCore/App/FormValidation.swift", "RestoreyCore/App/StorageForm.swift",
     ]
 
     static let files: [String] = appFiles + directories.flatMap { directory -> [String] in
@@ -46,11 +48,11 @@ struct StatusPathPurityTests {
         // `SourcePaths.resolvingLinks` is where links are followed. Only `LinkResolver` calls it on the agent's side, on a
         // thread of its own with a deadline and one check outstanding.
         "RestoreyCore/Config/SourcePaths.swift": ["URL(fileURLWithPath: standardised(path), isDirectory: true).resolvingSymlinksInPath()"],
-        // `FolderDrop.classify` runs in the app, on a drop, to learn what was dropped; the agent never calls it.
+        // `PickedItem.classify` learns what was added to a list; it runs only inside `FolderDrop.look`, on the link
+        // check's thread with its deadline and gate (`LinkResolver`), and the agent never calls it.
         "RestoreyCore/App/FolderDrop.swift": [
-            "let path = url.standardizedFileURL.path", "let target = url.resolvingSymlinksInPath()",
-            "fileManager.fileExists(atPath: target.path, isDirectory: &isDirectory)",
-            "target.resourceValues(forKeys: [.isPackageKey])",
+            "fileManager.fileExists(atPath: target, isDirectory: &isDirectory)",
+            "found.resourceValues(forKeys: [.isPackageKey])",
         ],
         // The probe's whole job is to look at the protected folders under home; it runs on its own thread, bounded.
         "AgentCore/FullDiskAccessProbe.swift": ["fm.fileExists(atPath: path, isDirectory: &isDirectory)"],

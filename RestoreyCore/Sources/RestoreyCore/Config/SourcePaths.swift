@@ -2,13 +2,11 @@ import Foundation
 
 /// Where one backup folder lies against another: the one place paths are compared for containment (Task 1).
 ///
-/// Two entry points, so a caller can't follow links by accident (final review I1):
-/// - `containsByPath` compares the paths as written and never touches the file system. It is the one for validation
-///   and anything on the agent's status and scheduling path (`Plan.validationErrors()`, `nextRunDate`), which a
-///   repository on a hung network volume must not be able to stall.
-/// - `containsFollowingLinks` also compares where links lead, which reads the file system (an `lstat` per component)
-///   and can block for as long as a volume doesn't answer. It is for the app adding folders (`FolderDrop`). The agent
-///   follows links only through `LinkResolver`, on a thread of its own with a deadline.
+/// `containsByPath` compares the paths as written and never touches the file system (final review I1). It is the one
+/// for validation and anything on the agent's status and scheduling path (`Plan.validationErrors()`, `nextRunDate`),
+/// which a repository on a hung network volume must not be able to stall. Where links lead is learnt only through
+/// `LinkResolver`, on a thread of its own with a deadline, by the agent and by the app adding folders (`FolderDrop.look`,
+/// L157); callers then compare the paths it gives back with `containsByPath`.
 public enum SourcePaths {
     /// Whether `inner` is `outer` or lies below it, by whole path components (`/Users/me/Doc` doesn't contain
     /// `/Users/me/Documents`). Compared standardised (trailing slashes, `.` and `..` don't matter), as written: a link
@@ -28,12 +26,6 @@ public enum SourcePaths {
         comparableComponents(a) == comparableComponents(b)
     }
 
-    /// `containsByPath`, or the same comparison of where both paths lead once links are resolved (a folder reached
-    /// through a link is the place the link leads to). Reads the file system: never call it on the agent's actor.
-    public static func containsFollowingLinks(_ outer: String, _ inner: String) -> Bool {
-        containsByPath(outer, inner) || containsByPath(resolvingLinks(outer), resolvingLinks(inner))
-    }
-
     /// `path` with `.`, `..` and repeated or trailing slashes removed, as written: `/a/x/../b/` is `/a/b`. Pure: unlike
     /// `URL(fileURLWithPath:)`, which asks the file system whether the path is a folder, it reads nothing.
     public static func standardised(_ path: String) -> String {
@@ -41,7 +33,8 @@ public enum SourcePaths {
         return path.hasPrefix("/") ? "/" + parts.joined(separator: "/") : parts.joined(separator: "/")
     }
 
-    /// Where `path` leads once every link in it is followed. Reads the file system.
+    /// Where `path` leads once every link in it is followed. Reads the file system, and can block for as long as a
+    /// volume doesn't answer: only `LinkResolver` calls it.
     public static func resolvingLinks(_ path: String) -> String {
         URL(fileURLWithPath: standardised(path), isDirectory: true).resolvingSymlinksInPath().path
     }
@@ -77,8 +70,10 @@ public enum SourcePaths {
     }
 }
 
-/// Where paths lead once links are followed, for the agent (final review round 2): `AgentState.savePlan`'s check of a
-/// source reaching the repository through a link, and a backup's exclusion of where a link to its repository leads.
+/// Where paths lead once links are followed (final review round 2): for the agent, `AgentState.savePlan`'s check of a
+/// source reaching the repository through a link and a backup's exclusion of where a link to its repository leads; for
+/// the app, reading what is being added to a plan's lists (`FolderDrop.look`, L157), so its main actor never waits on a
+/// volume.
 ///
 /// Following a link reads the disk, which a network volume that stops answering can hold up for good, so the work runs
 /// on a thread of its own (`OwnThread`), never on the cooperative pool, raced against `deadline`, with one outstanding
@@ -88,7 +83,8 @@ public enum SourcePaths {
 public struct LinkResolver: Sendable {
     /// The same bound as the agent's other blocking file-system looks (`MarkedNotForBackup.timeLimit`, 10 s).
     public static let defaultDeadline: TimeInterval = MarkedNotForBackup.timeLimit
-    /// The agent's, with one gate for the whole process: every save and every backup share it.
+    /// One for the whole process, so a stuck check leaves one blocked thread there: in the agent every save and every
+    /// backup share it; in the app, every add to a plan's lists.
     public static let live = LinkResolver()
 
     public let gate: OneOutstandingGate
@@ -108,17 +104,27 @@ public struct LinkResolver: Sendable {
     /// Where each of `paths` leads, in order; nil when the file system didn't answer within `deadline`, or an earlier
     /// check is still outstanding past its own.
     public func resolve(_ paths: [String]) async -> [String]? {
+        await look { follow in paths.map(follow) }
+    }
+
+    /// `work`'s result, handed this resolver's way of following a link, under the same thread, deadline and gate as
+    /// `resolve`: for a check that reads more of the disk than where links lead (what an item dropped on a list is).
+    /// Nil when it didn't finish within `deadline`, or an earlier check is still outstanding past its own; `work` then
+    /// finishes later on its own thread, its result discarded, so it must touch nothing but its own state.
+    public func look<Value: Sendable>(
+        _ work: @escaping @Sendable (_ follow: @Sendable (String) -> String) -> Value
+    ) async -> Value? {
         let end = ContinuousClock.now.advanced(by: .seconds(deadline))
         let (gate, follow) = (gate, follow)
         guard await gate.enter(until: end) else { return nil }
         let remaining = max(0, ContinuousClock.now.duration(to: end) / .seconds(1))
         return await OwnThread.run(
             named: "Restorey link check", qualityOfService: .utility, deadline: remaining, orElse: nil
-        ) {
-            let resolved = paths.map(follow)
+        ) { () -> Value? in
+            let value = work(follow)
             // Only when the work has really returned: a check abandoned at its deadline keeps the gate until then.
             gate.leave()
-            return resolved
+            return value
         }
     }
 }

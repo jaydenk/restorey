@@ -2,21 +2,21 @@ import RestoreyCore
 import SwiftUI
 
 /// A list that takes folders dragged from Finder (Task 17e, audit T3): the list is ringed in the accent colour while a
-/// drag is over it, as Finder's own drop targets are, and `onDrop` gets the dropped items, to add through the same
-/// rule as the list's add button (`FolderDrop`), each item read by `PickedItem.classify` (RestoreyCore).
+/// drag is over it, as Finder's own drop targets are, and `onDrop` gets the dropped URLs, to add through the same
+/// rule as the list's add button (`FolderDrop`), each item read by `FolderDrop.look` (RestoreyCore) off the main actor.
 ///
 /// `dropDestination(for:isEnabled:action:)` (macOS 26) takes the files as `URL`s; `onDropSessionUpdated` (macOS 26) reports
 /// the drag entering and leaving, which draws the ring.
 struct FolderDropTarget: ViewModifier {
     let isEnabled: Bool
-    let onDrop: ([PickedItem]) -> Void
+    let onDrop: ([URL]) -> Void
     @State private var targeted = false
 
     func body(content: Content) -> some View {
         content
             .dropDestination(for: URL.self, isEnabled: isEnabled) { urls, _ in
                 targeted = false
-                onDrop(PickedItem.classify(urls))
+                onDrop(urls)
             }
             .onDropSessionUpdated { session in
                 // Ringed only while the drag is over the list: entering or moving within it.
@@ -36,7 +36,7 @@ struct FolderDropTarget: ViewModifier {
 }
 
 extension View {
-    func acceptsDroppedFolders(isEnabled: Bool = true, _ onDrop: @escaping ([PickedItem]) -> Void) -> some View {
+    func acceptsDroppedFolders(isEnabled: Bool = true, _ onDrop: @escaping ([URL]) -> Void) -> some View {
         modifier(FolderDropTarget(isEnabled: isEnabled, onDrop: onDrop))
     }
 }

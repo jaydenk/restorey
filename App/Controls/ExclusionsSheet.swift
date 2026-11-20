@@ -96,15 +96,19 @@ struct ExclusionsSheet: View {
         panel.message = "Choose the folders to leave out of the backup."
         Task { @MainActor in
             guard await panel.presentForKeyWindow() == .OK else { return }
-            add(PickedItem.classify(panel.urls))
+            add(panel.urls)
         }
     }
 
-    /// The button's and a drop's one way in.
-    private func add(_ items: [PickedItem]) {
-        let outcome = FolderDrop.addingExclusions(items, to: exclusions)
-        exclusions = outcome.list
-        addProblem = outcome.problem
+    /// The button's and a drop's one way in. What the items are is read off the main actor (`FolderDrop.look`,
+    /// within its 10 s deadline, L157); the rule is then applied to the list as it is by then.
+    private func add(_ urls: [URL]) {
+        Task { @MainActor in
+            let look = await FolderDrop.look(at: urls)
+            let outcome = FolderDrop.addingExclusions(look.items, to: exclusions)
+            exclusions = outcome.list
+            addProblem = outcome.problem
+        }
     }
 
     /// The selected rows but Restorey's own folders, which always stay.

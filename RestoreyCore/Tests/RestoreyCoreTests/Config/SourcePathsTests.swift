@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import RestoreyCore
 
-/// Whether one folder is another or lies below it, compared by whole path components (Task 1). Two entry points: by
-/// path alone (no file system access, for validation and scheduling) and following links (where the user acts).
+/// Whether one folder is another or lies below it, compared by whole path components (Task 1), by path alone (no file
+/// system access). Where links lead is learnt only through `LinkResolver` (`LinkResolverTests`, `FolderDropTests`).
 struct SourcePathsTests {
     @Test func aFolderContainsItselfAndItsDescendants() {
         #expect(SourcePaths.containsByPath("/a", "/a"))
@@ -16,19 +16,6 @@ struct SourcePathsTests {
         #expect(!SourcePaths.containsByPath("/Users/me/Doc", "/Users/me/Documents"))
         #expect(!SourcePaths.containsByPath("/Volumes/Backup", "/Volumes/Backups"))
         #expect(!SourcePaths.containsByPath("/Volumes/Backup", "/Volumes/Backups/data"))
-    }
-
-    @Test func aFolderReachedThroughASymlinkIsCoveredWhenFollowingLinks() throws {
-        let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("SourcePathsTests-\(UUID().uuidString)")
-        defer { try? fm.removeItem(at: root) }
-        let home = root.appendingPathComponent("home")
-        let downloads = home.appendingPathComponent("Downloads")
-        try fm.createDirectory(at: downloads, withIntermediateDirectories: true)
-        let link = root.appendingPathComponent("link")
-        try fm.createSymbolicLink(at: link, withDestinationURL: downloads)
-        #expect(SourcePaths.containsFollowingLinks(home.path, link.path))
-        #expect(!SourcePaths.containsFollowingLinks(link.path, home.path))
     }
 
     /// Final review I1: the comparison by path judges a link by its own path, never where it leads.

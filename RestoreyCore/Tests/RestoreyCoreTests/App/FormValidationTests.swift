@@ -201,6 +201,21 @@ struct FormValidationTests {
         #expect(FormValidation.addingSources(["/Volumes/Backup"], to: ["/Users/me"]) == ["/Users/me", "/Volumes/Backup"])
     }
 
+    /// L157: the form's rule compares paths as written and never reads the disk (it runs on the main actor, where a
+    /// volume that stops answering would hang the app): a link and the folder it leads to are two entries here, as
+    /// restic records them. Adding folders compares where links lead off the main actor (`FolderDrop.look`).
+    @Test func sourcesAreComparedByPathWithoutFollowingLinks() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("FormValidationTests-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        let folder = root.appendingPathComponent("Folder")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let link = root.appendingPathComponent("link")
+        try fm.createSymbolicLink(at: link, withDestinationURL: folder)
+        #expect(FormValidation.addingSources([link.path], to: [folder.path]) == [folder.path, link.path])
+        #expect(FormValidation.addingSources(["Relative/./x/"], to: []) == ["Relative/x"])
+    }
+
     @Test func sourcePathsShowTheHomeFolderAsATilde() {
         #expect(FormValidation.displayPath("/Users/me/Documents", home: "/Users/me") == "~/Documents")
         #expect(FormValidation.displayPath("/Users/me", home: "/Users/me") == "~")
