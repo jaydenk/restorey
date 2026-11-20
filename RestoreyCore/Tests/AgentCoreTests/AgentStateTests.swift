@@ -1575,10 +1575,12 @@ extension AgentStateTests {
         let release = DispatchSemaphore(value: 0)
         let finished = DispatchSemaphore(value: 0)
         let entered = Gate()
+        let gate = OneOutstandingGate()
         private let calls = Mutex(0)
+        private let released = Mutex(false)
 
         func resolver(deadline: TimeInterval) -> LinkResolver {
-            LinkResolver(deadline: deadline) { [self] path in
+            LinkResolver(gate: gate, deadline: deadline) { [self] path in
                 let first = calls.withLock { count in
                     count += 1
                     return count == 1
@@ -1592,9 +1594,19 @@ extension AgentStateTests {
             }
         }
 
+        /// Lets the held work go, once however often it is called: a test `defer`s it so a failing assertion or a
+        /// throw can't leave the work's thread blocked.
+        func letGo() {
+            if released.withLock({ let first = !$0; $0 = true; return first }) { release.signal() }
+        }
+
+        /// Lets the work go and waits for it to return, but only if it was admitted: a deadline that passed before
+        /// the gate admitted the check (`.expired`) starts no work, and nothing would ever signal `finished`. While
+        /// the gate is held the work's thread has been started and is blocked here, so it will signal.
         func finish() async {
-            release.signal()
-            await OwnThread.run(named: "test wait", qualityOfService: .utility) { self.finished.wait() }
+            let admitted = gate.isBusy
+            letGo()
+            if admitted { await OwnThread.run(named: "test wait", qualityOfService: .utility) { self.finished.wait() } }
         }
     }
 
@@ -1605,6 +1617,7 @@ extension AgentStateTests {
         let clock = TestClock()
         let state = await Self.makeState(dir, clock: clock)
         let held = HeldResolver()
+        defer { held.letGo() }
         await state.attach(linkResolver: held.resolver(deadline: 0.05))
         let log = Locked<[String]>([])
         await state.attach(agentLog: { line in log.mutate { $0.append(line) } })
@@ -1627,6 +1640,7 @@ extension AgentStateTests {
         let clock = TestClock()
         let state = await Self.makeState(dir, clock: clock)
         let held = HeldResolver()
+        defer { held.letGo() }
         await state.attach(linkResolver: held.resolver(deadline: 3600))
         let local = Self.localPlan(
             repository: dir.url.appendingPathComponent("repo"), sources: ["/Users/me"], now: clock.now)

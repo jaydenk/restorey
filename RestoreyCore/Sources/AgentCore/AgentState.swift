@@ -177,13 +177,13 @@ public actor AgentState {
 
     public static func configStore(in directory: URL) -> VersionedStore<ConfigFile> {
         VersionedStore(
-            fileURL: directory.appendingPathComponent("config.json"),
+            fileURL: directory.appendingPathComponent("config.json", isDirectory: false),
             currentVersion: ConfigMigrations.currentVersion, migrations: ConfigMigrations.migrations)
     }
 
     public static func stateStore(in directory: URL) -> VersionedStore<RunState> {
         VersionedStore(
-            fileURL: directory.appendingPathComponent("state.json"),
+            fileURL: directory.appendingPathComponent("state.json", isDirectory: false),
             currentVersion: stateSchemaVersion, migrations: [:])
     }
 

@@ -27,16 +27,26 @@ struct LinkResolverTests {
     @Test func aCheckPastItsDeadlineGivesUpAndAStuckOneBlocksNoMoreThreads() async {
         let release = DispatchSemaphore(value: 0)
         let finished = DispatchSemaphore(value: 0)
+        let entered = DispatchSemaphore(value: 0)
         let calls = Atomic(0)
         let resolver = LinkResolver(deadline: 0.05) { path in
             if calls.add(1) == 1 {
+                entered.signal()
                 release.wait()
                 finished.signal()
             }
             return path
         }
         #expect(await resolver.resolve(["/Volumes/Gone/repo"]) == nil)
-        #expect(resolver.gate.isBusy, "the abandoned work still holds the gate")
+        // Holding the gate means the work's thread was started, but on a busy runner it may not have reached `follow`
+        // when the deadline passed (as in MarkedNotForBackupTests.aStuckLookIsNotJoinedByAnother): wait for it to be in
+        // the held work before asserting on it or checking again. Only waited for when the gate is held, so a deadline
+        // that passed before the work was even admitted fails the test here rather than hanging it.
+        guard resolver.gate.isBusy else {
+            Issue.record("the deadline passed before the check was admitted, so no work was held")
+            return
+        }
+        await OwnThread.run(named: "test wait", qualityOfService: .utility) { entered.wait() }
         #expect(await resolver.resolve(["/Volumes/Gone/repo"]) == nil)
         #expect(calls.value == 1, "no second thread was started behind the stuck one")
 

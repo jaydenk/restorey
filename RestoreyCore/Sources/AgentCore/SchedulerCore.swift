@@ -178,7 +178,7 @@ public actor SchedulerCore {
         case .wake:
             await afterNetwork(catchUpAll: true)
         case .volumeMounted(let path):
-            let mounted = (path as NSString).standardizingPath
+            let mounted = SourcePaths.standardised(path)
             let skipped = await plans(skippedFor: { reason in
                 if case .volumeNotMounted(let volume) = reason { "/Volumes/\(volume)" == mounted } else { false }
             })

@@ -79,27 +79,37 @@ struct PlanRunnerTests {
     @Test func aRepositoryLinkThatCantBeFollowedInTimeLeavesOutThePathAsGiven() async throws {
         let release = DispatchSemaphore(value: 0)
         let finished = DispatchSemaphore(value: 0)
-        let resolver = LinkResolver(deadline: 0.05) { path in
+        let gate = OneOutstandingGate()
+        let resolver = LinkResolver(gate: gate, deadline: 0.05) { path in
             release.wait()
+            release.signal() // a turnstile: one signal frees every check that was ever held
             finished.signal()
             return path + "-resolved"
         }
         let f = try await RunnerFixture.make(linkResolver: resolver)
-        defer { f.remove() }
+        defer {
+            f.remove()
+            release.signal() // never leaves a held thread behind, whatever fails above
+        }
         try f.write("a.txt", "hello")
         let plan = await f.plan()
         let repositoryPath = try #require(plan.repository.localFolderPath)
 
         #expect(await f.runner.repositoryLinkTarget(plan) == nil)
-        #expect(f.agentInfo.value.contains { $0.hasPrefix("Couldn’t find out where the repository folder of plan") })
+        #expect(f.agentInfo.value.filter { $0.hasPrefix("Couldn’t find out where the repository folder of plan") }.count == 1)
         let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
         guard case .success = record.outcome else { Issue.record("expected a success, got \(record.outcome)"); return }
         let log = try String(contentsOf: f.logs.appendingPathComponent(record.logFile), encoding: .utf8)
         #expect(log.contains("--exclude=\(DefaultExclusions.pattern(forFolder: repositoryPath))"))
         #expect(!log.contains("-resolved"))
+        // Round 3: a stuck check is logged once per episode, not once per backup.
+        #expect(f.agentInfo.value.filter { $0.hasPrefix("Couldn’t find out where the repository folder of plan") }.count == 1)
 
+        // Wait for the held work only if a check was admitted (the gate is held while its thread is blocked); a
+        // deadline that passed before admission starts no work, and nothing would signal `finished`.
+        let admitted = gate.isBusy
         release.signal()
-        await OwnThread.run(named: "test wait", qualityOfService: .utility) { finished.wait() }
+        if admitted { await OwnThread.run(named: "test wait", qualityOfService: .utility) { finished.wait() } }
     }
 
     /// Spec §8: idle sleep is held off while restic runs, and only then.

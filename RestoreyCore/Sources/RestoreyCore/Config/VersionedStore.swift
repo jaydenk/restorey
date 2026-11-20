@@ -50,7 +50,7 @@ public actor VersionedStore<Payload: Codable & Sendable> {
 
     /// Where a file at `version` is kept before it is migrated: `config.json.v1.bak`.
     public static func backupURL(for fileURL: URL, version: Int) -> URL {
-        fileURL.deletingLastPathComponent().appendingPathComponent("\(fileURL.lastPathComponent).v\(version).bak")
+        fileURL.deletingLastPathComponent().appendingPathComponent("\(fileURL.lastPathComponent).v\(version).bak", isDirectory: false)
     }
 
     private struct Existing {

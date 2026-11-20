@@ -170,6 +170,9 @@ public actor PlanRunner {
     nonisolated let cloudOnlyWalkGate = OneOutstandingGate()
     /// Set once a backup has logged that an earlier cloud-only walk is still stuck; cleared by the next walk that runs.
     private var loggedStuckWalk = false
+    /// Set once a backup has logged that the repository's link check got no answer (timed out, or an earlier one is
+    /// stuck); cleared by the next check that does answer, so one stuck episode logs one line, not one per backup.
+    private var loggedStuckLinkCheck = false
     /// The latest background run `backUpNow` started, by plan.
     private var background: [UUID: Task<RunRecord, Never>] = [:]
     /// Plans to back up (trigger `.manual`) as soon as their run, being paused, has ended: a Resume that
@@ -668,7 +671,7 @@ public actor PlanRunner {
                     + "names exactly (plan \(id)): " + unlogged.map(\.debugDescription).joined(separator: ", "))
         }
         guard !file.written.isEmpty else { return (nil, 0) }
-        let url = deps.notForBackupDirectory.appendingPathComponent("\(id).txt")
+        let url = deps.notForBackupDirectory.appendingPathComponent("\(id).txt", isDirectory: false)
         do {
             try FileManager.default.createDirectory(
                 at: deps.notForBackupDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -720,10 +723,15 @@ public actor PlanRunner {
     func repositoryLinkTarget(_ plan: Plan) async -> String? {
         guard let repositoryPath = plan.repository.localFolderPath else { return nil }
         guard let target = await deps.linkResolver.resolve([repositoryPath])?.first else {
-            deps.agentInfo("Couldn’t find out where the repository folder of plan \(plan.id.uuidString) leads: the file "
-                + "system didn’t answer, so only the folder as given is left out of this backup")
+            if !loggedStuckLinkCheck {
+                loggedStuckLinkCheck = true
+                deps.agentInfo("Couldn’t find out where the repository folder of plan \(plan.id.uuidString) leads: the file "
+                    + "system didn’t answer, so only the folder as given is left out of this backup (not logged again "
+                    + "until a check answers)")
+            }
             return nil
         }
+        loggedStuckLinkCheck = false
         return target
     }
 

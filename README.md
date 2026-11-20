@@ -777,7 +777,7 @@ thread of its own (`OwnThread`) with a 10 s deadline (`MarkedNotForBackup.timeLi
 file-system looks) and one check outstanding in the process (`OneOutstandingGate`), so a stuck one leaves a single
 blocked thread. Saving a plan uses it, inside the serialised write so saves still finish in the order they came, to
 refuse a source that reaches the repository through a link; when the check doesn't answer in time (or an earlier one
-is stuck) the save goes ahead on the comparison by path and the agent log says so. A backup uses it to also exclude
+is stuck) the save goes ahead on the comparison by path and the agent log says so. While a link check hangs, all of the agent's config writes (saves, alerts' state, run starts) can wait up to 10 s, after which later checks are skipped and logged. A backup uses it to also exclude
 where a link to its repository leads; when it doesn't answer, only the folder as given is excluded, and the log says
 so. Pause stops a run in progress (SIGINT, then SIGKILL after 10 s) and resumes after the length chosen (1 hour, 4
 hours or until tomorrow, 24 hours). Resume on a
