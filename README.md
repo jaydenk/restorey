@@ -782,7 +782,7 @@ replaced instead.
 
 ## What a backup run does
 
-The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`) runs each backup in this order:
+The agent's plan runner (`RestoreyCore/Sources/AgentCore/PlanRunner.swift`, the backup itself in `PlanRunner+Backup.swift`) runs each backup in this order:
 
 1. Refuses a plan that is invalid or whose recovery kit hasn't been confirmed, without running restic: "Confirm
    you've saved the recovery kit for <plan> before its first backup", or, for a plan that finished setup and needs
