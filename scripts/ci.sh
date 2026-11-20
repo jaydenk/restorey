@@ -26,7 +26,14 @@ step "Fetch vendored binaries (cached)"
 scripts/fetch-binaries.sh
 
 step "Test RestoreyCore"
-swift test --package-path RestoreyCore
+# Keep the log, and on failure repeat the failing expectations: a long run buries them. pipefail makes the
+# pipeline's status swift test's, so tee can't hide a failure.
+test_log=build/swift-test.log
+if ! swift test --package-path RestoreyCore 2>&1 | tee "$test_log"; then
+  echo "error: RestoreyCore tests failed (full log: $test_log). Failing expectations:" >&2
+  grep -E "Expectation failed|Issue recorded|recorded an issue" "$test_log" >&2 || true
+  exit 1
+fi
 
 # Deadlines under GCD starvation, on their own: these park every constrained global-queue thread in the test process,
 # so they would stall other tests beside them (README: "Building from source"). Skipped in the run above.
