@@ -62,9 +62,10 @@ public struct AgentHealthInput: Sendable, Equatable {
     public var executableFingerprintOnDisk: String?
     /// The last repair of each kind (at most one per kind).
     public var lastRepairs: [RepairRecord]
-    /// When an `enabled` agent's heartbeat first failed in the current run of failures; `nil` while it
-    /// answers.
-    public var unreachableSince: Date?
+    /// How long an `enabled` agent's heartbeats have kept failing, in time the Mac was awake (`UnreachableRun`); `nil`
+    /// while it answers. Sleep and wall-clock changes don't count, so a hello that failed just before a long sleep
+    /// can't make the first failure after waking look like hours of silence.
+    public var unreachableAwakeFor: TimeInterval?
     /// A restic from this app's `Contents/Helpers` is running under the agent (`resticRunsUnderAgent`).
     /// Only asked for an unreachable agent, the one case that would be unregistered without a drain.
     public var resticRunningUnderAgent: Bool
@@ -76,7 +77,7 @@ public struct AgentHealthInput: Sendable, Equatable {
     public init(
         smStatus: AgentServiceStatus, heartbeat: AgentHeartbeat, expectedExecutablePrefix: String,
         appVersion: String, appBuild: String, storedPlistHash: String?, currentPlistHash: String,
-        executableFingerprintOnDisk: String?, lastRepairs: [RepairRecord], unreachableSince: Date? = nil,
+        executableFingerprintOnDisk: String?, lastRepairs: [RepairRecord], unreachableAwakeFor: TimeInterval? = nil,
         resticRunningUnderAgent: Bool = false, connectionRefusesEveryAgent: Bool = false, now: Date
     ) {
         self.smStatus = smStatus
@@ -88,7 +89,7 @@ public struct AgentHealthInput: Sendable, Equatable {
         self.currentPlistHash = currentPlistHash
         self.executableFingerprintOnDisk = executableFingerprintOnDisk
         self.lastRepairs = lastRepairs
-        self.unreachableSince = unreachableSince
+        self.unreachableAwakeFor = unreachableAwakeFor
         self.resticRunningUnderAgent = resticRunningUnderAgent
         self.connectionRefusesEveryAgent = connectionRefusesEveryAgent
         self.now = now
@@ -150,7 +151,7 @@ public enum AgentHealthPolicy: Sendable, Equatable {
     public static let unreachableGrace: TimeInterval = 30
 
     /// How long an `enabled` agent that doesn't answer is waited on while a restic it started runs, measured from
-    /// `unreachableSince` like the grace (owner, 20 Nov 2026). A backup that runs on past it is taken as hung: the
+    /// `unreachableAwakeFor` like the grace (owner, 20 Nov 2026). A backup that runs on past it is taken as hung: the
     /// re-registration goes ahead, stopping it, and the menu says so.
     public static let hungResticCap: TimeInterval = 30 * 60
 
@@ -158,6 +159,35 @@ public enum AgentHealthPolicy: Sendable, Equatable {
     public static let repairInterval: TimeInterval = 3600
     /// `hello` every 10 s.
     public static let heartbeatInterval: TimeInterval = 10
+}
+
+/// The current run of failed heartbeats from an `enabled` agent, timed in awake time: the app feeds it
+/// `SuspendingClock` readings, which stop while the Mac sleeps and ignore wall-clock changes (fix round 1 of Task 11).
+/// A run starts when the first failing hello was asked, so a call that only fails at its timeout doesn't stretch the
+/// grace.
+public struct UnreachableRun: Sendable, Equatable {
+    public private(set) var startedAt: Duration?
+
+    public init() {}
+
+    /// `failing`: an `enabled` agent's hello failed this heartbeat. Returns `AgentHealthInput.unreachableAwakeFor`.
+    public mutating func heartbeat(failing: Bool, askedAt: Duration, now: Duration) -> TimeInterval? {
+        guard failing else {
+            startedAt = nil
+            return nil
+        }
+        let start = startedAt ?? askedAt
+        startedAt = start
+        let elapsed = (now - start).components
+        return max(0, TimeInterval(elapsed.seconds) + TimeInterval(elapsed.attoseconds) / 1e18)
+    }
+}
+
+/// What a failed `register()` shows. While the connection admits no agent the cause the user can act on is the
+/// signature, since no registration would let the app talk to the agent; the registration error is only logged
+/// (fix round 1 of Task 11, controller ruling).
+public func healthAfterFailedRegistration(_ sentence: String, connectionRefusesEveryAgent: Bool) -> AgentHealthState {
+    connectionRefusesEveryAgent ? .signatureUntrusted : .failed(sentence)
 }
 
 /// The repair table (spec §6.2 and §8, spike H3a, H6 and phase B).
@@ -182,7 +212,7 @@ public func decideAgentHealth(
         guard case .ok(let reply) = input.heartbeat else {
             switch enabledButUnreachable {
             case .repairAutomatically:
-                let unreachableFor = input.now.timeIntervalSince(input.unreachableSince ?? input.now)
+                let unreachableFor = input.unreachableAwakeFor ?? 0
                 guard unreachableFor >= AgentHealthPolicy.unreachableGrace else {
                     return .showNotRunning(canRepair: true)
                 }

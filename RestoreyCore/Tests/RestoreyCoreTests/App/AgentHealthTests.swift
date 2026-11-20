@@ -33,7 +33,7 @@ struct AgentHealthTests {
             smStatus: smStatus, heartbeat: heartbeat, expectedExecutablePrefix: prefix, appVersion: "0.1.0",
             appBuild: "7", storedPlistHash: storedPlistHash, currentPlistHash: "abc",
             executableFingerprintOnDisk: "disk", lastRepairs: lastRepairs,
-            unreachableSince: unreachableFor.map { now.addingTimeInterval(-$0) }, now: now)
+            unreachableAwakeFor: unreachableFor, now: now)
     }
 
     private static func input(
@@ -175,7 +175,7 @@ struct AgentHealthTests {
     }
 
     /// Owner, 20 Nov 2026: a hung backup is waited on for at most `hungResticCap`, measured from
-    /// `unreachableSince` like the grace; then the re-registration goes ahead and stops it.
+    /// the first failed heartbeat in awake time, like the grace; then the re-registration goes ahead and stops it.
     @Test func aHungBackupIsWaitedOnForThirtyMinutes() {
         func decide(running: Bool, for seconds: TimeInterval, repairs: [RepairRecord] = []) -> AgentHealthAction {
             var input = Self.input(heartbeat: .unreachable, lastRepairs: repairs, unreachableFor: seconds)
@@ -191,6 +191,48 @@ struct AgentHealthTests {
         #expect(decide(running: true, for: 30 * 60, repairs: [Self.recent(.restart)]) == .reregisterStoppingBackup)
         // No restic: nothing to stop, as before.
         #expect(decide(running: false, for: 30 * 60) == .reregisterAfterDrain)
+    }
+
+    /// Fix round 1: the grace and the cap count only time the Mac was awake while the agent kept failing. A hello that
+    /// failed just before an 8-hour sleep and the first after waking are seconds of awake time apart, so neither the
+    /// grace nor the cap is reached and a healthy backup isn't stopped; a forward clock change can't reach them either,
+    /// as no wall-clock time is read. Awake time is a `SuspendingClock` reading, here a plain `Duration`.
+    @Test func onlyAwakeTimeCountsTowardsTheGraceAndTheCap() {
+        func decide(_ run: inout UnreachableRun, failing: Bool, askedAt: Duration, now: Duration) -> AgentHealthAction {
+            var input = Self.input(heartbeat: .unreachable)
+            input.unreachableAwakeFor = run.heartbeat(failing: failing, askedAt: askedAt, now: now)
+            input.resticRunningUnderAgent = input.unreachableAwakeFor != nil
+            return decideAgentHealth(input)
+        }
+        // Failed at 1000 s of awake time; the Mac slept 8 hours; the next hello, 3 s after waking, fails too.
+        var slept = UnreachableRun()
+        #expect(decide(&slept, failing: true, askedAt: .seconds(1000), now: .seconds(1002)) == .showNotRunning(canRepair: true))
+        #expect(slept.heartbeat(failing: true, askedAt: .seconds(1003), now: .seconds(1005)) == 5)
+        #expect(decide(&slept, failing: true, askedAt: .seconds(1013), now: .seconds(1015)) == .showNotRunning(canRepair: true))
+        // Past the grace in awake time, restic still running: waited on.
+        #expect(decide(&slept, failing: true, askedAt: .seconds(1040), now: .seconds(1042)) == .waitForRunningRestic)
+
+        // 30 awake minutes of failures reach the cap.
+        var hung = UnreachableRun()
+        _ = hung.heartbeat(failing: true, askedAt: .seconds(0), now: .seconds(2))
+        #expect(decide(&hung, failing: true, askedAt: .seconds(1797), now: .seconds(1799)) == .waitForRunningRestic)
+        #expect(decide(&hung, failing: true, askedAt: .seconds(1798), now: .seconds(1800)) == .reregisterStoppingBackup)
+
+        // Measured from when the first failing hello was asked, not when it gave up; an answer ends the run.
+        var answered = UnreachableRun()
+        #expect(answered.heartbeat(failing: true, askedAt: .seconds(10), now: .seconds(17)) == 7)
+        #expect(answered.heartbeat(failing: false, askedAt: .seconds(20), now: .seconds(20)) == nil)
+        #expect(answered.heartbeat(failing: true, askedAt: .seconds(30), now: .seconds(31)) == 1)
+    }
+
+    /// Fix round 1 (controller ruling): `register()` still runs under refuse-all, since it stops nothing. If it fails,
+    /// the cause shown is still the signature, as no registration would let the app talk to the agent anyway; the
+    /// registration error is only logged.
+    @Test func aFailedRegistrationUnderRefuseAllShowsTheSignature() {
+        #expect(healthAfterFailedRegistration("Restorey couldn’t register its background process: x", connectionRefusesEveryAgent: true)
+            == .signatureUntrusted)
+        #expect(healthAfterFailedRegistration("Restorey couldn’t register its background process: x", connectionRefusesEveryAgent: false)
+            == .failed("Restorey couldn’t register its background process: x"))
     }
 
     /// Ruling T7-1: a connection that admits no agent (`AgentPeerCheck.refuseAll`) makes every hello fail, so the
