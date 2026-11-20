@@ -25,7 +25,7 @@ enum StatusIcon {
 
     static func accessibilityDescription(for state: StatusIconState) -> String {
         switch state {
-        case .ok: "Restorey"
+        case .ok, .idle: "Restorey"
         case .backingUp: "Restorey: backing up"
         case .paused: "Restorey: paused"
         case .warning: "Restorey: needs attention"
@@ -36,7 +36,7 @@ enum StatusIcon {
     /// The asset catalog image for each state.
     static func assetName(for state: StatusIconState) -> String {
         switch state {
-        case .ok: "StatusIdle"
+        case .ok, .idle: "StatusIdle"
         case .backingUp: "StatusBackingUp"
         case .paused: "StatusPaused"
         case .warning: "StatusAttention"

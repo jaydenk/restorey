@@ -155,7 +155,7 @@ struct MenuPresentationTests {
         // The menu's line is short (audit P5); the Overview and the item's tooltip have the sentence.
         #expect(content.plans[0].menuDetail == "Interrupted, carries on at 10:25")
         #expect(content.plans[0].severity == nil)
-        #expect(content.icon == .ok)
+        #expect(content.icon == .idle, "no backup yet: the plain drive, not the tick")
         // The Overview reads the same facts.
         let overview = MenuPresentation.overview(
             planID: plan.id, health: .healthy, status: Self.status([status]), notificationsAuthorised: true,
@@ -565,6 +565,38 @@ struct MenuPresentationTests {
             action: .addCheckInURL(first.id), dismiss: .dismissOffMacNote(first.id), planID: first.id)])
     }
 
+    // MARK: The tick (owner, 20 Nov 2026)
+
+    /// The menu bar shows the tick only when every plan has a backup that saved the data; a plan before its first backup is
+    /// the plain drive (`.idle`), so the tick never claims backups that don't exist.
+    @Test func theTickNeedsEveryPlanBackedUp() {
+        let home = Self.plan("Home"), photos = Self.plan("Photos")
+        #expect(Self.make(Self.status([Self.line(home), Self.line(photos)])).icon == .ok)
+        #expect(Self.make(Self.status([Self.line(home), Self.line(photos, backedUpAt: nil)])).icon == .idle)
+        #expect(Self.make(Self.status([Self.line(home, backedUpAt: nil)])).icon == .idle)
+        // No plans at all is already a warning ("No backup plan yet"), never the tick.
+        #expect(Self.make(Self.status([])).icon == .warning)
+    }
+
+    /// A problem, a backup in progress or a pause still outranks both the tick and the plain drive.
+    @Test func problemsRunsAndPausesBeatTheTickAndIdle() {
+        let fresh = Self.plan("Fresh"), done = Self.plan("Done")
+        let running = Self.status([Self.line(fresh, backedUpAt: nil), Self.line(done, phase: .running(nil, retrying: nil))])
+        #expect(Self.make(running).icon == .backingUp)
+        let paused = Self.status([Self.line(fresh, backedUpAt: nil), Self.line(done, phase: .paused(until: Self.at(15, 0)))])
+        #expect(Self.make(paused).icon == .paused)
+        let failed = Self.status([Self.line(done, outcome: .failed(exitCode: 1, reason: "x"), alerts: [.backupFailed])])
+        #expect(Self.make(failed).icon > .ok)
+    }
+
+    /// While Restorey connects to or updates its background process it knows nothing yet, so no tick.
+    @Test func connectingOrUpdatingIsNeverTheTick() {
+        #expect(Self.make(nil, health: .checking).icon == .idle)
+        #expect(Self.make(nil).icon == .idle)
+        #expect(Self.make(Self.status([Self.line(Self.plan())]), health: .updating).icon == .idle)
+        #expect(Self.make(Self.status([Self.line(Self.plan())]), health: .waitingForUpdate).icon == .idle)
+    }
+
     // MARK: Updating and an unanswering agent
 
     @Test func updatingWhileABackupFinishes() {
@@ -594,7 +626,7 @@ struct MenuPresentationTests {
         let content = Self.make(Self.status([Self.line(Self.plan())]), health: .updating)
         #expect(content.plans.isEmpty)
         #expect(content.message == "Updating Restorey’s background process…")
-        #expect(content.icon == .ok)
+        #expect(content.icon == .idle)
         let waiting = Self.make(Self.status([Self.line(Self.plan())]), health: .waitingForUpdate)
         #expect(waiting.message == "Updating Restorey’s background process…")
     }
@@ -660,12 +692,12 @@ struct MenuPresentationTests {
 
     @Test func checkingAndUnreadableStatus() {
         let checking = Self.make(nil, health: .checking)
-        #expect(checking.icon == .ok)
+        #expect(checking.icon == .idle)
         #expect(checking.message == "Connecting to Restorey’s background process…")
         #expect(checking.plans.isEmpty)
         let healthyWithoutStatus = Self.make(nil)
         #expect(healthyWithoutStatus.plans.isEmpty)
-        #expect(healthyWithoutStatus.icon == .ok)
+        #expect(healthyWithoutStatus.icon == .idle)
         // Healthy again, with the fresh status still on its way.
         #expect(healthyWithoutStatus.message == "Connecting to Restorey’s background process…")
     }

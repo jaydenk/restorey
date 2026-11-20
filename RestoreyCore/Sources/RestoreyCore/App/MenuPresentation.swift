@@ -237,9 +237,9 @@ public enum MenuPresentation {
         let now = format.now
         switch health {
         case .checking:
-            return MenuContent(icon: .ok, message: "Connecting to Restorey’s background process…")
+            return MenuContent(icon: .idle, message: "Connecting to Restorey’s background process…")
         case .waitingForUpdate:
-            return MenuContent(icon: .ok, message: "Updating Restorey’s background process…")
+            return MenuContent(icon: .idle, message: "Updating Restorey’s background process…")
         case .updating:
             return updating(status: status, format: format)
         case .switchedOff:
@@ -269,7 +269,7 @@ public enum MenuPresentation {
             return MenuContent(icon: .error, message: "Backups couldn’t be set up", messageDetail: sentence)
         case .healthy:
             // Healthy again, with the fresh status still on its way (`shouldRefetchStatus`).
-            guard let status else { return MenuContent(icon: .ok, message: "Connecting to Restorey’s background process…") }
+            guard let status else { return MenuContent(icon: .idle, message: "Connecting to Restorey’s background process…") }
             return healthy(status: status, notificationsAuthorised: notificationsAuthorised, format: format)
         }
     }
@@ -319,7 +319,7 @@ public enum MenuPresentation {
             return tip("Backing up")
         case .paused:
             return tip("Paused")
-        case .ok:
+        case .ok, .idle:
             if let message = content.message, content.plans.isEmpty { return tip(message) }
             guard let newest = status?.plans.compactMap(\.lastBackup).max(by: { $0.endedAt < $1.endedAt }) else {
                 return tip("No backup yet")
@@ -329,7 +329,9 @@ public enum MenuPresentation {
     }
 
     private static func icon(banners: [MenuBanner], plans: [PlanStatus], lines: [PlanLine]) -> StatusIconState {
-        var icon = StatusIconState.ok
+        // The tick only when every plan has a backup that saved the data (`lastBackup`, the record "Backed up at …"
+        // reads); before that, the plain drive.
+        var icon: StatusIconState = !plans.isEmpty && plans.allSatisfy { $0.lastBackup != nil } ? .ok : .idle
         for banner in banners { icon = max(icon, banner.severity == .error ? .error : .warning) }
         for (plan, line) in zip(plans, lines) {
             if let severity = line.severity { icon = max(icon, severity == .error ? .error : .warning) }
@@ -617,7 +619,7 @@ public enum MenuPresentation {
     private static func updating(status: AgentStatus?, format: TextContext) -> MenuContent {
         let running = (status?.plans ?? []).filter { $0.phase.isRunning }
         guard !running.isEmpty else {
-            return MenuContent(icon: .ok, message: "Updating Restorey’s background process…")
+            return MenuContent(icon: .idle, message: "Updating Restorey’s background process…")
         }
         let lines = running.map { plan -> PlanLine in
             var line = PlanLine(
