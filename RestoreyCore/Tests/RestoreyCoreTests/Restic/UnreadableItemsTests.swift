@@ -175,6 +175,17 @@ struct UnreadableItemsTests {
         #expect(UnreadableList.removing(permission.path, from: ["/x"]) == ["/x"])
     }
 
+    /// The row counts the other `/private` spelling as excluded, so Undo takes that spelling out too, or it would do
+    /// nothing (final review).
+    @Test func undoRemovesEitherFirmlinkSpelling() {
+        let short = DefaultExclusions.pattern(forFolder: "/var/x/file")
+        let long = DefaultExclusions.pattern(forFolder: "/private/var/x/file")
+        #expect(UnreadableList.removing("/private/var/x/file", from: ["/x", short, "/y"]) == ["/x", "/y"])
+        #expect(UnreadableList.removing("/var/x/file", from: [long, "/y"]) == ["/y"])
+        #expect(UnreadableList.removing("/var/x/file", from: ["/var/x/other", "/private/Users/x/file"])
+            == ["/var/x/other", "/private/Users/x/file"])
+    }
+
     // MARK: The summary on the Overview and in History
 
     @Test func theSummaryIsOnlyForAWarningWithItems() throws {

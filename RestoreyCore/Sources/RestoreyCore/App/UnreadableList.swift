@@ -102,9 +102,10 @@ public enum UnreadableList {
         return exclusions.contains(pattern) ? exclusions : exclusions + [pattern]
     }
 
-    /// `exclusions` without the pattern for `path`.
+    /// `exclusions` without the pattern for `path`, in either firmlink spelling: the row counts either as excluded
+    /// (`contains`), so Undo takes out whichever the form holds.
     public static func removing(_ path: String, from exclusions: [String]) -> [String] {
         let pattern = DefaultExclusions.pattern(forFolder: path)
-        return exclusions.filter { $0 != pattern }
+        return exclusions.filter { !SourcePaths.sameFirmlinkSpelling($0, pattern) }
     }
 }

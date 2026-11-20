@@ -14,11 +14,10 @@ public enum SourcePaths {
     ///
     /// `/private/tmp`, `/private/var` and `/private/etc` are their short forms (`/tmp`, `/var`, `/etc`): macOS makes
     /// them one place, and the folder picker stores one spelling where a typed path keeps the other (seen live 20 Nov
-    /// 2026). Only those three; `/Users/me` and `/private/Users/me` stay different. A path as written still counts, so
-    /// `/private` contains `/private/tmp/x`.
+    /// 2026). Only those three; `/Users/me` and `/private/Users/me` stay different. `/private` holds the three, so it
+    /// contains `/tmp/x` as well as `/private/tmp/x`.
     public static func containsByPath(_ outer: String, _ inner: String) -> Bool {
         comparableComponents(inner).starts(with: comparableComponents(outer))
-            || components(inner).starts(with: components(outer))
     }
 
     /// Whether `a` and `b` are the same path as `containsByPath` compares them (the firmlink spellings agree). Pure.
@@ -50,10 +49,11 @@ public enum SourcePaths {
     /// The three firmlinks under `/private` that macOS also reaches by a short path.
     private static let firmlinkNames: Set<Substring> = ["tmp", "var", "etc"]
 
-    /// `components`, with a leading `private/tmp`, `private/var` or `private/etc` shortened to `tmp`, `var` or `etc`.
+    /// `components` in the long spelling: a leading `tmp`, `var` or `etc` becomes `private/tmp`, `private/var` or
+    /// `private/etc`. The long spelling, so `/private` is a prefix of both spellings of each.
     private static func comparableComponents(_ path: String) -> [Substring] {
-        var parts = components(path)
-        if parts.count >= 2, parts[0] == "private", firmlinkNames.contains(parts[1]) { parts.removeFirst() }
+        let parts = components(path)
+        if let first = parts.first, firmlinkNames.contains(first) { return ["private"] + parts }
         return parts
     }
 

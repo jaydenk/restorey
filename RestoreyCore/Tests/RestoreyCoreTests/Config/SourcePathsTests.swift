@@ -61,6 +61,13 @@ struct SourcePathsTests {
         }
         #expect(SourcePaths.containsByPath("/private", "/private/tmp/x"))
         #expect(SourcePaths.containsByPath("/private/", "/private/var/backups/repo"))
+        // `/private` holds the firmlinks, so it holds their short spellings too.
+        for name in ["tmp", "var", "etc"] {
+            #expect(SourcePaths.containsByPath("/private", "/\(name)/x"))
+            #expect(SourcePaths.containsByPath("/private/", "/\(name)"))
+        }
+        #expect(!SourcePaths.containsByPath("/private", "/Users/me"))
+        #expect(!SourcePaths.containsByPath("/private/tmpx", "/tmp"))
         #expect(!SourcePaths.containsByPath("/tmp", "/private/tmpx"))
         #expect(!SourcePaths.containsByPath("/tmp/a", "/private/tmp/b"))
         #expect(!SourcePaths.containsByPath("/Users/me", "/private/Users/me"))
