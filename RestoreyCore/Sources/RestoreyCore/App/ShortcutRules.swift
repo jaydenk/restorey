@@ -119,7 +119,7 @@ public enum ShortcutRules {
         guard !actions.plans.isEmpty else { return .failure(unavailable(health: health, content: content, status: status)) }
         guard let planID else {
             let plans = actions.plans.filter(\.canPause).map(\.id)
-            guard !plans.isEmpty else { return .failure(ShortcutRefusal("There’s nothing to pause.")) }
+            guard !plans.isEmpty else { return .failure(ShortcutRefusal("Nothing is backing up, so there’s nothing to pause.")) }
             return .success(ShortcutCall(kind: .pause(plans), dialog: "Backups are paused \(spoken(length))."))
         }
         guard let (choice, plan) = find(planID, actions: actions, status: status) else { return .failure(gone) }
@@ -127,7 +127,9 @@ public enum ShortcutRules {
             switch plan?.phase {
             case .paused?: return .failure(ShortcutRefusal("“\(choice.name)” is already paused."))
             case .stopped?: return .failure(ShortcutRefusal("“\(choice.name)” is stopped, so there’s nothing to pause."))
-            default: return .failure(notReady(choice.name, plan) ?? ShortcutRefusal("“\(choice.name)” can’t be paused now."))
+            default:
+                return .failure(notReady(choice.name, plan)
+                    ?? ShortcutRefusal("“\(choice.name)” isn’t backing up, so there’s nothing to pause."))
             }
         }
         return .success(ShortcutCall(kind: .pause([planID]), dialog: "“\(choice.name)” is paused \(spoken(length))."))

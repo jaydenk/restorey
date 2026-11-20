@@ -37,6 +37,7 @@ extension PlanRunner {
         switch record.operation {
         case .backup:
             noteAttempt(at: record.startedAt, in: &history)
+            history.attemptBeforeRun = nil
             switch record.outcome {
             case .success(let snapshotID):
                 history.lastSuccessAt = ended
@@ -76,6 +77,18 @@ extension PlanRunner {
     static func noteAttempt(at date: Date, in history: inout PlanRunHistory) {
         history.lastAttemptAt = date
         if let until = history.pausedUntil, until <= date { history.pausedUntil = nil }
+    }
+
+    /// A cancelled backup doesn't move the schedule (owner, 20 Nov 2026): `lastAttemptAt` goes back to the slot the
+    /// schedule had, from the attempt before the run (`lastAttemptAfterCancel`).
+    static func keepSchedule(after record: RunRecord, attemptBeforeRun: Date?, plan: Plan, in history: inout PlanRunHistory) {
+        let interval: TimeInterval
+        switch plan.schedule {
+        case .interval(let seconds): interval = TimeInterval(seconds)
+        }
+        history.lastAttemptAt = lastAttemptAfterCancel(
+            previousAttempt: attemptBeforeRun, startedAt: record.startedAt, cancelledAt: record.endedAt,
+            interval: interval)
     }
 
     /// Raises (with fresh notification state) or clears the conditions history decides. The probe-driven

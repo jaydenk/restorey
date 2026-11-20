@@ -52,17 +52,18 @@ an item named for its fix with the problem under it (Allow Full Disk Access…, 
 Turn On in Login Items…); then a section per plan, headed by its name, with its status, progress or next run, and
 destination (choosing it opens the plan in Settings), then that plan's own problems (Finish Setup…, Save Recovery
 Kit…, Add Check-In URL… with Don't Show This Again) and, after a failure, Show Details… for its history; then Resume,
-Back Up Now, Pause and, while a backup runs, Cancel Backup, Restore Files…, Settings… (⌘,) and Quit Restorey. Pause
-opens a submenu of how long: For 1 Hour, For 4 Hours or Until Tomorrow (with several plans, headed All Plans and then
-each plan by name). Cancel Backup stops the backup in progress only: nothing is paused, no alert or check-in is sent,
-and the next backup falls at its normal time (with several backups running, a submenu of All Plans and each running
-plan). Option-click the icon for diagnostics: the
+Back Up Now and, while a backup runs, Pause and Cancel Backup, then Restore Files…, Settings… (⌘,) and Quit Restorey.
+Pause opens a submenu of how long: For 1 Hour, For 4 Hours or Until Tomorrow (with several backups running, headed All
+Plans and then each running plan by name). Cancel Backup stops the backup in progress only: nothing is paused, no alert
+or check-in is sent, and the schedule doesn't move: with a backup every 4 hours, cancelling the 12:00 one still lets the
+16:00 one run (with several backups running, a submenu of All Plans and each running plan). Option-click the icon for diagnostics: the
 app's and the background process's versions, Show Last Run Log, Show Logs in Finder and Copy Diagnostics. Backups run
 from the background agent whether or not the app is open.
 
 **Shortcuts and Spotlight.** Restorey adds five actions to the Shortcuts app and to Spotlight's actions, with no
 setting up: **Back Up Now**, **Pause Backups** (with a Length of For 1 Hour, For 4 Hours or Until Tomorrow; the agent
-refuses any other length), **Cancel Backup** (stops a backup in progress, this run only; refused with “There’s no backup
+refuses any other length; with nothing backing up it's refused with “Nothing is backing up, so there’s nothing to
+pause.”), **Cancel Backup** (stops a backup in progress, this run only; refused with “There’s no backup
 to cancel.” or ““<name>” isn’t backing up.”), **Resume Backups** and **Get Last Backup**, which gives the
 plan's last backup time and outcome as values a shortcut can use (Time, Outcome, Backed Up, Last Successful Backup,
 Summary). Each takes a plan, or none for every plan (Get Last Backup: the newest backup of any plan), and is refused
@@ -78,10 +79,10 @@ lid. Siri can't run them by voice on the Mac: Apple says voice invocation of App
   Restorey's icon and name and "Drag this into the list, then switch it on.", and Open System Settings; once it is on,
   it is one row with a green tick and "Full Disk Access is on".
 - **Plans**: the plans in a list with + (Add Plan…) and − (Delete Plan…) under it, and the selected plan's six tabs.
-  A plan's context menu has Back Up Now, Pause (a submenu of For 1 Hour, For 4 Hours and Until Tomorrow) or Resume,
-  Cancel Backup while it runs, Restore Files…, Show in History and Delete Plan….
-  **Overview** (its state; Back Up Now, with Pause (a pull-down menu of the three lengths) or Resume beside it, and
-  Cancel Backup while a backup runs; Restore Files…; the last and next backup; and
+  A plan's context menu has Back Up Now, Resume while it's paused, Pause (a submenu of For 1 Hour, For 4 Hours and
+  Until Tomorrow) and Cancel Backup while it runs, Restore Files…, Show in History and Delete Plan….
+  **Overview** (its state; Back Up Now, with Pause (a pull-down menu of the three lengths) and Cancel Backup beside it
+  while a backup runs, or Resume while paused; Restore Files…; the last and next backup; and
   any iCloud files skipped); **Folders** (the name, folders, drives and exclusions; drag folders and drives from
   Finder into the Folders list or the exclusions list, and press Delete to remove the selected ones). The Folders list
   keeps three rules (`FolderDrop`, paths compared by whole components and by where a link leads): a folder inside one
@@ -373,8 +374,9 @@ of refusing (an agent from before it answered with a bare status, which still de
 and carrying on counts: a run stopping for a pause (or any other stop), a run in its maintenance after the backup step
 (forget, prune, check), or a one-off action such as an adopt, still gets the "is already backing up" refusal, as before;
 only Resume queues a backup behind a stopping run (Ruling R62). The agent’s `cancel` call (v0.1.1) stops only the run in
-progress: it ends cancelled with no ping, alert or maintenance, sets no pause, and the next backup falls at its normal
-time; with no run in progress it changes nothing, a run a pause is already stopping stays paused, and, like Pause, it is
+progress: it ends cancelled with no ping, alert or maintenance, sets no pause, and the schedule doesn't move (the
+history keeps the attempt before the run in `attemptBeforeRun`, and `lastAttemptAfterCancel` puts `lastAttemptAt` back
+to the old schedule's slot); with no run in progress it changes nothing, a run a pause is already stopping stays paused, and, like Pause, it is
 allowed while the agent is draining. The agent's log records a Cancel only when it stopped something. The progress line
 (`FirstBackupProgress`) is the menu's wording, plus "Waiting to start" while the run has no progress yet (queued behind
 an adopt's size measurement, say). Closing the window leaves the backup running. Every agent sentence shown in setup
@@ -443,7 +445,8 @@ stays under every tab, dimmed where there is nothing to save, so the page doesn'
 The plan list is a bordered list with the
 standard square + and − buttons under it (`SquareButton`, AppKit's `.smallSquare` bezel; HIG Buttons, "Square
 buttons"), as Mail's Accounts and Users & Groups have; Delete (⌫) and the row's context menu delete too. The row's
-context menu (Task 17e) also has the menu's Back Up Now, Pause (Resume while the plan is paused) and Restore Files…,
+context menu (Task 17e) also has the menu's Back Up Now, Resume (while the plan is paused), Pause and Cancel Backup
+(while it backs up) and Restore Files…,
 enabled as the status menu's items are for that plan (its `PlanChoice` from `MenuPresentation`, the same inputs) and
 asking the agent the same way (`AgentActions`), and Show in History, which opens History filtered to the plan as the
 menu's "Show Details…" does. Delete Plan… there asks first, as − does. Nothing in it is new: each item is elsewhere

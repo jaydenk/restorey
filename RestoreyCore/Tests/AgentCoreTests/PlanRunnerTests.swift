@@ -1522,6 +1522,31 @@ struct PlanRunnerTests {
             == max(lastAttemptAt.addingTimeInterval(TimeInterval(seconds)), f.clock.now))
     }
 
+    /// Owner, 20 Nov 2026: cancelling never moves the schedule. A Back Up Now half an hour after the last backup (the
+    /// plan runs hourly), cancelled, leaves the next backup at the last backup plus the interval, not the cancelled
+    /// run's start plus the interval.
+    @Test func cancellingABackUpNowLeavesTheScheduleWhereItWas() async throws {
+        let stepped = try steppedBackupStub([.out(Self.cancelStatus), .out(Self.cancelSummary)])
+        defer { stepped.finish() }
+        let f = try await RunnerFixture.make(executable: stepped.stub)
+        defer { f.remove() }
+        let lastBackup = f.clock.now.addingTimeInterval(-1800)
+        try await f.state.updateHistory(f.planID) { $0.lastAttemptAt = lastBackup }
+
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .manual) }
+        try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
+        _ = try await f.state.cancel(f.planID)
+        #expect(try await run.value.outcome == .cancelled)
+
+        let history = await f.history()
+        let plan = await f.plan()
+        guard case .interval(let seconds) = plan.schedule else { Issue.record("expected an interval schedule"); return }
+        #expect(history.lastAttemptAt == lastBackup)
+        #expect(history.attemptBeforeRun == nil, "cleared once the run has its record")
+        #expect(nextRunDate(plan: plan, history: history, now: f.clock.now)
+            == lastBackup.addingTimeInterval(TimeInterval(seconds)))
+    }
+
     /// Review focus 4: a Cancel that arrives after the run ended changes nothing and records nothing.
     @Test func cancelAfterTheRunEndedDoesNothing() async throws {
         let f = try await RunnerFixture.make()

@@ -240,13 +240,18 @@ public enum MenuLayout {
         return rows
     }
 
-    /// Pause's one submenu level (HIG): the three lengths for a single plan; with several, a section header for all
-    /// plans and one per plan, each with the three lengths, dimmed for a plan that can't be paused. The headers aren't
-    /// read with the items under them, so each length says what it pauses for VoiceOver.
+    /// Pause, only while a backup runs (owner, 20 Nov 2026), in one submenu level (HIG): the three lengths for the one
+    /// running plan; with several running, a section header for all of them and one per running plan, each with the
+    /// three lengths. The headers aren't read with the items under them, so each length says what it pauses for
+    /// VoiceOver.
     private static func pauseRow(_ submenus: Bool, _ plans: [PlanChoice]) -> MenuRow {
         guard submenus else { return .submenu(title: "Pause", items: lengths({ .pauseAll($0) }, enabled: true, spoken: nil)) }
+        let running = plans.filter(\.canPause)
+        if running.count == 1, let only = running.first {
+            return .submenu(title: "Pause", items: lengths({ .pause(only.id, $0) }, enabled: true, spoken: only.name))
+        }
         var items: [MenuRow] = [.header("All Plans")] + lengths({ .pauseAll($0) }, enabled: true, spoken: "all plans")
-        for plan in plans {
+        for plan in running {
             items.append(.header(plan.name))
             items += lengths({ .pause(plan.id, $0) }, enabled: plan.canPause, spoken: plan.name)
         }

@@ -17,6 +17,27 @@ public func isShortRetry(_ history: PlanRunHistory) -> Bool {
     }
 }
 
+/// The `lastAttemptAt` a cancelled backup leaves behind, so that cancelling never moves the schedule (owner, 20 Nov
+/// 2026): with a backup every 4 hours, cancelling the 12:00 one still lets the 16:00 one run. Pure, like `nextRunDate`.
+///
+/// The schedule's slots are `previousAttempt` plus whole intervals.
+/// - Cancelled before the next slot was due (a Back Up Now or Resume between slots): `previousAttempt`, as if the run
+///   had never started.
+/// - Otherwise the newest slot at or before `cancelledAt`: the slot the run filled (a catch-up that started late still
+///   fills its slot), or, for a cancel after further slots went by, the newest of those, so the next backup is the
+///   next slot and never an immediate restart.
+/// - With no `previousAttempt`, one after `startedAt` (the clock went backwards) or no usable interval, there is no
+///   schedule to keep: `startedAt`, as for any other attempt.
+public func lastAttemptAfterCancel(
+    previousAttempt: Date?, startedAt: Date, cancelledAt: Date, interval: TimeInterval
+) -> Date {
+    guard let previous = previousAttempt, previous <= startedAt, interval > 0 else { return startedAt }
+    let due = previous.addingTimeInterval(interval)
+    guard cancelledAt >= due else { return previous }
+    let slotsSinceDue = (cancelledAt.timeIntervalSince(due) / interval).rounded(.down)
+    return due.addingTimeInterval(slotsSinceDue * interval)
+}
+
 /// When `plan` should next run, anacron-style. A pure function of its inputs: it never reads the
 /// clock or the time zone, and intervals are elapsed seconds, so a time zone or daylight saving
 /// change cannot move a run. The caller decides what `now` is.

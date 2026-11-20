@@ -102,10 +102,10 @@ enum PauseLengthOption: String, AppEnum {
 struct PauseBackupsIntent: AppIntent {
     static let title: LocalizedStringResource = "Pause Backups"
     static let description = IntentDescription(
-        "Pauses backups for an hour, 4 hours or until tomorrow, as Pause in Restorey’s menu does, stopping a backup in progress. They resume by themselves. With no plan chosen, every plan is paused.")
+        "Stops a backup in progress and holds off backups for an hour, 4 hours or until tomorrow, as Pause in Restorey’s menu does. They resume by themselves. With no plan chosen, every backup in progress is paused; with nothing backing up, there’s nothing to pause.")
     static let supportedModes: IntentModes = .background
 
-    @Parameter(title: "Plan", description: "The plan to pause. Leave it empty to pause every plan.")
+    @Parameter(title: "Plan", description: "The plan to pause. Leave it empty to pause every backup in progress.")
     var plan: PlanEntity?
 
     @Parameter(title: "Length", description: "How long to pause for.", default: .oneHour)

@@ -89,9 +89,10 @@ struct MenuPresentationTests {
         #expect(line.progress == nil)
         #expect(line.severity == nil)
         #expect(!line.isPaused)
+        // Idle: nothing to pause (owner, 20 Nov 2026).
         #expect(content.actions == MenuActions(
-            backUpNow: true, pause: true, resume: false, perPlanSubmenus: false,
-            plans: [PlanChoice(id: plan.id, name: "MacBook", canBackUp: true, canPause: true, canResume: false, canRestore: true)]))
+            backUpNow: true, pause: false, resume: false, perPlanSubmenus: false,
+            plans: [PlanChoice(id: plan.id, name: "MacBook", canBackUp: true, canPause: false, canResume: false, canRestore: true)]))
     }
 
     @Test func destinationHasNoSizeBeforeTheFirstMeasurement() {
@@ -198,9 +199,10 @@ struct MenuPresentationTests {
         #expect(content.actions.perPlanSubmenus)
         #expect(content.actions.backUpNow)
         #expect(content.actions.cancel)
-        // Per plan for the submenus: the running one can't be backed up again, but can be paused or cancelled.
+        // Per plan for the submenus: the running one can't be backed up again, but can be paused or cancelled; the idle
+        // one has nothing to pause (owner, 20 Nov 2026).
         #expect(content.actions.plans == [
-            PlanChoice(id: idle.id, name: "MacBook", canBackUp: true, canPause: true, canResume: false, canRestore: true),
+            PlanChoice(id: idle.id, name: "MacBook", canBackUp: true, canPause: false, canResume: false, canRestore: true),
             PlanChoice(
                 id: photos.id, name: "Photos drive", canBackUp: false, canPause: true, canResume: false, canRestore: true,
                 canCancel: true),

@@ -18,11 +18,13 @@ struct MenuLayoutTests {
     }
 
     private static func choice(
-        _ id: UUID, _ name: String, backUp: Bool = true, pause: Bool = true, resume: Bool = false, restore: Bool = true,
+        _ id: UUID, _ name: String, backUp: Bool = true, pause: Bool? = nil, resume: Bool = false, restore: Bool = true,
         cancel: Bool = false
     ) -> PlanChoice {
+        // As `MenuPresentation` decides it, a plan can be paused exactly when it can be cancelled: while it backs up.
         PlanChoice(
-            id: id, name: name, canBackUp: backUp, canPause: pause, canResume: resume, canRestore: restore, canCancel: cancel)
+            id: id, name: name, canBackUp: backUp, canPause: pause ?? cancel, canResume: resume, canRestore: restore,
+            canCancel: cancel)
     }
 
     private static func actions(_ plans: [PlanChoice]) -> MenuActions {
@@ -62,7 +64,6 @@ struct MenuLayoutTests {
                 command: .openPlan(Self.a), accessibilityLabel: "MacBook, Backed up at 14:16, Next 15:16, B2 · my-backups")),
             .separator,
             Self.button("Back Up Now", .backUpAll),
-            .submenu(title: "Pause", items: Self.lengths { .pauseAll($0) }),
             Self.button("Restore Files…", .restoreFiles(Self.a)),
         ] + Self.tail)
     }
@@ -70,12 +71,12 @@ struct MenuLayoutTests {
     /// Each plan is a section of its own, its name the header. Back Up Now and Pause act on every plan from the
     /// submenu's first item, or on one plan below it (an item with a submenu can't have an action of its own).
     @Test func severalPlansGetSectionsAndSubmenus() {
-        let plans = [Self.choice(Self.a, "MacBook"), Self.choice(Self.b, "Photos", backUp: false)]
+        let plans = [Self.choice(Self.a, "MacBook"), Self.choice(Self.b, "Photos", backUp: false, cancel: true)]
         let photos = Self.line(Self.b, "Photos", status: "Backing up", menuDetail: nil, progress: 0.42, running: true)
         let content = MenuContent(
             icon: .backingUp, plans: [Self.line(Self.a, "MacBook"), photos], actions: Self.actions(plans))
         let rows = MenuLayout.rows(content, developer: true)
-        #expect(rows.count == 14)
+        #expect(rows.count == 15)
         #expect(Array(rows[2...5]) == [
             .separator,
             .header("Photos"),
@@ -92,10 +93,8 @@ struct MenuLayoutTests {
                 Self.button("MacBook", .backUp(Self.a)),
                 Self.button("Photos", .backUp(Self.b), enabled: false),
             ]),
-            .submenu(title: "Pause", items:
-                [MenuRow.header("All Plans")] + Self.lengths({ .pauseAll($0) }, label: "all plans")
-                + [.header("MacBook")] + Self.lengths({ .pause(Self.a, $0) }, label: "MacBook")
-                + [.header("Photos")] + Self.lengths({ .pause(Self.b, $0) }, label: "Photos")),
+            .submenu(title: "Pause", items: Self.lengths({ .pause(Self.b, $0) }, label: "Photos")),
+            Self.button("Cancel Backup", .cancel(Self.b)),
             .submenu(title: "Restore Files…", items: [
                 Self.button("MacBook", .restoreFiles(Self.a)),
                 Self.button("Photos", .restoreFiles(Self.b)),
@@ -107,15 +106,27 @@ struct MenuLayoutTests {
         ])
     }
 
-    /// Pause with several plans: a section header for all plans and for each plan, each with the three lengths. A plan
-    /// that can't be paused has its lengths dimmed; the submenu stays available (audit P2).
-    @Test func pauseListsEachLengthUnderAllPlansAndUnderEachPlan() {
-        let plans = [Self.choice(Self.a, "MacBook"), Self.choice(Self.b, "Photos", pause: false)]
-        let rows = MenuLayout.rows(MenuContent(icon: .ok, actions: Self.actions(plans)), developer: false)
+    /// Pause with several plans backing up: a section header for all of them and for each running plan, each with the
+    /// three lengths. A plan that isn't backing up isn't listed (owner, 20 Nov 2026: nothing to pause).
+    @Test func pauseListsEachLengthUnderAllPlansAndUnderEachRunningPlan() {
+        let plans = [
+            Self.choice(Self.a, "MacBook", backUp: false, cancel: true),
+            Self.choice(Self.b, "Photos", backUp: false, cancel: true),
+            Self.choice(UUID(), "Idle"),
+        ]
+        let rows = MenuLayout.rows(MenuContent(icon: .backingUp, actions: Self.actions(plans)), developer: false)
         #expect(rows.contains(.submenu(title: "Pause", items:
             [MenuRow.header("All Plans")] + Self.lengths({ .pauseAll($0) }, label: "all plans")
             + [.header("MacBook")] + Self.lengths({ .pause(Self.a, $0) }, label: "MacBook")
-            + [.header("Photos")] + Self.lengths({ .pause(Self.b, $0) }, enabled: false, label: "Photos"))))
+            + [.header("Photos")] + Self.lengths({ .pause(Self.b, $0) }, label: "Photos"))))
+    }
+
+    /// With nothing backing up there is no Pause at all, as there is no Cancel Backup.
+    @Test func pauseAppearsOnlyWhileABackupRuns() {
+        let idle = MenuLayout.rows(
+            MenuContent(icon: .ok, actions: Self.actions([Self.choice(Self.a, "MacBook"), Self.choice(Self.b, "Photos")])),
+            developer: false)
+        #expect(!idle.contains { if case .submenu(let title, _) = $0 { title == "Pause" } else { false } })
     }
 
     /// Cancel Backup is there only while a backup runs, after Pause.
@@ -195,7 +206,7 @@ struct MenuLayoutTests {
 
     /// Fix round 1: whether the actions get submenus is `perPlanSubmenus`, decided once by `MenuPresentation`.
     @Test func submenusFollowPerPlanSubmenus() {
-        var actions = Self.actions([Self.choice(Self.a, "MacBook"), Self.choice(Self.b, "Photos")])
+        var actions = Self.actions([Self.choice(Self.a, "MacBook"), Self.choice(Self.b, "Photos", cancel: true)])
         actions.perPlanSubmenus = false
         let rows = MenuLayout.rows(MenuContent(icon: .ok, actions: actions), developer: false)
         #expect(rows.contains(Self.button("Back Up Now", .backUpAll)))

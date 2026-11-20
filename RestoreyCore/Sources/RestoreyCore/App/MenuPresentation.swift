@@ -348,7 +348,8 @@ public enum MenuPresentation {
             return PlanChoice(
                 id: plan.plan.id, name: plan.plan.name,
                 canBackUp: ready && !plan.phase.isRunning,
-                canPause: ready && !plan.phase.isPaused && !plan.phase.isStopped,
+                // Only a backup in progress can be paused (owner, 20 Nov 2026), as only one can be cancelled.
+                canPause: ready && plan.phase.isRunning,
                 canResume: ready && plan.phase.isPaused, canRestore: plan.setupState != .unfinished,
                 canCancel: ready && plan.phase.isRunning)
         }

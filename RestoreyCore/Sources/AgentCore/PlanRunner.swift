@@ -787,7 +787,10 @@ public actor PlanRunner {
             await write(plan.id) { history in
                 history.runningRecord = provisional
                 history.runningRecordID = id
-                if op == .backup { Self.noteAttempt(at: startedAt, in: &history) }
+                if op == .backup {
+                    history.attemptBeforeRun = history.lastAttemptAt
+                    Self.noteAttempt(at: startedAt, in: &history)
+                }
             }
         }
 
@@ -918,7 +921,11 @@ public actor PlanRunner {
                 history.runningRecord = nil
             }
             history.record(record)
+            let attemptBeforeRun = history.attemptBeforeRun
             Self.apply(record, stoppedReason: stoppedReason, to: &history)
+            if record.operation == .backup, record.outcome == .cancelled {
+                Self.keepSchedule(after: record, attemptBeforeRun: attemptBeforeRun, plan: plan, in: &history)
+            }
             switch fda {
             case .missing?:
                 if history.activeAlerts[.fullDiskAccessMissing] == nil {

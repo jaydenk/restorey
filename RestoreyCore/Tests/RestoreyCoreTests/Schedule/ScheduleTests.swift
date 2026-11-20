@@ -246,4 +246,59 @@ struct ScheduleTests {
     @Test func zeroIntervalPlanNeverRuns() {
         #expect(nextRunDate(plan: plan(interval: 0), history: PlanRunHistory(), now: Self.now) == .distantFuture)
     }
+
+    // MARK: Cancel keeps the schedule (owner, 20 Nov 2026)
+
+    private static let fourHours: TimeInterval = 4 * 3600
+    /// 12:00 on the test day: the scheduled backup's time in the owner's example.
+    private static let noon = Date(timeIntervalSince1970: 1_800_000_000)
+
+    private func kept(previous: Date?, started: Date, cancelled: Date) -> Date {
+        lastAttemptAfterCancel(
+            previousAttempt: previous, startedAt: started, cancelledAt: cancelled, interval: Self.fourHours)
+    }
+
+    /// The owner's example: every 4 hours, the 12:00 backup is cancelled, and the 16:00 one runs as planned.
+    @Test func cancellingTheScheduledBackupKeepsTheNextSlot() {
+        let previous = Self.noon.addingTimeInterval(-Self.fourHours)  // 08:00
+        let anchor = kept(previous: previous, started: Self.noon, cancelled: Self.noon.addingTimeInterval(300))
+        #expect(anchor == Self.noon)
+        #expect(anchor.addingTimeInterval(Self.fourHours) == Self.noon.addingTimeInterval(Self.fourHours))
+    }
+
+    /// A Back Up Now (or Resume) at 12:37, between the 12:24 backup and the 16:24 one, cancelled a minute later:
+    /// the 16:24 backup still runs (live check on build 832 moved it to 16:37).
+    @Test func cancellingAnEarlyBackupLeavesTheScheduleAlone() {
+        let previous = Self.noon.addingTimeInterval(24 * 60)  // 12:24
+        let started = Self.noon.addingTimeInterval(37 * 60)  // 12:37
+        #expect(kept(previous: previous, started: started, cancelled: started.addingTimeInterval(60)) == previous)
+    }
+
+    /// A late start (the Mac was asleep at 12:00 and caught up at 13:10) still fills the 12:00 slot: 16:00 is next.
+    @Test func cancellingACatchUpKeepsTheSlotItFilled() {
+        let previous = Self.noon.addingTimeInterval(-Self.fourHours)
+        let started = Self.noon.addingTimeInterval(70 * 60)
+        #expect(kept(previous: previous, started: started, cancelled: started.addingTimeInterval(60)) == Self.noon)
+    }
+
+    /// A cancel after one or more slots went by (a long backup, or a catch-up hours late) lands on the newest slot that
+    /// has passed, so the next backup is the next slot, never an immediate restart.
+    @Test func cancellingAfterSlotsWentByWaitsForTheNextOne() {
+        let previous = Self.noon.addingTimeInterval(-Self.fourHours)
+        let cancelled = Self.noon.addingTimeInterval(6.5 * 3600)  // 18:30, after the 16:00 slot
+        #expect(kept(previous: previous, started: Self.noon, cancelled: cancelled) == Self.noon.addingTimeInterval(Self.fourHours))
+        let lateCatchUp = Self.noon.addingTimeInterval(8 * 3600)  // 20:00 exactly: that slot is the one filled
+        #expect(kept(previous: previous, started: lateCatchUp, cancelled: lateCatchUp.addingTimeInterval(60)) == lateCatchUp)
+    }
+
+    /// With no earlier attempt there is no schedule to keep yet, and a clock that went backwards can't be trusted: the
+    /// start time stands, as for any other attempt.
+    @Test func cancellingWithNoUsableEarlierAttemptCountsFromTheStart() {
+        let started = Self.noon
+        #expect(kept(previous: nil, started: started, cancelled: started.addingTimeInterval(60)) == started)
+        #expect(kept(previous: started.addingTimeInterval(3600), started: started, cancelled: started) == started)
+        #expect(lastAttemptAfterCancel(
+            previousAttempt: started.addingTimeInterval(-3600), startedAt: started, cancelledAt: started, interval: 0)
+            == started)
+    }
 }

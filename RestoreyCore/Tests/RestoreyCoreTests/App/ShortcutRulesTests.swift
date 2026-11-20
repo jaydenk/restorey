@@ -170,7 +170,9 @@ struct ShortcutRulesTests {
 
     @Test func pauseSaysHowLongForEachLength() {
         let home = Self.plan("Home"), photos = Self.plan("Photos")
-        let status = Self.status([Self.line(home), Self.line(photos)])
+        let status = Self.status([
+            Self.line(home, phase: .running(nil, retrying: nil)), Self.line(photos, phase: .running(nil, retrying: nil)),
+        ])
         let all: [PauseLength: String] = [
             .oneHour: "Backups are paused for an hour.", .fourHours: "Backups are paused for 4 hours.",
             .oneDay: "Backups are paused until tomorrow.",
@@ -193,7 +195,7 @@ struct ShortcutRulesTests {
         for length in PauseLength.allCases {
             #expect(Self.pause(paused.id, status, length: length)
                 == .failure(ShortcutRefusal("“Paused” is already paused.")))
-            #expect(Self.pause(nil, status, length: length) == .failure(ShortcutRefusal("There’s nothing to pause.")))
+            #expect(Self.pause(nil, status, length: length) == .failure(ShortcutRefusal("Nothing is backing up, so there’s nothing to pause.")))
         }
     }
 
@@ -234,8 +236,11 @@ struct ShortcutRulesTests {
             Self.line(home), Self.line(photos, phase: .running(nil, retrying: nil)),
             Self.line(paused, phase: .paused(until: Self.at(15, 0))),
         ])
+        // Only a backup in progress is paused (owner, 20 Nov 2026): the idle "Home" is left alone, and refused by name.
         #expect(Self.pause(nil, status)
-            == .success(ShortcutCall(kind: .pause([home.id, photos.id]), dialog: "Backups are paused for an hour.")))
+            == .success(ShortcutCall(kind: .pause([photos.id]), dialog: "Backups are paused for an hour.")))
+        #expect(Self.pause(home.id, status)
+            == .failure(ShortcutRefusal("“Home” isn’t backing up, so there’s nothing to pause.")))
         #expect(Self.pause(photos.id, status)
             == .success(ShortcutCall(kind: .pause([photos.id]), dialog: "“Photos” is paused for an hour.")))
         #expect(Self.pause(paused.id, status) == .failure(ShortcutRefusal("“Paused” is already paused.")))
@@ -247,7 +252,7 @@ struct ShortcutRulesTests {
         #expect(Self.pause(stopped.id, status)
             == .failure(ShortcutRefusal("“Stopped” is stopped, so there’s nothing to pause.")))
         #expect(Self.pause(unfinished.id, status) == .failure(ShortcutRefusal("“New” hasn’t finished setup.")))
-        #expect(Self.pause(nil, status) == .failure(ShortcutRefusal("There’s nothing to pause.")))
+        #expect(Self.pause(nil, status) == .failure(ShortcutRefusal("Nothing is backing up, so there’s nothing to pause.")))
     }
 
     @Test func resumeOnlyWhatIsPaused() {
