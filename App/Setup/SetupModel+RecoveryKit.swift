@@ -5,8 +5,9 @@ import RestoreyCore
 /// being set up, fetched when the step shows and dropped when it goes (`closeRecoveryKit`, from `go(to:)`,
 /// `startAgain` and `close`). No Touch ID here: the user has just chosen or typed the password.
 ///
-/// The tick only records `SetupProgress.kitSaved`; the agent's `confirmRecoveryKit` waits for Done's "Start
-/// First Backup" (`SetupFlow`), so the plan can't run while its sources and schedule are still being chosen.
+/// The tick only records `SetupProgress.kitSaved`, with the kit's digest; the agent's `confirmRecoveryKit` waits for
+/// Done's "Start First Backup" (`SetupFlow`), so the plan can't run while its sources and schedule are still being
+/// chosen.
 extension SetupModel {
     /// The kit can show only once the repository's own password is saved: this setup created the repository with
     /// it, or adopted one it opens (`PasswordStep.decide`'s recorded facts). Until then the plan holds the random
@@ -14,7 +15,8 @@ extension SetupModel {
     var kitBlockedByStandInPassword: Bool { !repositoryReady }
 
     /// Fetches the kit when the step shows it. Waits for the plan first (a resumed setup), and does nothing while
-    /// the stand-in password is all there is.
+    /// the stand-in password is all there is. A tick given for a kit other than the one now shown (the details changed
+    /// since, or Done found them changed) is cleared: the kit to save is this one.
     func openRecoveryKit() async {
         await loadPlan()
         guard step == .recoveryKit, !kitBlockedByStandInPassword, let plan = draft.plan, let supervisor else { return }
@@ -24,6 +26,7 @@ extension SetupModel {
         }
         guard let kit = recoveryKit, kit.state == .idle else { return }
         await kit.load()
+        if kitSaved, let shown = kit.document?.digest, shown != draft.progress.kitDigest { kitSaved = false }
     }
 
     func closeRecoveryKit() {

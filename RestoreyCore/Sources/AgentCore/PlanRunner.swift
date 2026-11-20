@@ -256,6 +256,38 @@ public actor PlanRunner {
         return BackUpNowReply(status: await deps.state.status(), alreadyRunning: alreadyRunning)
     }
 
+    /// Setup's Start (Task 9): confirms the kit the person saved (`kitDigest`, checked by the state) and starts the
+    /// plan's first backup, a manual one, in the background. The run's handle is registered first, as `begin` does, so a
+    /// pause or Cancel reaches it from the moment the plan shows confirmed; the state then saves the confirmation and
+    /// registers the run in one step (`AgentState.confirmKit`). Any refusal confirms nothing and starts nothing.
+    func startFirstBackup(planID: UUID, kitDigest: String?) async throws -> AgentStatus {
+        await recovery?.value
+        try await deps.state.requireRunnable(planID)
+        if handles[planID] != nil {
+            let name = (try? await deps.state.runInputs(planID).plan.name) ?? "This plan"
+            throw AgentError.alreadyRunning(name: name)
+        }
+        let handle = RunHandle(isBackup: true)
+        handles[planID] = handle
+        let confirmed: (status: AgentStatus, began: Bool)
+        do {
+            confirmed = try await deps.state.confirmKit(planID, kitDigest: kitDigest, beginningRun: true)
+        } catch {
+            if handles[planID] === handle { handles[planID] = nil }
+            throw error
+        }
+        guard confirmed.began else {
+            if handles[planID] === handle { handles[planID] = nil }
+            return confirmed.status
+        }
+        background[planID] = Task {
+            let record = await backup(planID: planID, trigger: .manual, handle: handle)
+            await end(planID, handle)
+            return record
+        }
+        return confirmed.status
+    }
+
     /// On agent start, before the runner is attached to the state: turns every run still marked in
     /// progress into an `.interrupted` record (an interrupted backup also sends its `/fail` ping), then
     /// runs a plain `unlock` once per repository, through its queue (Review Focus 3). Calling it again

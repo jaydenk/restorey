@@ -312,6 +312,21 @@ struct MessagesTests {
         #expect(decoded.outcome == .unknown)
     }
 
+    /// Task 9: `confirmRecoveryKit` carries a `ConfirmRecoveryKitRequest` in the string an app from before it sent the
+    /// bare plan ID in. That old message still reads, as a confirmation with no digest to check that starts nothing.
+    @Test func confirmRecoveryKitRequestReadsTheOldBarePlanIDAndRoundTrips() throws {
+        let old = try ConfirmRecoveryKitRequest(message: Self.planID.uuidString)
+        #expect(old == ConfirmRecoveryKitRequest(planID: Self.planID, kitDigest: nil, startFirstBackup: false))
+        #expect(try old.message() == Self.planID.uuidString, "a plain confirmation reads the same to an older agent")
+        let new = ConfirmRecoveryKitRequest(planID: Self.planID, kitDigest: "ab12", startFirstBackup: true)
+        #expect(try ConfirmRecoveryKitRequest(message: new.message()) == new)
+        #expect(try new.message() == #"{"kitDigest":"ab12","planID":"6F1C2E1A-0000-4000-8000-000000000001","startFirstBackup":true}"#)
+        // The added keys are optional, as Task 4's `cancelOutcome` is.
+        let bare = #"{"planID":"6F1C2E1A-0000-4000-8000-000000000001"}"#
+        #expect(try ConfirmRecoveryKitRequest(message: bare) == old)
+        #expect(throws: (any Error).self) { try ConfirmRecoveryKitRequest(message: "not a plan") }
+    }
+
     @Test func recoveryKitSecretsRoundTrip() throws {
         try roundTrip(RecoveryKitSecrets(plan: Self.plan(), secrets: [
             SecretEntry(key: .repositoryPassword(Self.planID), value: "pa ss\"wörd\n"),

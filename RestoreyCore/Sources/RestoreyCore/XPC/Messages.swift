@@ -26,6 +26,52 @@ public struct PauseRequest: Codable, Sendable, Equatable {
     }
 }
 
+// MARK: Recovery kit
+
+/// `confirmRecoveryKit`'s request (Task 9), sent as JSON in the string an app from before it sent the bare plan ID in.
+/// That bare ID still reads, as a confirmation with no digest to check that starts nothing, which is what it always
+/// was; the added keys are optional in the JSON too.
+public struct ConfirmRecoveryKitRequest: Codable, Sendable, Equatable {
+    public var planID: UUID
+    /// `RecoveryKitDocument.digest` of the kit the person saved. The agent refuses the confirmation when it no longer
+    /// matches the plan it stores; nil checks nothing.
+    public var kitDigest: String?
+    /// Setup's Start: the agent starts the first backup itself, together with the confirmation, so the scheduler never
+    /// finds the plan due before it.
+    public var startFirstBackup: Bool
+
+    public init(planID: UUID, kitDigest: String?, startFirstBackup: Bool) {
+        self.planID = planID
+        self.kitDigest = kitDigest
+        self.startFirstBackup = startFirstBackup
+    }
+
+    private enum CodingKeys: String, CodingKey { case planID, kitDigest, startFirstBackup }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        planID = try c.decode(UUID.self, forKey: .planID)
+        kitDigest = try c.decodeIfPresent(String.self, forKey: .kitDigest)
+        startFirstBackup = try c.decodeIfPresent(Bool.self, forKey: .startFirstBackup) ?? false
+    }
+
+    /// Reads the string `confirmRecoveryKit` carries: a bare plan ID (an app from before this type) or the JSON.
+    public init(message: String) throws {
+        if let planID = UUID(uuidString: message) {
+            self.init(planID: planID, kitDigest: nil, startFirstBackup: false)
+        } else {
+            self = try XPCCoding.decode(Self.self, from: Data(message.utf8))
+        }
+    }
+
+    /// The string `confirmRecoveryKit` carries: the bare plan ID when there is nothing more to say, which an agent from
+    /// before this type reads too, otherwise the JSON.
+    public func message() throws -> String {
+        if kitDigest == nil, !startFirstBackup { return planID.uuidString }
+        return String(decoding: try XPCCoding.encode(self), as: UTF8.self)
+    }
+}
+
 // MARK: Handshake
 
 /// The app's half of the version handshake (spec §8).

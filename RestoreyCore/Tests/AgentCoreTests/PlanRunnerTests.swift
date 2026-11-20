@@ -1800,6 +1800,60 @@ struct PlanRunnerTests {
         #expect(await f.status().phase == .idle)
     }
 
+    /// Task 9 (final review rows 233, 246): setup's Start confirms the kit it showed and starts the first backup in one
+    /// call. The confirmation and the run appear in the same status, so no status (and no scheduler read) ever has the
+    /// plan confirmed but not running: it is never "due", and the backup that runs is this manual one.
+    @Test func confirmingTheShownKitStartsTheFirstBackupInTheSameTurn() async throws {
+        let f = try await RunnerFixture.make(confirmKit: false)
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        let shown = RecoveryKitDocument.make(try await f.state.recoveryKit(f.planID), createdAt: f.clock.now).digest
+        let firstConfirmed = Locked<PlanPhase?>(nil)
+        let planID = f.planID
+        await f.state.setStatusObserver { status in
+            guard let plan = status.plans.first(where: { $0.plan.id == planID }), plan.plan.recoveryKitConfirmedAt != nil
+            else { return }
+            firstConfirmed.mutate { if $0 == nil { $0 = plan.phase } }
+        }
+
+        let status = try await f.state.confirmRecoveryKit(planID: f.planID, kitDigest: shown, startFirstBackup: true)
+        #expect(status.plans.first?.setupState == .complete)
+        #expect(status.plans.first?.phase.isRunning == true)
+        #expect(firstConfirmed.value?.isRunning == true, "confirmed and running appeared together")
+        let record = try #require(await f.runner.waitForBackgroundRun(planID: f.planID))
+        #expect(record.trigger == .manual)
+        guard case .success = record.outcome else {
+            Issue.record("expected a success, got \(record.outcome)")
+            return
+        }
+        #expect(await f.history().recent.filter { $0.operation == .backup }.map(\.id) == [record.id])
+    }
+
+    /// A kit shown before its keys changed confirms nothing and starts nothing; the plan stays free to start once the
+    /// new kit is confirmed.
+    @Test func aStaleKitNeitherConfirmsNorStartsTheFirstBackup() async throws {
+        let f = try await RunnerFixture.make(confirmKit: false)
+        defer { f.remove() }
+        try f.write("a.txt", "one")
+        let stale = RecoveryKitDocument.digest(for: await f.plan())
+        try await f.updatePlan { $0.hostLabel = "otherhost" }
+
+        await #expect { try await f.state.confirmRecoveryKit(planID: f.planID, kitDigest: stale, startFirstBackup: true) }
+            throws: { ($0 as? AgentError) == .recoveryKitChanged }
+        #expect(await f.plan().recoveryKitConfirmedAt == nil)
+        #expect(await f.status().phase.isRunning == false)
+        #expect(await f.runner.waitForBackgroundRun(planID: f.planID) == nil)
+
+        let current = RecoveryKitDocument.digest(for: await f.plan())
+        let status = try await f.state.confirmRecoveryKit(planID: f.planID, kitDigest: current, startFirstBackup: true)
+        #expect(status.plans.first?.phase.isRunning == true)
+        let record = try #require(await f.runner.waitForBackgroundRun(planID: f.planID))
+        guard case .success = record.outcome else {
+            Issue.record("expected a success, got \(record.outcome)")
+            return
+        }
+    }
+
     @Test func backUpNowStillHonoursPreflight() async throws {
         let f = try await RunnerFixture.make()
         defer { f.remove() }

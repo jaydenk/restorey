@@ -365,7 +365,9 @@ public actor AgentState {
     /// current value; otherwise the recovery details the user saved no longer match, so it is cleared.
     /// `setupCompletedAt` and `offMacNoteDismissed` are agent-owned too: a new plan starts without them and
     /// an existing plan keeps the stored values, whatever the request says (Ruling P2-3). Only
-    /// `confirmRecoveryKit` and `dismissOffMacNote` set them.
+    /// `confirmRecoveryKit` and `dismissOffMacNote` set them. So is `credentialsVersion`: 0 for a new plan, and one
+    /// more whenever the save changes the repository or a secret that opens it (the change that clears the
+    /// confirmation), which is what makes a kit shown before the change refuse to confirm (Task 9).
     ///
     /// The same change also clears a stop (`stoppedReason`, e.g. after a wrong password) and refreshes the
     /// plan's alerts: the user has changed what restic opens the repository with, so the next run tries it
@@ -416,11 +418,13 @@ public actor AgentState {
                 plan.recoveryKitConfirmedAt = kitStillHolds ? stored.recoveryKitConfirmedAt : nil
                 plan.setupCompletedAt = stored.setupCompletedAt
                 plan.offMacNoteDismissed = stored.offMacNoteDismissed
+                plan.credentialsVersion = stored.credentialsVersion + (credentialsChanged ? 1 : 0)
                 updated.plans[index] = plan
             } else {
                 plan.recoveryKitConfirmedAt = nil
                 plan.setupCompletedAt = nil
                 plan.offMacNoteDismissed = false
+                plan.credentialsVersion = 0
                 updated.plans.append(plan)
             }
 
@@ -507,19 +511,58 @@ public actor AgentState {
         }
     }
 
+    /// Records that the user has saved the plan's recovery details, with nothing checked and nothing started: an app
+    /// from before Task 9, and the developer window.
+    public func confirmRecoveryKit(_ id: UUID) async throws -> AgentStatus {
+        try await confirmRecoveryKit(planID: id, kitDigest: nil, startFirstBackup: false)
+    }
+
     /// Records that the user has saved the plan's recovery details. Until then the plan never runs
     /// on its own. The first confirmation also finishes setup (`setupCompletedAt`, Ruling P2-3).
-    public func confirmRecoveryKit(_ id: UUID) async throws -> AgentStatus {
+    ///
+    /// `kitDigest` is `RecoveryKitDocument.digest` of the kit the person saved. When it no longer matches the plan as
+    /// stored (its repository, a key or the host label changed since the kit was shown, Task 9) the confirmation is
+    /// refused with `recoveryKitChanged` and nothing is confirmed. Nil checks nothing.
+    ///
+    /// `startFirstBackup` is setup's Start: the runner registers a manual backup's handle, then the confirmation is
+    /// saved and the run registered with no suspension point between them (`confirmKit`), so no status and no read
+    /// by the scheduler (`scheduleInputs`) ever has the plan confirmed but not running, and the backup that runs is
+    /// this one. Refused, with nothing confirmed, when the runner isn't attached yet, the plan is invalid or it is
+    /// already running.
+    public func confirmRecoveryKit(planID id: UUID, kitDigest: String?, startFirstBackup: Bool) async throws -> AgentStatus {
         try requireMutable()
-        _ = try requirePlan(id)
-        return try await serialisedWrite {
+        let plan = try requirePlan(id)
+        guard startFirstBackup else { return try await confirmKit(id, kitDigest: kitDigest, beginningRun: false).status }
+        let errors = plan.validationErrors()
+        guard errors.isEmpty else { throw AgentError.invalidPlan(errors) }
+        return try await requireRunner().startFirstBackup(planID: id, kitDigest: kitDigest)
+    }
+
+    /// The confirmation itself, through the write gate; with `beginningRun` (the runner holds the run's handle) it
+    /// also registers the run, as `beginRun` does, in the same synchronous step that makes the confirmation visible:
+    /// `config` and `running` change together after the save, so nothing on this actor can see one without the other.
+    /// No run is registered when a drain or a delete began while the config was being saved; the plan is then
+    /// confirmed and the next agent's scheduler finds it due (`began` false).
+    func confirmKit(_ id: UUID, kitDigest: String?, beginningRun: Bool) async throws -> (status: AgentStatus, began: Bool) {
+        try await serialisedWrite {
             var updated = config
             guard let index = updated.plans.firstIndex(where: { $0.id == id }) else { throw AgentError.unknownPlan }
+            let plan = updated.plans[index]
+            if let kitDigest, kitDigest != RecoveryKitDocument.digest(for: plan) { throw AgentError.recoveryKitChanged }
+            if beginningRun {
+                try requireMutable()
+                guard !deleting.contains(id) else { throw AgentError.planDeleting(name: plan.name) }
+                guard running[id] == nil else { throw AgentError.alreadyRunning(name: plan.name) }
+            }
             let now = now()
             updated.plans[index].recoveryKitConfirmedAt = now
             if updated.plans[index].setupCompletedAt == nil { updated.plans[index].setupCompletedAt = now }
-            try await saveConfig(updated)
-            return pushStatus()
+            try await writeConfig(updated)
+            // No suspension point from here to the return.
+            config = updated
+            let began = beginningRun && !isDraining && !deleting.contains(id) && running[id] == nil
+            if began { running[id] = RunProgress() }
+            return (pushStatus(), began)
         }
     }
 
@@ -569,11 +612,7 @@ public actor AgentState {
         _ = try requirePlan(id)
         return try await serialisedWrite {
             let plan = try requirePlan(id)
-            var keys: [SecretKey] = [.repositoryPassword(id)]
-            switch plan.repository {
-            case .s3: keys += [.s3AccessKeyID(id), .s3SecretAccessKey(id)]
-            case .raw(_, let names): keys += names.map { .environment(id, name: $0) }
-            }
+            var keys = plan.credentialKeys
             if plan.hasCheckInURL { keys.append(.checkInURL(id)) }
             let entries = try keys.map { key in
                 let value: String?
@@ -689,6 +728,13 @@ public actor AgentState {
         guard running[planID] == nil else { throw AgentError.alreadyRunning(name: plan.name) }
         running[planID] = RunProgress()
         pushStatus()
+    }
+
+    /// What the scheduler decides from: `allRunInputs` without the plans that are running, read in one step, so a
+    /// running plan (setup's first backup, confirmed and started together by `confirmKit`; a Back Up Now) is never
+    /// offered to it as due.
+    func scheduleInputs() -> [(plan: Plan, history: PlanRunHistory)] {
+        allRunInputs().filter { running[$0.plan.id] == nil }
     }
 
     /// Records the latest progress and "retrying" line for a running plan. Pushed at most every
@@ -982,12 +1028,17 @@ public actor AgentState {
 
     /// Writes the config and adopts it in memory only once the write succeeded.
     private func saveConfig(_ updated: ConfigFile) async throws {
+        try await writeConfig(updated)
+        config = updated
+    }
+
+    /// Writes `config.json` without adopting it, for a caller that must change `config` together with other state.
+    private func writeConfig(_ updated: ConfigFile) async throws {
         do {
             try await configStore.save(updated)
         } catch {
             throw AgentError.storage("Restorey couldn’t save config.json: \(error)")
         }
-        config = updated
     }
 
     /// Saves `state.json`; if the save fails, adopts `updated` in memory anyway and rethrows. For the alert

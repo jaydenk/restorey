@@ -19,7 +19,7 @@ public enum NudgeReason: Sendable, Equatable {
 public protocol SchedulerRunner: Sendable {
     /// Finishes recovery from the last agent's exit. Called once before the first tick.
     func recoverAfterStart() async
-    /// Every plan with its history; empty when nothing may run (the config-error state).
+    /// Every plan that isn't running, with its history; empty when nothing may run (the config-error state).
     func scheduleEntries() async -> [(plan: Plan, history: PlanRunHistory)]
     /// Runs one backup. Throws only when the run can't be registered (draining, already running…).
     func runBackup(planID: UUID, trigger: RunTrigger) async throws -> RunRecord
@@ -348,8 +348,9 @@ public actor SchedulerCore {
 }
 
 extension PlanRunner: SchedulerRunner {
+    /// Leaves out plans that are running (`AgentState.scheduleInputs`): setup's first backup, a Back Up Now.
     public func scheduleEntries() async -> [(plan: Plan, history: PlanRunHistory)] {
-        await deps.state.allRunInputs()
+        await deps.state.scheduleInputs()
     }
 
     /// Due at start-up (never pruned), then 24 hours after the last prune by the injected clock. A clock

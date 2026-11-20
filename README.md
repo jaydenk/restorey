@@ -374,8 +374,12 @@ home folder by default (or the adopted snapshot's folders, with the new-group wa
 exclusions in one line (`ExclusionsSummary`, which also names the items apps mark as not for backup) and "Review Exclusions…" (folders, with Restorey's own two kept; file
 types; one file system). **Schedule** has the interval (hourly by default; 1, 2, 4, 6, 12 or 24 hours), the battery
 rule, retention and the optional check-in URL with why it matters (`ScheduleForm`). **Done**'s "Start First Backup"
-saves anything left, confirms the kit, then backs up: confirming makes the plan due, so the scheduler may start it
-first. `backUpNow` answers with a `BackUpNowReply` whose `alreadyRunning` says so for the plan asked for, instead
+saves anything left, then makes one `confirmRecoveryKit` call carrying the digest of the kit the tick was given for
+(kept in the setup progress) and `startFirstBackup`: the agent checks the digest, then saves the confirmation and
+registers the first backup with no suspension point between them, so no status and no scheduler read has the plan
+confirmed but not running (the scheduler skips running plans), and the backup that runs is that manual one. A kit
+whose details changed since it was shown confirms nothing and starts nothing: setup goes back to the kit step, with
+the new kit and the tick cleared. Progress saved by a build before the digest resumes at the kit step. `backUpNow` answers with a `BackUpNowReply` whose `alreadyRunning` says so for the plan asked for, instead
 of refusing (an agent from before it answered with a bare status, which still decodes). Only a backup step still under way
 and carrying on counts: a run stopping for a pause (or any other stop), a run in its maintenance after the backup step
 (forget, prune, check), or a one-off action such as an adopt, still gets the "is already backing up" refusal, as before;
@@ -1170,7 +1174,16 @@ Keys" button and Option peek as Restore Files (in setup's kit step too); after a
 made key again and Restorey brought back to the front. For a plan needing a new kit, the window is headed "Save a new recovery kit — the saved one
 has the old keys" and its tick "I've saved it somewhere other than this Mac" confirms the kit with the agent, which
 lets backups carry on. Before confirming, the window checks the kit against the agent's current secrets, so a kit
-whose keys changed while it was open is shown again rather than confirmed.
+whose keys changed while it was open is shown again rather than confirmed; the confirmation itself carries the kit's
+digest too, so a change saved in the moment between that check and the agent's answer is refused the same way.
+
+The digest (`RecoveryKitDocument.digest`) is a SHA-256 over the plan's ID, the repository address, the host label,
+the Keychain names of the password and storage keys, and the plan's `credentialsVersion`: a counter the agent alone
+sets, moved on by every save that changes the repository or one of those secrets. It stands in for their values, so
+the digest holds no secret and the agent checks it without reading the Keychain. The app makes it from the plan in
+the kit it showed, the agent from the plan it stores; a mismatch is refused with "The recovery details changed. Save
+the new recovery kit first." `confirmRecoveryKit`'s string is a `ConfirmRecoveryKitRequest` as JSON (plan ID, digest,
+`startFirstBackup`), or the bare plan ID an app from before it sends, which still confirms as it always did.
 
 A plan needs a new kit when what the kit holds to open and restore its repository changes: saving a different
 repository password or storage key (or environment value), or a new host label (the kit's restore commands pass it

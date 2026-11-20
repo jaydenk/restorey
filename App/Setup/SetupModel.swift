@@ -351,10 +351,12 @@ final class SetupModel {
         saveProgress()
     }
 
+    /// The tick, kept with the digest of the kit showing when it is given (`SetupProgress.kitDigest`): that kit is
+    /// the one Done's Start confirms.
     var kitSaved: Bool {
         get { draft.progress.kitSaved }
         set {
-            draft.setKitSaved(newValue)
+            draft.setKitSaved(newValue, digest: recoveryKit?.document?.digest ?? draft.progress.kitDigest)
             saveProgress()
         }
     }

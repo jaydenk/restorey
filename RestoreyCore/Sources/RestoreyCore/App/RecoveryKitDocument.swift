@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// The recovery kit (UI design §7, product spec §7): everything needed to open a plan's repository if this Mac
@@ -53,11 +54,15 @@ public struct RecoveryKitDocument: Sendable, Equatable, CustomStringConvertible,
     /// When the kit was made, for its heading (stored in UTC, shown in local time).
     public var createdAt: Date
     public var sections: [Section]
+    /// `digest(for:)` of the plan the kit was made from: what confirming this kit sends, so the agent can tell it
+    /// still matches what it stores. Not secret.
+    public var digest: String
 
-    public init(planName: String, createdAt: Date, sections: [Section]) {
+    public init(planName: String, createdAt: Date, sections: [Section], digest: String) {
         self.planName = planName
         self.createdAt = createdAt
         self.sections = sections
+        self.digest = digest
     }
 
     public var description: String { "RecoveryKitDocument(\(planName), sections: \(sections.map(\.title)))" }
@@ -106,8 +111,27 @@ public struct RecoveryKitDocument: Sendable, Equatable, CustomStringConvertible,
         if plan.hasCheckInURL, let url = secret("Check-in URL", .checkInURL(plan.id)) {
             sections.append(Section(title: "Check-in URL", fields: [url]))
         }
-        return RecoveryKitDocument(planName: plan.name, createdAt: createdAt, sections: sections)
+        return RecoveryKitDocument(planName: plan.name, createdAt: createdAt, sections: sections, digest: digest(for: plan))
     }
+
+    /// What a kit for `plan` stands for, as lower-case hex SHA-256 (Task 9). The app makes it from the plan in the kit
+    /// it showed (`make`), the agent from the plan it stores, so a confirmation is refused when anything the kit holds
+    /// has changed since it was shown. It hashes the plan's ID, the repository address, the host label the restore
+    /// commands pass, the names of the keys the kit holds (`Plan.credentialKeys`) and `credentialsVersion`, which
+    /// stands for their values: no secret goes in, so the agent needn't read the keychain to make it and the digest
+    /// gives nothing away. The check-in URL, the name and the folders aren't in it: none of them is needed to restore,
+    /// and changing them doesn't ask for a new kit (`AgentState.savePlan`).
+    public static func digest(for plan: Plan) -> String {
+        let facts = ["restorey-recovery-kit-1", plan.id.uuidString, plan.repository.resticRepository, plan.hostLabel]
+            + plan.credentialKeys.map(\.account) + [String(plan.credentialsVersion)]
+        // Each fact is prefixed with its length, so no two lists of facts give the same bytes.
+        let bytes = facts.map { "\($0.utf8.count):\($0)" }.joined()
+        return SHA256.hash(data: Data(bytes.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The agent's refusal when the kit confirmed isn't the current one (`digest(for:)` differs), so the app can send the
+    /// person back to the kit.
+    public static let detailsChangedRefusal = "The recovery details changed. Save the new recovery kit first."
 }
 
 /// Whether a place the recovery kit is saved to is this Mac's own disk (UI design §7: "a warning if the location

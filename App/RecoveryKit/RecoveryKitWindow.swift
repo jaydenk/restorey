@@ -99,9 +99,10 @@ final class RecoveryKitWindowModel {
 
     /// "I've saved it somewhere other than this Mac": the agent's `confirmRecoveryKit`, which lets backups carry on.
     /// Checked first against the agent's current secrets, so a kit holding keys changed since it opened is
-    /// replaced and shown again rather than confirmed.
+    /// replaced and shown again rather than confirmed. The confirmation carries the shown kit's digest, so a change
+    /// saved between that check and the agent's answer is refused too (Task 9), and the kit is checked again.
     func confirmSaved() async {
-        guard gate == .open, kit.document != nil, !confirming else { return }
+        guard gate == .open, let shown = kit.document?.digest, !confirming else { return }
         confirming = true
         confirmProblem = nil
         replacedBeforeConfirming = false
@@ -116,8 +117,15 @@ final class RecoveryKitWindowModel {
         case true?:
             break
         }
-        switch await supervisor.connection.confirmRecoveryKit(planID) {
+        switch await supervisor.connection.confirmRecoveryKit(planID, kitDigest: shown) {
         case .success: confirmedHere = true
+        case .failure(.refused(RecoveryKitDocument.detailsChangedRefusal)):
+            // Replaces the kit with the current one and says so, as a change found before confirming does.
+            if await kit.stillCurrent() == false {
+                replacedBeforeConfirming = true
+            } else {
+                confirmProblem = RecoveryKitDocument.detailsChangedRefusal
+            }
         case .failure(let error): confirmProblem = FormValidation.sentence(error.description)
         }
     }

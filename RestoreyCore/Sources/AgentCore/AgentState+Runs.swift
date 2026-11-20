@@ -92,12 +92,7 @@ extension AgentState {
 
     /// The secrets that open a plan's repository.
     static func credentialKeys(of plan: Plan) -> Set<SecretKey> {
-        var keys: Set<SecretKey> = [.repositoryPassword(plan.id)]
-        switch plan.repository {
-        case .s3: keys.formUnion([.s3AccessKeyID(plan.id), .s3SecretAccessKey(plan.id)])
-        case .raw(_, let names): keys.formUnion(names.map { .environment(plan.id, name: $0) })
-        }
-        return keys
+        Set(plan.credentialKeys)
     }
 
     /// Runs the Full Disk Access probe now and pushes the status (Ruling P2-11). Changes no file, so it is

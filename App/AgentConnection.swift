@@ -120,8 +120,18 @@ final class AgentConnection {
         await statusCall(timeout: .seconds(60)) { $0.resume(planID.uuidString, withReply: $1) }
     }
 
-    func confirmRecoveryKit(_ planID: UUID) async -> Result<AgentStatus, AgentCallError> {
-        await statusCall(timeout: .seconds(60)) { $0.confirmRecoveryKit(planID.uuidString, withReply: $1) }
+    /// `kitDigest` is the shown kit's `RecoveryKitDocument.digest` (nil checks nothing); `startFirstBackup` is setup's
+    /// Start, which starts the first backup together with the confirmation.
+    func confirmRecoveryKit(
+        _ planID: UUID, kitDigest: String? = nil, startFirstBackup: Bool = false
+    ) async -> Result<AgentStatus, AgentCallError> {
+        await statusCall(timeout: .seconds(60)) { proxy, reply in
+            let request = ConfirmRecoveryKitRequest(planID: planID, kitDigest: kitDigest, startFirstBackup: startFirstBackup)
+            guard let message = try? request.message() else {
+                return reply(nil, "Restorey couldn’t make the confirmation request")
+            }
+            proxy.confirmRecoveryKit(message, withReply: reply)
+        }
     }
 
     /// restic retries an unreachable backend for up to 15 minutes, so these allow 20.

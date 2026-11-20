@@ -45,6 +45,11 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
     public var setupCompletedAt: Date?
     /// Whether the user has dismissed the "No off-Mac monitoring" note for this plan.
     public var offMacNoteDismissed: Bool
+    /// Moves on by one each time the repository or a secret that opens it changes (the repository password, an S3
+    /// key, an environment value), never with the check-in URL. Agent-owned, like `recoveryKitConfirmedAt`: it stands
+    /// for the secrets' values in the recovery kit's digest (`RecoveryKitDocument.digest(for:)`), so a kit shown before
+    /// a change can't be confirmed after it and the digest never holds a secret. 0 for a new plan.
+    public var credentialsVersion: Int
     public var createdAt: Date
     /// When setup adopted the plan's repository ("Use This Repository"). It bounds "snapshots from before
     /// adoption" (product spec §5.6, Task 14b): only snapshots this Mac made by then are offered. Nil for a created
@@ -76,6 +81,7 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         recoveryKitConfirmedAt: Date?,
         setupCompletedAt: Date? = nil,
         offMacNoteDismissed: Bool = false,
+        credentialsVersion: Int = 0,
         createdAt: Date,
         adoptedAt: Date? = nil
     ) {
@@ -102,6 +108,7 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         self.recoveryKitConfirmedAt = recoveryKitConfirmedAt
         self.setupCompletedAt = setupCompletedAt
         self.offMacNoteDismissed = offMacNoteDismissed
+        self.credentialsVersion = credentialsVersion
         self.createdAt = createdAt
         self.adoptedAt = adoptedAt
     }
@@ -111,7 +118,7 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         case skipsItemsMarkedNotForBackup, backUpAnyway
         case schedule, conditions, retention, pruneEnabled, forgetCadence, uploadLimitKiB, packSizeMiB
         case noSuccessAlertDays, hasCheckInURL, recoveryKitConfirmedAt, setupCompletedAt, offMacNoteDismissed
-        case createdAt, adoptedAt
+        case credentialsVersion, createdAt, adoptedAt
     }
 
     /// `config.json` always has `offMacNoteDismissed` (schema 3), but a plan in a status or save request from
@@ -145,6 +152,8 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         recoveryKitConfirmedAt = try c.decodeIfPresent(Date.self, forKey: .recoveryKitConfirmedAt)
         setupCompletedAt = try c.decodeIfPresent(Date.self, forKey: .setupCompletedAt)
         offMacNoteDismissed = try c.decodeIfPresent(Bool.self, forKey: .offMacNoteDismissed) ?? false
+        // Added after schema 3 with no migration (Task 9): absent is a plan whose secrets haven't changed since.
+        credentialsVersion = try c.decodeIfPresent(Int.self, forKey: .credentialsVersion) ?? 0
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         adoptedAt = try c.decodeIfPresent(Date.self, forKey: .adoptedAt)
     }
@@ -221,6 +230,19 @@ extension PlanValidationError {
         case .sourceInsideRepository(let path):
             "“\(FolderDrop.name(path))” is inside this plan’s backup repository. Choose a different folder"
         }
+    }
+}
+
+extension Plan {
+    /// The keychain items that open the plan's repository, in the plan's order: the repository password, then an S3
+    /// plan's two keys or a raw plan's environment values. The check-in URL isn't one: it isn't needed to restore.
+    public var credentialKeys: [SecretKey] {
+        var keys: [SecretKey] = [.repositoryPassword(id)]
+        switch repository {
+        case .s3: keys += [.s3AccessKeyID(id), .s3SecretAccessKey(id)]
+        case .raw(_, let names): keys += names.map { .environment(id, name: $0) }
+        }
+        return keys
     }
 }
 

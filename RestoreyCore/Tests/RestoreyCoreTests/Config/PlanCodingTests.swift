@@ -94,6 +94,7 @@ struct PlanCodingTests {
         original.recoveryKitConfirmedAt = Self.now
         original.setupCompletedAt = Self.now
         original.offMacNoteDismissed = true
+        original.credentialsVersion = 3
         original.conditions.battery = .neverOnBattery
         var rawPlan = plan(.raw(repository: "rest:http://nas/repo", environmentNames: ["A", "B"]), .adopted)
         rawPlan.conditions.battery = .minimumPercent(35)
@@ -104,6 +105,16 @@ struct PlanCodingTests {
                 .decode(Plan.self, from: VersionedStore<PlanBox>.makeEncoder().encode(sample))
             #expect(decoded == sample)
         }
+    }
+
+    /// Task 9: `credentialsVersion` was added with no migration, like `adoptedAt`: a plan saved before it reads as 0.
+    @Test func aPlanSavedBeforeTheCredentialsVersionReadsAsZero() throws {
+        let data = try VersionedStore<PlanBox>.makeEncoder().encode(plan(.s3(Self.s3), .created))
+        var object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["credentialsVersion"] as? Int == 0)
+        object["credentialsVersion"] = nil
+        let older = try JSONSerialization.data(withJSONObject: object)
+        #expect(try VersionedStore<PlanBox>.makeDecoder().decode(Plan.self, from: older).credentialsVersion == 0)
     }
 
     @Test func subSecondDatesRoundTrip() throws {
