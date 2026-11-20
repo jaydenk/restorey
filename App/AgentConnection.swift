@@ -10,12 +10,16 @@ enum AgentCallError: Error, Equatable, CustomStringConvertible {
     case refused(String)
     /// The reply couldn't be decoded.
     case badReply(String)
+    /// The connection refused the agent for its signature (`CodeSigning.isRequirementFailure`): an agent still running
+    /// after an update replaced its file, which restarts by itself.
+    case signatureRejected
 
     var description: String {
         switch self {
         case .unreachable(let detail): "Restorey couldn’t reach its background process (\(detail))."
         case .refused(let message): message
         case .badReply(let detail): "Restorey’s background process sent a reply it couldn’t read (\(detail))."
+        case .signatureRejected: "Restorey’s background process is restarting after an update. Try again in a moment."
         }
     }
 }
@@ -261,7 +265,8 @@ final class AgentConnection {
             // A plain closure written here would inherit the main actor, and the Swift 6 runtime traps when
             // XPC calls it off the main queue (the crash in fix round 3).
             let proxy = connection.remoteObjectProxyWithErrorHandler { @Sendable error in
-                once.resume(.failure(.unreachable(error.localizedDescription)))
+                once.resume(.failure(
+                    CodeSigning.isRequirementFailure(error) ? .signatureRejected : .unreachable(error.localizedDescription)))
             }
             guard let agent = proxy as? AgentXPC else {
                 once.resume(.failure(.unreachable("no proxy")))

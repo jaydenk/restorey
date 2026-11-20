@@ -43,9 +43,9 @@ final class AgentSupervisor {
     @ObservationIgnored private var lastAction: AgentHealthAction?
     /// After a drain call fails, re-registration waits until then (10 s doubling to 10 min).
     @ObservationIgnored private var drainRetryAfter: Date?
-    /// The current run of failed heartbeats from an `enabled` agent, timed in awake time (see
+    /// The current run of failed or refused heartbeats from an `enabled` agent, timed in awake time (see
     /// `AgentHealthPolicy.unreachableGrace` and `longWaitWarning`).
-    @ObservationIgnored private var unreachable = UnreachableRun()
+    @ObservationIgnored private var silence = AgentSilence()
     /// Stops while the Mac sleeps and ignores wall-clock changes, so neither counts towards the grace or the warning.
     @ObservationIgnored private let awakeOrigin = SuspendingClock().now
     /// The last `register()` failure logged, so one repeated every heartbeat is logged once.
@@ -136,8 +136,8 @@ final class AgentSupervisor {
         // `SMAppService.status` (`smStatus`) is read afresh above at every heartbeat, so the user switching the
         // agent off in Login Items shows within one heartbeat while the app runs.
         if case .ok(let reply) = beat { noteHello(reply) } else { noteHello(nil) }
-        let unreachableAwakeFor = unreachable.heartbeat(
-            failing: smStatus == .enabled && !refusesEveryAgent && beat == .unreachable, askedAt: askedAt, now: awakeTime())
+        let unreachableAwakeFor = silence.heartbeat(
+            beat, counted: smStatus == .enabled && !refusesEveryAgent, askedAt: askedAt, now: awakeTime())
 
         let input = AgentHealthInput(
             smStatus: smStatus, heartbeat: beat, expectedExecutablePrefix: installed.helpersPrefix,
@@ -155,6 +155,8 @@ final class AgentSupervisor {
             switch action {
             case .waitForRunningRestic(longWait: false):
                 log.info("Not re-registering the unreachable agent: a restic it started is still running, and unregister() without a drain would kill it. Checking again at each heartbeat for as long as it runs")
+            case .waitForReplacedAgent:
+                log.info("The agent's connection refuses it for its signature: an update replaced its file while it runs. Waiting for it to finish any restic step in flight and restart by itself; it is never re-registered automatically")
             case .waitForRunningRestic(longWait: true):
                 log.error("The agent hasn't answered for \(Int(AgentHealthPolicy.longWaitWarning / 60)) minutes while a restic it started is still running. Still waiting rather than stopping it: the menu warns, and only Restart Backups stops it")
             default:
@@ -165,13 +167,19 @@ final class AgentSupervisor {
         await perform(action, heartbeat: beat)
     }
 
-    /// One retry after 2 s, so the 0.4 s KeepAlive gap after an agent crash isn't reported as a fault.
+    /// One retry after 2 s, so the 0.4 s KeepAlive gap after an agent crash isn't reported as a fault. The retry's
+    /// failure decides which: an agent refused for its signature, or one that doesn't answer.
     private func helloWithRetry() async -> AgentHeartbeat {
+        var beat = AgentHeartbeat.unreachable
         for attempt in 0..<2 {
             if attempt > 0 { try? await Task.sleep(for: .seconds(2)) }
-            if case .success(let reply) = await connection.hello(request) { return .ok(reply) }
+            switch await connection.hello(request) {
+            case .success(let reply): return .ok(reply)
+            case .failure(.signatureRejected): beat = .signatureRejected
+            case .failure: beat = .unreachable
+            }
         }
-        return .unreachable
+        return beat
     }
 
     private func perform(_ action: AgentHealthAction, heartbeat: AgentHeartbeat) async {
@@ -205,6 +213,9 @@ final class AgentSupervisor {
             if case .ok = heartbeat { await reregister(reachable: true) } else { await reregister(reachable: false) }
         case .waitForUpdate:
             await waitForUpdate()
+        case .waitForReplacedAgent:
+            // Re-decided at every heartbeat. Nothing to ask the agent: the connection refuses it.
+            set(.waitingForUpdate)
         case .waitForRunningRestic(let longWait):
             // Re-decided at every heartbeat; `heartbeat` logs why when the action begins. Never repaired: only the
             // user's Restart Backups stops that backup.
@@ -315,7 +326,7 @@ final class AgentSupervisor {
         return probe
     }
 
-    /// Awake time since the supervisor first asked, for `UnreachableRun`.
+    /// Awake time since the supervisor first asked, for `AgentSilence`.
     private func awakeTime() -> Duration {
         awakeOrigin.duration(to: SuspendingClock().now)
     }
@@ -413,6 +424,7 @@ final class AgentSupervisor {
             + (reply.draining ? ", draining" : "")
             + (reply.executableFingerprint == input.executableFingerprintOnDisk ? "" : ", binary replaced since launch")
         case .unreachable: "unreachable"
+        case .signatureRejected: "refused for its signature (its file was replaced while it runs)"
         }
         return "\(input.smStatus), \(beat), app \(input.appVersion) (\(input.appBuild)), plist "
             + (input.storedPlistHash == input.currentPlistHash ? "unchanged" : "changed")

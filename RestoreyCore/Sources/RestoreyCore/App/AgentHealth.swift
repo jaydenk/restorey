@@ -13,6 +13,9 @@ public enum AgentServiceStatus: Sendable, Equatable {
 public enum AgentHeartbeat: Sendable, Equatable {
     case ok(HelloReply)
     case unreachable
+    /// The connection refused the agent for its signature (`CodeSigning.isRequirementFailure`): an agent still running
+    /// after an update replaced its file, which restarts by itself (`ReplacementWatch`).
+    case signatureRejected
 }
 
 /// The two kinds of automatic repair. The hourly limit is per kind: a restart (for a stale agent) is
@@ -117,6 +120,11 @@ public enum AgentHealthAction: Sendable, Equatable {
     /// a slow hourly run), so it never stops it on its own (owner, 20 Nov 2026). `longWait` from
     /// `AgentHealthPolicy.longWaitWarning` on: the menu warns and offers Restart Backups, the person's choice.
     case waitForRunningRestic(longWait: Bool)
+    /// The connection refuses the agent for its signature, because an update replaced its file while it runs
+    /// (`AgentHeartbeat.signatureRejected`): "Updating Restorey’s background process…". The agent can't be asked to
+    /// restart, but every agent since Ruling R55 restarts by itself after any restic step in flight, so a refused agent is
+    /// never repaired automatically; from `longWaitWarning` on the menu warns instead. Decided again at each heartbeat.
+    case waitForReplacedAgent
     /// The agent is already draining: "Updating the background agent…", with Back Up Now disabled. The
     /// app asks it to restart once drained, which also frees an agent left drained by an app that quit
     /// half-way through a re-registration.
@@ -182,6 +190,24 @@ public struct UnreachableRun: Sendable, Equatable {
     }
 }
 
+/// The supervisor's awake-time run of silence, for `AgentHealthInput.unreachableAwakeFor`: an `UnreachableRun` that a
+/// refused agent counts towards, but that starts afresh when the refusal gives way to an agent that doesn't answer (the
+/// old agent exited and the new one isn't listening yet), so minutes of refusal don't count towards the 30 s grace.
+public struct AgentSilence: Sendable, Equatable {
+    private var run = UnreachableRun()
+    private var lastBeat: AgentHeartbeat?
+
+    public init() {}
+
+    /// `counted`: the beat is from an `enabled` agent through a connection that admits agents.
+    public mutating func heartbeat(_ beat: AgentHeartbeat, counted: Bool, askedAt: Duration, now: Duration) -> TimeInterval? {
+        if beat == .unreachable, lastBeat == .signatureRejected { run = UnreachableRun() }
+        lastBeat = beat
+        let answered = if case .ok = beat { true } else { false }
+        return run.heartbeat(failing: counted && !answered, askedAt: askedAt, now: now)
+    }
+}
+
 /// What a failed `register()` shows. While the connection admits no agent the cause the user can act on is the
 /// signature, since no registration would let the app talk to the agent; the registration error is only logged
 /// (fix round 1 of Task 11, controller ruling).
@@ -209,9 +235,17 @@ public func decideAgentHealth(
         // stop a healthy agent's backups.
         if input.connectionRefusesEveryAgent { return .showSignatureUntrusted }
         guard case .ok(let reply) = input.heartbeat else {
+            let unreachableFor = input.unreachableAwakeFor ?? 0
+            // An update replaced the agent's file while it runs: it restarts by itself once any restic step in flight
+            // ends. Never repaired: an undrained re-registration could kill a backup the process table can't place (a
+            // bundle moved to the Bin reports restic's new path), and an agent refused for another reason would be
+            // refused again after it. From the warning on, Restart Backups is the person's choice.
+            if input.heartbeat == .signatureRejected {
+                guard unreachableFor >= AgentHealthPolicy.longWaitWarning else { return .waitForReplacedAgent }
+                return input.resticRunningUnderAgent ? .waitForRunningRestic(longWait: true) : .showNotRunning(canRepair: true)
+            }
             switch enabledButUnreachable {
             case .repairAutomatically:
-                let unreachableFor = input.unreachableAwakeFor ?? 0
                 guard unreachableFor >= AgentHealthPolicy.unreachableGrace else {
                     return .showNotRunning(canRepair: true)
                 }
