@@ -66,7 +66,7 @@ extension PlanRunner {
         if op == .backup { context.repositoryLinkTarget = await repositoryLinkTarget(plan) }
         let uploadsToTheNetwork = op == .backup && plan.repository.needsNetwork
         if uploadsToTheNetwork {
-            context.macWideUploadLimitKiB = await deps.state.networkSettings.uploadLimitKiB
+            context.macWideUploadLimitKiB = await deps.state.networkSettings.uploadLimit.rateKiB
             // Counted and registered with no suspension in between, so backups starting together each see
             // the others. restic can't change its limit mid-run, so each keeps the share it started with.
             context.networkedBackupsRunning = networkedUploads.count + 1

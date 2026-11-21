@@ -75,7 +75,7 @@ struct PreflightTests {
         _ name: String?, skipping names: [String], network: NetworkState = .satisfied(constrained: false, expensive: false)
     ) -> PreflightEnvironment {
         var e = env(network: network, mounted: ["/Volumes/Backup"], networkSettings: NetworkSettings(
-            uploadLimitKiB: nil, skipOnConstrainedNetwork: true, skippedWiFiNames: names))
+            uploadLimit: .none, skipOnConstrainedNetwork: true, skippedWiFiNames: names))
         e.currentWiFiName = { name }
         return e
     }

@@ -40,6 +40,8 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
     public var pruneEnabled: Bool
     public var forgetCadence: ForgetCadence
     public var uploadLimitKiB: Int?
+    /// The unit the plan's limit is shown and typed in. Only the display; the limit is `uploadLimitKiB`.
+    public var uploadLimitUnit: UploadLimitUnit
     public var packSizeMiB: Int?
     public var noSuccessAlertDays: Int
     /// Whether a check-in URL exists in the keychain. The URL itself is a secret and is not stored here.
@@ -82,6 +84,7 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         pruneEnabled: Bool,
         forgetCadence: ForgetCadence,
         uploadLimitKiB: Int?,
+        uploadLimitUnit: UploadLimitUnit = .megabytes,
         packSizeMiB: Int?,
         noSuccessAlertDays: Int,
         hasCheckInURL: Bool,
@@ -110,6 +113,7 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         self.pruneEnabled = pruneEnabled
         self.forgetCadence = forgetCadence
         self.uploadLimitKiB = uploadLimitKiB
+        self.uploadLimitUnit = uploadLimitUnit
         self.packSizeMiB = packSizeMiB
         self.noSuccessAlertDays = noSuccessAlertDays
         self.hasCheckInURL = hasCheckInURL
@@ -125,7 +129,7 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         case id, name, repository, origin, hostLabel, sources, exclusions, exclusionDefaultsRevision
         case fileTypeExclusions, oneFileSystem
         case skipsItemsMarkedNotForBackup, backUpAnyway
-        case schedule, conditions, retention, pruneEnabled, forgetCadence, uploadLimitKiB, packSizeMiB
+        case schedule, conditions, retention, pruneEnabled, forgetCadence, uploadLimitKiB, uploadLimitUnit, packSizeMiB
         case noSuccessAlertDays, hasCheckInURL, recoveryKitConfirmedAt, setupCompletedAt, offMacNoteDismissed
         case credentialsVersion, createdAt, adoptedAt
     }
@@ -158,6 +162,8 @@ public struct Plan: Codable, Sendable, Identifiable, Equatable {
         pruneEnabled = try c.decode(Bool.self, forKey: .pruneEnabled)
         forgetCadence = try c.decode(ForgetCadence.self, forKey: .forgetCadence)
         uploadLimitKiB = try c.decodeIfPresent(Int.self, forKey: .uploadLimitKiB)
+        // A plan from before the unit existed was shown in MB/s.
+        uploadLimitUnit = try c.decodeIfPresent(UploadLimitUnit.self, forKey: .uploadLimitUnit) ?? .megabytes
         packSizeMiB = try c.decodeIfPresent(Int.self, forKey: .packSizeMiB)
         noSuccessAlertDays = try c.decode(Int.self, forKey: .noSuccessAlertDays)
         hasCheckInURL = try c.decode(Bool.self, forKey: .hasCheckInURL)

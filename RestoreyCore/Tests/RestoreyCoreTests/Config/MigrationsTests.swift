@@ -51,7 +51,7 @@ struct MigrationsTests {
         #expect(plans[0]["setupCompletedAt"] as? String == Self.confirmedAt)
         #expect(plans[1]["setupCompletedAt"] == nil)
         #expect(try Self.network(payload)
-            == NetworkSettings(uploadLimitKiB: nil, skipOnConstrainedNetwork: true, skippedWiFiNames: []))
+            == NetworkSettings(uploadLimit: .none, skipOnConstrainedNetwork: true, skippedWiFiNames: []))
     }
 
     @Test func migratesV2WithAllPlansOffToSkipFalse() throws {
@@ -65,7 +65,7 @@ struct MigrationsTests {
 
     @Test func networkDefaultsArePinned() {
         #expect(NetworkSettings.defaults
-            == NetworkSettings(uploadLimitKiB: nil, skipOnConstrainedNetwork: true, skippedWiFiNames: []))
+            == NetworkSettings(uploadLimit: .none, skipOnConstrainedNetwork: true, skippedWiFiNames: []))
     }
 
     /// Values a plan or payload somehow already has are kept, as migration 1 does.
@@ -81,8 +81,11 @@ struct MigrationsTests {
         let migrated = try #require((payload["plans"] as? [[String: Any]])?.first)
         #expect(migrated["setupCompletedAt"] as? String == "2026-01-01T00:00:00.000Z")
         #expect(migrated["offMacNoteDismissed"] as? Bool == true)
-        #expect(try Self.network(payload)
-            == NetworkSettings(uploadLimitKiB: 500, skipOnConstrainedNetwork: true, skippedWiFiNames: ["Café"]))
+        // The old `uploadLimitKiB` key is carried through untouched; Task 2's migration to schema 5 turns it into
+        // `uploadLimit`.
+        let network = try #require(payload["network"] as? [String: Any])
+        #expect(network["uploadLimitKiB"] as? Int == 500)
+        #expect(try Self.network(payload).skippedWiFiNames == ["Café"])
     }
 
     @Test func aPlanListThatIsntOneIsRefused() {

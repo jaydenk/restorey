@@ -101,7 +101,7 @@ struct MessagesTests {
                            lastBackup: backup, repositorySize: size, setupState: $0)
             },
             configError: nil, fdaMissing: false, generatedAt: Self.now, agentRun: UUID(), sequence: 3,
-            network: NetworkSettings(uploadLimitKiB: 2048, skipOnConstrainedNetwork: false, skippedWiFiNames: ["Café"]))
+            network: NetworkSettings(uploadLimit: .rate(kiB: 2048, unit: .megabytes), skipOnConstrainedNetwork: false, skippedWiFiNames: ["Café"]))
         try roundTrip(status)
         try roundTrip(AgentStatus(plans: [], configError: "x", fdaMissing: nil, generatedAt: Self.now))
     }
@@ -138,7 +138,7 @@ struct MessagesTests {
     }
 
     @Test func newShapesArePinned() throws {
-        #expect(try json(NetworkSettings.defaults) == #"{"skipOnConstrainedNetwork":true,"skippedWiFiNames":[]}"#)
+        #expect(try json(NetworkSettings.defaults) == #"{"skipOnConstrainedNetwork":true,"skippedWiFiNames":[],"uploadLimit":{"kind":"none"}}"#)
         #expect(try json(RepositorySize(bytes: 42, measuredAt: Date(timeIntervalSince1970: 1_800_000_000)))
             == #"{"bytes":42,"measuredAt":"2027-01-15T08:00:00.000Z"}"#)
         #expect(try json([PlanSetupState.unfinished, .needsNewKit, .complete])

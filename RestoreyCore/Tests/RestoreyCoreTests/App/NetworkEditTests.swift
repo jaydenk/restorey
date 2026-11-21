@@ -5,7 +5,7 @@ import Testing
 /// Settings → Network (UI design §6.3, product spec §5.5): the Mac-wide rules as an edit with Save and Revert, the
 /// Wi-Fi list's additions, and when adding a name asks the agent for Location permission.
 struct NetworkEditTests {
-    private static let saved = NetworkSettings(uploadLimitKiB: 5120, skipOnConstrainedNetwork: true, skippedWiFiNames: ["Cafe"])
+    private static let saved = NetworkSettings(uploadLimit: .rate(kiB: 5120, unit: .megabytes), skipOnConstrainedNetwork: true, skippedWiFiNames: ["Cafe"])
 
     // MARK: Changes
 
@@ -31,21 +31,21 @@ struct NetworkEditTests {
         #expect(added)
         #expect(edit.isDirty)
         #expect(edit.request() == .success(NetworkSettings(
-            uploadLimitKiB: 1536, skipOnConstrainedNetwork: false, skippedWiFiNames: ["Cafe", "Phone hotspot"])))
+            uploadLimit: .rate(kiB: 1536, unit: .megabytes), skipOnConstrainedNetwork: false, skippedWiFiNames: ["Cafe", "Phone hotspot"])))
     }
 
     @Test func clearingTheLimitSavesNone() throws {
         var edit = NetworkEdit(settings: Self.saved)
         edit.fields.uploadLimit = ""
-        #expect(try edit.request().get().uploadLimitKiB == nil)
+        #expect(try edit.request().get().uploadLimit == .none)
     }
 
     /// A limit the field can only show rounded (3 KiB/s is "0"), left alone, keeps the agent's exact value.
     @Test func anUntouchedLimitKeepsTheSavedValueExactly() throws {
-        let odd = NetworkSettings(uploadLimitKiB: 3, skipOnConstrainedNetwork: true, skippedWiFiNames: [])
+        let odd = NetworkSettings(uploadLimit: .rate(kiB: 3, unit: .megabytes), skipOnConstrainedNetwork: true, skippedWiFiNames: [])
         var edit = NetworkEdit(settings: odd)
         edit.fields.skipOnConstrainedNetwork = false
-        #expect(try edit.request().get().uploadLimitKiB == 3)
+        #expect(try edit.request().get().uploadLimit == .rate(kiB: 3, unit: .megabytes))
     }
 
     @Test func revertGoesBackToTheSavedSettings() {
@@ -60,14 +60,14 @@ struct NetworkEditTests {
     @Test func aSaveStartsAgainFromWhatTheAgentSaved() {
         var edit = NetworkEdit(settings: Self.saved)
         _ = edit.add(name: "Home ")
-        edit.didSave(NetworkSettings(uploadLimitKiB: 5120, skipOnConstrainedNetwork: true, skippedWiFiNames: ["Cafe", "Home"]))
+        edit.didSave(NetworkSettings(uploadLimit: .rate(kiB: 5120, unit: .megabytes), skipOnConstrainedNetwork: true, skippedWiFiNames: ["Cafe", "Home"]))
         #expect(!edit.isDirty)
         #expect(edit.fields.wiFiNames == ["Cafe", "Home"])
     }
 
     /// The agent's copy changed (a save from another window): an untouched form follows it; edits are kept.
     @Test func rebaseFollowsTheAgentOnlyWhileUntouched() throws {
-        let newer = NetworkSettings(uploadLimitKiB: nil, skipOnConstrainedNetwork: false, skippedWiFiNames: [])
+        let newer = NetworkSettings(uploadLimit: .none, skipOnConstrainedNetwork: false, skippedWiFiNames: [])
         var untouched = NetworkEdit(settings: Self.saved)
         untouched.rebase(on: newer)
         #expect(untouched.fields == NetworkEdit.Fields(settings: newer))
@@ -83,7 +83,7 @@ struct NetworkEditTests {
         #expect(edited.fields.wiFiNames == [])
         // Fields the user didn't touch keep the agent's newer values.
         #expect(try edited.request().get() == NetworkSettings(
-            uploadLimitKiB: 2048, skipOnConstrainedNetwork: false, skippedWiFiNames: []))
+            uploadLimit: .rate(kiB: 2048, unit: .megabytes), skipOnConstrainedNetwork: false, skippedWiFiNames: []))
     }
 
     // MARK: Problems

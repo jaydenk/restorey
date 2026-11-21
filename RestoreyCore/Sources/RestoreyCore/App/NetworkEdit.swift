@@ -14,7 +14,7 @@ public struct NetworkEdit: Sendable, Equatable {
         public var wiFiNames: [String]
 
         public init(settings: NetworkSettings) {
-            uploadLimit = FormValidation.uploadLimitText(kiB: settings.uploadLimitKiB)
+            uploadLimit = FormValidation.uploadLimitText(kiB: settings.uploadLimit.rateKiB)
             skipOnConstrainedNetwork = settings.skipOnConstrainedNetwork
             wiFiNames = settings.skippedWiFiNames
         }
@@ -47,7 +47,7 @@ public struct NetworkEdit: Sendable, Equatable {
         if name.utf8.count > Self.maximumNameBytes {
             return "A Wi-Fi network’s name is at most \(Self.maximumNameBytes) bytes long."
         }
-        let listed = NetworkSettings(uploadLimitKiB: nil, skipOnConstrainedNetwork: false, skippedWiFiNames: fields.wiFiNames)
+        let listed = NetworkSettings(uploadLimit: .none, skipOnConstrainedNetwork: false, skippedWiFiNames: fields.wiFiNames)
         if listed.isSkipped(wiFiName: name) { return "“\(name)” is already in the list." }
         return nil
     }
@@ -77,7 +77,7 @@ public struct NetworkEdit: Sendable, Equatable {
     /// The first problem: the limit, then whatever the agent would refuse in the list.
     public var problem: String? {
         if let uploadLimitProblem { return uploadLimitProblem }
-        let listed = NetworkSettings(uploadLimitKiB: nil, skipOnConstrainedNetwork: false, skippedWiFiNames: fields.wiFiNames)
+        let listed = NetworkSettings(uploadLimit: .none, skipOnConstrainedNetwork: false, skippedWiFiNames: fields.wiFiNames)
         return listed.validationErrors().first.map { FormValidation.sentence($0.message) }
     }
 
@@ -89,7 +89,7 @@ public struct NetworkEdit: Sendable, Equatable {
         if let problem { return .failure(.init(problem)) }
         var settings = saved
         if fields.uploadLimit != started.uploadLimit, case .success(let limit) = FormValidation.uploadLimit(fields.uploadLimit) {
-            settings.uploadLimitKiB = limit
+            settings.uploadLimit = limit.map { .rate(kiB: $0, unit: .megabytes) } ?? .none
         }
         if fields.skipOnConstrainedNetwork != started.skipOnConstrainedNetwork {
             settings.skipOnConstrainedNetwork = fields.skipOnConstrainedNetwork

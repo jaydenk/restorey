@@ -70,7 +70,7 @@ final class AgentService: NSObject, AgentXPC, Sendable {
             let status = try await state.saveNetworkSettings(settings)
             // Counts only: Wi-Fi names say where the user goes, which a log doesn't need.
             log.info(
-                "Saved the network settings: upload limit \(settings.uploadLimitKiB.map { "\($0) KiB/s" } ?? "none"), "
+                "Saved the network settings: upload limit \(settings.uploadLimit.rateKiB.map { "\($0) KiB/s" } ?? "none"), "
                     + "skip on a constrained network \(settings.skipOnConstrainedNetwork ? "on" : "off"), "
                     + "\(settings.skippedWiFiNames.count) Wi-Fi names to skip")
             // A rule turned off can make a skipped plan due now.

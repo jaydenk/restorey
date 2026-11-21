@@ -3,30 +3,57 @@ import Foundation
 /// The Mac-wide network rules (Ruling P2-6, UI design §6.3), kept in `config.json` beside the plans
 /// (`ConfigFile.network`) since schema 3. They apply only to a repository that needs the network
 /// (`Repository.needsNetwork`).
-/// JSON: `{"skipOnConstrainedNetwork":true,"skippedWiFiNames":[]}`, with `uploadLimitKiB` omitted when nil.
+/// JSON: `{"uploadLimit":{"kind":"none"},"skipOnConstrainedNetwork":true,"skippedWiFiNames":[]}`, with `limitWindow`
+/// omitted when nil. `uploadLimit` decodes as none when absent (the migration to schema 5 reads the old
+/// `uploadLimitKiB`).
 public struct NetworkSettings: Codable, Sendable, Equatable {
-    /// The upload limit, in KiB/s, shared by the backups to networked repositories that run at once. Nil
-    /// for no Mac-wide limit; a plan's own `uploadLimitKiB` still applies.
-    public var uploadLimitKiB: Int?
+    /// The upload limit shared by the backups to networked repositories that run at once; a plan's own
+    /// `uploadLimitKiB` still applies.
+    public var uploadLimit: MacUploadLimit
+    /// When the limit applies; nil means always.
+    public var limitWindow: LimitWindow?
     /// Skip a backup on a constrained or expensive network (Low Data Mode, a phone hotspot).
     public var skipOnConstrainedNetwork: Bool
     /// Wi-Fi network names to skip backups on.
     public var skippedWiFiNames: [String]
 
-    public init(uploadLimitKiB: Int?, skipOnConstrainedNetwork: Bool, skippedWiFiNames: [String]) {
-        self.uploadLimitKiB = uploadLimitKiB
+    public init(
+        uploadLimit: MacUploadLimit,
+        limitWindow: LimitWindow? = nil,
+        skipOnConstrainedNetwork: Bool,
+        skippedWiFiNames: [String]
+    ) {
+        self.uploadLimit = uploadLimit
+        self.limitWindow = limitWindow
         self.skipOnConstrainedNetwork = skipOnConstrainedNetwork
         self.skippedWiFiNames = skippedWiFiNames
     }
 
+    private enum CodingKeys: String, CodingKey { case uploadLimit, limitWindow, skipOnConstrainedNetwork, skippedWiFiNames }
+
+    /// Hand-written so a config from before `uploadLimit` existed still decodes (as no limit).
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        uploadLimit = try c.decodeIfPresent(MacUploadLimit.self, forKey: .uploadLimit) ?? .none
+        limitWindow = try c.decodeIfPresent(LimitWindow.self, forKey: .limitWindow)
+        skipOnConstrainedNetwork = try c.decode(Bool.self, forKey: .skipOnConstrainedNetwork)
+        skippedWiFiNames = try c.decode([String].self, forKey: .skippedWiFiNames)
+    }
+
     /// No Mac-wide limit, skip on a constrained network, no Wi-Fi names.
-    public static let defaults = NetworkSettings(uploadLimitKiB: nil, skipOnConstrainedNetwork: true, skippedWiFiNames: [])
+    public static let defaults = NetworkSettings(uploadLimit: .none, skipOnConstrainedNetwork: true, skippedWiFiNames: [])
 }
 
 /// Why `NetworkSettings` can't be saved (Review Focus 5). `message` is the sentence shown to the user.
 public enum NetworkSettingsError: Equatable, Sendable {
-    /// The Mac-wide upload limit is 0 or negative. None is nil, not 0.
+    /// The Mac-wide upload rate is 0 or negative. No limit is `.none`, not 0.
     case limitNotPositive
+    /// The Mac-wide upload percentage is not from 1 to 100.
+    case percentOutOfRange(Int)
+    /// The limit window starts and ends at the same time.
+    case windowStartEqualsEnd
+    /// A limit window time is not within the day (0..<1440 minutes).
+    case windowTimeInvalid
     /// A Wi-Fi name is empty or only spaces.
     case emptyWiFiName
     /// A Wi-Fi name is listed twice, ignoring case and surrounding spaces. Carries the later spelling, trimmed.
@@ -35,6 +62,9 @@ public enum NetworkSettingsError: Equatable, Sendable {
     public var message: String {
         switch self {
         case .limitNotPositive: "The upload limit must be more than 0 KiB/s"
+        case .percentOutOfRange: "The upload limit must be a percentage from 1 to 100"
+        case .windowStartEqualsEnd: "The limit’s start and end times can’t be the same"
+        case .windowTimeInvalid: "A limit time must be within the day"
         case .emptyWiFiName: "A Wi-Fi network name can’t be empty"
         case .duplicateWiFiName(let name): "The Wi-Fi network “\(name)” is in the list more than once"
         }
@@ -42,12 +72,24 @@ public enum NetworkSettingsError: Equatable, Sendable {
 }
 
 extension NetworkSettings {
-    /// Every problem, each once, in a fixed order: the limit, then an empty name, then each network
+    /// Every problem, each once, in a fixed order: the limit, the window, then an empty name, then each network
     /// listed more than once. Names are compared as they are saved (`normalised`) and as they are matched
     /// (`isSkipped`): trimmed and ignoring case.
     public func validationErrors() -> [NetworkSettingsError] {
         var errors: [NetworkSettingsError] = []
-        if let uploadLimitKiB, uploadLimitKiB <= 0 { errors.append(.limitNotPositive) }
+        switch uploadLimit {
+        case .none: break
+        case .rate(let kiB, _): if kiB <= 0 { errors.append(.limitNotPositive) }
+        case .percent(let percent): if !(1...100).contains(percent) { errors.append(.percentOutOfRange(percent)) }
+        }
+        if let limitWindow {
+            let day = 0..<1440
+            if !day.contains(limitWindow.startMinute) || !day.contains(limitWindow.endMinute) {
+                errors.append(.windowTimeInvalid)
+            } else if limitWindow.startMinute == limitWindow.endMinute {
+                errors.append(.windowStartEqualsEnd)
+            }
+        }
         var seen: Set<String> = []
         var reported: Set<String> = []
         var duplicates: [NetworkSettingsError] = []
