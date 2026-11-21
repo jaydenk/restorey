@@ -120,13 +120,14 @@ extension NetworkSettings {
         return !key.isEmpty && skippedWiFiNames.contains { Self.matchKey(Self.trimmed($0)) == key }
     }
 
-    private static func trimmed(_ name: String) -> String {
+    static func trimmed(_ name: String) -> String {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Case-folded and in one Unicode form, so canonically equivalent spellings ("é" as one code point or
-    /// as "e" and a combining accent) give the same key in a `Set`.
-    private static func matchKey(_ name: String) -> String {
+    /// as "e" and a combining accent) give the same key in a `Set`. Shared with `NetworkKey`, so a Wi-Fi name
+    /// is matched the same way for the skip list and for the measurements.
+    static func matchKey(_ name: String) -> String {
         name.folding(options: .caseInsensitive, locale: nil).precomposedStringWithCanonicalMapping
     }
 }
