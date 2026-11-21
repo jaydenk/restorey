@@ -182,6 +182,28 @@ struct MessagesTests {
         #expect(status.plans[1].setupState == .complete)
     }
 
+    /// A status from an agent before the upload speed existed has no `uploadSpeed`.
+    @Test func agentStatusDecodesWithoutUploadSpeed() throws {
+        let old = #"{"plans":[],"generatedAt":"2027-01-15T08:00:00.000Z","sequence":3}"#
+        let decoded = try XPCCoding.decode(AgentStatus.self, from: Data(old.utf8))
+        #expect(decoded.uploadSpeed == nil)
+        #expect(decoded.sequence == 3)
+    }
+
+    @Test func uploadSpeedStatusRoundTrips() throws {
+        let record = UploadSpeedRecord(
+            latest: UploadSpeedMeasurement(bitsPerSecond: 320_000_000, bytesSent: 40_000_000, measuredAt: Self.now),
+            lastFailure: SpeedTestFailure(at: Self.now, reason: "The test timed out"))
+        for speed in [
+            UploadSpeedStatus(network: .wiFi(name: "Home"), record: record, testing: true),
+            UploadSpeedStatus(network: .ethernet, record: nil, testing: false),
+            UploadSpeedStatus(network: nil, record: nil, testing: false),
+        ] {
+            try roundTrip(AgentStatus(
+                plans: [], configError: nil, fdaMissing: nil, generatedAt: Self.now, sequence: 1, uploadSpeed: speed))
+        }
+    }
+
     // MARK: Ordering statuses (final review M1)
 
     private func status(at seconds: TimeInterval, run: UUID?, sequence: UInt64?) -> AgentStatus {

@@ -28,7 +28,32 @@ extension AgentState {
         }
         return AgentStatus(
             plans: config.plans.map { planStatus($0, now: now) }, configError: nil, fdaMissing: fdaMissing,
-            generatedAt: now, agentRun: statusRun, sequence: statusSequence, network: config.network)
+            generatedAt: now, agentRun: statusRun, sequence: statusSequence, network: config.network,
+            uploadSpeed: uploadSpeedStatus)
+    }
+
+    /// The upload speed where the Mac is, and whether any test is running.
+    private var uploadSpeedStatus: UploadSpeedStatus? {
+        uploadSpeedView.map { UploadSpeedStatus(network: $0.network, record: $0.record, testing: speedTestsRunning > 0) }
+    }
+
+    /// A test has started on `key`'s network (the daily one, one before a backup, or Test now): pushes the status with
+    /// `testing` set. Until the runner next looks, the measurement shown is the one last seen for that network.
+    func speedTestBegan(on key: NetworkKey) {
+        speedTestsRunning += 1
+        if uploadSpeedView?.network != key { uploadSpeedView = UploadSpeedStatus(network: key, record: nil, testing: false) }
+        pushStatus(deliveringAlerts: false)
+    }
+
+    /// The runner's view of the network the Mac is on and its measurement (nil with no network). Pushes the status when
+    /// that or `testing` changed; `endingTest` counts a test that has ended, so its end is pushed with the result.
+    @discardableResult
+    func noteUploadSpeed(network: NetworkKey?, record: UploadSpeedRecord?, endingTest: Bool = false) -> AgentStatus {
+        let before = uploadSpeedStatus
+        if endingTest { speedTestsRunning = max(0, speedTestsRunning - 1) }
+        uploadSpeedView = UploadSpeedStatus(network: network, record: record, testing: false)
+        guard uploadSpeedStatus != before else { return status() }
+        return pushStatus(deliveringAlerts: false)
     }
 
     /// The Mac-wide network rules the preflight applies (Ruling P2-6).

@@ -80,6 +80,23 @@ final class AgentService: NSObject, AgentXPC, Sendable {
         }
     }
 
+    func runUploadSpeedTest(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        // The test logs itself (`SpeedTester`), so only a refusal is logged here. Not by `respond`: its message names a
+        // skipped Wi-Fi network, which a Release log never does.
+        respond(reply, "runUploadSpeedTest", logsRefusal: false) { [state, log] in
+            do {
+                return try await state.runUploadSpeedTest()
+            } catch let error as AgentError {
+                if case .speedTestRefused(.skippedWiFi) = error {
+                    log.info("Refused runUploadSpeedTest: the Wi-Fi network is one backups skip")
+                } else {
+                    log.info("Refused runUploadSpeedTest: \(error.message)")
+                }
+                throw error
+            }
+        }
+    }
+
     /// The Mac-wide upload limit as the log names it: "none", "2048 KiB/s", "50% of the measured upload speed".
     private static func describe(_ limit: MacUploadLimit) -> String {
         switch limit {

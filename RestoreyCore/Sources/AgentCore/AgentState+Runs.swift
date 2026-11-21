@@ -101,6 +101,14 @@ extension AgentState {
         try await requireRunner().probeFullDiskAccess()
     }
 
+    /// Runs an upload speed test on the current network now, or joins one in flight, and returns the status once it has
+    /// ended. A test that fails is not an error: the status carries the failure. Refused with the sentence for why when
+    /// no test may run (`SpeedTestRefusal`), while draining and in the config-error state.
+    public func runUploadSpeedTest() async throws -> AgentStatus {
+        try requireMutable()
+        return try await requireRunner().testUploadSpeedNow()
+    }
+
     func requireRunner() throws -> PlanRunner {
         guard let runner else { throw AgentError.runnerUnavailable }
         return runner

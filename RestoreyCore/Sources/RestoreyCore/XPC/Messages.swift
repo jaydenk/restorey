@@ -147,10 +147,14 @@ public struct AgentStatus: Codable, Sendable, Equatable {
     /// The Mac-wide network rules from `config.json`. Nil when `config.json` couldn't be read, and from an
     /// agent older than schema 3.
     public var network: NetworkSettings?
+    /// The upload speed on the network the Mac is on, and whether a test is running. Nil from an agent older than
+    /// the upload speed tests, until the agent has looked at the network, and while `config.json` can't be read.
+    public var uploadSpeed: UploadSpeedStatus?
 
     public init(
         plans: [PlanStatus], configError: String?, fdaMissing: Bool?, generatedAt: Date,
-        agentRun: UUID? = nil, sequence: UInt64? = nil, network: NetworkSettings? = nil
+        agentRun: UUID? = nil, sequence: UInt64? = nil, network: NetworkSettings? = nil,
+        uploadSpeed: UploadSpeedStatus? = nil
     ) {
         self.plans = plans
         self.configError = configError
@@ -159,6 +163,7 @@ public struct AgentStatus: Codable, Sendable, Equatable {
         self.agentRun = agentRun
         self.sequence = sequence
         self.network = network
+        self.uploadSpeed = uploadSpeed
     }
 
     /// Whether the app should show `self` in place of `current`: a status from another agent process (a
@@ -171,6 +176,24 @@ public struct AgentStatus: Codable, Sendable, Equatable {
             return run != currentRun || sequence >= currentSequence
         }
         return generatedAt >= current.generatedAt
+    }
+}
+
+/// What the agent knows about the upload speed where the Mac is now (the upload-limit design, "Agent and app
+/// interface").
+public struct UploadSpeedStatus: Codable, Sendable, Equatable {
+    /// The current network's key; nil with no network. A Wi-Fi network is named only when the agent had a reason
+    /// to read the name (a percentage limit or a skip list), else it is `.wiFiUnknown`.
+    public var network: NetworkKey?
+    /// Its last measurement and last failure, if any.
+    public var record: UploadSpeedRecord?
+    /// Whether a test is running on any network: the daily one, one before a backup, or one asked for.
+    public var testing: Bool
+
+    public init(network: NetworkKey?, record: UploadSpeedRecord?, testing: Bool) {
+        self.network = network
+        self.record = record
+        self.testing = testing
     }
 }
 

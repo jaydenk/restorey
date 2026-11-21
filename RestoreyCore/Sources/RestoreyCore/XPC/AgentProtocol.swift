@@ -7,7 +7,8 @@ import Foundation
 /// error a sentence in Australian English to show as is. Plan IDs are UUID strings.
 ///
 /// Mutating calls (`savePlan`, `deletePlan`, `pause`, `cancel`, `resume`, `confirmRecoveryKit`, `backUpNow`,
-/// `createRepository`, `saveNetworkSettings`, `dismissOffMacNote`, `removeEarlierSnapshotsAfterNextBackup`) reply with
+/// `createRepository`, `saveNetworkSettings`, `runUploadSpeedTest`, `dismissOffMacNote`,
+/// `removeEarlierSnapshotsAfterNextBackup`) reply with
 /// the new `AgentStatus`. While a config error is reported, all of them are refused, and so are `history`, `recoveryKit`
 /// and the earlier-snapshots calls. While draining, all of them, `adopt`, `probeRepository` and the earlier-snapshots
 /// calls are refused, except `pause` and `cancel`: the user can still stop a long first backup,
@@ -27,6 +28,11 @@ import Foundation
     /// `NetworkSettings` → `AgentStatus`. The Mac-wide network rules, saved with Wi-Fi names trimmed; settings
     /// with a problem (`NetworkSettings.validationErrors`) are refused with every reason.
     func saveNetworkSettings(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
+    /// → `AgentStatus`. Runs an upload speed test on the current network now, or joins one in flight, and replies once it
+    /// has ended. A test that fails isn't an error: the status then carries the failure (`uploadSpeed.record`). What
+    /// refuses it, with a sentence (`SpeedTestRefusal.message`), is no network, a constrained or expensive network, a
+    /// skipped Wi-Fi network, and restic running a command against a networked repository.
+    func runUploadSpeedTest(withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// Removes the plan, its secrets, credentials file and history. Never touches the repository.
     func deletePlan(_ id: String, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// One plan, or every plan when `planID` is nil.

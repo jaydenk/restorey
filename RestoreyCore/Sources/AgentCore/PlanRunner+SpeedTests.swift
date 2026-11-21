@@ -22,6 +22,7 @@ extension PlanRunner {
     func runSpeedTest(_ key: NetworkKey) async -> Result<UploadSpeedMeasurement, SpeedTestError>? {
         guard let tester = deps.speedTester, networkedCommands.isEmpty else { return nil }
         speedTestsAsked += 1
+        await deps.state.speedTestBegan(on: key)
         let result = await tester.test(key)
         speedTestsAsked -= 1
         if speedTestsAsked == 0 {
@@ -29,7 +30,39 @@ extension PlanRunner {
             speedTestWaiters = []
             for waiter in waiters { waiter.resume() }
         }
+        await refreshUploadSpeedStatus(endingTest: true)
         return result
+    }
+
+    /// "Test now" (`AgentXPC.runUploadSpeedTest`): the test on the current network, through `runSpeedTest` like every
+    /// other test so it can't overlap a networked restic command. Returns the status once it has ended, a failed test
+    /// included. Refused when it may not run (`SpeedTestRefusal`).
+    func testUploadSpeedNow() async throws -> AgentStatus {
+        guard deps.speedTester != nil else { throw AgentError.operationFailed("The upload speed can’t be tested now") }
+        let settings = await deps.state.networkSettings
+        let network = await currentNetwork(settings)
+        if let refusal = SpeedTestRefusal.check(
+            network: network.state, settings: settings, wiFiName: network.wiFiName,
+            networkedCommandRunning: !networkedCommands.isEmpty)
+        {
+            throw AgentError.speedTestRefused(refusal)
+        }
+        guard let key = network.key else { throw AgentError.speedTestRefused(.noNetwork) }
+        // No suspension between the check above and this call, so no networked command registers in between.
+        guard await runSpeedTest(key) != nil else {
+            throw AgentError.speedTestRefused(.networkedCommandRunning)
+        }
+        return await deps.state.status()
+    }
+
+    /// Gives the status the network the Mac is on now and what is kept for it, pushing it if that changed. The
+    /// scheduler's tick calls it, so a change of network shows within a minute or at the next nudge.
+    func refreshUploadSpeedStatus(endingTest: Bool = false) async {
+        let settings = await deps.state.networkSettings
+        let network = await currentNetwork(settings)
+        var record: UploadSpeedRecord?
+        if let key = network.key, let tester = deps.speedTester { record = await tester.record(for: key) }
+        await deps.state.noteUploadSpeed(network: network.key, record: record, endingTest: endingTest)
     }
 
     /// Returns once no upload speed test is running or on its way to the tester. The caller registers its command in
@@ -62,13 +95,13 @@ extension PlanRunner {
         return Task { _ = await runSpeedTest(key) }
     }
 
-    /// The network the Mac is on now and its key. The Wi-Fi name is read only on Wi-Fi with a percentage set, the one
-    /// case it's needed for (a percentage's measurement belongs to the network); CoreWLAN never prompts for Location,
-    /// it answers nil without it.
+    /// The network the Mac is on now and its key. The Wi-Fi name is read only on Wi-Fi when something needs it: a
+    /// percentage (its measurement belongs to the network) or a skip list with names (a test is refused on a skipped
+    /// network); CoreWLAN never prompts for Location, it answers nil without it.
     func currentNetwork(_ settings: NetworkSettings) async -> (state: NetworkState, key: NetworkKey?, wiFiName: String?) {
         let environment = await deps.preflightEnvironment()
         var wiFiName: String?
-        if case .satisfied(_, _, .wiFi) = environment.network, case .percent = settings.uploadLimit {
+        if case .satisfied(_, _, .wiFi) = environment.network, settings.needsWiFiNameForSpeedTests {
             wiFiName = environment.currentWiFiName()
         }
         return (environment.network, networkKey(for: environment.network, wiFiName: wiFiName), wiFiName)
@@ -170,5 +203,13 @@ extension PlanRunner {
         formatter.timeZone = calendar.timeZone
         formatter.dateFormat = "d MMM yyyy"
         return formatter.string(from: date)
+    }
+}
+
+extension NetworkSettings {
+    /// Whether the speed tests need the Wi-Fi name: the limit is a percentage, or the skip list has names.
+    fileprivate var needsWiFiNameForSpeedTests: Bool {
+        if case .percent = uploadLimit { return true }
+        return !skippedWiFiNames.isEmpty
     }
 }

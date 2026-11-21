@@ -93,6 +93,11 @@ public actor AgentState {
     weak var runner: PlanRunner?
     /// The latest Full Disk Access probe, as the runner last saw it; nil until it has run.
     var fdaMissing: Bool?
+    /// The network the Mac was on and its measurement when the runner last looked (`noteUploadSpeed`); nil until it
+    /// has. Its `testing` is never read: the status derives it from `speedTestsRunning`.
+    var uploadSpeedView: UploadSpeedStatus?
+    /// Upload speed tests running now, of any kind (`speedTestBegan`, `noteUploadSpeed(endingTest:)`).
+    var speedTestsRunning = 0
 
     /// Posts the alerts (`attach(notifier:log:)`); without one, no alert is delivered.
     var notifier: (any AlertNotifying)?

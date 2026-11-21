@@ -284,7 +284,7 @@ plan and how many secrets it sent, and the app keeps them only while the kit or 
 (see "The recovery kit"). The other calls the setup and
 Settings screens use return no secret: `probeRepository` (is the address empty, or a repository the password opens,
 with its snapshots by host), `history` (run records, newest first, for one plan or all), `probeFullDiskAccess`
-(runs the agent's own probe and pushes the status) and `dismissOffMacNote`. It is the only writer of `config.json`,
+(runs the agent's own probe and pushes the status), `dismissOffMacNote` and `runUploadSpeedTest`. It is the only writer of `config.json`,
 `state.json` and the plans' keychain items, all under `~/Library/Application Support/<root ID>` (mode 0700).
 If either file is corrupt or was written by a newer Restorey, the agent reports it in `status`, refuses every
 change and leaves the file as it is. Its log is `~/Library/Logs/Restorey-Dev/agent.log`, and MetricKit
@@ -1017,6 +1017,17 @@ command that wants to start during a test waits for the test to end. Each test i
 network (a Wi-Fi network as "Wi-Fi" in a Release build), result, bytes sent and duration. With a fixed rate or no limit, no test runs on its own. An
 `upload-speeds.json` that can't be read (corrupt, or written by a newer Restorey) counts as no measurements, is
 logged once and is never overwritten. The logic is `SpeedTester` and `PlanRunner+SpeedTests.swift` (AgentCore).
+
+The agent's `status` (and every status it pushes) carries `uploadSpeed`: the key of the network the Mac is on now (none
+with no network; a Wi-Fi network is named only when the agent reads the name anyway, so it is "Wi-Fi (name unknown)"
+with no percentage and an empty skip list), what is kept for it (the last measurement and the last failure), and
+`testing`, true while any test runs, whether the day's, one before a backup or one asked for. A status goes out when a
+test starts and when it ends, and the scheduler's tick refreshes the network. An older agent sends none. The XPC call
+`runUploadSpeedTest` runs a test on the current network now, or joins the one in flight, and replies with the status once
+it has ended. It goes through the same gate as every other test (never overlapping a networked restic command), so a test that
+fails is not an error (the status then has `lastFailure`); only a refusal is, with a sentence: no network, a constrained
+or expensive network, a skipped Wi-Fi network, or restic running a command against a networked repository. Like the other
+mutating calls it is refused while a config error is reported and while draining.
 
 Wi-Fi names are matched ignoring case and surrounding spaces (not accents), and a backup on a listed network is
 recorded as "Skipped on Wi-Fi “<name>”". The app saves these settings through the agent, which refuses an upload

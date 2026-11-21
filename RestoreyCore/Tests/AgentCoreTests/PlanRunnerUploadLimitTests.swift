@@ -215,4 +215,143 @@ extension PlanRunnerTests {
         #expect(f.wiFiNameReads.value > 0)
         #expect(await f.speedTester.record(for: .wiFi(name: "Home"))?.latest != nil)
     }
+
+    // MARK: Test now (`AgentXPC.runUploadSpeedTest`) and the status
+
+    static func refusal(_ error: any Error) -> String? { (error as? AgentError)?.message }
+
+    @Test func runUploadSpeedTestIsRefusedOnAConstrainedNetwork() async throws {
+        let stub = try HeldResticStub()
+        defer { stub.remove() }
+        let f = try await Self.networkedFixture(stub, settings: Self.halfOfTheUpload)
+        defer { f.remove() }
+        f.network.set(.satisfied(constrained: true, expensive: false, interface: .wiFi))
+        await #expect { try await f.state.runUploadSpeedTest() } throws: {
+            Self.refusal($0) == SpeedTestRefusal.constrained.message
+        }
+        f.network.set(.satisfied(constrained: false, expensive: true, interface: .wired))
+        await #expect { try await f.state.runUploadSpeedTest() } throws: {
+            Self.refusal($0) == SpeedTestRefusal.constrained.message
+        }
+        f.network.set(.unsatisfied)
+        await #expect { try await f.state.runUploadSpeedTest() } throws: {
+            Self.refusal($0) == SpeedTestRefusal.noNetwork.message
+        }
+        #expect(f.speedTest.calls.value == 0)
+    }
+
+    @Test func runUploadSpeedTestIsRefusedOnASkippedWiFiNetwork() async throws {
+        let stub = try HeldResticStub()
+        defer { stub.remove() }
+        let skipping = NetworkSettings(uploadLimit: .none, skipOnConstrainedNetwork: true, skippedWiFiNames: ["Cafe"])
+        let f = try await Self.networkedFixture(stub, settings: skipping)
+        defer { f.remove() }
+        f.network.set(.satisfied(constrained: false, expensive: false, interface: .wiFi))
+        f.wiFiName.set("cafe ")
+        // The name is read although no percentage is set: the skip list needs it.
+        await #expect { try await f.state.runUploadSpeedTest() } throws: {
+            Self.refusal($0) == SpeedTestRefusal.skippedWiFi("cafe ").message
+        }
+        #expect(f.speedTest.calls.value == 0)
+    }
+
+    @Test func runUploadSpeedTestIsRefusedWhileANetworkedResticCommandRuns() async throws {
+        let stub = try HeldResticStub()
+        defer { stub.remove() }
+        let f = try await Self.networkedFixture(stub, settings: Self.halfOfTheUpload)
+        defer { f.remove() }
+        f.network.set(.satisfied(constrained: false, expensive: false, interface: .wired))
+        f.speedTest.answer(with: [.success(320_000_000)])
+        let backup = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await stub.waitForBackups(1)
+        await #expect { try await f.state.runUploadSpeedTest() } throws: {
+            Self.refusal($0) == SpeedTestRefusal.networkedCommandRunning.message
+        }
+        // The one the backup itself ran before restic started is the only one.
+        #expect(f.speedTest.calls.value == 1)
+        stub.release()
+        _ = try await backup.value
+    }
+
+    @Test func runUploadSpeedTestReturnsTheStatusWithTheFailure() async throws {
+        let stub = try HeldResticStub()
+        defer { stub.remove() }
+        let f = try await Self.networkedFixture(stub, settings: Self.halfOfTheUpload)
+        defer { f.remove() }
+        f.network.set(.satisfied(constrained: false, expensive: false, interface: .wired))
+        f.speedTest.answer(with: [.failure(.timedOut)])
+
+        let status = try await f.state.runUploadSpeedTest()
+        let failure = SpeedTestFailure(at: f.clock.now, reason: SpeedTestError.timedOut.message)
+        #expect(status.uploadSpeed == UploadSpeedStatus(
+            network: .ethernet, record: UploadSpeedRecord(lastFailure: failure), testing: false))
+        #expect(f.speedTest.calls.value == 1)
+    }
+
+    @Test func runUploadSpeedTestReturnsTheMeasurementAndPushesAtStartAndEnd() async throws {
+        let stub = try HeldResticStub()
+        defer { stub.remove() }
+        let f = try await Self.networkedFixture(stub, settings: .defaults)
+        defer { f.remove() }
+        f.network.set(.satisfied(constrained: false, expensive: false, interface: .wired))
+        let pushes = Locked<[UploadSpeedStatus?]>([])
+        await f.state.setStatusObserver { status in pushes.mutate { $0.append(status.uploadSpeed) } }
+        let gate = f.speedTest.holdCalls()
+
+        let call = Task { try await f.state.runUploadSpeedTest() }
+        #expect(await eventually { pushes.value.contains { $0?.testing == true } })
+        #expect(await f.runner.speedTestsAsked == 1)
+        gate.open()
+        let status = try await call.value
+        let measured = try #require(await f.speedTester.record(for: .ethernet)?.latest)
+        #expect(status.uploadSpeed == UploadSpeedStatus(
+            network: .ethernet, record: UploadSpeedRecord(latest: measured), testing: false))
+        #expect(pushes.value.last == status.uploadSpeed)
+        #expect(pushes.value.filter { $0?.testing == true }.count == 1)
+    }
+
+    /// A test the scheduler's tick starts also shows as testing, and the status goes out at its start and its end.
+    @Test func theDailyTestShowsAsTesting() async throws {
+        let stub = try HeldResticStub()
+        defer { stub.remove() }
+        let f = try await Self.networkedFixture(stub, settings: Self.halfOfTheUpload)
+        defer { f.remove() }
+        f.network.set(.satisfied(constrained: false, expensive: false, interface: .wired))
+        let pushes = Locked<[UploadSpeedStatus?]>([])
+        await f.state.setStatusObserver { status in pushes.mutate { $0.append(status.uploadSpeed) } }
+        let gate = f.speedTest.holdCalls()
+
+        let task = try #require(await f.runner.beginDailySpeedTestIfDue())
+        #expect(await eventually { pushes.value.contains { $0?.testing == true } })
+        #expect(await f.state.status().uploadSpeed?.testing == true)
+        gate.open()
+        await task.value
+        let ended = await f.state.status().uploadSpeed
+        #expect(ended?.testing == false)
+        #expect(ended?.network == .ethernet)
+        #expect(ended?.record?.latest != nil)
+        #expect(pushes.value.last??.testing == false)
+    }
+
+    /// The status carries the current network's key; the Wi-Fi name is read only when something needs it, never
+    /// otherwise (CoreWLAN never prompts, but there's no reason to ask).
+    @Test func theStatusNamesTheNetworkOnlyWhenTheNameIsNeeded() async throws {
+        let stub = try HeldResticStub()
+        defer { stub.remove() }
+        let f = try await Self.networkedFixture(stub, settings: .defaults)
+        defer { f.remove() }
+        f.wiFiName.set("Home")
+        f.network.set(.satisfied(constrained: false, expensive: false, interface: .wiFi))
+        await f.runner.refreshStatus()
+        #expect(await f.state.status().uploadSpeed?.network == .wiFiUnknown)
+        #expect(f.wiFiNameReads.value == 0)
+
+        _ = try await f.state.saveNetworkSettings(Self.halfOfTheUpload)
+        await f.runner.refreshStatus()
+        #expect(await f.state.status().uploadSpeed?.network == .wiFi(name: "Home"))
+
+        f.network.set(.unsatisfied)
+        await f.runner.refreshStatus()
+        #expect(await f.state.status().uploadSpeed == UploadSpeedStatus(network: nil, record: nil, testing: false))
+    }
 }

@@ -1092,6 +1092,7 @@ struct AgentStateTests {
         await #expect { _ = try await state.adopt(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.beginRun(planID: plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.saveNetworkSettings(.defaults) } throws: { Self.message($0) == refused }
+        await #expect { try await state.runUploadSpeedTest() } throws: { Self.message($0) == refused }
         await #expect { _ = try await state.probeRepository(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.dismissOffMacNote(plan.id) } throws: { Self.message($0) == refused }
         // Reads too: without the files there is no plan to answer for.
@@ -1332,6 +1333,7 @@ struct AgentStateTests {
         await #expect { try await state.resume(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.beginRun(planID: plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.saveNetworkSettings(.defaults) } throws: { Self.message($0) == refused }
+        await #expect { try await state.runUploadSpeedTest() } throws: { Self.message($0) == refused }
         let other = Self.plan(now: clock.now)
         await #expect { try await state.beginRun(planID: other.id) } throws: { Self.message($0) == refused }
         // Pause is allowed, so the user can still stop a long first backup.
