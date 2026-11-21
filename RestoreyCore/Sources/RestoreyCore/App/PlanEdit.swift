@@ -22,8 +22,10 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
         public var backUpAnyway: [String]
         /// The interval, the battery rule and retention (as text), shared with setup's schedule step.
         public var schedule: ScheduleForm
-        /// MB/s as typed; empty is no limit (the default, UI design §6.2).
+        /// The limit as typed, in `uploadLimitUnit`; empty is no limit (the default, UI design §6.2).
         public var uploadLimit: String
+        /// The unit the limit is typed and shown in. Changing it converts `uploadLimit` (`PlanEdit.setUploadLimitUnit`).
+        public var uploadLimitUnit: UploadLimitUnit
         public var hostLabel: String
         public var pruneEnabled: Bool
         public var forgetCadence: ForgetCadence
@@ -40,7 +42,8 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
             skipsItemsMarkedNotForBackup = plan.skipsItemsMarkedNotForBackup
             backUpAnyway = plan.backUpAnyway
             schedule = ScheduleForm(plan: plan)
-            uploadLimit = FormValidation.uploadLimitText(kiB: plan.uploadLimitKiB)
+            uploadLimit = FormValidation.uploadLimitText(kiB: plan.uploadLimitKiB, unit: plan.uploadLimitUnit)
+            uploadLimitUnit = plan.uploadLimitUnit
             hostLabel = plan.hostLabel
             pruneEnabled = plan.pruneEnabled
             forgetCadence = plan.forgetCadence
@@ -170,8 +173,17 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
     }
 
     public var uploadLimitProblem: String? {
-        if case .failure(let problem) = FormValidation.uploadLimit(fields.uploadLimit) { return problem.message }
+        if case .failure(let problem) = FormValidation.uploadLimit(fields.uploadLimit, unit: fields.uploadLimitUnit) {
+            return problem.message
+        }
         return nil
+    }
+
+    /// Shows the plan's limit in another unit: the typed amount converts (5 MB/s becomes 5120 KB/s), it isn't
+    /// reinterpreted.
+    public mutating func setUploadLimitUnit(_ unit: UploadLimitUnit) {
+        fields.uploadLimit = FormValidation.convertedLimitText(fields.uploadLimit, from: fields.uploadLimitUnit, to: unit)
+        fields.uploadLimitUnit = unit
     }
 
     public var checkInProblem: String? { ScheduleForm.checkInProblem(secret(checkInKey)) }
@@ -216,8 +228,11 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
         if retentionText.contains(where: changed), case .success(let retention) = fields.schedule.retention {
             plan.retention = retention
         }
-        if changed(\.uploadLimit), case .success(let limit) = FormValidation.uploadLimit(fields.uploadLimit) {
+        if changed(\.uploadLimit) || changed(\.uploadLimitUnit),
+            case .success(let limit) = FormValidation.uploadLimit(fields.uploadLimit, unit: fields.uploadLimitUnit)
+        {
             plan.uploadLimitKiB = limit
+            plan.uploadLimitUnit = fields.uploadLimitUnit
         }
         if changed(\.hostLabel) { plan.hostLabel = fields.hostLabel.trimmingCharacters(in: .whitespacesAndNewlines) }
         if changed(\.pruneEnabled) { plan.pruneEnabled = fields.pruneEnabled }

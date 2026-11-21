@@ -284,7 +284,7 @@ plan and how many secrets it sent, and the app keeps them only while the kit or 
 (see "The recovery kit"). The other calls the setup and
 Settings screens use return no secret: `probeRepository` (is the address empty, or a repository the password opens,
 with its snapshots by host), `history` (run records, newest first, for one plan or all), `probeFullDiskAccess`
-(runs the agent's own probe and pushes the status), `dismissOffMacNote` and `runUploadSpeedTest`. It is the only writer of `config.json`,
+(runs the agent's own probe and pushes the status) and `dismissOffMacNote`; Settings → Network also calls `runUploadSpeedTest` (Test now). It is the only writer of `config.json`,
 `state.json` and the plans' keychain items, all under `~/Library/Application Support/<root ID>` (mode 0700).
 If either file is corrupt or was written by a newer Restorey, the agent reports it in `status`, refuses every
 change and leaves the file as it is. Its log is `~/Library/Logs/Restorey-Dev/agent.log`, and MetricKit
@@ -531,8 +531,10 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   (`dropDestination(for:isEnabled:action:)` and `onDropSessionUpdated`, macOS 26). Delete (⌫ or ⌦,
   `onDeleteCommand`) removes the selected rows as Remove does (never Restorey's own exclusions), and a folder's
   context menu has Show in Finder and Remove. Setup's "What to back up" step uses the same list.
-- **Schedule**: the interval, the battery rule and the plan's own upload limit in MB/s (empty, the default, is none;
-  a networked repository also gets its share of the Mac-wide limit, the smaller winning, Ruling P2-7). Under the
+- **Schedule**: the interval, the battery rule and the plan's own upload limit, in KB/s or MB/s by a picker beside the
+  amount (empty, the default, is none; choosing the other unit converts the amount, so 5 MB/s becomes 5120 KB/s, and
+  the plan remembers its unit, `PlanEdit.setUploadLimitUnit`; a plan's limit is never a percentage). A networked
+  repository also gets its share of the Mac-wide limit, the smaller winning, Ruling P2-7. Under the
   interval, one quiet line gives the plan's last backup and next run in the menu's words ("Last backup at 14:16 ·
   next at 15:16"; "No backup yet · first at …"; paused, a skipping battery, network, Wi-Fi or drive rule, and a plan
   waiting for a recovery kit are each said). It describes the saved schedule: while the interval is edited and unsaved it adds "Next
@@ -586,9 +588,31 @@ agent also removes the plan's run logs, and setup's saved progress is forgotten 
 **Network** edits the Mac-wide rules (`NetworkEdit` in `RestoreyCore`, held by `NetworkEditModel` for as long as
 the window is open, so going to another section and back keeps unsaved edits; closing the window or quitting with
 unsaved Network edits asks Save, Don't Save or Cancel, after a plan's question if both have edits,
-`UnsavedSettings`): "Upload limit for this Mac" in MB/s
-(empty, the default, is none), "Skip on a hotspot or in Low Data Mode" and "Skip on these Wi-Fi networks", saved
-with Save (⌘S) or undone with Revert, which apply only the fields you changed, as a plan's tabs do. A name is added
+`UnsavedSettings`). Its rows, from the top (the full design is in
+`docs/superpowers/specs/2026-11-21-upload-limit-design.md`):
+
+- **Upload limit for this Mac**: an amount and a picker of None (the default), KB/s, MB/s or "% of upload speed"
+  (`LimitKind`). Switching between KB/s and MB/s converts the amount; a percentage is a whole number from 1 to 100
+  and starts at 50.
+- **The speed line** (`NetworkEdit.speedLine`) with **Test now** (`runUploadSpeedTest`, off while any test runs; a
+  refusal is shown as its sentence): "Upload speed on “Kerr Home”: 38 MB/s, measured today" (or "yesterday", or a
+  date), "Not measured on this network yet", the last failure's sentence, "Testing upload speed…" or "Not connected to a
+  network". Speeds show in MB/s with up to one decimal, or in KB/s below 1 MB/s. This row is the one place the
+  Wi-Fi network's name is shown in the app; it is never logged.
+- **Only limit during** (shown whenever the limit isn't None): a tick box, then Every day, Weekdays or Weekends and a
+  start and end time (8:00 am to 6:00 pm on weekdays to begin with), in the Mac's 12 or 24 hour clock. Outside the
+  window there is no Mac-wide limit; a start and end that are the same time are refused. None saves no window.
+- **Now** (`NetworkEdit.nowLine`, worked out each minute from the settings the agent has, by the same
+  `resolveMacWideLimit` a backup uses): "Now: 20 MB/s, until 6:00 pm", "Now: no limit, from 8:00 am Monday", "No limit
+  right now" or "Now: no limit until this network is measured".
+- "Skip on a hotspot or in Low Data Mode" and "Skip on these Wi-Fi networks".
+
+Choosing "% of upload speed" while the agent isn't authorised for Location sends `requestLocationPermission` (a
+percentage needs the Wi-Fi name to tell networks apart); if that is refused the choice stands and a line says "Without
+Location permission, Restorey can't tell Wi-Fi networks apart, so they share one measurement". Times and dates in these
+lines use the Mac's locale (`UploadLimitText`, which the agent's log line also uses, pinned to Australian English so a
+log reads the same on every Mac). Save (⌘S) and Revert apply only the fields you changed, as a plan's tabs do: the
+limit's kind and amount go together, as do the window's fields. A name is added
 trimmed, at most 32 bytes (an SSID's limit), and not twice ignoring case; the agent's own checks are shown before a
 save. Whether Restorey can see Wi-Fi names is `WiFiNameAccess`, from the agent's `locationAccess` reply (asked, never
 prompting, when the pane appears and whenever Restorey comes back to the front), else its hello: adding a name while
@@ -1040,10 +1064,10 @@ skips a backup.
 
 **Location permission.** macOS reveals the Wi-Fi network's name only to a process with Location Services
 permission, so the agent, which reads it, needs its own. Restorey asks for it only when you first add a Wi-Fi
-network to skip in Settings → Network, never during setup; the app asks the agent over XPC
+network to skip, or first choose a percentage limit, in Settings → Network, never during setup; the app asks the agent over XPC
 (`requestLocationPermission`), and the prompt
 names the agent's display name ("Restorey", or "Restorey Dev" for a Debug build) and says "Restorey checks the
-Wi-Fi network's name so it can skip backups on networks you've listed." Once you have answered, macOS doesn't
+Wi-Fi network's name so it can skip backups on networks you've listed and measure each network's upload speed." Once you have answered, macOS doesn't
 ask again; change it in System Settings → Privacy & Security → Location Services. The agent carries the usage text
 under `NSLocationUsageDescription` and `NSLocationWhenInUseUsageDescription`, and the hardened runtime's
 `com.apple.security.personal-information.location` entitlement; `scripts/verify-bundle.sh` checks all three.

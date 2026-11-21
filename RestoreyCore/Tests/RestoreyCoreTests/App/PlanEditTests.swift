@@ -110,6 +110,40 @@ struct PlanEditTests {
         #expect(plan.noSuccessAlertDays == 5)
     }
 
+    @Test func planLimitKeepsItsUnit() throws {
+        var plan = Self.plan()
+        plan.uploadLimitKiB = 512
+        plan.uploadLimitUnit = .kilobytes
+        var edit = PlanEdit(plan: plan)
+        #expect(edit.fields.uploadLimit == "512")
+        #expect(edit.fields.uploadLimitUnit == .kilobytes)
+        #expect(!edit.isDirty)
+        edit.fields.name = "Renamed"
+        #expect(try edit.request().get().plan.uploadLimitUnit == .kilobytes)
+        #expect(try edit.request().get().plan.uploadLimitKiB == 512)
+
+        edit.fields.uploadLimit = "600"
+        let typed = try edit.request().get().plan
+        #expect(typed.uploadLimitKiB == 600)
+        #expect(typed.uploadLimitUnit == .kilobytes)
+    }
+
+    @Test func switchingThePlanLimitUnitConvertsTheAmount() throws {
+        var plan = Self.plan()
+        plan.uploadLimitKiB = 5120
+        var edit = PlanEdit(plan: plan)
+        #expect(edit.fields.uploadLimitUnit == .megabytes)
+        edit.setUploadLimitUnit(.kilobytes)
+        #expect(edit.fields.uploadLimit == "5120")
+        #expect(edit.isDirty)
+        let saved = try edit.request().get().plan
+        #expect(saved.uploadLimitKiB == 5120)
+        #expect(saved.uploadLimitUnit == .kilobytes)
+        // Typed in KB/s, an amount that isn't a number says KB/s.
+        edit.fields.uploadLimit = "fast"
+        #expect(edit.uploadLimitProblem == "Enter the limit as a number of KB/s, such as 512.")
+    }
+
     /// A value the form can't show exactly (an interval or battery rule set elsewhere, a limit with more decimals
     /// than the field shows) is kept as saved unless that control is changed: saving the name mustn't move it.
     @Test func valuesTheFormRoundsAreKeptUnlessTheirControlChanges() throws {

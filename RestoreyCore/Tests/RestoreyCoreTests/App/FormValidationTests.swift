@@ -167,6 +167,40 @@ struct FormValidationTests {
         }
     }
 
+    @Test func kilobytesAreReadAsKiB() {
+        #expect(FormValidation.uploadLimit("512", unit: .kilobytes) == .success(512))
+        #expect(FormValidation.uploadLimit(" 100 ", unit: .kilobytes) == .success(100))
+        #expect(FormValidation.uploadLimit("", unit: .kilobytes) == .success(nil))
+        #expect(FormValidation.uploadLimit("5", unit: .megabytes) == .success(5120))
+    }
+
+    @Test(arguments: ["0", "-1", "0.2"])
+    func kilobyteLimitMustBeMoreThanZero(_ text: String) {
+        #expect(FormValidation.uploadLimit(text, unit: .kilobytes)
+            == .failure("The upload limit must be more than 0 KB/s. Leave it empty for no limit."))
+    }
+
+    @Test(arguments: ["fast", "5 KB", "1,5", "NaN"])
+    func kilobyteLimitMustBeANumber(_ text: String) {
+        #expect(FormValidation.uploadLimit(text, unit: .kilobytes)
+            == .failure("Enter the limit as a number of KB/s, such as 512."))
+    }
+
+    @Test func uploadLimitTextFollowsTheUnit() {
+        #expect(FormValidation.uploadLimitText(kiB: 512, unit: .kilobytes) == "512")
+        #expect(FormValidation.uploadLimitText(kiB: 512, unit: .megabytes) == "0.5")
+        #expect(FormValidation.uploadLimitText(kiB: nil, unit: .kilobytes) == "")
+    }
+
+    @Test func convertingATypedLimitBetweenUnits() {
+        #expect(FormValidation.convertedLimitText("5", from: .megabytes, to: .kilobytes) == "5120")
+        #expect(FormValidation.convertedLimitText("5120", from: .kilobytes, to: .megabytes) == "5")
+        #expect(FormValidation.convertedLimitText("1.5", from: .megabytes, to: .kilobytes) == "1536")
+        #expect(FormValidation.convertedLimitText("", from: .megabytes, to: .kilobytes) == "")
+        #expect(FormValidation.convertedLimitText("fast", from: .megabytes, to: .kilobytes) == "fast")
+        #expect(FormValidation.convertedLimitText("5", from: .megabytes, to: .megabytes) == "5")
+    }
+
     // MARK: File types
 
     @Test func typedFileTypesAreNormalisedAndDeduplicated() {

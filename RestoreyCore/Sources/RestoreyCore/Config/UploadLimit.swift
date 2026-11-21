@@ -65,11 +65,3 @@ public struct LimitWindow: Codable, Sendable, Equatable {
         self.endMinute = endMinute
     }
 }
-
-extension MacUploadLimit {
-    /// The fixed rate in KiB/s, nil for none or a percentage. Temporary bridge for callers that don't yet
-    /// read a percentage or a window (Tasks 6 and 8 replace them).
-    public var rateKiB: Int? {
-        if case .rate(let kiB, _) = self { kiB } else { nil }
-    }
-}

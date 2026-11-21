@@ -140,6 +140,9 @@ extension PlanRunner {
         return (resolved.kiB, Self.macWideLimitLine(resolved, settings: settings, network: key, now: now, calendar: .current))
     }
 
+    /// A log reads the same on every Mac, so its times and dates are Australian English whatever the Mac's region.
+    private static let logLocale = Locale(identifier: "en_AU")
+
     /// "Mac-wide upload limit 19 MB/s: 50% of 38 MB/s measured on Wi-Fi today, inside 8:00 am–6:00 pm weekdays" (a Debug
     /// build names the Wi-Fi network: `NetworkKey.logName`).
     static func macWideLimitLine(
@@ -148,61 +151,24 @@ extension PlanRunner {
         let limit: String
         switch (resolved.kiB, settings.uploadLimit) {
         case (nil, _): limit = "none"
-        case (let kiB?, .rate(_, let unit)): limit = rateText(kiB: kiB, unit: unit)
-        case (let kiB?, _): limit = rateText(kiB: kiB, unit: kiB < 1024 ? .kilobytes : .megabytes)
+        case (let kiB?, .rate(_, let unit)): limit = UploadLimitText.rateText(kiB: kiB, unit: unit)
+        case (let kiB?, _): limit = UploadLimitText.rateText(kiB: kiB, unit: kiB < 1024 ? .kilobytes : .megabytes)
         }
-        let inside = settings.limitWindow.map { ", inside \(windowText($0))" } ?? ""
+        let inside = settings.limitWindow.map { ", inside \(UploadLimitText.windowText($0, locale: Self.logLocale))" } ?? ""
         let how: String
         switch resolved.reason {
         case .noLimitSet: how = "no limit set"
-        case .outsideWindow: how = "outside \(settings.limitWindow.map(windowText) ?? "the window")"
+        case .outsideWindow: how = "outside \(settings.limitWindow.map { UploadLimitText.windowText($0, locale: Self.logLocale) } ?? "the window")"
         case .rate: how = "a fixed rate\(inside)"
         case .percentNotMeasured:
             how = network.map { "not measured on \($0.logName) yet" } ?? "not measured: no network"
         case .percentOf(let measurement):
             let percent = if case .percent(let percent) = settings.uploadLimit { percent } else { 0 }
-            let speed = rateText(kiB: Int(measurement.bitsPerSecond / 8 / 1024), unit: .megabytes)
+            let speed = UploadLimitText.rateText(kiB: Int(measurement.bitsPerSecond / 8 / 1024), unit: .megabytes)
             let on = network.map { " on \($0.logName)" } ?? ""
-            how = "\(percent)% of \(speed) measured\(on) \(dayText(measurement.measuredAt, now: now, calendar: calendar))\(inside)"
+            how = "\(percent)% of \(speed) measured\(on) \(UploadLimitText.dayText(measurement.measuredAt, now: now, calendar: calendar, locale: Self.logLocale))\(inside)"
         }
         return "Mac-wide upload limit \(limit): \(how)"
-    }
-
-    /// "500 KB/s", "4.77 MB/s".
-    static func rateText(kiB: Int, unit: UploadLimitUnit) -> String {
-        switch unit {
-        case .kilobytes: "\(kiB) KB/s"
-        case .megabytes: "\(FormValidation.uploadLimitText(kiB: kiB)) MB/s"
-        }
-    }
-
-    /// "8:00 am–6:00 pm weekdays".
-    static func windowText(_ window: LimitWindow) -> String {
-        func time(_ minute: Int) -> String {
-            let hour = minute / 60 % 24
-            let twelve = hour % 12 == 0 ? 12 : hour % 12
-            return String(format: "%d:%02d %@", twelve, minute % 60, hour < 12 ? "am" : "pm")
-        }
-        let days = switch window.days {
-        case .everyDay: "every day"
-        case .weekdays: "weekdays"
-        case .weekends: "weekends"
-        }
-        return "\(time(window.startMinute))–\(time(window.endMinute)) \(days)"
-    }
-
-    /// "today", "yesterday", or the date ("14 Jan 2027").
-    static func dayText(_ date: Date, now: Date, calendar: Calendar) -> String {
-        if calendar.isDate(date, inSameDayAs: now) { return "today" }
-        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
-            return "yesterday"
-        }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_AU")
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "d MMM yyyy"
-        return formatter.string(from: date)
     }
 }
 

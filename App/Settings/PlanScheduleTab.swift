@@ -24,7 +24,7 @@ struct PlanScheduleTab: View {
                     BatteryPicker(rule: $model.fields.schedule.battery)
                 }
                 LabeledContent("Upload limit") {
-                    UploadLimitField(name: "Upload limit, in MB/s", text: $model.fields.uploadLimit)
+                    UploadLimitField(name: "Upload limit", text: $model.fields.uploadLimit, unit: $model.uploadLimitUnit)
                 }
                 if let problem = model.edit.uploadLimitProblem {
                     SeverityText(problem)

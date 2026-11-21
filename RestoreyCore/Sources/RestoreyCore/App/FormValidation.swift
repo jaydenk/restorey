@@ -127,29 +127,58 @@ public enum FormValidation {
         return nil
     }
 
-    /// The upload limit as typed, in MB/s, to what is stored, in KiB/s: "" is no limit (nil), "5" is 5120,
-    /// "1.5" is 1536 (one MB/s here is 1024 KiB/s, the unit restic's `--limit-upload` takes). Only a plain
-    /// decimal number with a full stop is read, so the result never depends on the Mac's region.
-    public static func uploadLimit(_ text: String) -> Result<Int?, Problem> {
+    /// The upload limit as typed, in `unit` (MB/s or KB/s), to what is stored, in KiB/s: "" is no limit (nil), "5"
+    /// MB/s is 5120, "1.5" is 1536 (one MB/s here is 1024 KiB/s, the unit restic's `--limit-upload` takes), "512"
+    /// KB/s is 512. Only a plain decimal number with a full stop is read, so the result never depends on the Mac's
+    /// region.
+    public static func uploadLimit(_ text: String, unit: UploadLimitUnit = .megabytes) -> Result<Int?, Problem> {
         let typed = trimmed(text)
         if typed.isEmpty { return .success(nil) }
-        let notANumber: Problem = "Enter the limit as a number of MB/s, such as 5 or 1.5."
+        let notANumber = limitNotANumber(unit)
         guard typed.wholeMatch(of: /-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)/) != nil,
-            let megabytes = Decimal(string: typed, locale: Locale(identifier: "en_US_POSIX"))
+            let amount = Decimal(string: typed, locale: Locale(identifier: "en_US_POSIX"))
         else { return .failure(notANumber) }
-        let kiB = NSDecimalNumber(decimal: megabytes * 1024).rounding(accordingToBehavior: nil)
+        let perUnit: Decimal = unit == .megabytes ? 1024 : 1
+        let kiB = NSDecimalNumber(decimal: amount * perUnit).rounding(accordingToBehavior: nil)
         guard kiB.doubleValue < Double(Int32.max) else { return .failure(notANumber) }
         guard kiB.intValue >= 1 else {
-            return .failure("The upload limit must be more than 0 MB/s. Leave it empty for no limit.")
+            return .failure(Problem("The upload limit must be more than 0 \(unitName(unit)). Leave it empty for no limit."))
         }
         return .success(kiB.intValue)
     }
 
-    /// A saved upload limit as the field shows it, in MB/s: the inverse of `uploadLimit`, with up to two decimals
-    /// and a full stop whatever the Mac's region; nil (no limit) is empty. A limit that needs more decimals is
-    /// shown rounded, so a form keeps the stored value unless the text is changed (`PlanEdit`).
-    public static func uploadLimitText(kiB: Int?) -> String {
+    /// What to say when a limit isn't a number (or isn't there).
+    public static func limitNotANumber(_ unit: UploadLimitUnit) -> Problem {
+        switch unit {
+        case .megabytes: "Enter the limit as a number of MB/s, such as 5 or 1.5."
+        case .kilobytes: "Enter the limit as a number of KB/s, such as 512."
+        }
+    }
+
+    /// A percentage of the measured upload speed, as typed: a whole number from 1 to 100.
+    public static func percent(_ text: String) -> Result<Int, Problem> {
+        let typed = trimmed(text)
+        guard typed.wholeMatch(of: /[0-9]{1,3}/) != nil, let value = Int(typed), (1...100).contains(value) else {
+            return .failure("Enter a percentage from 1 to 100.")
+        }
+        return .success(value)
+    }
+
+    /// "MB/s" or "KB/s".
+    public static func unitName(_ unit: UploadLimitUnit) -> String {
+        switch unit {
+        case .megabytes: "MB/s"
+        case .kilobytes: "KB/s"
+        }
+    }
+
+    /// A saved upload limit as the field shows it, in `unit`: the inverse of `uploadLimit`. MB/s has up to two
+    /// decimals and a full stop whatever the Mac's region; KB/s is whole. nil (no limit) is empty. A limit that
+    /// needs more decimals is shown rounded, so a form keeps the stored value unless the text is changed
+    /// (`PlanEdit`).
+    public static func uploadLimitText(kiB: Int?, unit: UploadLimitUnit = .megabytes) -> String {
         guard let kiB else { return "" }
+        if unit == .kilobytes { return String(kiB) }
         let formatter = NumberFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.numberStyle = .decimal
@@ -158,6 +187,13 @@ public enum FormValidation {
         formatter.maximumFractionDigits = 2
         formatter.roundingMode = .halfUp
         return formatter.string(from: NSNumber(value: Double(kiB) / 1024)) ?? "\(Double(kiB) / 1024)"
+    }
+
+    /// A typed limit shown again in another unit, so switching from 5 MB/s to KB/s reads 5120, not 5. Text that
+    /// isn't a limit (empty, or not a number) is left as it is.
+    public static func convertedLimitText(_ text: String, from old: UploadLimitUnit, to new: UploadLimitUnit) -> String {
+        guard old != new, case .success(let kiB?) = uploadLimit(text, unit: old) else { return text }
+        return uploadLimitText(kiB: kiB, unit: new)
     }
 
     /// A sentence in the agent's style (no closing full stop: `fileTypeProblem`, `AgentError`, the call

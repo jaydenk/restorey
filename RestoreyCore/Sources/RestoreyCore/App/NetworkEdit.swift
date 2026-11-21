@@ -1,23 +1,96 @@
 import Foundation
 
-/// Settings → Network (UI design §6.3, product spec §5.5, Ruling P2-6): the Mac-wide rules being edited, with Save
-/// and Revert as a plan's tabs have them. Pure; the app's `NetworkEditModel` does the calls.
+/// The kinds of Mac-wide limit the picker offers: None, KB/s, MB/s, or a percentage of the measured upload speed.
+public enum LimitKind: String, CaseIterable, Sendable {
+    case none, kilobytes, megabytes, percent
+
+    /// The picker's title.
+    public var title: String {
+        switch self {
+        case .none: "None"
+        case .kilobytes: "KB/s"
+        case .megabytes: "MB/s"
+        case .percent: "% of upload speed"
+        }
+    }
+
+    /// The unit of a fixed rate; nil for none and a percentage.
+    public var unit: UploadLimitUnit? {
+        switch self {
+        case .kilobytes: .kilobytes
+        case .megabytes: .megabytes
+        case .none, .percent: nil
+        }
+    }
+
+    public init(unit: UploadLimitUnit) {
+        self = unit == .kilobytes ? .kilobytes : .megabytes
+    }
+}
+
+/// Settings → Network (UI design §6.3, product spec §5.5, Ruling P2-6, and the upload-limit design): the Mac-wide
+/// rules being edited, with Save and Revert as a plan's tabs have them. Pure; the app's `NetworkEditModel` does the
+/// calls.
 ///
 /// The fields hold exactly what the controls show: the limit is parsed in `request()`, never as the user types. A
 /// field still equal to its start is one the user hasn't changed, and a save leaves the agent's value for it alone.
 public struct NetworkEdit: Sendable, Equatable {
     public struct Fields: Sendable, Equatable {
-        /// MB/s as typed; empty is no Mac-wide limit (the default).
-        public var uploadLimit: String
+        /// What the picker shows. The amount is in this kind's unit (KB/s, MB/s, or a percentage).
+        public var limitKind: LimitKind
+        /// The amount as typed; empty for `.none`.
+        public var limitAmount: String
+        /// "Only limit during" is ticked. The window's own fields below are shown whenever the kind isn't none, and
+        /// start as weekdays 8:00 am to 6:00 pm.
+        public var windowEnabled: Bool
+        public var windowDays: LimitDays
+        /// Minutes after midnight.
+        public var windowStart: Int
+        public var windowEnd: Int
         public var skipOnConstrainedNetwork: Bool
         /// The Wi-Fi networks to skip, as the list shows them (each trimmed when it was added).
         public var wiFiNames: [String]
 
+        public static let defaultWindow = LimitWindow(days: .weekdays, startMinute: 8 * 60, endMinute: 18 * 60)
+
         public init(settings: NetworkSettings) {
-            uploadLimit = FormValidation.uploadLimitText(kiB: settings.uploadLimit.rateKiB)
+            switch settings.uploadLimit {
+            case .none:
+                limitKind = .none
+                limitAmount = ""
+            case .rate(let kiB, let unit):
+                limitKind = LimitKind(unit: unit)
+                limitAmount = FormValidation.uploadLimitText(kiB: kiB, unit: unit)
+            case .percent(let percent):
+                limitKind = .percent
+                limitAmount = String(percent)
+            }
+            let window = settings.limitWindow
+            windowEnabled = window != nil
+            windowDays = (window ?? Self.defaultWindow).days
+            windowStart = (window ?? Self.defaultWindow).startMinute
+            windowEnd = (window ?? Self.defaultWindow).endMinute
             skipOnConstrainedNetwork = settings.skipOnConstrainedNetwork
             wiFiNames = settings.skippedWiFiNames
         }
+
+        fileprivate var limit: LimitFields { LimitFields(kind: limitKind, amount: limitAmount) }
+        fileprivate var window: WindowFields {
+            WindowFields(enabled: windowEnabled, days: windowDays, start: windowStart, end: windowEnd)
+        }
+    }
+
+    /// The limit's two fields, which are saved (and followed from the agent) together.
+    fileprivate struct LimitFields: Equatable {
+        var kind: LimitKind
+        var amount: String
+    }
+
+    fileprivate struct WindowFields: Equatable {
+        var enabled: Bool
+        var days: LimitDays
+        var start: Int
+        var end: Int
     }
 
     /// The settings as the agent last reported them: what a save is built on.
@@ -32,6 +105,47 @@ public struct NetworkEdit: Sendable, Equatable {
     }
 
     public var isDirty: Bool { fields != started }
+
+    // MARK: The limit
+
+    /// Chooses what kind of limit this is. Between KB/s and MB/s the typed amount converts (5 MB/s becomes
+    /// 5120 KB/s) rather than being read in the new unit. Choosing a percentage from anything else starts at 50, and
+    /// a rate from anything else starts empty.
+    public mutating func setLimitKind(_ kind: LimitKind) {
+        let old = fields.limitKind
+        guard kind != old else { return }
+        switch (old.unit, kind.unit) {
+        case (let from?, let to?):
+            fields.limitAmount = FormValidation.convertedLimitText(fields.limitAmount, from: from, to: to)
+        default:
+            fields.limitAmount = kind == .percent ? "50" : ""
+        }
+        fields.limitKind = kind
+    }
+
+    /// Whether the limit is something the user has changed. Only then is it checked and saved: one the field can
+    /// only show rounded (3 KiB/s shows as "0") is kept as saved, not refused.
+    private var limitChanged: Bool { fields.limit != started.limit }
+    private var windowChanged: Bool { fields.window != started.window }
+
+    /// The limit as typed: what a save stores, or why it can't.
+    private func parsedLimit() -> Result<MacUploadLimit, FormValidation.Problem> {
+        switch fields.limitKind {
+        case .none:
+            return .success(.none)
+        case .kilobytes, .megabytes:
+            let unit = fields.limitKind.unit ?? .megabytes
+            switch FormValidation.uploadLimit(fields.limitAmount, unit: unit) {
+            case .failure(let problem): return .failure(problem)
+            case .success(let kiB?): return .success(.rate(kiB: kiB, unit: unit))
+            case .success(nil):
+                // Empty is no limit for a plan; here that is the None choice.
+                return .failure(FormValidation.limitNotANumber(unit))
+            }
+        case .percent:
+            return FormValidation.percent(fields.limitAmount).map { .percent($0) }
+        }
+    }
 
     // MARK: The Wi-Fi list
 
@@ -66,45 +180,75 @@ public struct NetworkEdit: Sendable, Equatable {
 
     // MARK: Problems (each a sentence ending with a full stop)
 
-    /// Only for a limit the user has typed: one the field can only show rounded (3 KiB/s shows as "0") is kept as
-    /// saved, not refused.
+    /// Only for a limit the user has changed.
     public var uploadLimitProblem: String? {
-        guard fields.uploadLimit != started.uploadLimit else { return nil }
-        if case .failure(let problem) = FormValidation.uploadLimit(fields.uploadLimit) { return problem.message }
+        guard limitChanged else { return nil }
+        if case .failure(let problem) = parsedLimit() { return problem.message }
         return nil
     }
 
-    /// The first problem: the limit, then whatever the agent would refuse in the list.
+    /// The window's start and end are the same time, which the agent refuses. Only while the window would be saved.
+    public var windowProblem: String? {
+        guard fields.limitKind != .none, fields.windowEnabled, fields.windowStart == fields.windowEnd else { return nil }
+        return FormValidation.sentence(NetworkSettingsError.windowStartEqualsEnd.message)
+    }
+
+    /// The first problem: the limit, then whatever the agent would refuse (the window, the list).
     public var problem: String? {
         if let uploadLimitProblem { return uploadLimitProblem }
-        let listed = NetworkSettings(uploadLimit: .none, skipOnConstrainedNetwork: false, skippedWiFiNames: fields.wiFiNames)
-        return listed.validationErrors().first.map { FormValidation.sentence($0.message) }
+        if let windowProblem { return windowProblem }
+        return candidate().validationErrors().first.map { FormValidation.sentence($0.message) }
     }
 
     // MARK: Saving
 
-    /// What a save sends, or the first problem. Only what the user changed is applied, so a limit the field shows
-    /// rounded is kept exactly unless it is retyped.
-    public func request() -> Result<NetworkSettings, FormValidation.Problem> {
-        if let problem { return .failure(.init(problem)) }
+    /// The settings a save would send: the saved ones with each group the user changed applied. A limit that
+    /// doesn't parse leaves the saved one (`problem` reports it first). The window is saved only with a limit.
+    private func candidate() -> NetworkSettings {
         var settings = saved
-        if fields.uploadLimit != started.uploadLimit, case .success(let limit) = FormValidation.uploadLimit(fields.uploadLimit) {
-            settings.uploadLimit = limit.map { .rate(kiB: $0, unit: .megabytes) } ?? .none
+        if limitChanged, case .success(let limit) = parsedLimit() { settings.uploadLimit = limit }
+        if limitChanged || windowChanged {
+            let w = fields.window
+            settings.limitWindow = fields.limitKind != .none && w.enabled
+                ? LimitWindow(days: w.days, startMinute: w.start, endMinute: w.end) : nil
         }
         if fields.skipOnConstrainedNetwork != started.skipOnConstrainedNetwork {
             settings.skipOnConstrainedNetwork = fields.skipOnConstrainedNetwork
         }
         if fields.wiFiNames != started.wiFiNames { settings.skippedWiFiNames = fields.wiFiNames }
-        return .success(settings)
+        return settings
+    }
+
+    /// What a save sends, or the first problem. Only what the user changed is applied, so a limit the field shows
+    /// rounded is kept exactly unless it is retyped.
+    public func request() -> Result<NetworkSettings, FormValidation.Problem> {
+        if let problem { return .failure(.init(problem)) }
+        return .success(candidate())
     }
 
     /// The agent's copy changed (a save elsewhere): each field the user hasn't touched follows it, both what it shows
-    /// and its start; a field being edited is kept as typed.
+    /// and its start; a field being edited is kept as typed. The limit's kind and amount go together, as do the
+    /// window's fields.
     public mutating func rebase(on latest: NetworkSettings) {
         guard latest != saved else { return }
         saved = latest
         let next = Fields(settings: latest)
-        if fields.uploadLimit == started.uploadLimit { fields.uploadLimit = next.uploadLimit; started.uploadLimit = next.uploadLimit }
+        if fields.limit == started.limit {
+            fields.limitKind = next.limitKind
+            fields.limitAmount = next.limitAmount
+            started.limitKind = next.limitKind
+            started.limitAmount = next.limitAmount
+        }
+        if fields.window == started.window {
+            fields.windowEnabled = next.windowEnabled
+            fields.windowDays = next.windowDays
+            fields.windowStart = next.windowStart
+            fields.windowEnd = next.windowEnd
+            started.windowEnabled = next.windowEnabled
+            started.windowDays = next.windowDays
+            started.windowStart = next.windowStart
+            started.windowEnd = next.windowEnd
+        }
         if fields.skipOnConstrainedNetwork == started.skipOnConstrainedNetwork {
             fields.skipOnConstrainedNetwork = next.skipOnConstrainedNetwork
             started.skipOnConstrainedNetwork = next.skipOnConstrainedNetwork
@@ -122,6 +266,55 @@ public struct NetworkEdit: Sendable, Equatable {
     public mutating func revert() {
         fields = Fields(settings: saved)
         started = fields
+    }
+
+    // MARK: The Now and speed lines
+
+    /// What a backup starting at `date` would get as the Mac-wide limit, and when that next changes: "Now: 20 MB/s,
+    /// until 6:00 pm", "Now: no limit, from 8:00 am Monday". From the settings the agent has (`saved`), not the
+    /// form, since that is what a backup would use.
+    public func nowLine(
+        status: UploadSpeedStatus?, at date: Date, calendar: Calendar, locale: Locale = .current
+    ) -> String {
+        let resolved = resolveMacWideLimit(saved, measurement: status?.record?.latest, at: date, calendar: calendar)
+        func when(_ change: Date) -> String {
+            let time = UploadLimitText.timeText(change, calendar: calendar, locale: locale)
+            guard !calendar.isDate(change, inSameDayAs: date) else { return time }
+            return "\(time) \(UploadLimitText.weekdayText(change, calendar: calendar, locale: locale))"
+        }
+        switch resolved.reason {
+        case .noLimitSet:
+            return "No limit right now"
+        case .percentNotMeasured:
+            return "Now: no limit until this network is measured"
+        case .outsideWindow:
+            return "Now: no limit" + (resolved.changesAt.map { ", from \(when($0))" } ?? "")
+        case .rate, .percentOf:
+            let limit = resolved.kiB.map { UploadLimitText.speedText(kiB: $0) } ?? "no limit"
+            return "Now: \(limit)" + (resolved.changesAt.map { ", until \(when($0))" } ?? "")
+        }
+    }
+
+    /// The current network's speed and its age, or why there isn't one: "Upload speed on “Kerr Home”: 38 MB/s,
+    /// measured today". A failure newer than the last measurement is told instead of it.
+    public func speedLine(
+        _ status: UploadSpeedStatus?, now: Date, calendar: Calendar, locale: Locale = .current
+    ) -> String {
+        guard let status, let network = status.network else { return "Not connected to a network" }
+        if status.testing { return "Testing upload speed…" }
+        let record = status.record
+        if let failure = record?.lastFailure, failure.at > (record?.latest?.measuredAt ?? .distantPast) {
+            return FormValidation.sentence(failure.reason)
+        }
+        guard let measurement = record?.latest else { return "Not measured on this network yet" }
+        let name: String
+        switch network {
+        case .wiFi: name = "“\(network.displayName)”"
+        case .wiFiUnknown, .ethernet, .other: name = network.displayName
+        }
+        let speed = UploadLimitText.speedText(kiB: Int(measurement.bitsPerSecond / 8 / 1024))
+        let age = UploadLimitText.dayText(measurement.measuredAt, now: now, calendar: calendar, locale: locale)
+        return "Upload speed on \(name): \(speed), measured \(age)"
     }
 }
 
@@ -206,6 +399,16 @@ public enum WiFiNameAccess: Sendable, Equatable {
         case .servicesOff:
             return "Location Services is off for this Mac, so Restorey can’t see Wi-Fi names. Turn it on in System "
                 + "Settings → Privacy & Security → Location Services." + unused
+        }
+    }
+
+    /// The line under a percentage limit when Wi-Fi networks can't be told apart (the agent can't read the name, so
+    /// every Wi-Fi network shares one measurement); nil when it can, or the answer isn't known yet.
+    public var percentNote: String? {
+        switch self {
+        case .allowed, .checking: nil
+        case .notAsked, .refused, .restricted, .servicesOff:
+            "Without Location permission, Restorey can’t tell Wi-Fi networks apart, so they share one measurement"
         }
     }
 

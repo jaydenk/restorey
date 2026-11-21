@@ -99,13 +99,84 @@ struct RetentionCountField: View {
     }
 }
 
-/// An upload limit in MB/s, empty for none ("None"), with its stepper: a plan's (Schedule) and the Mac's (Network).
+/// A plan's upload limit, empty for none ("None"), with its stepper and a KB/s / MB/s picker. Choosing the other unit
+/// converts the amount, so 5 MB/s becomes 5120 KB/s (`PlanEditModel.uploadLimitUnit`).
 struct UploadLimitField: View {
     let name: String
     @Binding var text: String
+    @Binding var unit: UploadLimitUnit
 
     var body: some View {
-        NumberField(name: name, placeholder: "None", text: $text, unit: "MB/s", width: 70, step: StepperText.uploadLimit)
+        HStack(spacing: 6) {
+            NumberField(name: name, placeholder: "None", text: $text, width: 70) { StepperText.uploadLimit($0, by: $1, unit: unit) }
+            Picker("Unit of \(name)", selection: $unit) {
+                ForEach(UploadLimitUnit.allCases, id: \.self) { Text(FormValidation.unitName($0)).tag($0) }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+    }
+}
+
+/// The Mac-wide limit's amount and kind: a number (a rate or a percentage) with its stepper, and the picker of None,
+/// KB/s, MB/s and % of upload speed. Changing the kind goes through `onKind`, which converts the amount and, for a
+/// percentage, asks for Location permission (`NetworkEditModel.setLimitKind`).
+struct MacLimitField: View {
+    let name: String
+    @Binding var amount: String
+    let kind: LimitKind
+    let onKind: (LimitKind) -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if kind != .none {
+                NumberField(name: name, placeholder: kind == .percent ? "50" : "Amount", text: $amount, width: 70) { text, by in
+                    kind == .percent ? StepperText.percent(text, by: by) : StepperText.uploadLimit(text, by: by, unit: kind.unit ?? .megabytes)
+                }
+            }
+            Picker("Kind of \(name)", selection: Binding(get: { kind }, set: onKind)) {
+                ForEach(LimitKind.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+    }
+}
+
+/// A time of day to the minute, as the Mac shows times (12 or 24 hour). The value is minutes after midnight; the
+/// picker works in UTC on a fixed day, so a daylight-saving change can't move it.
+struct TimeOfDayPicker: View {
+    let name: String
+    @Binding var minute: Int
+
+    var body: some View {
+        DatePicker(name, selection: Binding(get: { Self.date(minute) }, set: { minute = Self.minute($0) }), displayedComponents: .hourAndMinute)
+            .labelsHidden()
+            .environment(\.timeZone, .gmt)
+            .accessibilityLabel(name)
+    }
+
+    private static func date(_ minute: Int) -> Date { Date(timeIntervalSince1970: TimeInterval(minute * 60)) }
+
+    private static func minute(_ date: Date) -> Int {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .gmt
+        return calendar.component(.hour, from: date) * 60 + calendar.component(.minute, from: date)
+    }
+}
+
+/// The days a limit window applies on.
+struct LimitDaysPicker: View {
+    @Binding var days: LimitDays
+
+    var body: some View {
+        Picker("Days", selection: $days) {
+            Text("Every day").tag(LimitDays.everyDay)
+            Text("Weekdays").tag(LimitDays.weekdays)
+            Text("Weekends").tag(LimitDays.weekends)
+        }
+        .labelsHidden()
+        .fixedSize()
     }
 }
 

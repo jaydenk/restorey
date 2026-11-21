@@ -11,7 +11,7 @@ struct NetworkEditTests {
 
     @Test func aFreshEditShowsTheSavedSettingsAndIsUnchanged() {
         let edit = NetworkEdit(settings: Self.saved)
-        #expect(edit.fields.uploadLimit == "5")
+        #expect(edit.fields.limitAmount == "5")
         #expect(edit.fields.skipOnConstrainedNetwork)
         #expect(edit.fields.wiFiNames == ["Cafe"])
         #expect(!edit.isDirty)
@@ -19,13 +19,20 @@ struct NetworkEditTests {
         #expect(edit.request() == .success(Self.saved))
     }
 
-    @Test func noLimitIsAnEmptyField() {
-        #expect(NetworkEdit(settings: .defaults).fields.uploadLimit == "")
+    @Test func noLimitIsTheNoneChoiceWithAnEmptyAmount() {
+        let fields = NetworkEdit(settings: .defaults).fields
+        #expect(fields.limitKind == .none)
+        #expect(fields.limitAmount == "")
+        #expect(!fields.windowEnabled)
+        // The window row's defaults: weekdays, 8:00 am to 6:00 pm.
+        #expect(fields.windowDays == .weekdays)
+        #expect(fields.windowStart == 480)
+        #expect(fields.windowEnd == 1080)
     }
 
     @Test func eachFieldIsSavedAsTyped() {
         var edit = NetworkEdit(settings: Self.saved)
-        edit.fields.uploadLimit = " 1.5 "
+        edit.fields.limitAmount = " 1.5 "
         edit.fields.skipOnConstrainedNetwork = false
         let added = edit.add(name: "  Phone hotspot ")
         #expect(added)
@@ -34,10 +41,14 @@ struct NetworkEditTests {
             uploadLimit: .rate(kiB: 1536, unit: .megabytes), skipOnConstrainedNetwork: false, skippedWiFiNames: ["Cafe", "Phone hotspot"])))
     }
 
-    @Test func clearingTheLimitSavesNone() throws {
-        var edit = NetworkEdit(settings: Self.saved)
-        edit.fields.uploadLimit = ""
-        #expect(try edit.request().get().uploadLimit == .none)
+    @Test func choosingNoneSavesNoLimitAndNoWindow() throws {
+        var windowed = Self.saved
+        windowed.limitWindow = LimitWindow(days: .weekdays, startMinute: 480, endMinute: 1080)
+        var edit = NetworkEdit(settings: windowed)
+        edit.setLimitKind(.none)
+        let settings = try edit.request().get()
+        #expect(settings.uploadLimit == .none)
+        #expect(settings.limitWindow == nil)
     }
 
     /// A limit the field can only show rounded (3 KiB/s is "0"), left alone, keeps the agent's exact value.
@@ -50,7 +61,7 @@ struct NetworkEditTests {
 
     @Test func revertGoesBackToTheSavedSettings() {
         var edit = NetworkEdit(settings: Self.saved)
-        edit.fields.uploadLimit = "9"
+        edit.fields.limitAmount = "9"
         edit.remove(name: "Cafe")
         edit.revert()
         #expect(!edit.isDirty)
@@ -74,9 +85,9 @@ struct NetworkEditTests {
         #expect(!untouched.isDirty)
 
         var edited = NetworkEdit(settings: Self.saved)
-        edited.fields.uploadLimit = "2"
+        edited.fields.limitAmount = "2"
         edited.rebase(on: newer)
-        #expect(edited.fields.uploadLimit == "2")
+        #expect(edited.fields.limitAmount == "2")
         #expect(edited.saved == newer)
         // What the form shows follows the agent too, except the field being edited.
         #expect(!edited.fields.skipOnConstrainedNetwork)
@@ -86,15 +97,263 @@ struct NetworkEditTests {
             uploadLimit: .rate(kiB: 2048, unit: .megabytes), skipOnConstrainedNetwork: false, skippedWiFiNames: []))
     }
 
+    // MARK: Unit, percentage and window (upload-limit design: Settings → Network)
+
+    private static let en_AU = Locale(identifier: "en_AU")
+    private static let adelaide: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Australia/Adelaide")!
+        return calendar
+    }()
+
+    /// A wall-clock time in Adelaide (UTC+10:30 in January, daylight saving).
+    private static func adelaideDate(_ y: Int, _ m: Int, _ d: Int, _ hour: Int, _ minute: Int = 0) -> Date {
+        adelaide.date(from: DateComponents(year: y, month: m, day: d, hour: hour, minute: minute))!
+    }
+
+    @Test func kilobytesAreReadAsKiB() throws {
+        var edit = NetworkEdit(settings: .defaults)
+        edit.setLimitKind(.kilobytes)
+        edit.fields.limitAmount = "512"
+        #expect(try edit.request().get().uploadLimit == .rate(kiB: 512, unit: .kilobytes))
+        edit.setLimitKind(.megabytes)
+        #expect(edit.fields.limitAmount == "0.5")
+        #expect(try edit.request().get().uploadLimit == .rate(kiB: 512, unit: .megabytes))
+    }
+
+    @Test func switchingUnitConvertsTheAmount() {
+        var edit = NetworkEdit(settings: Self.saved)  // 5 MB/s
+        edit.setLimitKind(.kilobytes)
+        #expect(edit.fields.limitAmount == "5120")
+        edit.setLimitKind(.megabytes)
+        #expect(edit.fields.limitAmount == "5")
+        // Text that isn't a number is left for the user to fix.
+        edit.fields.limitAmount = "fast"
+        edit.setLimitKind(.kilobytes)
+        #expect(edit.fields.limitAmount == "fast")
+    }
+
+    @Test func choosingAKindFromNoneStartsFromASensibleAmount() {
+        var edit = NetworkEdit(settings: .defaults)
+        edit.setLimitKind(.percent)
+        #expect(edit.fields.limitAmount == "50")
+        edit.setLimitKind(.megabytes)
+        #expect(edit.fields.limitAmount == "")
+        edit.setLimitKind(.none)
+        #expect(edit.fields.limitAmount == "")
+    }
+
+    @Test func aRateNeedsAnAmount() {
+        var edit = NetworkEdit(settings: .defaults)
+        edit.setLimitKind(.megabytes)
+        #expect(edit.problem == "Enter the limit as a number of MB/s, such as 5 or 1.5.")
+        edit.setLimitKind(.kilobytes)
+        #expect(edit.problem == "Enter the limit as a number of KB/s, such as 512.")
+    }
+
+    @Test func percentRefusesOutOfRange() {
+        for text in ["0", "101", "50.5", "", "-5", "fifty", "1e1"] {
+            #expect(FormValidation.percent(text) == .failure("Enter a percentage from 1 to 100."), "\(text)")
+        }
+        #expect(FormValidation.percent(" 50 ") == .success(50))
+        #expect(FormValidation.percent("1") == .success(1))
+        #expect(FormValidation.percent("100") == .success(100))
+        var edit = NetworkEdit(settings: .defaults)
+        edit.setLimitKind(.percent)
+        edit.fields.limitAmount = "101"
+        #expect(edit.uploadLimitProblem == "Enter a percentage from 1 to 100.")
+        #expect(throws: FormValidation.Problem.self) { try edit.request().get() }
+    }
+
+    @Test func aWindowWithEqualStartAndEndIsAProblem() {
+        var edit = NetworkEdit(settings: .defaults)
+        edit.setLimitKind(.percent)
+        edit.fields.windowEnabled = true
+        edit.fields.windowStart = 600
+        edit.fields.windowEnd = 600
+        #expect(edit.problem == "The limit’s start and end times can’t be the same.")
+        // A window that is switched off, or a limit that is none, isn't saved, so it can't be a problem.
+        edit.fields.windowEnabled = false
+        #expect(edit.problem == nil)
+    }
+
+    @Test func savingBuildsTheSettings() throws {
+        var edit = NetworkEdit(settings: .defaults)
+        edit.setLimitKind(.percent)
+        edit.fields.limitAmount = "50"
+        edit.fields.windowEnabled = true
+        #expect(edit.isDirty)
+        var expected = NetworkSettings.defaults
+        expected.uploadLimit = .percent(50)
+        expected.limitWindow = LimitWindow(days: .weekdays, startMinute: 480, endMinute: 1080)
+        #expect(try edit.request().get() == expected)
+
+        // The window switched off: a limit all the time.
+        edit.fields.windowEnabled = false
+        expected.limitWindow = nil
+        #expect(try edit.request().get() == expected)
+
+        // Other days and times.
+        edit.fields.windowEnabled = true
+        edit.fields.windowDays = .weekends
+        edit.fields.windowStart = 22 * 60
+        edit.fields.windowEnd = 6 * 60
+        expected.limitWindow = LimitWindow(days: .weekends, startMinute: 1320, endMinute: 360)
+        #expect(try edit.request().get() == expected)
+    }
+
+    @Test func aSavedPercentAndWindowAreShownBack() {
+        var settings = NetworkSettings.defaults
+        settings.uploadLimit = .percent(30)
+        settings.limitWindow = LimitWindow(days: .everyDay, startMinute: 60, endMinute: 120)
+        let edit = NetworkEdit(settings: settings)
+        #expect(edit.fields.limitKind == .percent)
+        #expect(edit.fields.limitAmount == "30")
+        #expect(edit.fields.windowEnabled)
+        #expect(edit.fields.windowDays == .everyDay)
+        #expect(edit.fields.windowStart == 60)
+        #expect(edit.fields.windowEnd == 120)
+        #expect(!edit.isDirty)
+        #expect(edit.request() == .success(settings))
+    }
+
+    @Test func rebaseFollowsTheLimitAndTheWindowSeparately() throws {
+        var newer = Self.saved
+        newer.uploadLimit = .percent(40)
+        newer.limitWindow = LimitWindow(days: .weekends, startMinute: 0, endMinute: 600)
+        var edit = NetworkEdit(settings: Self.saved)
+        edit.fields.limitAmount = "9"  // the limit is being edited; the window is untouched
+        edit.rebase(on: newer)
+        #expect(edit.fields.limitKind == .megabytes)
+        #expect(edit.fields.limitAmount == "9")
+        #expect(edit.fields.windowEnabled)
+        #expect(edit.fields.windowDays == .weekends)
+        #expect(edit.fields.windowEnd == 600)
+    }
+
+    // MARK: The Now line
+
+    /// 335,544,320 bit/s is exactly 40 MB/s (41,943,040 bytes/s), so 50% is 20 MB/s.
+    private static func measured(at date: Date) -> UploadSpeedStatus {
+        UploadSpeedStatus(
+            network: .wiFi(name: "Kerr Home"),
+            record: UploadSpeedRecord(latest: UploadSpeedMeasurement(bitsPerSecond: 335_544_320, measuredAt: date)),
+            testing: false)
+    }
+
+    private static func percentEdit() -> NetworkEdit {
+        var settings = NetworkSettings.defaults
+        settings.uploadLimit = .percent(50)
+        settings.limitWindow = LimitWindow(days: .weekdays, startMinute: 480, endMinute: 1080)
+        return NetworkEdit(settings: settings)
+    }
+
+    @Test func nowLineForEachReason() {
+        let edit = Self.percentEdit()
+        let friday10am = Self.adelaideDate(2027, 1, 15, 10)  // a Friday
+        let status = Self.measured(at: friday10am)
+        func now(_ edit: NetworkEdit, _ status: UploadSpeedStatus?, at date: Date) -> String {
+            edit.nowLine(status: status, at: date, calendar: Self.adelaide, locale: Self.en_AU)
+        }
+        #expect(now(edit, status, at: friday10am) == "Now: 20 MB/s, until 6:00 pm")
+        // After Friday's window the next change is Monday morning.
+        #expect(now(edit, status, at: Self.adelaideDate(2027, 1, 15, 19)) == "Now: no limit, from 8:00 am Monday")
+        // Before today's window opens: later today, so no day name.
+        #expect(now(edit, status, at: Self.adelaideDate(2027, 1, 15, 7)) == "Now: no limit, from 8:00 am")
+        // No measurement for this network yet.
+        let unmeasured = UploadSpeedStatus(network: .ethernet, record: nil, testing: false)
+        #expect(now(edit, unmeasured, at: friday10am) == "Now: no limit until this network is measured")
+        #expect(now(edit, nil, at: friday10am) == "Now: no limit until this network is measured")
+        // No limit set, a rate with no window, a percentage with no window.
+        #expect(now(NetworkEdit(settings: .defaults), status, at: friday10am) == "No limit right now")
+        #expect(now(NetworkEdit(settings: Self.saved), status, at: friday10am) == "Now: 5 MB/s")
+        var allDay = NetworkSettings.defaults
+        allDay.uploadLimit = .percent(50)
+        #expect(now(NetworkEdit(settings: allDay), status, at: friday10am) == "Now: 20 MB/s")
+    }
+
+    @Test func nowLineNamesTheDayWhenTheWindowEndsAnotherDay() {
+        var settings = NetworkSettings.defaults
+        settings.uploadLimit = .rate(kiB: 512, unit: .kilobytes)
+        settings.limitWindow = LimitWindow(days: .everyDay, startMinute: 22 * 60, endMinute: 6 * 60)
+        let edit = NetworkEdit(settings: settings)
+        let line = edit.nowLine(
+            status: nil, at: Self.adelaideDate(2027, 1, 15, 23), calendar: Self.adelaide, locale: Self.en_AU)
+        #expect(line == "Now: 512 KB/s, until 6:00 am Saturday")
+    }
+
+    // MARK: The speed line
+
+    @Test func speedLineAges() {
+        let edit = NetworkEdit(settings: .defaults)
+        let now = Self.adelaideDate(2027, 1, 15, 10)
+        func line(measuredAt: Date) -> String {
+            edit.speedLine(Self.measured(at: measuredAt), now: now, calendar: Self.adelaide, locale: Self.en_AU)
+        }
+        #expect(line(measuredAt: Self.adelaideDate(2027, 1, 15, 6)) == "Upload speed on “Kerr Home”: 40 MB/s, measured today")
+        #expect(line(measuredAt: Self.adelaideDate(2027, 1, 14, 23)) == "Upload speed on “Kerr Home”: 40 MB/s, measured yesterday")
+        #expect(line(measuredAt: Self.adelaideDate(2027, 1, 3, 9)) == "Upload speed on “Kerr Home”: 40 MB/s, measured 3 Jan 2027")
+    }
+
+    @Test func speedLineForTheOtherStates() {
+        let edit = NetworkEdit(settings: .defaults)
+        let now = Self.adelaideDate(2027, 1, 15, 10)
+        func line(_ status: UploadSpeedStatus?) -> String {
+            edit.speedLine(status, now: now, calendar: Self.adelaide, locale: Self.en_AU)
+        }
+        #expect(line(nil) == "Not connected to a network")
+        #expect(line(UploadSpeedStatus(network: nil, record: nil, testing: false)) == "Not connected to a network")
+        #expect(line(UploadSpeedStatus(network: .ethernet, record: nil, testing: false)) == "Not measured on this network yet")
+        #expect(line(UploadSpeedStatus(network: .ethernet, record: nil, testing: true)) == "Testing upload speed…")
+        let failed = UploadSpeedRecord(lastFailure: SpeedTestFailure(at: now, reason: "The speed test timed out"))
+        #expect(line(UploadSpeedStatus(network: .ethernet, record: failed, testing: false)) == "The speed test timed out.")
+        // A failure newer than the last measurement is what Settings says; an older one isn't.
+        let older = UploadSpeedMeasurement(bitsPerSecond: 335_544_320, measuredAt: now.addingTimeInterval(-3600))
+        let both = UploadSpeedRecord(latest: older, lastFailure: SpeedTestFailure(at: now, reason: "The speed test timed out"))
+        #expect(line(UploadSpeedStatus(network: .ethernet, record: both, testing: false)) == "The speed test timed out.")
+        let healed = UploadSpeedRecord(
+            latest: UploadSpeedMeasurement(bitsPerSecond: 335_544_320, measuredAt: now),
+            lastFailure: SpeedTestFailure(at: now.addingTimeInterval(-3600), reason: "The speed test timed out"))
+        #expect(line(UploadSpeedStatus(network: .ethernet, record: healed, testing: false)) == "Upload speed on Ethernet: 40 MB/s, measured today")
+        #expect(line(UploadSpeedStatus(network: .wiFiUnknown, record: nil, testing: false)) == "Not measured on this network yet")
+    }
+
+    @Test func speedsShowInMegabytesWithOneDecimalOrKilobytesBelowOne() {
+        #expect(UploadLimitText.speedText(kiB: 40960) == "40 MB/s")
+        #expect(UploadLimitText.speedText(kiB: 4915) == "4.8 MB/s")
+        #expect(UploadLimitText.speedText(kiB: 1024) == "1 MB/s")
+        #expect(UploadLimitText.speedText(kiB: 1023) == "1023 KB/s")
+        #expect(UploadLimitText.speedText(kiB: 300) == "300 KB/s")
+    }
+
+    // MARK: Time and day text (the Mac's locale in the app; the agent's log pins en_AU)
+
+    @Test func timeAndDayText() {
+        let window = LimitWindow(days: .weekdays, startMinute: 480, endMinute: 1080)
+        #expect(UploadLimitText.windowText(window, locale: Self.en_AU) == "8:00 am–6:00 pm weekdays")
+        let midnight = LimitWindow(days: .weekends, startMinute: 0, endMinute: 750)
+        #expect(UploadLimitText.windowText(midnight, locale: Self.en_AU) == "12:00 am–12:30 pm weekends")
+        #expect(UploadLimitText.windowText(LimitWindow(days: .everyDay, startMinute: 60, endMinute: 120), locale: Self.en_AU)
+            == "1:00 am–2:00 am every day")
+        // A 24-hour locale shows 24-hour times.
+        #expect(UploadLimitText.windowText(window, locale: Locale(identifier: "de_DE")) == "08:00–18:00 weekdays")
+    }
+
+    @Test func aLimitInKilobytesOrMegabytesShowsBackInItsUnit() {
+        #expect(UploadLimitText.rateText(kiB: 500, unit: .kilobytes) == "500 KB/s")
+        #expect(UploadLimitText.rateText(kiB: 4885, unit: .megabytes) == "4.77 MB/s")
+    }
+
     // MARK: Problems
 
     @Test func aBadLimitIsTheProblemAndBlocksTheSave() {
         var edit = NetworkEdit(settings: .defaults)
-        edit.fields.uploadLimit = "fast"
+        edit.setLimitKind(.megabytes)
+        edit.fields.limitAmount = "fast"
         #expect(edit.uploadLimitProblem == "Enter the limit as a number of MB/s, such as 5 or 1.5.")
         #expect(edit.problem == edit.uploadLimitProblem)
         #expect(throws: FormValidation.Problem.self) { try edit.request().get() }
-        edit.fields.uploadLimit = "0"
+        edit.fields.limitAmount = "0"
         #expect(edit.problem == "The upload limit must be more than 0 MB/s. Leave it empty for no limit.")
     }
 

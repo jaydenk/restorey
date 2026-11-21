@@ -40,4 +40,24 @@ struct StepperTextTests {
             }
         }
     }
+
+    @Test func kilobyteLimitStepsInWholeHundreds() {
+        #expect(StepperText.uploadLimit("", by: 1, unit: .kilobytes) == "100")
+        #expect(StepperText.uploadLimit("512", by: 1, unit: .kilobytes) == "612")
+        #expect(StepperText.uploadLimit("512", by: -1, unit: .kilobytes) == "412")
+        #expect(StepperText.uploadLimit("100", by: -1, unit: .kilobytes) == "")
+        #expect(StepperText.uploadLimit("50", by: -1, unit: .kilobytes) == "")
+        #expect(StepperText.uploadLimit("fast", by: 1, unit: .kilobytes) == "100")
+    }
+
+    @Test func percentStepsByFiveWithinRange() {
+        #expect(StepperText.percent("50", by: 1) == "55")
+        #expect(StepperText.percent("50", by: -1) == "45")
+        #expect(StepperText.percent("98", by: 1) == "100")
+        #expect(StepperText.percent("100", by: 1) == "100")
+        #expect(StepperText.percent("3", by: -1) == "1")
+        #expect(StepperText.percent("1", by: -1) == "1")
+        #expect(StepperText.percent("", by: 1) == "5")
+        #expect(StepperText.percent("fast", by: -1) == "1")
+    }
 }

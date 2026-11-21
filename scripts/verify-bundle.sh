@@ -67,7 +67,7 @@ agent_display=$(plist_get "$AGENT/Contents/Info.plist" CFBundleDisplayName)
 
 # The agent reads the Wi-Fi name, which needs Location permission: requestWhenInUseAuthorization fails at once
 # without the usage description (NSLocationUsageDescription on macOS, and the When In Use key it documents).
-location_text="Restorey checks the Wi-Fi network's name so it can skip backups on networks you've listed."
+location_text="Restorey checks the Wi-Fi network's name so it can skip backups on networks you've listed and measure each network's upload speed."
 for key in NSLocationUsageDescription NSLocationWhenInUseUsageDescription; do
   [[ "$(plist_get "$AGENT/Contents/Info.plist" "$key")" == "$location_text" ]] || fail "agent $key is not the Location usage text"
 done

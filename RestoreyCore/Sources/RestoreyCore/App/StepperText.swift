@@ -13,14 +13,15 @@ public enum StepperText {
 
     public static let countRange = 0...9999
 
-    /// An upload limit in MB/s, one whole MB/s `by` up or down. Empty is no limit: up from it is 1, and down to 0 or
-    /// below is empty again (a limit must be more than 0, `FormValidation.uploadLimit`). A fraction keeps its
-    /// fraction ("1.5" up is "2.5"), written with a full stop whatever the Mac's region, as the field shows limits.
-    public static func uploadLimit(_ text: String, by step: Int) -> String {
+    /// An upload limit in `unit`, one step `by` up or down: a whole MB/s, or 100 KB/s. Empty is no limit: up from it
+    /// is one step, and down to 0 or below is empty again (a limit must be more than 0, `FormValidation.uploadLimit`).
+    /// A fraction keeps its fraction ("1.5" up is "2.5"), written with a full stop whatever the Mac's region, as the
+    /// field shows limits.
+    public static func uploadLimit(_ text: String, by step: Int, unit: UploadLimitUnit = .megabytes) -> String {
         let typed = text.trimmingCharacters(in: .whitespaces)
         let posix = Locale(identifier: "en_US_POSIX")
         let current = typed.isEmpty ? 0 : Decimal(string: typed, locale: posix) ?? 0
-        let next = current + Decimal(step)
+        let next = current + Decimal(step * (unit == .kilobytes ? 100 : 1))
         guard next > 0 else { return "" }
         let formatter = NumberFormatter()
         formatter.locale = posix
@@ -30,5 +31,11 @@ public enum StepperText {
         formatter.maximumFractionDigits = 2
         formatter.roundingMode = .halfUp
         return formatter.string(from: next as NSDecimalNumber) ?? "\(next)"
+    }
+
+    /// A percentage of the upload speed, five up or down, kept from 1 to 100.
+    public static func percent(_ text: String, by step: Int) -> String {
+        let current = Int(text.trimmingCharacters(in: .whitespaces)) ?? 0
+        return String(min(max(current + step * 5, 1), 100))
     }
 }
