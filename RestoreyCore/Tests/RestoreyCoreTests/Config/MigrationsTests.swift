@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import RestoreyCore
 
-/// `config.json` schema 2 → 3 (Ruling P2-6) and 3 → 4 (owner, 20 Nov 2026), on the decoded dictionary as
+/// `config.json` schema 2 → 3 (Ruling P2-6) and 3 → 4 (owner, 20 Nov 2026) and 4 → 5 (upload limits), on the decoded dictionary as
 /// `VersionedStore` runs it.
 struct MigrationsTests {
     private static let confirmedAt = "2027-01-15T08:00:00.000Z"
@@ -30,8 +30,8 @@ struct MigrationsTests {
         return try XPCCoding.decode(NetworkSettings.self, from: JSONSerialization.data(withJSONObject: raw))
     }
 
-    @Test func currentVersionIsFour() {
-        #expect(ConfigMigrations.currentVersion == 4)
+    @Test func currentVersionIsFive() {
+        #expect(ConfigMigrations.currentVersion == 5)
     }
 
     @Test func migratesV2PlansToV3() throws {
@@ -81,8 +81,7 @@ struct MigrationsTests {
         let migrated = try #require((payload["plans"] as? [[String: Any]])?.first)
         #expect(migrated["setupCompletedAt"] as? String == "2026-01-01T00:00:00.000Z")
         #expect(migrated["offMacNoteDismissed"] as? Bool == true)
-        // The old `uploadLimitKiB` key is carried through untouched; Task 2's migration to schema 5 turns it into
-        // `uploadLimit`.
+        // The old `uploadLimitKiB` key is carried through untouched; the 4 → 5 migration turns it into `uploadLimit`.
         let network = try #require(payload["network"] as? [String: Any])
         #expect(network["uploadLimitKiB"] as? Int == 500)
         #expect(try Self.network(payload).skippedWiFiNames == ["Café"])
@@ -131,5 +130,77 @@ struct MigrationsTests {
         #expect(throws: ConfigMigrations.MigrationError.notAPlanList) {
             try ConfigMigrations.addExclusionDefaultsRevision(&payload)
         }
+    }
+}
+
+// MARK: 4 → 5
+
+struct UploadLimitMigrationTests {
+    private static func migrate(_ payload: [String: Any]) throws -> [String: Any] {
+        var payload = payload
+        try #require(ConfigMigrations.migrations[4] != nil)
+        try ConfigMigrations.migrations[4]?(&payload)
+        return payload
+    }
+
+    private static func limit(_ payload: [String: Any]) throws -> [String: Any] {
+        let network = try #require(payload["network"] as? [String: Any])
+        return try #require(network["uploadLimit"] as? [String: Any])
+    }
+
+    @Test func schema4MacWideLimitBecomesAMegabyteRate() throws {
+        let payload = try Self.migrate(["network": ["uploadLimitKiB": 5120, "skipOnConstrainedNetwork": true]])
+        let limit = try Self.limit(payload)
+        #expect(limit["kind"] as? String == "rate")
+        #expect(limit["kiB"] as? Int == 5120)
+        #expect(limit["unit"] as? String == "MB")
+        let network = try #require(payload["network"] as? [String: Any])
+        #expect(network["uploadLimitKiB"] == nil)
+        #expect(network["limitWindow"] == nil)
+        #expect(network["skipOnConstrainedNetwork"] as? Bool == true)
+    }
+
+    @Test func schema4WithoutLimitBecomesNone() throws {
+        let payload = try Self.migrate(["network": ["skipOnConstrainedNetwork": true]])
+        #expect(try Self.limit(payload)["kind"] as? String == "none")
+        #expect(try Self.limit(payload).count == 1)
+    }
+
+    @Test func schema4PlansGainMegabyteUnitAndKeepTheirLimit() throws {
+        let payload = try Self.migrate(["plans": [["name": "A", "uploadLimitKiB": 1536], ["name": "B"]]])
+        let plans = try #require(payload["plans"] as? [[String: Any]])
+        #expect(plans.map { $0["uploadLimitUnit"] as? String } == ["MB", "MB"])
+        #expect(plans[0]["uploadLimitKiB"] as? Int == 1536)
+        #expect(plans[1]["uploadLimitKiB"] == nil)
+    }
+
+    @Test func aPlanThatAlreadyHasAUnitKeepsIt() throws {
+        let payload = try Self.migrate(["plans": [["uploadLimitUnit": "KB", "uploadLimitKiB": 64]]])
+        #expect((payload["plans"] as? [[String: Any]])?.first?["uploadLimitUnit"] as? String == "KB")
+    }
+
+    @Test func aPayloadWithoutNetworkIsLeftWithoutOne() throws {
+        let payload = try Self.migrate(["plans": [[String: Any]]()])
+        #expect(payload["network"] == nil)
+    }
+
+    @Test func anExistingUploadLimitIsKept() throws {
+        let payload = try Self.migrate(["network": ["uploadLimit": ["kind": "percent", "percent": 50]]])
+        #expect(try Self.limit(payload)["percent"] as? Int == 50)
+    }
+
+    @Test func aPlanListThatIsntOneIsRefused() {
+        var payload: [String: Any] = ["plans": "nope"]
+        #expect(throws: ConfigMigrations.MigrationError.notAPlanList) {
+            try ConfigMigrations.convertUploadLimits(&payload)
+        }
+    }
+
+    /// Chained from schema 2, the 500 KiB limit survives as a rate in the decoded settings.
+    @Test func aFullMigrationOfAnOldLimitDecodesAsARate() throws {
+        var payload: [String: Any] = ["network": ["uploadLimitKiB": 500, "skipOnConstrainedNetwork": true, "skippedWiFiNames": [String]()]]
+        try ConfigMigrations.convertUploadLimits(&payload)
+        let raw = try JSONSerialization.data(withJSONObject: try #require(payload["network"]))
+        #expect(try XPCCoding.decode(NetworkSettings.self, from: raw).uploadLimit == .rate(kiB: 500, unit: .megabytes))
     }
 }

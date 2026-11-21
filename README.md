@@ -983,7 +983,7 @@ only by you). If an upgrade fails, the agent says so and leaves the file alone.
 
 ## `config.json`
 
-`config.json` (schema 4) holds the plans and, beside them, the Mac-wide network settings (`network`): an upload
+`config.json` (schema 5) holds the plans and, beside them, the Mac-wide network settings (`network`): an upload
 limit shared by the backups to networked repositories (none by default), whether to skip a backup on a
 constrained or expensive network (on by default), and Wi-Fi network names to skip backups on (none by default).
 These rules apply only to a repository on another machine; a backup to a folder or an external drive ignores them.
@@ -1027,6 +1027,11 @@ Upgrading from schema 2 moves the per-plan "skip on a constrained network" setti
 stays on if any plan had it on (an upgrade with every plan's setting off turns it off), and marks every plan
 whose recovery kit was already confirmed as having finished setup. Upgrading from schema 3 gives every plan
 `exclusionDefaultsRevision` 1, so the agent adds the defaults since then once (What a backup leaves out, above).
+Schema 5 stores the Mac-wide upload limit as `network.uploadLimit`: `{"kind":"none"}`, a rate
+(`{"kind":"rate","kiB":N,"unit":"MB"}`, with the unit, `MB` or `KB`, kept so it shows as the person entered it) or a
+percentage of the measured upload speed (`{"kind":"percent","percent":N}`), plus an optional `limitWindow`
+(`{"days":"weekdays","startMinute":480,"endMinute":1080}`: `everyDay`, `weekdays` or `weekends`, local minutes after midnight). Each plan's own limit keeps `uploadLimitKiB` and gains `uploadLimitUnit`. Upgrading from schema 4 turns
+a Mac-wide `uploadLimitKiB` into a rate in megabytes (none if it had no limit) and gives every plan the `MB` unit.
 
 ## Alerts
 
