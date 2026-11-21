@@ -14,7 +14,15 @@ public enum UploadLimitText {
         }
     }
 
-    /// A speed or a resolved limit: MB/s with up to one decimal, or KB/s below 1 MB/s ("40 MB/s", "4.8 MB/s",
+    /// A resolved Mac-wide limit as `setting` asked for it: a fixed rate in the unit it was set in ("5120 KB/s",
+    /// "4.77 MB/s"), a percentage's result in MB/s, or KB/s below 1 MB/s. The Now line and the agent's log line both
+    /// use this, so they word the same limit the same way.
+    public static func limitText(kiB: Int, setting: MacUploadLimit) -> String {
+        if case .rate(_, let unit) = setting { return rateText(kiB: kiB, unit: unit) }
+        return rateText(kiB: kiB, unit: kiB < 1024 ? .kilobytes : .megabytes)
+    }
+
+    /// A speed (a measurement, not a limit): MB/s with up to one decimal, or KB/s below 1 MB/s ("40 MB/s", "4.8 MB/s",
     /// "300 KB/s").
     public static func speedText(kiB: Int) -> String {
         guard kiB >= 1024 else { return "\(kiB) KB/s" }

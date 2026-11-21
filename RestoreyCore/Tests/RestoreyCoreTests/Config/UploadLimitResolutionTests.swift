@@ -127,10 +127,17 @@ struct UploadLimitResolutionTests {
         }
     }
 
-    @Test func aHugeMeasurementIsClampedRatherThanTrapping() {
-        let huge = measurement(1e30)
-        let r = resolveMacWideLimit(settings(.percent(100)), measurement: huge, at: nov(21, 12), calendar: calendar)
-        #expect(r.kiB == Int(Int32.max))
-        #expect(r.reason == .percentOf(huge))
+    /// Above 10 Tbit/s is not a measurement, so it is never converted (and so never trapped on).
+    @Test func anImplausiblyFastMeasurementIsNotMeasuredAndNeverTraps() {
+        for bits in [1e30, 1e14, Double.greatestFiniteMagnitude] {
+            let r = resolveMacWideLimit(settings(.percent(100)), measurement: measurement(bits), at: nov(21, 12), calendar: calendar)
+            #expect(r.kiB == nil)
+            #expect(r.reason == .percentNotMeasured)
+            #expect(measurement(bits).kiBPerSecond == nil)
+        }
+        let fastest = measurement(UploadSpeedMeasurement.maximumBitsPerSecond)
+        #expect(fastest.kiBPerSecond == 1_220_703_125)
+        let r = resolveMacWideLimit(settings(.percent(100)), measurement: fastest, at: nov(21, 12), calendar: calendar)
+        #expect(r.kiB == 1_220_703_125)
     }
 }

@@ -38,6 +38,15 @@ struct NetworkQualityTests {
         #expect(parse(#"{"ul_throughput":true}"#) == .failure(.unreadable))
     }
 
+    @Test func anImplausiblyFastThroughputIsNotAMeasurement() throws {
+        func parse(_ json: String) -> Result<UploadSpeedMeasurementDraft, SpeedTestError> {
+            NetworkQuality.parse(stdout: Data(json.utf8))
+        }
+        #expect(parse(#"{"ul_throughput":1e14}"#) == .failure(.noUploadMeasured))
+        #expect(parse(#"{"ul_throughput":1e30}"#) == .failure(.noUploadMeasured))
+        #expect(try parse(#"{"ul_throughput":1e13}"#).get().bitsPerSecond == 1e13)
+    }
+
     @Test func missingBytesStillGivesASpeed() throws {
         let draft = try NetworkQuality.parse(stdout: Data(#"{"ul_throughput":1000000.5}"#.utf8)).get()
         #expect(draft.bitsPerSecond == 1_000_000.5)

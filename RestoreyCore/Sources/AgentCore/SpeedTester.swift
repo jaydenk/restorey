@@ -123,7 +123,7 @@ public actor SpeedTester {
                 do {
                     return try await store.load() ?? UploadSpeedsFile()
                 } catch {
-                    log("Couldn’t read \(UploadSpeedsFile.fileName), so no upload speed measurements are used until a test runs: \(error)")
+                    log("Couldn’t read \(UploadSpeedsFile.fileName), so no upload speed measurements are used until a test runs: \(Self.describe(error))")
                     return UploadSpeedsFile()
                 }
             }
@@ -140,7 +140,18 @@ public actor SpeedTester {
         } catch {
             guard !loggedSaveFailure else { return }
             loggedSaveFailure = true
-            log("Couldn’t save \(UploadSpeedsFile.fileName), so upload speed measurements are kept only until the agent restarts: \(error)")
+            log("Couldn’t save \(UploadSpeedsFile.fileName), so upload speed measurements are kept only until the agent restarts: \(Self.describe(error))")
+        }
+    }
+
+    /// What went wrong with the file, never the error's own description: a decoding error's coding path holds the
+    /// stored key, which for a Wi-Fi network contains its name, and a Release log never names the network.
+    static func describe(_ error: any Error) -> String {
+        switch error as? VersionedStoreError {
+        case .newerSchema(let found, _)?: "written by a newer Restorey (schema \(found))"
+        case .corrupt?: "corrupt"
+        case .missingMigration?, .migrationFailed?: "can’t be migrated"
+        case nil: error is DecodingError || error is EncodingError ? "corrupt" : "an error reading or writing the file"
         }
     }
 

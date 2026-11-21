@@ -41,7 +41,7 @@ public enum NetworkQuality {
     public static let defaultBound: Duration = .seconds(20 + 5)
 
     /// Reads `ul_throughput` (bits per second) and `ul_bytes_transferred` from the tool's JSON. A missing,
-    /// null, non-finite or non-positive throughput is `noUploadMeasured`; a throughput that isn't a number, or
+    /// null, non-finite, non-positive or implausibly fast (over 10 Tbit/s) throughput is `noUploadMeasured`; a throughput that isn't a number, or
     /// output that isn't a JSON object, is `unreadable`. Neither is ever returned as a speed.
     public static func parse(stdout: Data) -> Result<UploadSpeedMeasurementDraft, SpeedTestError> {
         guard let root = (try? JSONSerialization.jsonObject(with: stdout)) as? [String: Any] else {
@@ -52,7 +52,7 @@ public enum NetworkQuality {
         }
         guard let throughput = number(rawThroughput) else { return .failure(.unreadable) }
         let bitsPerSecond = throughput.doubleValue
-        guard bitsPerSecond.isFinite, bitsPerSecond > 0 else { return .failure(.noUploadMeasured) }
+        guard bitsPerSecond.isFinite, bitsPerSecond > 0, bitsPerSecond <= UploadSpeedMeasurement.maximumBitsPerSecond else { return .failure(.noUploadMeasured) }
         let bytes = root["ul_bytes_transferred"].flatMap(number).flatMap { Int64(exactly: $0.doubleValue.rounded()) }
         return .success(UploadSpeedMeasurementDraft(bitsPerSecond: bitsPerSecond, bytesSent: bytes))
     }

@@ -301,6 +301,10 @@ struct NetworkEditTests {
         // No limit set, a rate with no window, a percentage with no window.
         #expect(now(NetworkEdit(settings: .defaults), status, at: friday10am) == "No limit right now")
         #expect(now(NetworkEdit(settings: Self.saved), status, at: friday10am) == "Now: 5 MB/s")
+        // A fixed rate reads in the unit it was set in, as the agent's log says it.
+        var inKilobytes = NetworkSettings.defaults
+        inKilobytes.uploadLimit = .rate(kiB: 5120, unit: .kilobytes)
+        #expect(now(NetworkEdit(settings: inKilobytes), status, at: friday10am) == "Now: 5120 KB/s")
         var allDay = NetworkSettings.defaults
         allDay.uploadLimit = .percent(50)
         #expect(now(NetworkEdit(settings: allDay), status, at: friday10am) == "Now: 20 MB/s")
@@ -316,7 +320,44 @@ struct NetworkEditTests {
         #expect(line == "Now: 512 KB/s, until 6:00 am Saturday")
     }
 
+    /// With the limit or the window edited and not saved, the line (about what is saved) says it will update.
+    @Test func nowLineSaysItUpdatesWhenYouSaveWhileTheLimitOrWindowIsEdited() {
+        let friday10am = Self.adelaideDate(2027, 1, 15, 10)
+        let status = Self.measured(at: friday10am)
+        func now(_ edit: NetworkEdit) -> String {
+            edit.nowLine(status: status, at: friday10am, calendar: Self.adelaide, locale: Self.en_AU)
+        }
+        var edit = Self.percentEdit()
+        #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm")
+        edit.fields.limitAmount = "60"
+        #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm. Updates when you save.")
+        edit.revert()
+        edit.fields.windowEnd = 19 * 60
+        #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm. Updates when you save.")
+        edit.revert()
+        edit.fields.skipOnConstrainedNetwork.toggle()
+        #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm", "the other groups don't change the line")
+        var none = NetworkEdit(settings: .defaults)
+        none.setLimitKind(.megabytes)
+        #expect(now(none) == "No limit right now. Updates when you save.")
+    }
+
     // MARK: The speed line
+
+    /// A huge stored speed (a file edited, or an old bug) neither traps nor shows.
+    @Test func speedLineWithAnImplausibleSpeedIsNotMeasuredAndNeverTraps() {
+        let edit = NetworkEdit(settings: .defaults)
+        let now = Self.adelaideDate(2027, 1, 15, 10)
+        for bits in [1e30, 1e14, Double.infinity, Double.nan] {
+            let record = UploadSpeedRecord(latest: UploadSpeedMeasurement(bitsPerSecond: bits, measuredAt: now))
+            let status = UploadSpeedStatus(network: .ethernet, record: record, testing: false)
+            #expect(edit.speedLine(status, now: now, calendar: Self.adelaide, locale: Self.en_AU) == "Not measured on this network yet")
+        }
+        let huge = UploadSpeedStatus(
+            network: .ethernet,
+            record: UploadSpeedRecord(latest: UploadSpeedMeasurement(bitsPerSecond: 1e30, measuredAt: now)), testing: false)
+        #expect(edit.nowLine(status: huge, at: now, calendar: Self.adelaide, locale: Self.en_AU) == "No limit right now")
+    }
 
     @Test func speedLineAges() {
         let edit = NetworkEdit(settings: .defaults)
@@ -335,7 +376,7 @@ struct NetworkEditTests {
         func line(_ status: UploadSpeedStatus?) -> String {
             edit.speedLine(status, now: now, calendar: Self.adelaide, locale: Self.en_AU)
         }
-        #expect(line(nil) == "Not connected to a network")
+        #expect(line(nil) == "Checking…", "no status yet is not the same as no network")
         #expect(line(UploadSpeedStatus(network: nil, record: nil, testing: false)) == "Not connected to a network")
         #expect(line(UploadSpeedStatus(network: .ethernet, record: nil, testing: false)) == "Not measured on this network yet")
         #expect(line(UploadSpeedStatus(network: .ethernet, record: nil, testing: true)) == "Testing upload speed…")
@@ -350,6 +391,12 @@ struct NetworkEditTests {
             lastFailure: SpeedTestFailure(at: now.addingTimeInterval(-3600), reason: "The speed test timed out"))
         #expect(line(UploadSpeedStatus(network: .ethernet, record: healed, testing: false)) == "Upload speed on Ethernet: 40 MB/s, measured today")
         #expect(line(UploadSpeedStatus(network: .wiFiUnknown, record: nil, testing: false)) == "Not measured on this network yet")
+    }
+
+    @Test func thePercentNoteEndsWithAFullStopLikeTheOtherFormNotes() {
+        #expect(WiFiNameAccess.refused.percentNote
+            == "Without Location permission, Restorey can’t tell Wi-Fi networks apart, so they share one measurement.")
+        #expect(WiFiNameAccess.allowed.percentNote == nil)
     }
 
     @Test func speedsShowInMegabytesWithOneDecimalOrKilobytesBelowOne() {

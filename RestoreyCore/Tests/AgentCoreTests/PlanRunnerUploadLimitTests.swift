@@ -80,7 +80,7 @@ extension PlanRunnerTests {
         let office = await f.speedTester.record(for: .wiFi(name: "Office"))
         #expect(office == UploadSpeedRecord(lastFailure: SpeedTestFailure(at: f.clock.now, reason: SpeedTestError.timedOut.message)))
         #expect(await f.speedTester.record(for: .wiFi(name: "Home")) == home)
-        #expect(try runLog(f, record).contains("Mac-wide upload limit none: not measured on “Office” yet"))
+        #expect(try runLog(f, record).contains("Mac-wide upload limit none: the upload speed test on “Office” failed"))
     }
 
     /// At most one test per network per calendar day: after the test before a backup fails, a later backup that day
@@ -102,7 +102,7 @@ extension PlanRunnerTests {
         let second = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
         #expect(f.speedTest.calls.value == 1)
         #expect(try stub.limits()[f.planID] == .some(nil))
-        #expect(try runLog(f, second).contains("Mac-wide upload limit none: not measured on Ethernet yet"))
+        #expect(try runLog(f, second).contains("Mac-wide upload limit none: the upload speed test on Ethernet failed"))
     }
 
     /// Outside the window there's no limit anyway, so the test before the first backup is left to the daily one.
@@ -333,9 +333,10 @@ extension PlanRunnerTests {
         #expect(pushes.value.last??.testing == false)
     }
 
-    /// The status carries the current network's key; the Wi-Fi name is read only when something needs it, never
-    /// otherwise (CoreWLAN never prompts, but there's no reason to ask).
-    @Test func theStatusNamesTheNetworkOnlyWhenTheNameIsNeeded() async throws {
+    /// The status and Test now key the network by its name whenever the agent can read it, whatever the limit is (the
+    /// spec: "the network's name when the agent can read it"). CoreWLAN answers nil without Location permission and
+    /// never prompts; the agent asks Location for nothing here.
+    @Test func theStatusAndTestNowNameTheNetworkWheneverTheNameCanBeRead() async throws {
         let stub = try HeldResticStub()
         defer { stub.remove() }
         let f = try await Self.networkedFixture(stub, settings: .defaults)
@@ -343,15 +344,62 @@ extension PlanRunnerTests {
         f.wiFiName.set("Home")
         f.network.set(.satisfied(constrained: false, expensive: false, interface: .wiFi))
         await f.runner.refreshStatus()
+        #expect(await f.state.status().uploadSpeed?.network == .wiFi(name: "Home"))
+
+        // Test now files its result under the name too, with a fixed rate and an empty skip list.
+        let rate = NetworkSettings(uploadLimit: .rate(kiB: 500, unit: .kilobytes), skipOnConstrainedNetwork: true, skippedWiFiNames: [])
+        _ = try await f.state.saveNetworkSettings(rate)
+        let status = try await f.state.runUploadSpeedTest()
+        #expect(status.uploadSpeed?.network == .wiFi(name: "Home"))
+        #expect(await f.speedTester.record(for: .wiFi(name: "Home"))?.latest != nil)
+        #expect(await f.speedTester.record(for: .wiFiUnknown) == nil)
+
+        // Without a name (no Location permission) it is the unnamed Wi-Fi network.
+        f.wiFiName.set(nil)
+        await f.runner.refreshStatus()
         #expect(await f.state.status().uploadSpeed?.network == .wiFiUnknown)
-        #expect(f.wiFiNameReads.value == 0)
+
+        // The backup's own checks still read it only when it matters: none of them here with a fixed rate.
+        let before = f.wiFiNameReads.value
+        f.wiFiName.set("Home")
+        stub.release()
+        _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        #expect(f.wiFiNameReads.value == before)
 
         _ = try await f.state.saveNetworkSettings(Self.halfOfTheUpload)
         await f.runner.refreshStatus()
         #expect(await f.state.status().uploadSpeed?.network == .wiFi(name: "Home"))
-
-        f.network.set(.unsatisfied)
+        f.network.set(.satisfied(constrained: false, expensive: false, interface: .wired))
         await f.runner.refreshStatus()
-        #expect(await f.state.status().uploadSpeed == UploadSpeedStatus(network: nil, record: nil, testing: false))
+        #expect(await f.state.status().uploadSpeed?.network == .ethernet)
+    }
+
+    // MARK: The log line
+
+    /// A measurement too fast to be real (a file edited, an old bug) neither traps the agent at a backup's start nor
+    /// is used: it reads as not measured.
+    @Test func theLogLineSurvivesAHugeMeasurement() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let huge = UploadSpeedMeasurement(bitsPerSecond: 1e30, measuredAt: now)
+        let resolved = resolveMacWideLimit(Self.halfOfTheUpload, measurement: huge, at: now, calendar: .current)
+        #expect(PlanRunner.macWideLimitLine(resolved, settings: Self.halfOfTheUpload, network: .ethernet, now: now, calendar: .current)
+            == "Mac-wide upload limit none: not measured on Ethernet yet")
+    }
+
+    /// The Now line and the agent's log word the same limit the same way.
+    @Test func theLogLineAndTheNowLineWordALimitAlike() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        for (limit, expected) in [
+            (MacUploadLimit.rate(kiB: 5120, unit: .kilobytes), "5120 KB/s"),
+            (.rate(kiB: 5120, unit: .megabytes), "5 MB/s"),
+            (.rate(kiB: 4885, unit: .megabytes), UploadLimitText.rateText(kiB: 4885, unit: .megabytes)),
+        ] {
+            let settings = NetworkSettings(uploadLimit: limit, skipOnConstrainedNetwork: true, skippedWiFiNames: [])
+            let resolved = resolveMacWideLimit(settings, measurement: nil, at: now, calendar: .current)
+            let log = PlanRunner.macWideLimitLine(resolved, settings: settings, network: nil, now: now, calendar: .current)
+            let nowLine = NetworkEdit(settings: settings).nowLine(status: nil, at: now, calendar: .current, locale: Locale(identifier: "en_AU"))
+            #expect(log.hasPrefix("Mac-wide upload limit \(expected):"), "\(log)")
+            #expect(nowLine == "Now: \(expected)", "\(nowLine)")
+        }
     }
 }

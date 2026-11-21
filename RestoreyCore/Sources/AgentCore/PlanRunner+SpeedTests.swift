@@ -40,7 +40,7 @@ extension PlanRunner {
     func testUploadSpeedNow() async throws -> AgentStatus {
         guard deps.speedTester != nil else { throw AgentError.operationFailed("The upload speed can’t be tested now") }
         let settings = await deps.state.networkSettings
-        let network = await currentNetwork(settings)
+        let network = await currentNetwork(settings, alwaysReadName: true)
         if let refusal = SpeedTestRefusal.check(
             network: network.state, settings: settings, wiFiName: network.wiFiName,
             networkedCommandRunning: !networkedCommands.isEmpty)
@@ -59,7 +59,7 @@ extension PlanRunner {
     /// scheduler's tick calls it, so a change of network shows within a minute or at the next nudge.
     func refreshUploadSpeedStatus(endingTest: Bool = false) async {
         let settings = await deps.state.networkSettings
-        let network = await currentNetwork(settings)
+        let network = await currentNetwork(settings, alwaysReadName: true)
         var record: UploadSpeedRecord?
         if let key = network.key, let tester = deps.speedTester { record = await tester.record(for: key) }
         await deps.state.noteUploadSpeed(network: network.key, record: record, endingTest: endingTest)
@@ -95,13 +95,17 @@ extension PlanRunner {
         return Task { _ = await runSpeedTest(key) }
     }
 
-    /// The network the Mac is on now and its key. The Wi-Fi name is read only on Wi-Fi when something needs it: a
-    /// percentage (its measurement belongs to the network) or a skip list with names (a test is refused on a skipped
-    /// network); CoreWLAN never prompts for Location, it answers nil without it.
-    func currentNetwork(_ settings: NetworkSettings) async -> (state: NetworkState, key: NetworkKey?, wiFiName: String?) {
+    /// The network the Mac is on now and its key. The Wi-Fi name is read only on Wi-Fi, and by the pre-backup and daily
+    /// checks only when something needs it: a percentage (its measurement belongs to the network) or a skip list with
+    /// names (a test is refused on a skipped network). `alwaysReadName` is for what is shown or filed under the network
+    /// whatever the limit is (Test now and the status): the key is "the network's name when the agent can read it".
+    /// CoreWLAN never prompts for Location, it answers nil without it, and nothing here asks Location for anything.
+    func currentNetwork(
+        _ settings: NetworkSettings, alwaysReadName: Bool = false
+    ) async -> (state: NetworkState, key: NetworkKey?, wiFiName: String?) {
         let environment = await deps.preflightEnvironment()
         var wiFiName: String?
-        if case .satisfied(_, _, .wiFi) = environment.network, settings.needsWiFiNameForSpeedTests {
+        if case .satisfied(_, _, .wiFi) = environment.network, alwaysReadName || settings.needsWiFiNameForSpeedTests {
             wiFiName = environment.currentWiFiName()
         }
         return (environment.network, networkKey(for: environment.network, wiFiName: wiFiName), wiFiName)
@@ -117,6 +121,7 @@ extension PlanRunner {
         let settings = await deps.state.networkSettings
         var key: NetworkKey?
         var measurement: UploadSpeedMeasurement?
+        var testFailed = false
         if case .percent = settings.uploadLimit, let tester = deps.speedTester {
             let network = await currentNetwork(settings)
             key = network.key
@@ -133,11 +138,17 @@ extension PlanRunner {
                 {
                     measurement = measured
                 }
+                // A test that failed today (before this backup or earlier) is why there is no measurement.
+                if measurement == nil, let failure = await tester.record(for: key)?.lastFailure,
+                    Calendar.current.isDate(failure.at, inSameDayAs: deps.now())
+                {
+                    testFailed = true
+                }
             }
         }
         let now = deps.now()
         let resolved = RestoreyCore.resolveMacWideLimit(settings, measurement: measurement, at: now, calendar: .current)
-        return (resolved.kiB, Self.macWideLimitLine(resolved, settings: settings, network: key, now: now, calendar: .current))
+        return (resolved.kiB, Self.macWideLimitLine(resolved, settings: settings, network: key, now: now, calendar: .current, testFailed: testFailed))
     }
 
     /// A log reads the same on every Mac, so its times and dates are Australian English whatever the Mac's region.
@@ -146,13 +157,14 @@ extension PlanRunner {
     /// "Mac-wide upload limit 19 MB/s: 50% of 38 MB/s measured on Wi-Fi today, inside 8:00 am–6:00 pm weekdays" (a Debug
     /// build names the Wi-Fi network: `NetworkKey.logName`).
     static func macWideLimitLine(
-        _ resolved: ResolvedMacWideLimit, settings: NetworkSettings, network: NetworkKey?, now: Date, calendar: Calendar
+        _ resolved: ResolvedMacWideLimit, settings: NetworkSettings, network: NetworkKey?, now: Date, calendar: Calendar,
+        testFailed: Bool = false
     ) -> String {
         let limit: String
-        switch (resolved.kiB, settings.uploadLimit) {
-        case (nil, _): limit = "none"
-        case (let kiB?, .rate(_, let unit)): limit = UploadLimitText.rateText(kiB: kiB, unit: unit)
-        case (let kiB?, _): limit = UploadLimitText.rateText(kiB: kiB, unit: kiB < 1024 ? .kilobytes : .megabytes)
+        if let kiB = resolved.kiB {
+            limit = UploadLimitText.limitText(kiB: kiB, setting: settings.uploadLimit)
+        } else {
+            limit = "none"
         }
         let inside = settings.limitWindow.map { ", inside \(UploadLimitText.windowText($0, locale: Self.logLocale))" } ?? ""
         let how: String
@@ -161,10 +173,15 @@ extension PlanRunner {
         case .outsideWindow: how = "outside \(settings.limitWindow.map { UploadLimitText.windowText($0, locale: Self.logLocale) } ?? "the window")"
         case .rate: how = "a fixed rate\(inside)"
         case .percentNotMeasured:
-            how = network.map { "not measured on \($0.logName) yet" } ?? "not measured: no network"
+            if let network, testFailed {
+                how = "the upload speed test on \(network.logName) failed"
+            } else {
+                how = network.map { "not measured on \($0.logName) yet" } ?? "not measured: no network"
+            }
         case .percentOf(let measurement):
             let percent = if case .percent(let percent) = settings.uploadLimit { percent } else { 0 }
-            let speed = UploadLimitText.rateText(kiB: Int(measurement.bitsPerSecond / 8 / 1024), unit: .megabytes)
+            // The resolver only gives `percentOf` for a plausible measurement; the conversion is the shared, clamped one.
+            let speed = UploadLimitText.rateText(kiB: measurement.kiBPerSecond ?? 0, unit: .megabytes)
             let on = network.map { " on \($0.logName)" } ?? ""
             how = "\(percent)% of \(speed) measured\(on) \(UploadLimitText.dayText(measurement.measuredAt, now: now, calendar: calendar, locale: Self.logLocale))\(inside)"
         }

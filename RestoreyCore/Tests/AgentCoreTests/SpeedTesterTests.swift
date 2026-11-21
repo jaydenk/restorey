@@ -149,6 +149,27 @@ struct SpeedTesterTests {
         #expect(w.logs.value.filter { $0.contains("upload-speeds.json") }.count == 2, "each problem once")
     }
 
+    /// A Release log never names the Wi-Fi network, and a decoding error's coding path holds the stored key
+    /// (`wifi:<name>`): the log says what is wrong with the file, never the error's description.
+    @Test func anUnreadableFileIsLoggedWithItsKindNeverTheNetworkName() async throws {
+        let w = try World()
+        defer { w.remove() }
+        let corrupt = Data(#"{"schemaVersion":1,"payload":{"records":{"wifi:Secret Cafe":{"latest":{"bitsPerSecond":"fast"}}}}}"#.utf8)
+        try corrupt.write(to: w.file)
+        #expect(await w.tester.record(for: .ethernet) == nil)
+        let lines = w.logs.value.filter { $0.contains("upload-speeds.json") }
+        try #require(lines.count == 1)
+        #expect(lines[0].hasSuffix("until a test runs: corrupt"), "\(lines[0])")
+        #expect(!w.logs.value.joined().contains("Secret Cafe"))
+        #expect(!w.logs.value.joined().contains("wifi:"))
+
+        let newer = try World()
+        defer { newer.remove() }
+        try Data(#"{"schemaVersion":99,"payload":{}}"#.utf8).write(to: newer.file)
+        #expect(await newer.tester.record(for: .ethernet) == nil)
+        #expect(newer.logs.value.first?.hasSuffix("until a test runs: written by a newer Restorey (schema 99)") == true)
+    }
+
     @Test func refusals() {
         let settings = NetworkSettings(uploadLimit: .percent(50), skipOnConstrainedNetwork: false, skippedWiFiNames: ["Café"])
         func check(_ network: NetworkState, _ name: String? = nil, running: Bool = false) -> SpeedTestRefusal? {

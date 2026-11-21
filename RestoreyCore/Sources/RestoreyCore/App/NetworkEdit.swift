@@ -292,17 +292,20 @@ public struct NetworkEdit: Sendable, Equatable {
             guard !calendar.isDate(change, inSameDayAs: date) else { return time }
             return "\(time) \(UploadLimitText.weekdayText(change, calendar: calendar, locale: locale))"
         }
+        let line: String
         switch resolved.reason {
         case .noLimitSet:
-            return "No limit right now"
+            line = "No limit right now"
         case .percentNotMeasured:
-            return "Now: no limit until this network is measured"
+            line = "Now: no limit until this network is measured"
         case .outsideWindow:
-            return "Now: no limit" + (resolved.changesAt.map { ", from \(when($0))" } ?? "")
+            line = "Now: no limit" + (resolved.changesAt.map { ", from \(when($0))" } ?? "")
         case .rate, .percentOf:
-            let limit = resolved.kiB.map { UploadLimitText.speedText(kiB: $0) } ?? "no limit"
-            return "Now: \(limit)" + (resolved.changesAt.map { ", until \(when($0))" } ?? "")
+            let limit = resolved.kiB.map { UploadLimitText.limitText(kiB: $0, setting: saved.uploadLimit) } ?? "no limit"
+            line = "Now: \(limit)" + (resolved.changesAt.map { ", until \(when($0))" } ?? "")
         }
+        // The line is about what is saved; with the limit or window edited and not saved it may be about to change.
+        return limitChanged || windowChanged ? line + ". Updates when you save." : line
     }
 
     /// The current network's speed and its age, or why there isn't one: "Upload speed on “Kerr Home”: 38 MB/s,
@@ -310,19 +313,24 @@ public struct NetworkEdit: Sendable, Equatable {
     public func speedLine(
         _ status: UploadSpeedStatus?, now: Date, calendar: Calendar, locale: Locale = .current
     ) -> String {
-        guard let status, let network = status.network else { return "Not connected to a network" }
+        // No status yet: the agent hasn't reported. `network` nil in a status is the agent saying there is none.
+        guard let status else { return "Checking…" }
+        guard let network = status.network else { return "Not connected to a network" }
         if status.testing { return "Testing upload speed…" }
         let record = status.record
         if let failure = record?.lastFailure, failure.at > (record?.latest?.measuredAt ?? .distantPast) {
             return FormValidation.sentence(failure.reason)
         }
-        guard let measurement = record?.latest else { return "Not measured on this network yet" }
+        // A stored value that isn't plausible is not a measurement (`UploadSpeedMeasurement.isPlausible`).
+        guard let measurement = record?.latest, let kiB = measurement.kiBPerSecond else {
+            return "Not measured on this network yet"
+        }
         let name: String
         switch network {
         case .wiFi: name = "“\(network.displayName)”"
         case .wiFiUnknown, .ethernet, .other: name = network.displayName
         }
-        let speed = UploadLimitText.speedText(kiB: Int(measurement.bitsPerSecond / 8 / 1024))
+        let speed = UploadLimitText.speedText(kiB: kiB)
         let age = UploadLimitText.dayText(measurement.measuredAt, now: now, calendar: calendar, locale: locale)
         return "Upload speed on \(name): \(speed), measured \(age)"
     }
@@ -418,7 +426,7 @@ public enum WiFiNameAccess: Sendable, Equatable {
         switch self {
         case .allowed, .checking: nil
         case .notAsked, .refused, .restricted, .servicesOff:
-            "Without Location permission, Restorey can’t tell Wi-Fi networks apart, so they share one measurement"
+            "Without Location permission, Restorey can’t tell Wi-Fi networks apart, so they share one measurement."
         }
     }
 

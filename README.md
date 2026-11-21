@@ -596,20 +596,22 @@ unsaved Network edits asks Save, Don't Save or Cancel, after a plan's question i
   and starts at 50.
 - **The speed line** (`NetworkEdit.speedLine`) with **Test now** (`runUploadSpeedTest`, off while any test runs; a
   refusal is shown as its sentence): "Upload speed on “Kerr Home”: 38 MB/s, measured today" (or "yesterday", or a
-  date), "Not measured on this network yet", the last failure's sentence, "Testing upload speed…" or "Not connected to a
-  network". Speeds show in MB/s with up to one decimal, or in KB/s below 1 MB/s. This row is the one place the
+  date), "Not measured on this network yet", the last failure's sentence, "Testing upload speed…", "Checking…" before the
+  agent has reported, or "Not connected to a network" when it says there is none. Speeds show in MB/s with up to one decimal, or in KB/s below 1 MB/s. This row is the one place the
   Wi-Fi network's name is shown in the app; it is never logged.
 - **Only limit during** (shown whenever the limit isn't None): a tick box, then Every day, Weekdays or Weekends and a
   start and end time (8:00 am to 6:00 pm on weekdays to begin with), in the Mac's 12 or 24 hour clock. Outside the
   window there is no Mac-wide limit; a start and end that are the same time are refused. None saves no window.
 - **Now** (`NetworkEdit.nowLine`, worked out each minute from the settings the agent has, by the same
   `resolveMacWideLimit` a backup uses): "Now: 20 MB/s, until 6:00 pm", "Now: no limit, from 8:00 am Monday", "No limit
-  right now" or "Now: no limit until this network is measured".
+  right now" or "Now: no limit until this network is measured". A fixed rate reads in the unit it was set in ("Now: 5120
+  KB/s"), as the run log does. While the limit or the window has unsaved changes the line, which is about what is
+  saved, ends "Updates when you save."
 - "Skip on a hotspot or in Low Data Mode" and "Skip on these Wi-Fi networks".
 
 Choosing "% of upload speed" while the agent isn't authorised for Location sends `requestLocationPermission` (a
 percentage needs the Wi-Fi name to tell networks apart); if that is refused the choice stands and a line says "Without
-Location permission, Restorey can't tell Wi-Fi networks apart, so they share one measurement". Times and dates in these
+Location permission, Restorey can't tell Wi-Fi networks apart, so they share one measurement." Times and dates in these
 lines use the Mac's locale (`UploadLimitText`, which the agent's log line also uses, pinned to Australian English so a
 log reads the same on every Mac). Save (⌘S) and Revert apply only the fields you changed, as a plan's tabs do: the
 limit's kind and amount go together, as do the window's fields. A name is added
@@ -1024,7 +1026,10 @@ A backup keeps the limit it started with, even if the window opens or closes or 
 runs: Restorey never restarts a backup to change it. A backup to a folder or drive gets the plan's own limit alone.
 The backup's run log says how the limit was resolved, for example "Mac-wide upload limit 4.77 MB/s: 50% of 9.54 MB/s
 measured on Wi-Fi today", "Mac-wide upload limit none: outside 8:00 am–6:00 pm weekdays" or "Mac-wide upload limit
-none: not measured on Ethernet yet" (a Debug build names the Wi-Fi network, “Office”).
+none: not measured on Ethernet yet" (or "none: the upload speed test on Ethernet failed" when today's test before the
+backup failed); a Debug build names the Wi-Fi network, “Office”. A measurement above 10 Tbit/s (`ul_throughput`, or a
+stored value) is not a measurement: the test fails with "didn’t measure any upload" and a stored one counts as not
+measured, so no speed is ever converted out of range.
 
 **Upload speed tests.** With a percentage set, the agent measures the upload speed with macOS's
 `networkQuality -d -c -M 20` (upload only, against Apple's servers; stopped after 25 seconds and killed 10 seconds
@@ -1059,7 +1064,9 @@ limit of 0 or less, a percentage outside 1 to 100, a window that starts when it 
 listed twice, with the reason, and saves the names trimmed. The agent reads the Wi-Fi name itself (CoreWLAN, which
 answers without a name rather than prompting when it has no Location permission) just before a backup to a networked
 repository: for the skip list whenever the list isn't empty, and for the upload limit only on Wi-Fi when the limit is
-a percentage (also for the daily test's check). A name it can't read (no Location permission, or not on Wi-Fi) never
+a percentage (also for the daily test's check). Test now and the status read it whenever the Mac is on Wi-Fi, whatever
+the limit is, so a measurement is filed under the network's name whenever the agent can read it (CoreWLAN gives no name,
+and never prompts, without Location permission; the agent asks Location for nothing there). A name it can't read (no Location permission, or not on Wi-Fi) never
 skips a backup.
 
 **Location permission.** macOS reveals the Wi-Fi network's name only to a process with Location Services

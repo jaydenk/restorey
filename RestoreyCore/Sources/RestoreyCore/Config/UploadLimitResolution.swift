@@ -73,6 +73,22 @@ extension LimitWindow {
     }
 }
 
+extension UploadSpeedMeasurement {
+    /// The fastest upload speed taken as real: 10 Tbit/s. A stored or measured value above it is not a measurement.
+    public static let maximumBitsPerSecond = 1e13
+
+    /// A positive, finite speed no faster than `maximumBitsPerSecond`. Everything that reads a measurement (the
+    /// resolver, the run log line, Settings' speed line) treats any other value as not measured.
+    public var isPlausible: Bool {
+        bitsPerSecond.isFinite && bitsPerSecond > 0 && bitsPerSecond <= Self.maximumBitsPerSecond
+    }
+
+    /// The speed in KiB/s, rounded down, nil when it isn't plausible: the one bits to KiB conversion, which can't trap.
+    public var kiBPerSecond: Int? {
+        isPlausible ? Int((bitsPerSecond / 8 / 1024).rounded(.down)) : nil
+    }
+}
+
 /// What the Mac-wide limit is for a backup that starts at a given moment, and why.
 public struct ResolvedMacWideLimit: Sendable, Equatable {
     public enum Reason: Sendable, Equatable {
@@ -111,13 +127,11 @@ public func resolveMacWideLimit(
     case .rate(let kiB, _):
         return result(kiB, .rate)
     case .percent(let percent):
-        // The measurement comes from a file and parsed tool output: a value that isn't a positive finite
-        // number counts as not measured.
-        guard let measurement, measurement.bitsPerSecond.isFinite, measurement.bitsPerSecond > 0 else {
+        // The measurement comes from a file and parsed tool output: a value that isn't plausible counts as not measured.
+        guard let measurement, measurement.isPlausible else {
             return result(nil, .percentNotMeasured)
         }
         let share = (measurement.bitsPerSecond / 8 / 1024 * Double(percent) / 100).rounded(.down)
-        let kiB = Int(min(share, Double(Int32.max)))
-        return result(max(1, kiB), .percentOf(measurement))
+        return result(max(1, Int(min(share, Double(Int32.max)))), .percentOf(measurement))
     }
 }
