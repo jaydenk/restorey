@@ -26,6 +26,8 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
         public var uploadLimit: String
         /// The unit the limit is typed and shown in. Changing it converts `uploadLimit` (`PlanEdit.setUploadLimitUnit`).
         public var uploadLimitUnit: UploadLimitUnit
+        /// The exact KiB/s the text stands for after a unit switch (`FormValidation.ExactLimit`).
+        public var uploadLimitExact: FormValidation.ExactLimit?
         public var hostLabel: String
         public var pruneEnabled: Bool
         public var forgetCadence: ForgetCadence
@@ -44,6 +46,8 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
             schedule = ScheduleForm(plan: plan)
             uploadLimit = FormValidation.uploadLimitText(kiB: plan.uploadLimitKiB, unit: plan.uploadLimitUnit)
             uploadLimitUnit = plan.uploadLimitUnit
+            let shown = uploadLimit
+            uploadLimitExact = plan.uploadLimitKiB.map { .init(text: shown, kiB: $0) }
             hostLabel = plan.hostLabel
             pruneEnabled = plan.pruneEnabled
             forgetCadence = plan.forgetCadence
@@ -173,16 +177,23 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
     }
 
     public var uploadLimitProblem: String? {
-        if case .failure(let problem) = FormValidation.uploadLimit(fields.uploadLimit, unit: fields.uploadLimitUnit) {
+        if case .failure(let problem) = limitKiB {
             return problem.message
         }
         return nil
     }
 
+    private var limitKiB: Result<Int?, FormValidation.Problem> {
+        FormValidation.limitKiB(fields.uploadLimit, unit: fields.uploadLimitUnit, exact: fields.uploadLimitExact)
+    }
+
     /// Shows the plan's limit in another unit: the typed amount converts (5 MB/s becomes 5120 KB/s), it isn't
     /// reinterpreted.
     public mutating func setUploadLimitUnit(_ unit: UploadLimitUnit) {
-        fields.uploadLimit = FormValidation.convertedLimitText(fields.uploadLimit, from: fields.uploadLimitUnit, to: unit)
+        let converted = FormValidation.convertedLimit(
+            fields.uploadLimit, exact: fields.uploadLimitExact, from: fields.uploadLimitUnit, to: unit)
+        fields.uploadLimit = converted.text
+        fields.uploadLimitExact = converted.exact
         fields.uploadLimitUnit = unit
     }
 
@@ -229,7 +240,7 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
             plan.retention = retention
         }
         if changed(\.uploadLimit) || changed(\.uploadLimitUnit),
-            case .success(let limit) = FormValidation.uploadLimit(fields.uploadLimit, unit: fields.uploadLimitUnit)
+            case .success(let limit) = limitKiB
         {
             plan.uploadLimitKiB = limit
             plan.uploadLimitUnit = fields.uploadLimitUnit

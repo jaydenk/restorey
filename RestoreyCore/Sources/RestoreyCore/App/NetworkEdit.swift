@@ -40,6 +40,8 @@ public struct NetworkEdit: Sendable, Equatable {
         public var limitKind: LimitKind
         /// The amount as typed; empty for `.none`.
         public var limitAmount: String
+        /// The exact KiB/s the amount stands for after a KB/s / MB/s switch (`FormValidation.ExactLimit`).
+        public var limitExact: FormValidation.ExactLimit?
         /// "Only limit during" is ticked. The window's own fields below are shown whenever the kind isn't none, and
         /// start as weekdays 8:00 am to 6:00 pm.
         public var windowEnabled: Bool
@@ -58,12 +60,15 @@ public struct NetworkEdit: Sendable, Equatable {
             case .none:
                 limitKind = .none
                 limitAmount = ""
+                limitExact = nil
             case .rate(let kiB, let unit):
                 limitKind = LimitKind(unit: unit)
                 limitAmount = FormValidation.uploadLimitText(kiB: kiB, unit: unit)
+                limitExact = .init(text: limitAmount, kiB: kiB)
             case .percent(let percent):
                 limitKind = .percent
                 limitAmount = String(percent)
+                limitExact = nil
             }
             let window = settings.limitWindow
             windowEnabled = window != nil
@@ -116,9 +121,12 @@ public struct NetworkEdit: Sendable, Equatable {
         guard kind != old else { return }
         switch (old.unit, kind.unit) {
         case (let from?, let to?):
-            fields.limitAmount = FormValidation.convertedLimitText(fields.limitAmount, from: from, to: to)
+            let converted = FormValidation.convertedLimit(fields.limitAmount, exact: fields.limitExact, from: from, to: to)
+            fields.limitAmount = converted.text
+            fields.limitExact = converted.exact
         default:
             fields.limitAmount = kind == .percent ? "50" : ""
+            fields.limitExact = nil
         }
         fields.limitKind = kind
     }
@@ -135,7 +143,7 @@ public struct NetworkEdit: Sendable, Equatable {
             return .success(.none)
         case .kilobytes, .megabytes:
             let unit = fields.limitKind.unit ?? .megabytes
-            switch FormValidation.uploadLimit(fields.limitAmount, unit: unit) {
+            switch FormValidation.limitKiB(fields.limitAmount, unit: unit, exact: fields.limitExact, emptyMeansNone: false) {
             case .failure(let problem): return .failure(problem)
             case .success(let kiB?): return .success(.rate(kiB: kiB, unit: unit))
             case .success(nil):
@@ -236,8 +244,10 @@ public struct NetworkEdit: Sendable, Equatable {
         if fields.limit == started.limit {
             fields.limitKind = next.limitKind
             fields.limitAmount = next.limitAmount
+            fields.limitExact = next.limitExact
             started.limitKind = next.limitKind
             started.limitAmount = next.limitAmount
+            started.limitExact = next.limitExact
         }
         if fields.window == started.window {
             fields.windowEnabled = next.windowEnabled

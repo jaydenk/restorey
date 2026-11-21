@@ -131,7 +131,12 @@ public enum FormValidation {
     /// MB/s is 5120, "1.5" is 1536 (one MB/s here is 1024 KiB/s, the unit restic's `--limit-upload` takes), "512"
     /// KB/s is 512. Only a plain decimal number with a full stop is read, so the result never depends on the Mac's
     /// region.
-    public static func uploadLimit(_ text: String, unit: UploadLimitUnit = .megabytes) -> Result<Int?, Problem> {
+    ///
+    /// `emptyMeansNone` is false where an empty amount is refused and None is how to say no limit (the Mac-wide
+    /// limit); only the wording for 0 differs.
+    public static func uploadLimit(
+        _ text: String, unit: UploadLimitUnit = .megabytes, emptyMeansNone: Bool = true
+    ) -> Result<Int?, Problem> {
         let typed = trimmed(text)
         if typed.isEmpty { return .success(nil) }
         let notANumber = limitNotANumber(unit)
@@ -142,7 +147,8 @@ public enum FormValidation {
         let kiB = NSDecimalNumber(decimal: amount * perUnit).rounding(accordingToBehavior: nil)
         guard kiB.doubleValue < Double(Int32.max) else { return .failure(notANumber) }
         guard kiB.intValue >= 1 else {
-            return .failure(Problem("The upload limit must be more than 0 \(unitName(unit)). Leave it empty for no limit."))
+            let instead = emptyMeansNone ? "Leave it empty for no limit." : "Choose None for no limit."
+            return .failure(Problem("The upload limit must be more than 0 \(unitName(unit)). \(instead)"))
         }
         return .success(kiB.intValue)
     }
@@ -189,11 +195,40 @@ public enum FormValidation {
         return formatter.string(from: NSNumber(value: Double(kiB) / 1024)) ?? "\(Double(kiB) / 1024)"
     }
 
-    /// A typed limit shown again in another unit, so switching from 5 MB/s to KB/s reads 5120, not 5. Text that
-    /// isn't a limit (empty, or not a number) is left as it is.
+    /// The exact KiB/s behind a limit's text, kept when a unit switch rewrote the text (the text shows 100 KB/s as
+    /// "0.1" MB/s, which is 102). It counts only while the text is still the one the switch wrote: typing makes the
+    /// text what it says.
+    public struct ExactLimit: Sendable, Equatable {
+        public var text: String
+        public var kiB: Int
+        public init(text: String, kiB: Int) {
+            self.text = text
+            self.kiB = kiB
+        }
+    }
+
+    /// The limit as typed, in KiB/s: `exact` when the text is still the one it was written for, else as typed.
+    public static func limitKiB(
+        _ text: String, unit: UploadLimitUnit, exact: ExactLimit?, emptyMeansNone: Bool = true
+    ) -> Result<Int?, Problem> {
+        if let exact, exact.text == text { return .success(exact.kiB) }
+        return uploadLimit(text, unit: unit, emptyMeansNone: emptyMeansNone)
+    }
+
+    /// A typed limit shown again in another unit, so switching from 5 MB/s to KB/s reads 5120, not 5, without
+    /// changing the stored value: the KiB/s it stands for goes with the new text as `exact`. Text that isn't a limit
+    /// (empty, or not a number) is left as it is.
+    public static func convertedLimit(
+        _ text: String, exact: ExactLimit?, from old: UploadLimitUnit, to new: UploadLimitUnit
+    ) -> (text: String, exact: ExactLimit?) {
+        guard old != new, case .success(let kiB?) = limitKiB(text, unit: old, exact: exact) else { return (text, exact) }
+        let shown = uploadLimitText(kiB: kiB, unit: new)
+        return (shown, ExactLimit(text: shown, kiB: kiB))
+    }
+
+    /// `convertedLimit`'s text alone.
     public static func convertedLimitText(_ text: String, from old: UploadLimitUnit, to new: UploadLimitUnit) -> String {
-        guard old != new, case .success(let kiB?) = uploadLimit(text, unit: old) else { return text }
-        return uploadLimitText(kiB: kiB, unit: new)
+        convertedLimit(text, exact: nil, from: old, to: new).text
     }
 
     /// A sentence in the agent's style (no closing full stop: `fileTypeProblem`, `AgentError`, the call

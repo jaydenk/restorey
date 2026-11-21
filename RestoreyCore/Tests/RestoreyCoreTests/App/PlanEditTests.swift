@@ -144,6 +144,24 @@ struct PlanEditTests {
         #expect(edit.uploadLimitProblem == "Enter the limit as a number of KB/s, such as 512.")
     }
 
+    @Test(arguments: [100, 300, 1000, 3])
+    func switchingThePlanUnitBackAndForthKeepsTheStoredKiB(kiB: Int) throws {
+        var plan = Self.plan()
+        plan.uploadLimitKiB = kiB
+        plan.uploadLimitUnit = .kilobytes
+        var edit = PlanEdit(plan: plan)
+        let started = edit.fields.uploadLimit
+        edit.setUploadLimitUnit(.megabytes)
+        #expect(edit.uploadLimitProblem == nil)
+        let converted = try edit.request().get().plan
+        #expect(converted.uploadLimitKiB == kiB)
+        #expect(converted.uploadLimitUnit == .megabytes)
+        edit.setUploadLimitUnit(.kilobytes)
+        #expect(edit.fields.uploadLimit == started)
+        #expect(!edit.isDirty)
+        #expect(try edit.request().get().plan == plan)
+    }
+
     /// A value the form can't show exactly (an interval or battery rule set elsewhere, a limit with more decimals
     /// than the field shows) is kept as saved unless that control is changed: saving the name mustn't move it.
     @Test func valuesTheFormRoundsAreKeptUnlessTheirControlChanges() throws {

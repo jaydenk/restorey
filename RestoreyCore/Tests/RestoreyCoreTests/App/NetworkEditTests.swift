@@ -133,6 +133,29 @@ struct NetworkEditTests {
         #expect(edit.fields.limitAmount == "fast")
     }
 
+    /// A unit switch never changes the stored KiB: the text is only how it reads back.
+    @Test(arguments: [100, 300, 1000, 3])
+    func switchingUnitsBackAndForthKeepsTheStoredKiB(kiB: Int) throws {
+        let saved = NetworkSettings(uploadLimit: .rate(kiB: kiB, unit: .kilobytes), skipOnConstrainedNetwork: true, skippedWiFiNames: [])
+        var edit = NetworkEdit(settings: saved)
+        let started = edit.fields.limitAmount
+        edit.setLimitKind(.megabytes)
+        #expect(edit.problem == nil)
+        #expect(try edit.request().get().uploadLimit == .rate(kiB: kiB, unit: .megabytes))
+        edit.setLimitKind(.kilobytes)
+        #expect(edit.fields.limitAmount == started)
+        #expect(!edit.isDirty)
+        #expect(try edit.request().get() == saved)
+    }
+
+    @Test func typingAfterASwitchIsReadAsTyped() throws {
+        var edit = NetworkEdit(settings: NetworkSettings(
+            uploadLimit: .rate(kiB: 1000, unit: .kilobytes), skipOnConstrainedNetwork: true, skippedWiFiNames: []))
+        edit.setLimitKind(.megabytes)  // shows 0.98
+        edit.fields.limitAmount = "0.99"  // typed: now it is what it says
+        #expect(try edit.request().get().uploadLimit == .rate(kiB: 1014, unit: .megabytes))
+    }
+
     @Test func choosingAKindFromNoneStartsFromASensibleAmount() {
         var edit = NetworkEdit(settings: .defaults)
         edit.setLimitKind(.percent)
@@ -354,7 +377,7 @@ struct NetworkEditTests {
         #expect(edit.problem == edit.uploadLimitProblem)
         #expect(throws: FormValidation.Problem.self) { try edit.request().get() }
         edit.fields.limitAmount = "0"
-        #expect(edit.problem == "The upload limit must be more than 0 MB/s. Leave it empty for no limit.")
+        #expect(edit.problem == "The upload limit must be more than 0 MB/s. Choose None for no limit.")
     }
 
     /// The agent refuses these too (`NetworkSettings.validationErrors`); the form says so first, with a full stop.
