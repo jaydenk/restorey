@@ -148,6 +148,17 @@ struct NetworkEditTests {
         #expect(try edit.request().get() == saved)
     }
 
+    /// A switch that can't convert (empty or invalid text) mustn't leave the old exact value to apply to the new unit.
+    @Test(arguments: ["", "fast"])
+    func retypingTheOldDigitsAfterAnUnconvertibleSwitchIsInTheNewUnit(blank: String) throws {
+        var edit = NetworkEdit(settings: NetworkSettings(
+            uploadLimit: .rate(kiB: 100, unit: .kilobytes), skipOnConstrainedNetwork: true, skippedWiFiNames: []))
+        edit.fields.limitAmount = blank
+        edit.setLimitKind(.megabytes)
+        edit.fields.limitAmount = "100"
+        #expect(try edit.request().get().uploadLimit == .rate(kiB: 102_400, unit: .megabytes))
+    }
+
     @Test func typingAfterASwitchIsReadAsTyped() throws {
         var edit = NetworkEdit(settings: NetworkSettings(
             uploadLimit: .rate(kiB: 1000, unit: .kilobytes), skipOnConstrainedNetwork: true, skippedWiFiNames: []))

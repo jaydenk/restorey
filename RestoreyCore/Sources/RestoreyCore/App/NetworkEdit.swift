@@ -64,7 +64,7 @@ public struct NetworkEdit: Sendable, Equatable {
             case .rate(let kiB, let unit):
                 limitKind = LimitKind(unit: unit)
                 limitAmount = FormValidation.uploadLimitText(kiB: kiB, unit: unit)
-                limitExact = .init(text: limitAmount, kiB: kiB)
+                limitExact = .init(text: limitAmount, kiB: kiB, unit: unit)
             case .percent(let percent):
                 limitKind = .percent
                 limitAmount = String(percent)

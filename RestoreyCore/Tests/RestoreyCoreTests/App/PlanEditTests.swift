@@ -162,6 +162,18 @@ struct PlanEditTests {
         #expect(try edit.request().get().plan == plan)
     }
 
+    @Test(arguments: ["", "fast"])
+    func retypingTheOldDigitsAfterAnUnconvertibleSwitchIsInTheNewUnit(blank: String) throws {
+        var plan = Self.plan()
+        plan.uploadLimitKiB = 100
+        plan.uploadLimitUnit = .kilobytes
+        var edit = PlanEdit(plan: plan)
+        edit.fields.uploadLimit = blank
+        edit.setUploadLimitUnit(.megabytes)
+        edit.fields.uploadLimit = "100"
+        #expect(try edit.request().get().plan.uploadLimitKiB == 102_400)
+    }
+
     /// A value the form can't show exactly (an interval or battery rule set elsewhere, a limit with more decimals
     /// than the field shows) is kept as saved unless that control is changed: saving the name mustn't move it.
     @Test func valuesTheFormRoundsAreKeptUnlessTheirControlChanges() throws {

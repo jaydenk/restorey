@@ -47,7 +47,7 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
             uploadLimit = FormValidation.uploadLimitText(kiB: plan.uploadLimitKiB, unit: plan.uploadLimitUnit)
             uploadLimitUnit = plan.uploadLimitUnit
             let shown = uploadLimit
-            uploadLimitExact = plan.uploadLimitKiB.map { .init(text: shown, kiB: $0) }
+            uploadLimitExact = plan.uploadLimitKiB.map { .init(text: shown, kiB: $0, unit: plan.uploadLimitUnit) }
             hostLabel = plan.hostLabel
             pruneEnabled = plan.pruneEnabled
             forgetCadence = plan.forgetCadence

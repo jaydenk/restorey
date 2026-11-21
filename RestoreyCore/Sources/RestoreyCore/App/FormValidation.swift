@@ -201,9 +201,12 @@ public enum FormValidation {
     public struct ExactLimit: Sendable, Equatable {
         public var text: String
         public var kiB: Int
-        public init(text: String, kiB: Int) {
+        /// The unit the text is in: it never applies to the text of another unit.
+        public var unit: UploadLimitUnit
+        public init(text: String, kiB: Int, unit: UploadLimitUnit) {
             self.text = text
             self.kiB = kiB
+            self.unit = unit
         }
     }
 
@@ -211,7 +214,7 @@ public enum FormValidation {
     public static func limitKiB(
         _ text: String, unit: UploadLimitUnit, exact: ExactLimit?, emptyMeansNone: Bool = true
     ) -> Result<Int?, Problem> {
-        if let exact, exact.text == text { return .success(exact.kiB) }
+        if let exact, exact.text == text, exact.unit == unit { return .success(exact.kiB) }
         return uploadLimit(text, unit: unit, emptyMeansNone: emptyMeansNone)
     }
 
@@ -221,9 +224,11 @@ public enum FormValidation {
     public static func convertedLimit(
         _ text: String, exact: ExactLimit?, from old: UploadLimitUnit, to new: UploadLimitUnit
     ) -> (text: String, exact: ExactLimit?) {
-        guard old != new, case .success(let kiB?) = limitKiB(text, unit: old, exact: exact) else { return (text, exact) }
+        guard old != new else { return (text, exact) }
+        // Text that can't be converted is kept as it is, with nothing exact behind it.
+        guard case .success(let kiB?) = limitKiB(text, unit: old, exact: exact) else { return (text, nil) }
         let shown = uploadLimitText(kiB: kiB, unit: new)
-        return (shown, ExactLimit(text: shown, kiB: kiB))
+        return (shown, ExactLimit(text: shown, kiB: kiB, unit: new))
     }
 
     /// `convertedLimit`'s text alone.
