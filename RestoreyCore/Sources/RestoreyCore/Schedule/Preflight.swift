@@ -12,9 +12,27 @@ public struct PowerState: Sendable, Equatable {
     }
 }
 
+/// The kind of link a satisfied network path uses. Wi-Fi wins over wired when a path offers both.
+public enum NetworkInterface: String, Sendable, Equatable {
+    case wiFi, wired, other
+}
+
 public enum NetworkState: Sendable, Equatable {
     case unsatisfied
-    case satisfied(constrained: Bool, expensive: Bool)
+    case satisfied(constrained: Bool, expensive: Bool, interface: NetworkInterface = .other)
+}
+
+/// Which network the Mac is on, for the per-network upload speed; nil when there is no network. A Wi-Fi
+/// link whose name is unreadable (no Location permission, or no name) is `.wiFiUnknown`.
+public func networkKey(for state: NetworkState, wiFiName: String?) -> NetworkKey? {
+    guard case .satisfied(_, _, let interface) = state else { return nil }
+    switch interface {
+    case .wiFi:
+        let name = wiFiName.map(NetworkSettings.trimmed) ?? ""
+        return name.isEmpty ? .wiFiUnknown : .wiFi(name: name)
+    case .wired: return .ethernet
+    case .other: return .other
+    }
 }
 
 /// Everything `preflight` knows about the machine, injected so the decision stays pure and the tests
@@ -76,7 +94,7 @@ public func preflight(plan: Plan, env: PreflightEnvironment) -> PreflightResult 
         switch env.network {
         case .unsatisfied:
             return .skip(.noNetwork)
-        case .satisfied(let constrained, let expensive):
+        case .satisfied(let constrained, let expensive, _):
             if env.networkSettings.skipOnConstrainedNetwork && (constrained || expensive) {
                 return .skip(.constrainedNetwork)
             }

@@ -34,9 +34,12 @@ final class SystemObservers: Sendable {
     init(log: AppLog) {
         self.log = log
         monitor.pathUpdateHandler = { [network, weak self] path in
+            let interface: NetworkInterface =
+                path.usesInterfaceType(.wifi) ? .wiFi : path.usesInterfaceType(.wiredEthernet) ? .wired : .other
             let restored = network.update(
                 path.status == .satisfied
-                    ? .satisfied(constrained: path.isConstrained, expensive: path.isExpensive) : .unsatisfied)
+                    ? .satisfied(constrained: path.isConstrained, expensive: path.isExpensive, interface: interface)
+                    : .unsatisfied)
             if restored, let handler = self?.networkRestored.withLock({ $0 }) { handler() }
         }
         monitor.start(queue: DispatchQueue(label: "com.jaydenkerr.restorey.agent.network"))
