@@ -181,6 +181,12 @@ public actor AgentState {
             currentVersion: ConfigMigrations.currentVersion, migrations: ConfigMigrations.migrations)
     }
 
+    /// `upload-speeds.json`, beside `config.json` and `state.json`: the upload speed measured on each network
+    /// (`SpeedTester`). A measurement, not a setting, so it is a file of its own.
+    public static func uploadSpeedsStore(in directory: URL) -> VersionedStore<UploadSpeedsFile> {
+        UploadSpeedsFile.store(in: directory)
+    }
+
     public static func stateStore(in directory: URL) -> VersionedStore<RunState> {
         VersionedStore(
             fileURL: directory.appendingPathComponent("state.json", isDirectory: false),

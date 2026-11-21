@@ -46,7 +46,8 @@ public struct PreflightEnvironment: Sendable {
     /// The Mac-wide network rules (`ConfigFile.network`). The plan runner sets them from the config.
     public var networkSettings: NetworkSettings
     /// The Wi-Fi network's name, or nil when it can't be read (no Location permission, or not on Wi-Fi),
-    /// which never skips (Ruling P2-8). Called only when the skip list has names.
+    /// which never skips (Ruling P2-8). Called only when the skip list has names, and by the plan runner on Wi-Fi
+    /// when the Mac-wide limit is a percentage (`PlanRunner.currentNetwork`).
     public var currentWiFiName: @Sendable () -> String?
 
     public init(

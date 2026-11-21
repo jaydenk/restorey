@@ -70,12 +70,22 @@ final class AgentService: NSObject, AgentXPC, Sendable {
             let status = try await state.saveNetworkSettings(settings)
             // Counts only: Wi-Fi names say where the user goes, which a log doesn't need.
             log.info(
-                "Saved the network settings: upload limit \(settings.uploadLimit.rateKiB.map { "\($0) KiB/s" } ?? "none"), "
+                "Saved the network settings: upload limit \(Self.describe(settings.uploadLimit))"
+                    + "\(settings.limitWindow == nil ? "" : " inside a window"), "
                     + "skip on a constrained network \(settings.skipOnConstrainedNetwork ? "on" : "off"), "
                     + "\(settings.skippedWiFiNames.count) Wi-Fi names to skip")
             // A rule turned off can make a skipped plan due now.
             plansChanged()
             return status
+        }
+    }
+
+    /// The Mac-wide upload limit as the log names it: "none", "2048 KiB/s", "50% of the measured upload speed".
+    private static func describe(_ limit: MacUploadLimit) -> String {
+        switch limit {
+        case .none: "none"
+        case .rate(let kiB, _): "\(kiB) KiB/s"
+        case .percent(let percent): "\(percent)% of the measured upload speed"
         }
     }
 

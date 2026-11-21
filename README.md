@@ -105,7 +105,8 @@ lid. Siri can't run them by voice on the Mac: Apple says voice invocation of App
   password, a key or the host label pauses backups until a new recovery kit is saved. Deleting a plan leaves the
   repository alone.
 - **Network**: rules for the whole Mac, for plans that back up to another machine (S3, B2, a restic server; never a
-  folder or drive): an upload limit shared by the backups uploading at once, skipping backups on a phone hotspot or
+  folder or drive): an upload limit shared by the backups uploading at once (a rate, or a percentage of the upload
+  speed the agent measures on each network), skipping backups on a phone hotspot or
   in Low Data Mode (on by default), and a list of Wi-Fi networks to skip backups on. Adding the first network asks
   for Location permission, which macOS requires before it shows any app the Wi-Fi network's name.
 - **History**: every plan's runs in a table, newest first, sortable by any column and filtered by plan and by outcome,
@@ -984,18 +985,46 @@ only by you). If an upgrade fails, the agent says so and leaves the file alone.
 ## `config.json`
 
 `config.json` (schema 5) holds the plans and, beside them, the Mac-wide network settings (`network`): an upload
-limit shared by the backups to networked repositories (none by default), whether to skip a backup on a
-constrained or expensive network (on by default), and Wi-Fi network names to skip backups on (none by default).
-These rules apply only to a repository on another machine; a backup to a folder or an external drive ignores them.
-A backup to a networked repository gets restic's `--limit-upload` set to the smaller of the plan's own limit and
-its share of the Mac-wide one: the Mac-wide limit divided by the backups to networked repositories uploading when
-it starts, counting itself (never below 1 KiB/s). restic can't change the limit mid-run, so a backup keeps the
-share it started with. A backup to a folder or drive gets the plan's own limit alone. Wi-Fi names are matched
-ignoring case and surrounding spaces (not accents), and a backup on a listed network is recorded as "Skipped on
-Wi-Fi “<name>”". The app saves these settings through the agent, which refuses an upload limit of 0 or less, an
-empty Wi-Fi name and a name listed twice, with the reason, and saves the names trimmed. The agent reads the
-Wi-Fi name itself (CoreWLAN) just before a backup to a networked repository, and only when the list isn't empty;
-a name it can't read (no Location permission, or not on Wi-Fi) never skips a backup.
+limit for this Mac (none by default; a fixed rate in KB/s or MB/s, or a percentage of the measured upload speed),
+optionally only during a window of days and hours, whether to skip a backup on a constrained or expensive network
+(on by default), and Wi-Fi network names to skip backups on (none by default). These rules apply only to a
+repository on another machine; a backup to a folder or an external drive ignores them.
+
+**The upload limit.** restic's `--limit-upload` (KiB/s) is fixed for a run, so the agent works out the Mac-wide limit
+when each backup to a networked repository starts, in the Mac's current time zone: outside the window (when one is
+set) there is none; a rate is that rate; a percentage is that share of the upload speed last measured on the network
+the Mac is on at that moment, in KiB/s rounded down and never below 1, or none when that network hasn't been measured.
+The backup then gets the smaller of the plan's own limit and its share of the Mac-wide one: the Mac-wide limit divided
+by the backups to networked repositories uploading when it starts, counting itself (never below 1 KiB/s, Ruling P2-7).
+A backup keeps the limit it started with, even if the window opens or closes or the Mac changes network while it
+runs: Restorey never restarts a backup to change it. A backup to a folder or drive gets the plan's own limit alone.
+The backup's run log says how the limit was resolved, for example "Mac-wide upload limit 4.77 MB/s: 50% of 9.54 MB/s
+measured on “Office” today", "Mac-wide upload limit none: outside 8:00 am–6:00 pm weekdays" or "Mac-wide upload limit
+none: not measured on Ethernet yet".
+
+**Upload speed tests.** With a percentage set, the agent measures the upload speed with macOS's
+`networkQuality -d -c -M 20` (upload only, against Apple's servers; stopped after 25 seconds and killed 10 seconds
+later if it hangs) and keeps the result per network in `upload-speeds.json` beside `config.json` (schema 1: the last
+success's speed, bytes sent and time in UTC, and the last failure with its reason). A network is a Wi-Fi network by
+name, one shared "Wi-Fi (name unknown)" when the name can't be read, Ethernet, or anything else. A test runs at most
+once per network per calendar day, on the scheduler's tick, and also before the first backup on a network with no
+measurement yet when that backup starts inside the window; if that test fails, the backup runs with no Mac-wide limit
+(it is never skipped or held back for want of a measurement), and the failure is kept. Two backups starting together
+on an unmeasured network share one test. A test never runs with no network, on a constrained or expensive network
+(whatever the backup rule says), on a skipped Wi-Fi network, or while restic runs any command against a networked
+repository (a backup, forget, prune, check…); a backup to a folder or drive doesn't stop one. A networked restic
+command that wants to start during a test waits for the test to end. Each test is logged in `agent.log` with its
+network, result, bytes sent and duration. With a fixed rate or no limit, no test runs on its own. An
+`upload-speeds.json` that can't be read (corrupt, or written by a newer Restorey) counts as no measurements, is
+logged once and is never overwritten. The logic is `SpeedTester` and `PlanRunner+SpeedTests.swift` (AgentCore).
+
+Wi-Fi names are matched ignoring case and surrounding spaces (not accents), and a backup on a listed network is
+recorded as "Skipped on Wi-Fi “<name>”". The app saves these settings through the agent, which refuses an upload
+limit of 0 or less, a percentage outside 1 to 100, a window that starts when it ends, an empty Wi-Fi name and a name
+listed twice, with the reason, and saves the names trimmed. The agent reads the Wi-Fi name itself (CoreWLAN, which
+answers without a name rather than prompting when it has no Location permission) just before a backup to a networked
+repository, and only on Wi-Fi when the skip list isn't empty or the limit is a percentage; a name it can't read (no
+Location permission, or not on Wi-Fi) never skips a backup.
 
 **Location permission.** macOS reveals the Wi-Fi network's name only to a process with Location Services
 permission, so the agent, which reads it, needs its own. Restorey asks for it only when you first add a Wi-Fi
@@ -1017,7 +1046,9 @@ reports, and each `locationAccess` call, which the Network pane makes when it ap
 to the front, and which answers at once with the switch and the authorisation, never asking. The hello carries the
 last value read (`locationServicesEnabled`) and never reads it. The logic is `LocationAccess` (AgentCore), tested
 against a fake Core Location; `Agent/LocationPermission.swift` wraps the one `CLLocationManager` around it. A Release log
-never names the network; a Debug build's log does, and also logs each name a backup's checks read. The Debug
+names a Wi-Fi network only where the upload speed belongs to it (each speed test's line in `agent.log`, and a backup's
+"Mac-wide upload limit" line in its run log, as the upload-limit design asks); a Debug build's log also logs each name
+the agent reads when it differs from the last one. The Debug
 developer window's "Request Location" button sends the request and shows the reply.
 Each plan also records when its setup finished (`setupCompletedAt`, set when its recovery kit is first confirmed
 and never cleared), so a plan whose kit must be confirmed again is told apart from one whose setup was never

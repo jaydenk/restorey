@@ -29,6 +29,9 @@ final class SystemObservers: Sendable {
 
     /// The Debug-only Wi-Fi name line in `wiFiName()`.
     private let log: AppLog
+    /// The name that line last gave (nil: none logged yet), so the daily speed test's check on every tick with a
+    /// percentage set doesn't log the same name each minute.
+    private let lastLoggedWiFiName = Mutex<String??>(nil)
 
     /// Starts watching the network path.
     init(log: AppLog) {
@@ -54,16 +57,20 @@ final class SystemObservers: Sendable {
             network: network.forPreflight,
             isMountPoint: { SystemConditions.isMountPoint($0) },
             fileExists: { FileManager.default.fileExists(atPath: $0) },
-            // Read only when a networked plan meets a non-empty Wi-Fi list. Nil without Location permission
-            // or off Wi-Fi, which never skips (Ruling P2-8).
+            // Read only when a networked plan meets a non-empty Wi-Fi list, and on Wi-Fi when the Mac-wide limit is a
+            // percentage (the measurement belongs to the network). Nil without Location permission or off Wi-Fi,
+            // which never skips (Ruling P2-8) and shares the "Wi-Fi (name unknown)" measurement.
             currentWiFiName: { [self] in wiFiName() })
     }
 
     private func wiFiName() -> String? {
         let name = WiFiName.current()
         #if DEBUG
-        // For the live check only: a Release log never names the network, which says where the user is.
-        log.info("Preflight read the Wi-Fi name: \(name.map { "\"\($0)\"" } ?? "none")")
+        // For the live check only: a Release log never logs this read, which says where the user is. Logged when
+        // the name changes.
+        if lastLoggedWiFiName.withLock({ last in defer { last = .some(name) }; return last != .some(name) }) {
+            log.info("Preflight read the Wi-Fi name: \(name.map { "\"\($0)\"" } ?? "none")")
+        }
         #endif
         return name
     }

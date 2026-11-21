@@ -58,6 +58,9 @@ struct SchedulerCoreTests {
         private(set) var pruneCalls = 0
         func pruneRunLogsIfDue() async { pruneCalls += 1 }
 
+        private(set) var dailySpeedTestChecks = 0
+        func startDailySpeedTestIfDue() async { dailySpeedTestChecks += 1 }
+
         func runBackup(planID: UUID, trigger: RunTrigger) async throws -> RunRecord {
             if let error = errors[planID] { throw error }
             let name = entries.first { $0.plan.id == planID }?.plan.name ?? "?"
@@ -140,6 +143,15 @@ struct SchedulerCoreTests {
         await w.core.tick()
         await w.core.tick()
         #expect(await w.runner.pruneCalls == 2)
+    }
+
+    /// The upload-limit design: every tick asks the runner to start the day's upload speed test (the runner decides
+    /// whether one is due, and starts it without holding up the tick).
+    @Test func everyTickAsksForTheDailySpeedTest() async throws {
+        let w = World()
+        await w.core.tick()
+        await w.core.tick()
+        #expect(await w.runner.dailySpeedTestChecks == 2)
     }
 
     @Test func notDuePlanDoesNot() async throws {
