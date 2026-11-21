@@ -156,9 +156,16 @@ public actor SpeedTester {
 }
 
 extension NetworkKey {
-    /// The network as a log line names it: a Wi-Fi name in quotes (“Kerr Home”), the others as they read.
+    /// The network as a log line names it: "Wi-Fi", "Wi-Fi (name unknown)", "Ethernet", "this network". A Release log
+    /// never names the Wi-Fi network, which says where the user is; a Debug build's does, in quotes (“Kerr Home”), as
+    /// `SystemObservers.wiFiName()` logs the name it reads.
     var logName: String {
-        if case .wiFi = self { "“\(displayName)”" } else { displayName }
+        guard case .wiFi = self else { return displayName }
+        #if DEBUG
+        return "“\(displayName)”"
+        #else
+        return "Wi-Fi"
+        #endif
     }
 }
 

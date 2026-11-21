@@ -77,8 +77,8 @@ extension PlanRunner {
     // MARK: Resolving the limit at a backup's start
 
     /// The Mac-wide limit for a backup to a networked repository starting now, and the run log's line saying how it was
-    /// resolved. With a percentage set, on a network with no measurement, inside the window (or with none), and on a
-    /// network that may be tested, the test runs first; if it fails, or can't run because another networked command
+    /// resolved. With a percentage set, on a network with no measurement and not tested yet today, inside the window
+    /// (or with none), and on a network that may be tested, the test runs first; if it fails, or can't run because another networked command
     /// is running, there is no Mac-wide limit. Called before the backup registers in `networkedCommands`.
     func resolveMacWideLimitKiB() async -> (kiB: Int?, logLine: String) {
         let settings = await deps.state.networkSettings
@@ -91,6 +91,8 @@ extension PlanRunner {
                 measurement = await tester.record(for: key)?.latest
                 let insideWindow = settings.limitWindow?.contains(deps.now(), calendar: .current) ?? true
                 if measurement == nil, insideWindow,
+                    // At most once per network per day: a test that failed earlier today isn't run again.
+                    !(await tester.testedToday(key, calendar: .current)),
                     SpeedTestRefusal.check(
                         network: network.state, settings: settings, wiFiName: network.wiFiName,
                         networkedCommandRunning: false) == nil,
@@ -105,7 +107,8 @@ extension PlanRunner {
         return (resolved.kiB, Self.macWideLimitLine(resolved, settings: settings, network: key, now: now, calendar: .current))
     }
 
-    /// "Mac-wide upload limit 19 MB/s: 50% of 38 MB/s measured on “Kerr Home” today, inside 8:00 am–6:00 pm weekdays".
+    /// "Mac-wide upload limit 19 MB/s: 50% of 38 MB/s measured on Wi-Fi today, inside 8:00 am–6:00 pm weekdays" (a Debug
+    /// build names the Wi-Fi network: `NetworkKey.logName`).
     static func macWideLimitLine(
         _ resolved: ResolvedMacWideLimit, settings: NetworkSettings, network: NetworkKey?, now: Date, calendar: Calendar
     ) -> String {

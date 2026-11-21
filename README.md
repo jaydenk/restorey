@@ -999,22 +999,22 @@ by the backups to networked repositories uploading when it starts, counting itse
 A backup keeps the limit it started with, even if the window opens or closes or the Mac changes network while it
 runs: Restorey never restarts a backup to change it. A backup to a folder or drive gets the plan's own limit alone.
 The backup's run log says how the limit was resolved, for example "Mac-wide upload limit 4.77 MB/s: 50% of 9.54 MB/s
-measured on “Office” today", "Mac-wide upload limit none: outside 8:00 am–6:00 pm weekdays" or "Mac-wide upload limit
-none: not measured on Ethernet yet".
+measured on Wi-Fi today", "Mac-wide upload limit none: outside 8:00 am–6:00 pm weekdays" or "Mac-wide upload limit
+none: not measured on Ethernet yet" (a Debug build names the Wi-Fi network, “Office”).
 
 **Upload speed tests.** With a percentage set, the agent measures the upload speed with macOS's
 `networkQuality -d -c -M 20` (upload only, against Apple's servers; stopped after 25 seconds and killed 10 seconds
 later if it hangs) and keeps the result per network in `upload-speeds.json` beside `config.json` (schema 1: the last
 success's speed, bytes sent and time in UTC, and the last failure with its reason). A network is a Wi-Fi network by
 name, one shared "Wi-Fi (name unknown)" when the name can't be read, Ethernet, or anything else. A test runs at most
-once per network per calendar day, on the scheduler's tick, and also before the first backup on a network with no
-measurement yet when that backup starts inside the window; if that test fails, the backup runs with no Mac-wide limit
+once per network per calendar day (a failure counts), on the scheduler's tick, and also before the first backup on a
+network with no measurement yet when that backup starts inside the window and the network hasn't been tested today; if that test fails, the backup runs with no Mac-wide limit
 (it is never skipped or held back for want of a measurement), and the failure is kept. Two backups starting together
 on an unmeasured network share one test. A test never runs with no network, on a constrained or expensive network
 (whatever the backup rule says), on a skipped Wi-Fi network, or while restic runs any command against a networked
 repository (a backup, forget, prune, check…); a backup to a folder or drive doesn't stop one. A networked restic
 command that wants to start during a test waits for the test to end. Each test is logged in `agent.log` with its
-network, result, bytes sent and duration. With a fixed rate or no limit, no test runs on its own. An
+network (a Wi-Fi network as "Wi-Fi" in a Release build), result, bytes sent and duration. With a fixed rate or no limit, no test runs on its own. An
 `upload-speeds.json` that can't be read (corrupt, or written by a newer Restorey) counts as no measurements, is
 logged once and is never overwritten. The logic is `SpeedTester` and `PlanRunner+SpeedTests.swift` (AgentCore).
 
@@ -1023,8 +1023,9 @@ recorded as "Skipped on Wi-Fi “<name>”". The app saves these settings throug
 limit of 0 or less, a percentage outside 1 to 100, a window that starts when it ends, an empty Wi-Fi name and a name
 listed twice, with the reason, and saves the names trimmed. The agent reads the Wi-Fi name itself (CoreWLAN, which
 answers without a name rather than prompting when it has no Location permission) just before a backup to a networked
-repository, and only on Wi-Fi when the skip list isn't empty or the limit is a percentage; a name it can't read (no
-Location permission, or not on Wi-Fi) never skips a backup.
+repository: for the skip list whenever the list isn't empty, and for the upload limit only on Wi-Fi when the limit is
+a percentage (also for the daily test's check). A name it can't read (no Location permission, or not on Wi-Fi) never
+skips a backup.
 
 **Location permission.** macOS reveals the Wi-Fi network's name only to a process with Location Services
 permission, so the agent, which reads it, needs its own. Restorey asks for it only when you first add a Wi-Fi
@@ -1046,9 +1047,8 @@ reports, and each `locationAccess` call, which the Network pane makes when it ap
 to the front, and which answers at once with the switch and the authorisation, never asking. The hello carries the
 last value read (`locationServicesEnabled`) and never reads it. The logic is `LocationAccess` (AgentCore), tested
 against a fake Core Location; `Agent/LocationPermission.swift` wraps the one `CLLocationManager` around it. A Release log
-names a Wi-Fi network only where the upload speed belongs to it (each speed test's line in `agent.log`, and a backup's
-"Mac-wide upload limit" line in its run log, as the upload-limit design asks); a Debug build's log also logs each name
-the agent reads when it differs from the last one. The Debug
+never names the network (a speed test's line and a backup's "Mac-wide upload limit" line say "Wi-Fi"); a Debug build's
+log does, and also logs each name the agent reads when it differs from the last one. The Debug
 developer window's "Request Location" button sends the request and shows the reply.
 Each plan also records when its setup finished (`setupCompletedAt`, set when its recovery kit is first confirmed
 and never cleared), so a plan whose kit must be confirmed again is told apart from one whose setup was never

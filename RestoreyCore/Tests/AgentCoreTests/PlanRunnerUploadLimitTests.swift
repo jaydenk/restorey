@@ -83,6 +83,28 @@ extension PlanRunnerTests {
         #expect(try runLog(f, record).contains("Mac-wide upload limit none: not measured on “Office” yet"))
     }
 
+    /// At most one test per network per calendar day: after the test before a backup fails, a later backup that day
+    /// on the same network runs without one, and with no Mac-wide limit.
+    @Test func aFailedPreBackupTestIsNotRepeatedTheSameDay() async throws {
+        let stub = try HeldResticStub()
+        defer { stub.remove() }
+        stub.release()
+        let f = try await Self.networkedFixture(stub, settings: Self.halfOfTheUpload)
+        defer { f.remove() }
+        f.network.set(.satisfied(constrained: false, expensive: false, interface: .wired))
+        f.speedTest.answer(with: [.failure(.timedOut), .success(320_000_000)])
+
+        _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        #expect(f.speedTest.calls.value == 1)
+        stub.reset()
+        stub.release()
+        f.clock.advance(60)
+        let second = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        #expect(f.speedTest.calls.value == 1)
+        #expect(try stub.limits()[f.planID] == .some(nil))
+        #expect(try runLog(f, second).contains("Mac-wide upload limit none: not measured on Ethernet yet"))
+    }
+
     /// Outside the window there's no limit anyway, so the test before the first backup is left to the daily one.
     @Test func outsideTheWindowNoPreBackupTestRuns() async throws {
         let stub = try HeldResticStub()
