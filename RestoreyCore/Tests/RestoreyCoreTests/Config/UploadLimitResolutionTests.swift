@@ -111,4 +111,26 @@ struct UploadLimitResolutionTests {
         #expect(r.kiB == 500)
         #expect(r.changesAt == nil)
     }
+
+    @Test func noLimitWithAStoredWindowIsNoLimitSetOutsideItToo() {
+        let r = resolveMacWideLimit(settings(.none, window: workHours), measurement: nil, at: nov(21, 12), calendar: calendar)
+        #expect(r.kiB == nil)
+        #expect(r.reason == .noLimitSet)
+        #expect(r.changesAt == nil)
+    }
+
+    @Test func anUnusableMeasurementIsNotMeasuredAndNeverTraps() {
+        for bits in [Double.nan, .infinity, -.infinity, 0, -5] {
+            let r = resolveMacWideLimit(settings(.percent(50)), measurement: measurement(bits), at: nov(21, 12), calendar: calendar)
+            #expect(r.kiB == nil)
+            #expect(r.reason == .percentNotMeasured)
+        }
+    }
+
+    @Test func aHugeMeasurementIsClampedRatherThanTrapping() {
+        let huge = measurement(1e30)
+        let r = resolveMacWideLimit(settings(.percent(100)), measurement: huge, at: nov(21, 12), calendar: calendar)
+        #expect(r.kiB == Int(Int32.max))
+        #expect(r.reason == .percentOf(huge))
+    }
 }

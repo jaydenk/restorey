@@ -102,6 +102,8 @@ public func resolveMacWideLimit(
         ResolvedMacWideLimit(kiB: kiB, reason: reason, changesAt: changesAt)
     }
 
+    // No limit never changes with the time, so a window left in the config doesn't matter.
+    if case .none = settings.uploadLimit { return ResolvedMacWideLimit(kiB: nil, reason: .noLimitSet, changesAt: nil) }
     if let window, !window.contains(date, calendar: calendar) { return result(nil, .outsideWindow) }
     switch settings.uploadLimit {
     case .none:
@@ -109,8 +111,13 @@ public func resolveMacWideLimit(
     case .rate(let kiB, _):
         return result(kiB, .rate)
     case .percent(let percent):
-        guard let measurement else { return result(nil, .percentNotMeasured) }
-        let kiB = Int((measurement.bitsPerSecond / 8 / 1024 * Double(percent) / 100).rounded(.down))
+        // The measurement comes from a file and parsed tool output: a value that isn't a positive finite
+        // number counts as not measured.
+        guard let measurement, measurement.bitsPerSecond.isFinite, measurement.bitsPerSecond > 0 else {
+            return result(nil, .percentNotMeasured)
+        }
+        let share = (measurement.bitsPerSecond / 8 / 1024 * Double(percent) / 100).rounded(.down)
+        let kiB = Int(min(share, Double(Int32.max)))
         return result(max(1, kiB), .percentOf(measurement))
     }
 }
