@@ -982,7 +982,11 @@ reasons are in the design spec, §5.7):
   extension (`dmg`, or `tar.gz`), with no leading dot, slash, wildcard or space, or the plan is refused as
   invalid. The agent stores entries trimmed, in lower case and without duplicates.
 - **Other filesystems mounted under a source** (`--one-file-system`, on by default), such as `~/OrbStack` or a
-  connected iPhone's DeviceFS. A drive listed as a source is still backed up.
+  connected iPhone's DeviceFS. A drive listed as a source is still backed up. Their mount-point folders are left out
+  too: restic would keep each as an empty folder, but reading it goes to the mounted file system, and DeviceFS fails
+  that read on every run ("1 file couldn't be read"). Before each backup the agent lists them from the mount table
+  (`OtherFileSystems`, with the same 10-second bound as its other disk checks) and passes each as an `--exclude`;
+  when the check doesn't answer in time, the backup runs without them, as before.
 - **Items apps mark as not for backup**: Time Machine's per-item exclusion attribute
   (`com_apple_backup_excludeItem`), which macOS and apps set on data they can rebuild or download again, such as
   Lightroom previews, virtual machine disks, build folders and app caches. Restorey skips them as Time Machine does

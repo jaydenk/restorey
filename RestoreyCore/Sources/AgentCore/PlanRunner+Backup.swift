@@ -324,4 +324,19 @@ extension PlanRunner {
         loggedStuckLinkCheck = false
         return target
     }
+
+    /// The other file systems mounted inside the plan's folders, for a backup with one file system on (`OtherFileSystems`).
+    /// Finding them reads the disk, so it goes through `deps.linkResolver` like the repository's link. Empty with one
+    /// file system off (restic then backs up what is inside them), or when the answer didn't come in time: the backup
+    /// then runs as before this fix, with restic keeping the mount-point folders.
+    func otherFileSystemMountPoints(_ plan: Plan) async -> [String] {
+        guard plan.oneFileSystem else { return [] }
+        let (sources, find) = (plan.sources, deps.otherFileSystems)
+        guard let found = await deps.linkResolver.look({ _ in find(sources) }) else {
+            deps.agentInfo("Couldn’t list the other file systems mounted inside the folders of plan \(plan.id.uuidString): "
+                + "the file system didn’t answer, so restic keeps their mount-point folders in this backup")
+            return []
+        }
+        return found
+    }
 }

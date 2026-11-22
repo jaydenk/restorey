@@ -180,7 +180,8 @@ final class RunnerFixture: Sendable {
         cloudOnlyDeadline: TimeInterval = RunnerFixture.unreachableDeadline,
         markedItems: (any MarkedItemsFinding)? = nil,
         markedItemsDeadline: TimeInterval = RunnerFixture.unreachableDeadline,
-        linkResolver: LinkResolver = .live
+        linkResolver: LinkResolver = .live,
+        otherFileSystems: @escaping @Sendable ([String]) -> [String] = { _ in [] }
     ) async throws -> RunnerFixture {
         let fm = FileManager.default
         let base = stableAncestors ? URL(fileURLWithPath: "/Users/Shared", isDirectory: true) : fm.temporaryDirectory
@@ -191,7 +192,8 @@ final class RunnerFixture: Sendable {
                 confirmKit: confirmKit, gracePeriod: gracePeriod, pingDelay: pingDelay,
                 networkSettings: networkSettings, retryLock: retryLock, cloudOnlySkipped: cloudOnlySkipped,
                 cloudOnlyDeadline: cloudOnlyDeadline, markedItems: markedItems,
-                markedItemsDeadline: markedItemsDeadline, linkResolver: linkResolver, change: change)
+                markedItemsDeadline: markedItemsDeadline, linkResolver: linkResolver,
+                otherFileSystems: otherFileSystems, change: change)
         } catch {
             // The caller's `defer { remove() }` isn't in place yet.
             try? fm.removeItem(at: root)
@@ -205,6 +207,7 @@ final class RunnerFixture: Sendable {
         cloudOnlySkipped: @escaping @Sendable ([String], [String]) -> CloudOnlyCounter.Result?,
         cloudOnlyDeadline: TimeInterval,
         markedItems: (any MarkedItemsFinding)?, markedItemsDeadline: TimeInterval, linkResolver: LinkResolver,
+        otherFileSystems: @escaping @Sendable ([String]) -> [String],
         change: (inout Plan) -> Void
     ) async throws -> RunnerFixture {
         let fm = FileManager.default
@@ -279,7 +282,8 @@ final class RunnerFixture: Sendable {
             binaryReplaced: { binaryReplaced.value },
             cloudOnlySkipped: cloudOnlySkipped, cloudOnlyDeadline: cloudOnlyDeadline,
             markedItems: markedItems, markedItemsDeadline: markedItemsDeadline,
-            maintenanceRetryLock: retryLock, linkResolver: linkResolver, speedTester: speedTester)
+            maintenanceRetryLock: retryLock, linkResolver: linkResolver, otherFileSystems: otherFileSystems,
+            speedTester: speedTester)
         let runner = PlanRunner(dependencies: dependencies)
         await runner.recoverAfterStart()
         await state.attach(runner: runner)

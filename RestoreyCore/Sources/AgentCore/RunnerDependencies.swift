@@ -60,6 +60,10 @@ public struct RunnerDependencies: Sendable {
     /// Follows a link to a local repository for its exclusion (`LinkResolver`: its own thread, a deadline, one
     /// outstanding). Nil from it means only the path as given is excluded.
     public var linkResolver: LinkResolver
+    /// Finds the other file systems mounted inside a plan's folders, for a backup with one file system on
+    /// (`OtherFileSystems.current`; tests pass their own). Called through `linkResolver.look`, so a volume that
+    /// doesn't answer holds up one thread at most and the backup goes ahead without them.
+    public var otherFileSystems: @Sendable ([String]) -> [String]
     /// Measures the upload speed of the network the Mac is on, for a Mac-wide limit given as a percentage (the
     /// upload-limit design). Nil: nothing is measured, so a percentage is never resolved to a limit.
     public var speedTester: SpeedTester?
@@ -83,6 +87,7 @@ public struct RunnerDependencies: Sendable {
         notForBackupDirectory: URL? = nil,
         maintenanceRetryLock: String = "5m",
         linkResolver: LinkResolver = .live,
+        otherFileSystems: @escaping @Sendable ([String]) -> [String] = OtherFileSystems.current,
         speedTester: SpeedTester? = nil
     ) {
         self.state = state
@@ -113,6 +118,7 @@ public struct RunnerDependencies: Sendable {
             ?? credentialsDirectory.appendingPathComponent("not-for-backup", isDirectory: true)
         self.maintenanceRetryLock = maintenanceRetryLock
         self.linkResolver = linkResolver
+        self.otherFileSystems = otherFileSystems
         self.speedTester = speedTester
     }
 }
