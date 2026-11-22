@@ -92,6 +92,12 @@ final class RunnerFixture: Sendable {
     let power: Locked<PowerState>
     /// The network path the preflight sees; unconstrained by default.
     let network: Locked<NetworkState>
+    /// The Wi-Fi name the runner reads (nil: unreadable), and how many times it has read it.
+    let wiFiName: Locked<String?>
+    let wiFiNameReads: Locked<Int>
+    /// The stand-in for `networkQuality` behind `speedTester`, which keeps `upload-speeds.json` in `support`.
+    let speedTest: FakeSpeedTest
+    let speedTester: SpeedTester
     let supervisor: SupervisedProcesses
     let state: AgentState
     let runner: PlanRunner
@@ -110,6 +116,7 @@ final class RunnerFixture: Sendable {
     private init(
         root: URL, restic: URL, clock: FixtureClock, secrets: InMemorySecretStore, checkIn: RecordingCheckIn,
         fda: Locked<FDAProbeResult>, power: Locked<PowerState>, network: Locked<NetworkState>,
+        wiFiName: Locked<String?>, wiFiNameReads: Locked<Int>, speedTest: FakeSpeedTest, speedTester: SpeedTester,
         supervisor: SupervisedProcesses, state: AgentState, runner: PlanRunner, dependencies: RunnerDependencies, agentLog: Locked<[String]>,
         agentInfo: Locked<[String]>,
         sleepAssertions: Locked<[String]>, sleepPrevention: SleepPrevention, binaryReplaced: Locked<Bool>,
@@ -131,6 +138,10 @@ final class RunnerFixture: Sendable {
         self.fda = fda
         self.power = power
         self.network = network
+        self.wiFiName = wiFiName
+        self.wiFiNameReads = wiFiNameReads
+        self.speedTest = speedTest
+        self.speedTester = speedTester
         self.supervisor = supervisor
         self.state = state
         self.runner = runner
@@ -216,6 +227,8 @@ final class RunnerFixture: Sendable {
         let fda = Locked<FDAProbeResult>(.granted)
         let power = Locked(PowerState(onBattery: false, percent: 100))
         let network = Locked(NetworkState.satisfied(constrained: false, expensive: false))
+        let wiFiName = Locked<String?>(nil)
+        let wiFiNameReads = Locked(0)
         let supervisor = SupervisedProcesses()
         let sleepAssertions = Locked<[String]>([])
         let binaryReplaced = Locked(false)
@@ -226,6 +239,10 @@ final class RunnerFixture: Sendable {
         try await AgentState.configStore(in: support).save(ConfigFile(plans: [], network: networkSettings))
         let logStore = RunLogStore(root: root.appendingPathComponent("logs"), subsystem: "test.restorey")
         let state = await AgentState(directory: support, secrets: secrets, runLogs: logStore, now: { clock.now })
+        let speedTest = FakeSpeedTest(now: { clock.now })
+        let speedTester = SpeedTester(
+            store: AgentState.uploadSpeedsStore(in: support), run: { await speedTest.run() }, now: { clock.now },
+            log: { line in agentInfo.mutate { $0.append(line) } })
 
         var plan = Plan.newHotPlan(
             name: "Fixture",
@@ -248,7 +265,11 @@ final class RunnerFixture: Sendable {
                 PreflightEnvironment(
                     power: power.value, network: network.value,
                     isMountPoint: { _ in false },
-                    fileExists: { FileManager.default.fileExists(atPath: $0) })
+                    fileExists: { FileManager.default.fileExists(atPath: $0) },
+                    currentWiFiName: {
+                        wiFiNameReads.mutate { $0 += 1 }
+                        return wiFiName.value
+                    })
             },
             now: { clock.now },
             interruptGracePeriod: gracePeriod,
@@ -258,14 +279,15 @@ final class RunnerFixture: Sendable {
             binaryReplaced: { binaryReplaced.value },
             cloudOnlySkipped: cloudOnlySkipped, cloudOnlyDeadline: cloudOnlyDeadline,
             markedItems: markedItems, markedItemsDeadline: markedItemsDeadline,
-            maintenanceRetryLock: retryLock, linkResolver: linkResolver)
+            maintenanceRetryLock: retryLock, linkResolver: linkResolver, speedTester: speedTester)
         let runner = PlanRunner(dependencies: dependencies)
         await runner.recoverAfterStart()
         await state.attach(runner: runner)
 
         let fixture = RunnerFixture(
             root: root, restic: restic, clock: clock, secrets: secrets, checkIn: checkIn, fda: fda,
-            power: power, network: network, supervisor: supervisor, state: state, runner: runner, dependencies: dependencies,
+            power: power, network: network, wiFiName: wiFiName, wiFiNameReads: wiFiNameReads, speedTest: speedTest,
+            speedTester: speedTester, supervisor: supervisor, state: state, runner: runner, dependencies: dependencies,
             agentLog: agentLog, agentInfo: agentInfo, sleepAssertions: sleepAssertions, sleepPrevention: sleepPrevention,
             binaryReplaced: binaryReplaced, planID: plan.id)
         if createRepository { _ = try await runner.createRepository(planID: plan.id) }
@@ -331,6 +353,19 @@ final class RunnerFixture: Sendable {
         let plan = Plan.newHotPlan(
             name: name, repository: .raw(repository: repository.path, environmentNames: []),
             origin: .adopted, hostLabel: "fixturehost", sources: [source.path], exclusions: [], now: clock.now)
+        _ = try await state.savePlan(SavePlanRequest(
+            plan: plan, secrets: [SecretEntry(key: .repositoryPassword(plan.id), value: Self.password)]))
+        _ = try await state.confirmRecoveryKit(plan.id)
+        return plan.id
+    }
+
+    /// Adds a plan, recovery kit confirmed, backing up the fixture's source to `repository` (a path, or a location on
+    /// another machine that restic is never actually pointed at).
+    func addPlan(_ name: String, repository: String, limit: Int? = nil) async throws -> UUID {
+        var plan = Plan.newHotPlan(
+            name: name, repository: .raw(repository: repository, environmentNames: []), origin: .created,
+            hostLabel: "fixturehost", sources: [source.path], exclusions: [], now: clock.now)
+        plan.uploadLimitKiB = limit
         _ = try await state.savePlan(SavePlanRequest(
             plan: plan, secrets: [SecretEntry(key: .repositoryPassword(plan.id), value: Self.password)]))
         _ = try await state.confirmRecoveryKit(plan.id)

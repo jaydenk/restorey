@@ -79,6 +79,14 @@ public actor PlanRunner {
     /// The backup steps to networked repositories whose restic is uploading now, by record ID: they share
     /// the Mac-wide upload limit (Ruling P2-7).
     var networkedUploads: Set<UUID> = []
+    /// Every restic command running against a networked repository (a backup, and forget, prune, check and the rest,
+    /// which also send traffic), by record ID. No upload speed test starts while there is one
+    /// (PlanRunner+SpeedTests.swift).
+    var networkedCommands: Set<UUID> = []
+    /// Upload speed tests this runner has asked the tester for whose call hasn't returned, and the networked commands
+    /// waiting for them to end.
+    var speedTestsAsked = 0
+    var speedTestWaiters: [CheckedContinuation<Void, Never>] = []
     /// When `pruneRunLogsIfDue` last pruned the run logs; nil until it has (Ruling R70).
     var lastRunLogPrune: Date?
     /// The measurements queued after an adopt (PlanRunner+Actions.swift), credential checks and recovery's

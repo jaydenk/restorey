@@ -75,7 +75,7 @@ struct PreflightTests {
         _ name: String?, skipping names: [String], network: NetworkState = .satisfied(constrained: false, expensive: false)
     ) -> PreflightEnvironment {
         var e = env(network: network, mounted: ["/Volumes/Backup"], networkSettings: NetworkSettings(
-            uploadLimitKiB: nil, skipOnConstrainedNetwork: true, skippedWiFiNames: names))
+            uploadLimit: .none, skipOnConstrainedNetwork: true, skippedWiFiNames: names))
         e.currentWiFiName = { name }
         return e
     }
@@ -279,5 +279,20 @@ struct PreflightTests {
     ])
     func rawLocationsAreReadAsResticReadsThem(location: String, needsNetwork: Bool) {
         #expect(Repository.raw(repository: location, environmentNames: []).needsNetwork == needsNetwork)
+    }
+
+    @Test func networkKeyForEachInterface() {
+        func state(_ interface: NetworkInterface) -> NetworkState {
+            .satisfied(constrained: false, expensive: false, interface: interface)
+        }
+        #expect(networkKey(for: state(.wiFi), wiFiName: "Kerr Home") == .wiFi(name: "Kerr Home"))
+        #expect(networkKey(for: state(.wiFi), wiFiName: "  Kerr Home ") == .wiFi(name: "Kerr Home"))
+        #expect(networkKey(for: state(.wiFi), wiFiName: nil) == .wiFiUnknown)
+        #expect(networkKey(for: state(.wiFi), wiFiName: "") == .wiFiUnknown)
+        #expect(networkKey(for: state(.wiFi), wiFiName: " \t\n ") == .wiFiUnknown)
+        #expect(networkKey(for: state(.wired), wiFiName: "Kerr Home") == .ethernet)
+        #expect(networkKey(for: state(.other), wiFiName: "Kerr Home") == .other)
+        #expect(networkKey(for: .satisfied(constrained: true, expensive: true), wiFiName: nil) == .other)
+        #expect(networkKey(for: .unsatisfied, wiFiName: "Kerr Home") == nil)
     }
 }

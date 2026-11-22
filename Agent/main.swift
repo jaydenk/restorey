@@ -151,7 +151,15 @@ do {
                 binaryReplaced: { executableReplaced() },
                 cloudOnlySkipped: CloudOnlySkipped.counter(home: FileManager.default.homeDirectoryForCurrentUser),
                 // Items apps mark as not for backup (Task 15c); each run's list goes in <Application Support>/not-for-backup.
-                markedItems: SpotlightMarkedItems()))
+                markedItems: SpotlightMarkedItems(),
+                // The upload speed per network, for a Mac-wide limit given as a percentage: macOS's networkQuality,
+                // results in <Application Support>/upload-speeds.json. The Wi-Fi name comes through
+                // `preflightEnvironment` (CoreWLAN, never a Location prompt).
+                speedTester: SpeedTester(
+                    store: AgentState.uploadSpeedsStore(in: identity.applicationSupportDirectory()),
+                    run: { await NetworkQuality.run(now: { Date() }) },
+                    now: { Date() },
+                    log: { log.info($0) })))
             keptAlive.append(runner)
             systemStop.attach(runner: runner)
             // Recovery runs to completion before the runner is attached, so a run action that arrives

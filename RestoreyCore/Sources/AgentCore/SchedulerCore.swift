@@ -32,6 +32,9 @@ public protocol SchedulerRunner: Sendable {
     /// Removes run logs older than the 400-day retention when a day has passed since the last prune
     /// (Ruling R70). Called on every tick; the agent also calls it at start-up.
     func pruneRunLogsIfDue() async
+    /// Starts the day's upload speed test for the current network when one is due, without waiting for it (the
+    /// upload-limit design, "When it runs"). Called on every tick.
+    func startDailySpeedTestIfDue() async
 }
 
 /// Decides when each plan backs up (spec §5.5). When the earliest plan falls due (at most a minute
@@ -258,6 +261,7 @@ public actor SchedulerCore {
             }
             await runner.refreshStatus()
             await runner.pruneRunLogsIfDue()
+            await runner.startDailySpeedTestIfDue()
             isReading = true
             endedDuringRead = []
             let entries = await runner.scheduleEntries()
@@ -368,8 +372,13 @@ extension PlanRunner: SchedulerRunner {
         }
     }
 
+    public func startDailySpeedTestIfDue() async {
+        await beginDailySpeedTestIfDue()
+    }
+
     public func refreshStatus() async {
         await deps.state.clampStretchedPauses()
+        await refreshUploadSpeedStatus()
         await deps.state.pushStatusIfChanged()
         // Time alone can make an alert due again, or raise `noRecentSuccess`. Scheduled, never awaited:
         // a notification centre that doesn't answer must not hold up the tick's runs (Ruling R44).

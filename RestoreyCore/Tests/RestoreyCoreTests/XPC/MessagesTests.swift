@@ -101,7 +101,7 @@ struct MessagesTests {
                            lastBackup: backup, repositorySize: size, setupState: $0)
             },
             configError: nil, fdaMissing: false, generatedAt: Self.now, agentRun: UUID(), sequence: 3,
-            network: NetworkSettings(uploadLimitKiB: 2048, skipOnConstrainedNetwork: false, skippedWiFiNames: ["Café"]))
+            network: NetworkSettings(uploadLimit: .rate(kiB: 2048, unit: .megabytes), skipOnConstrainedNetwork: false, skippedWiFiNames: ["Café"]))
         try roundTrip(status)
         try roundTrip(AgentStatus(plans: [], configError: "x", fdaMissing: nil, generatedAt: Self.now))
     }
@@ -138,7 +138,7 @@ struct MessagesTests {
     }
 
     @Test func newShapesArePinned() throws {
-        #expect(try json(NetworkSettings.defaults) == #"{"skipOnConstrainedNetwork":true,"skippedWiFiNames":[]}"#)
+        #expect(try json(NetworkSettings.defaults) == #"{"skipOnConstrainedNetwork":true,"skippedWiFiNames":[],"uploadLimit":{"kind":"none"}}"#)
         #expect(try json(RepositorySize(bytes: 42, measuredAt: Date(timeIntervalSince1970: 1_800_000_000)))
             == #"{"bytes":42,"measuredAt":"2027-01-15T08:00:00.000Z"}"#)
         #expect(try json([PlanSetupState.unfinished, .needsNewKit, .complete])
@@ -180,6 +180,28 @@ struct MessagesTests {
         #expect(status.plans.allSatisfy { $0.latestBackupRecord == nil })
         #expect(status.plans[0].setupState == .unfinished)
         #expect(status.plans[1].setupState == .complete)
+    }
+
+    /// A status from an agent before the upload speed existed has no `uploadSpeed`.
+    @Test func agentStatusDecodesWithoutUploadSpeed() throws {
+        let old = #"{"plans":[],"generatedAt":"2027-01-15T08:00:00.000Z","sequence":3}"#
+        let decoded = try XPCCoding.decode(AgentStatus.self, from: Data(old.utf8))
+        #expect(decoded.uploadSpeed == nil)
+        #expect(decoded.sequence == 3)
+    }
+
+    @Test func uploadSpeedStatusRoundTrips() throws {
+        let record = UploadSpeedRecord(
+            latest: UploadSpeedMeasurement(bitsPerSecond: 320_000_000, bytesSent: 40_000_000, measuredAt: Self.now),
+            lastFailure: SpeedTestFailure(at: Self.now, reason: "The test timed out"))
+        for speed in [
+            UploadSpeedStatus(network: .wiFi(name: "Home"), record: record, testing: true),
+            UploadSpeedStatus(network: .ethernet, record: nil, testing: false),
+            UploadSpeedStatus(network: nil, record: nil, testing: false),
+        ] {
+            try roundTrip(AgentStatus(
+                plans: [], configError: nil, fdaMissing: nil, generatedAt: Self.now, sequence: 1, uploadSpeed: speed))
+        }
     }
 
     // MARK: Ordering statuses (final review M1)

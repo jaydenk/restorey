@@ -70,12 +70,39 @@ final class AgentService: NSObject, AgentXPC, Sendable {
             let status = try await state.saveNetworkSettings(settings)
             // Counts only: Wi-Fi names say where the user goes, which a log doesn't need.
             log.info(
-                "Saved the network settings: upload limit \(settings.uploadLimitKiB.map { "\($0) KiB/s" } ?? "none"), "
+                "Saved the network settings: upload limit \(Self.describe(settings.uploadLimit))"
+                    + "\(settings.limitWindow == nil ? "" : " inside a window"), "
                     + "skip on a constrained network \(settings.skipOnConstrainedNetwork ? "on" : "off"), "
                     + "\(settings.skippedWiFiNames.count) Wi-Fi names to skip")
             // A rule turned off can make a skipped plan due now.
             plansChanged()
             return status
+        }
+    }
+
+    func runUploadSpeedTest(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        // The test logs itself (`SpeedTester`), so only a refusal is logged here. Not by `respond`: its message names a
+        // skipped Wi-Fi network, which a Release log never does.
+        respond(reply, "runUploadSpeedTest", logsRefusal: false) { [state, log] in
+            do {
+                return try await state.runUploadSpeedTest()
+            } catch let error as AgentError {
+                if case .speedTestRefused(.skippedWiFi) = error {
+                    log.info("Refused runUploadSpeedTest: the Wi-Fi network is one backups skip")
+                } else {
+                    log.info("Refused runUploadSpeedTest: \(error.message)")
+                }
+                throw error
+            }
+        }
+    }
+
+    /// The Mac-wide upload limit as the log names it: "none", "2048 KiB/s", "50% of the measured upload speed".
+    private static func describe(_ limit: MacUploadLimit) -> String {
+        switch limit {
+        case .none: "none"
+        case .rate(let kiB, _): "\(kiB) KiB/s"
+        case .percent(let percent): "\(percent)% of the measured upload speed"
         }
     }
 

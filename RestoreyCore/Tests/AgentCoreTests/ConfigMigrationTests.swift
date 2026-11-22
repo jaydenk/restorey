@@ -5,7 +5,8 @@ import RestoreyCore
 
 /// `config.json` schema 1 → 2 (Ruling R64): plans gain `fileTypeExclusions` and `oneFileSystem`; 2 → 3 (Ruling
 /// P2-6): the constrained-network rule moves to the Mac-wide `network` settings; 3 → 4 (owner, 20 Nov 2026): plans
-/// gain `exclusionDefaultsRevision` 1.
+/// gain `exclusionDefaultsRevision` 1; 4 → 5: the Mac-wide upload limit becomes a rate with a unit (or a percentage),
+/// and plans gain `uploadLimitUnit`.
 struct ConfigMigrationTests {
     private static let now = Date(timeIntervalSince1970: 1_800_000_000)
 
@@ -19,14 +20,19 @@ struct ConfigMigrationTests {
     /// and layout), then taken back. Schema 3 had no `exclusionDefaultsRevision`. Schema 2 also had no `network` and
     /// kept `skipOnConstrainedNetwork` in each plan's conditions (`skips` gives each plan's value, default true), and no
     /// `setupCompletedAt` or `offMacNoteDismissed`; schema 1 also lacked `fileTypeExclusions` and `oneFileSystem`.
+    ///
+    /// Schema 4 and older kept the Mac-wide limit as `network.uploadLimitKiB` (`macLimitKiB`, absent when nil) with no
+    /// `uploadLimit`, `limitWindow` or per-plan `uploadLimitUnit`.
     private static func writeOldFile(
-        _ plans: [Plan], version: Int, skips: [Bool]? = nil, in dir: AgentStateTests.TempDirectory
+        _ plans: [Plan], version: Int, skips: [Bool]? = nil, macLimitKiB: Int? = nil,
+        in dir: AgentStateTests.TempDirectory
     ) async throws {
         try await AgentState.configStore(in: dir.url).save(ConfigFile(plans: plans))
         var root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: dir.config)) as? [String: Any])
         var payload = try #require(root["payload"] as? [String: Any])
         var list = try #require(payload["plans"] as? [[String: Any]])
         for index in list.indices {
+            list[index]["uploadLimitUnit"] = nil
             list[index]["exclusionDefaultsRevision"] = nil
             guard version < 3 else { continue }
             list[index]["setupCompletedAt"] = nil
@@ -40,7 +46,15 @@ struct ConfigMigrationTests {
             }
         }
         payload["plans"] = list
-        if version < 3 { payload["network"] = nil }
+        if version < 3 {
+            payload["network"] = nil
+        } else {
+            var network = try #require(payload["network"] as? [String: Any])
+            network["uploadLimit"] = nil
+            network["limitWindow"] = nil
+            network["uploadLimitKiB"] = macLimitKiB
+            payload["network"] = network
+        }
         root["payload"] = payload
         root["schemaVersion"] = version
         try JSONSerialization.data(withJSONObject: root).write(to: dir.config)
@@ -103,15 +117,15 @@ struct ConfigMigrationTests {
         #expect(try await AgentState.configStore(in: dir.url).load() == ConfigFile(plans: [plan]))
     }
 
-    /// An older agent (schema 3) meeting a file this version wrote refuses it as newer and leaves it alone,
+    /// An older agent (schema 4) meeting a file this version wrote refuses it as newer and leaves it alone,
     /// the existing rule; the agent then sits in the config-error state (`configErrorBlocksEverything`).
-    @Test func anOlderAgentRefusesAVersion4FileAndLeavesItAlone() async throws {
+    @Test func anOlderAgentRefusesAVersion5FileAndLeavesItAlone() async throws {
         let dir = try AgentStateTests.TempDirectory()
         try await AgentState.configStore(in: dir.url).save(ConfigFile(plans: [Self.plan(exclusions: [])]))
         let before = try Data(contentsOf: dir.config)
-        let older = VersionedStore<ConfigFile>(fileURL: dir.config, currentVersion: 3, migrations: [:])
-        await #expect(throws: VersionedStoreError.newerSchema(found: 4, supported: 3)) { try await older.load() }
-        await #expect(throws: VersionedStoreError.newerSchema(found: 4, supported: 3)) {
+        let older = VersionedStore<ConfigFile>(fileURL: dir.config, currentVersion: 4, migrations: [:])
+        await #expect(throws: VersionedStoreError.newerSchema(found: 5, supported: 4)) { try await older.load() }
+        await #expect(throws: VersionedStoreError.newerSchema(found: 5, supported: 4)) {
             try await older.save(ConfigFile())
         }
         #expect(try Data(contentsOf: dir.config) == before)
@@ -160,8 +174,28 @@ struct ConfigMigrationTests {
         #expect(loaded.plans == [expected])
         #expect(loaded.plans.first?.exclusions == own)
         let root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: dir.config)) as? [String: Any])
-        #expect(root["schemaVersion"] as? Int == 4)
+        #expect(root["schemaVersion"] as? Int == ConfigMigrations.currentVersion)
         #expect(FileManager.default.fileExists(atPath: dir.url.appendingPathComponent("config.json.v3.bak").path))
+    }
+
+    /// Schema 4 → 5 through the real store: the Mac-wide limit and each plan's limit unit.
+    @Test func aVersion4ConfigMigratesToVersion5AndKeepsItsLimits() async throws {
+        let dir = try AgentStateTests.TempDirectory()
+        var limited = Self.plan(exclusions: [])
+        limited.uploadLimitKiB = 1536
+        let unlimited = Self.plan(exclusions: [])
+        try await Self.writeOldFile([limited, unlimited], version: 4, macLimitKiB: 5120, in: dir)
+
+        let loaded = try #require(try await AgentState.configStore(in: dir.url).load())
+        #expect(loaded.network.uploadLimit == .rate(kiB: 5120, unit: .megabytes))
+        #expect(loaded.network.limitWindow == nil)
+        #expect(loaded.plans.map(\.uploadLimitKiB) == [1536, nil])
+        #expect(loaded.plans.allSatisfy { $0.uploadLimitUnit == .megabytes })
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: dir.config)) as? [String: Any])
+        #expect(root["schemaVersion"] as? Int == 5)
+        let network = try #require((root["payload"] as? [String: Any])?["network"] as? [String: Any])
+        #expect(network["uploadLimitKiB"] == nil)
+        #expect(FileManager.default.fileExists(atPath: dir.url.appendingPathComponent("config.json.v4.bak").path))
     }
 
     /// The agent itself: a version-1 config.json loads with the plan migrated, no config error.

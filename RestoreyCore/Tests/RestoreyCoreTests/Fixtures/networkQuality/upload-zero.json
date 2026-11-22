@@ -1,0 +1,8 @@
+{
+  "base_rtt" : 17.5,
+  "interface_name" : "en0",
+  "ul_flows" : 0,
+  "ul_throughput" : 0,
+  "ul_bytes_transferred" : 0,
+  "os_version" : "Version 27.2 (Build 27C5)"
+}

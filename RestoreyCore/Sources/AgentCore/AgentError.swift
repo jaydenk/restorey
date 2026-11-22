@@ -37,6 +37,8 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
     case storage(String)
     /// The XPC payload could not be decoded.
     case invalidRequest(String)
+    /// `runUploadSpeedTest` was asked when no test may run; the sentence is the refusal's.
+    case speedTestRefused(SpeedTestRefusal)
     /// `pause` was sent a length that isn't one of `PauseLength`'s cases (an app and agent from different builds).
     case unknownPauseLength
 
@@ -66,6 +68,7 @@ public enum AgentError: Error, Equatable, Sendable, CustomStringConvertible {
         case .storage(let detail): detail
         // Never joined with another message, and shown as it is (the menu's alert), so it keeps its closing stop.
         case .unknownPauseLength: "Restorey can’t pause for that long. Choose 1 hour, 4 hours or until tomorrow."
+        case .speedTestRefused(let refusal): refusal.message
         case .invalidRequest(let detail): "Restorey couldn’t read the request: \(detail)"
         }
     }

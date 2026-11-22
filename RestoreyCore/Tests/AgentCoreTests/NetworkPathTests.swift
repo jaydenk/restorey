@@ -63,6 +63,16 @@ struct NetworkPathTests {
         #expect(offlineAtStart.update(.satisfied(constrained: false, expensive: false)) == true)
     }
 
+    /// A change in only the interface (Wi-Fi to wired, say) is a different network, not the network coming back.
+    @Test func interfaceChangeAloneIsNotARestore() {
+        let path = NetworkPath()
+        #expect(path.update(.satisfied(constrained: false, expensive: false, interface: .wiFi)) == false)
+        #expect(path.update(.satisfied(constrained: false, expensive: false, interface: .wired)) == false)
+        #expect(path.current == .satisfied(constrained: false, expensive: false, interface: .wired))
+        #expect(path.update(.unsatisfied) == false)
+        #expect(path.update(.satisfied(constrained: false, expensive: false, interface: .wiFi)) == true)
+    }
+
     @Test func aWaitCancelledBeforeTheNetworkComesBackReturnsAndIsForgotten() async {
         let path = NetworkPath()
         let cancelled = Task { await path.waitUntilSatisfied() }

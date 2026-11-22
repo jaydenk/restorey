@@ -91,6 +91,7 @@ struct PlanCodingTests {
     @Test func roundTripsThroughJSON() throws {
         var original = plan(.s3(Self.s3), .created)
         original.uploadLimitKiB = 2048
+        original.uploadLimitUnit = .kilobytes
         original.hasCheckInURL = true
         original.recoveryKitConfirmedAt = Self.now
         original.setupCompletedAt = Self.now

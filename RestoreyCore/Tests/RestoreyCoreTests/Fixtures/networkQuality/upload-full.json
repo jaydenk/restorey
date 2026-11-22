@@ -1,0 +1,11 @@
+{
+  "base_rtt" : 17.5,
+  "interface_name" : "en0",
+  "ul_flows" : 12,
+  "ul_throughput" : 38412345,
+  "ul_bytes_transferred" : 71234567,
+  "os_version" : "Version 27.2 (Build 27C5)",
+  "responsiveness" : 1452,
+  "start_date" : "11/21/2026, 9:30:00",
+  "end_date" : "11/21/2026, 9:30:12"
+}

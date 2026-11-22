@@ -35,6 +35,15 @@ final class PlanEditModel {
         }
     }
 
+    /// The plan limit's unit: choosing another converts the typed amount (`PlanEdit.setUploadLimitUnit`).
+    var uploadLimitUnit: UploadLimitUnit {
+        get { edit.fields.uploadLimitUnit }
+        set {
+            edit.setUploadLimitUnit(newValue)
+            saveError = nil
+        }
+    }
+
     func secret(_ key: SecretKey) -> String { edit.secret(key) }
 
     func setSecret(_ value: String, for key: SecretKey) {

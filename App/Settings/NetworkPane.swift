@@ -62,13 +62,16 @@ private struct NetworkForm: View {
             Form {
                 Section {
                     limit
+                    speed
+                    if model.fields.limitKind != .none { window }
+                    now
                     Toggle("Skip on a hotspot or in Low Data Mode", isOn: $model.fields.skipOnConstrainedNetwork)
                         // In a grouped form the switch's own label is drawn apart from it (live finding 4).
                         .accessibilityLabel("Skip on a hotspot or in Low Data Mode")
                 } footer: {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Empty means no limit. Backups uploading together share it, and a plan’s own limit "
-                            + "applies too: the smaller one wins.")
+                        Text("Backups uploading together share the limit, and a plan’s own limit applies too: the smaller "
+                            + "one wins. A percentage is of this network’s upload speed, which Restorey measures once a day.")
                             .explanatoryNote()
                         Text("These rules apply only to plans that back up to another machine, such as S3, B2 or a restic "
                             + "server. Backups to a folder or drive on this Mac are never skipped or limited.")
@@ -87,14 +90,69 @@ private struct NetworkForm: View {
         }
     }
 
-    /// The limit's explanation is in the section's footer, so the row holds only the field (Task 17c, as P6 has it for
-    /// General).
+    /// The limit's explanation is in the section's footer, so the row holds only the controls (Task 17c, as P6 has it
+    /// for General).
     @ViewBuilder private var limit: some View {
         LabeledContent("Upload limit for this Mac") {
-            UploadLimitField(name: "Upload limit for this Mac, in MB/s", text: $model.fields.uploadLimit)
+            MacLimitField(
+                name: "Upload limit for this Mac", amount: $model.fields.limitAmount, kind: model.fields.limitKind,
+                onKind: { kind in Task { await model.setLimitKind(kind) } })
+                .disabled(model.asking)
         }
         if let problem = model.edit.uploadLimitProblem {
             SeverityText(problem)
+        }
+        if model.asking {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Waiting for your answer to the Location question…").foregroundStyle(.secondary)
+            }
+            .font(.subheadline)
+        }
+        if let note = model.percentNote {
+            SeverityText(note, severity: .warning, font: .subheadline)
+        }
+    }
+
+    /// The current network's measured upload speed and its age, with Test now. The time-dependent words ("today") are
+    /// worked out again each minute.
+    @ViewBuilder private var speed: some View {
+        TimelineView(.everyMinute) { timeline in
+            LabeledContent {
+                Button("Test now") { Task { await model.testNow() } }
+                    .disabled(model.testing)
+            } label: {
+                Text(model.edit.speedLine(model.uploadSpeed, now: timeline.date, calendar: .current))
+            }
+        }
+        if let error = model.testError {
+            SeverityText(error)
+        }
+    }
+
+    /// "Only limit during  [Weekdays] [8:00 am] to [6:00 pm]". Shown whenever there is a limit.
+    @ViewBuilder private var window: some View {
+        LabeledContent {
+            HStack(spacing: 6) {
+                LimitDaysPicker(days: $model.fields.windowDays)
+                TimeOfDayPicker(name: "Window start", minute: $model.fields.windowStart)
+                Text("to").foregroundStyle(.secondary)
+                TimeOfDayPicker(name: "Window end", minute: $model.fields.windowEnd)
+            }
+            .disabled(!model.fields.windowEnabled)
+        } label: {
+            Toggle("Only limit during", isOn: $model.fields.windowEnabled)
+        }
+        if let problem = model.edit.windowProblem {
+            SeverityText(problem)
+        }
+    }
+
+    /// What a backup starting now would get as the limit, and when that changes.
+    private var now: some View {
+        TimelineView(.everyMinute) { timeline in
+            Text(model.edit.nowLine(status: model.uploadSpeed, at: timeline.date, calendar: .current))
+                .foregroundStyle(.secondary)
         }
     }
 

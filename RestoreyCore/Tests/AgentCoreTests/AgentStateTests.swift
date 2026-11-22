@@ -676,11 +676,11 @@ struct AgentStateTests {
         let state = await Self.makeState(dir)
         let pushes = Mutex<[AgentStatus]>([])
         await state.setStatusObserver { status in pushes.withLock { $0.append(status) } }
-        let settings = NetworkSettings(uploadLimitKiB: 750, skipOnConstrainedNetwork: false, skippedWiFiNames: [" Café ", "Home"])
+        let settings = NetworkSettings(uploadLimit: .rate(kiB: 750, unit: .megabytes), skipOnConstrainedNetwork: false, skippedWiFiNames: [" Café ", "Home"])
 
         let status = try await state.saveNetworkSettings(settings)
 
-        let saved = NetworkSettings(uploadLimitKiB: 750, skipOnConstrainedNetwork: false, skippedWiFiNames: ["Café", "Home"])
+        let saved = NetworkSettings(uploadLimit: .rate(kiB: 750, unit: .megabytes), skipOnConstrainedNetwork: false, skippedWiFiNames: ["Café", "Home"])
         #expect(status.network == saved, "names are trimmed")
         #expect(await state.networkSettings == saved)
         #expect(pushes.withLock { $0 }.map(\.network) == [saved])
@@ -689,11 +689,11 @@ struct AgentStateTests {
     }
 
     @Test(arguments: [
-        (NetworkSettings(uploadLimitKiB: 0, skipOnConstrainedNetwork: true, skippedWiFiNames: []),
+        (NetworkSettings(uploadLimit: .rate(kiB: 0, unit: .megabytes), skipOnConstrainedNetwork: true, skippedWiFiNames: []),
          "The upload limit must be more than 0 KiB/s"),
-        (NetworkSettings(uploadLimitKiB: nil, skipOnConstrainedNetwork: true, skippedWiFiNames: ["  "]),
+        (NetworkSettings(uploadLimit: .none, skipOnConstrainedNetwork: true, skippedWiFiNames: ["  "]),
          "A Wi-Fi network name can’t be empty"),
-        (NetworkSettings(uploadLimitKiB: -5, skipOnConstrainedNetwork: true, skippedWiFiNames: ["Home", "home"]),
+        (NetworkSettings(uploadLimit: .rate(kiB: -5, unit: .megabytes), skipOnConstrainedNetwork: true, skippedWiFiNames: ["Home", "home"]),
          "The upload limit must be more than 0 KiB/s. The Wi-Fi network “home” is in the list more than once"),
     ])
     func saveNetworkSettingsRefusesInvalidSettings(settings: NetworkSettings, sentence: String) async throws {
@@ -718,7 +718,7 @@ struct AgentStateTests {
         let before = await state.status().plans.map(\.plan)
 
         let status = try await state.saveNetworkSettings(
-            NetworkSettings(uploadLimitKiB: 100, skipOnConstrainedNetwork: true, skippedWiFiNames: []))
+            NetworkSettings(uploadLimit: .rate(kiB: 100, unit: .megabytes), skipOnConstrainedNetwork: true, skippedWiFiNames: []))
         #expect(status.plans.map(\.plan) == before)
     }
 
@@ -1092,6 +1092,7 @@ struct AgentStateTests {
         await #expect { _ = try await state.adopt(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.beginRun(planID: plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.saveNetworkSettings(.defaults) } throws: { Self.message($0) == refused }
+        await #expect { try await state.runUploadSpeedTest() } throws: { Self.message($0) == refused }
         await #expect { _ = try await state.probeRepository(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.dismissOffMacNote(plan.id) } throws: { Self.message($0) == refused }
         // Reads too: without the files there is no plan to answer for.
@@ -1332,6 +1333,7 @@ struct AgentStateTests {
         await #expect { try await state.resume(plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.beginRun(planID: plan.id) } throws: { Self.message($0) == refused }
         await #expect { try await state.saveNetworkSettings(.defaults) } throws: { Self.message($0) == refused }
+        await #expect { try await state.runUploadSpeedTest() } throws: { Self.message($0) == refused }
         let other = Self.plan(now: clock.now)
         await #expect { try await state.beginRun(planID: other.id) } throws: { Self.message($0) == refused }
         // Pause is allowed, so the user can still stop a long first backup.

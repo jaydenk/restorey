@@ -25,9 +25,9 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSLocationUsageDescription</key>
-    <string>Restorey checks the Wi-Fi network's name so it can skip backups on networks you've listed.</string>
+    <string>Restorey checks the Wi-Fi network's name so it can skip backups on networks you've listed and measure each network's upload speed.</string>
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>Restorey checks the Wi-Fi network's name so it can skip backups on networks you've listed.</string>
+    <string>Restorey checks the Wi-Fi network's name so it can skip backups on networks you've listed and measure each network's upload speed.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>RestoreyRootID</key>

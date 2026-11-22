@@ -4,7 +4,7 @@ import Testing
 
 struct NetworkSettingsTests {
     private func settings(limit: Int? = nil, names: [String] = []) -> NetworkSettings {
-        NetworkSettings(uploadLimitKiB: limit, skipOnConstrainedNetwork: true, skippedWiFiNames: names)
+        NetworkSettings(uploadLimit: limit.map { .rate(kiB: $0, unit: .megabytes) } ?? .none, skipOnConstrainedNetwork: true, skippedWiFiNames: names)
     }
 
     // MARK: Validation (Review Focus 5)

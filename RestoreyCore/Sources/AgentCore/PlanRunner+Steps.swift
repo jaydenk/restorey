@@ -64,16 +64,26 @@ extension PlanRunner {
 
         var context = session.context
         if op == .backup { context.repositoryLinkTarget = await repositoryLinkTarget(plan) }
-        let uploadsToTheNetwork = op == .backup && plan.repository.needsNetwork
-        if uploadsToTheNetwork {
-            context.macWideUploadLimitKiB = await deps.state.networkSettings.uploadLimitKiB
-            // Counted and registered with no suspension in between, so backups starting together each see
-            // the others. restic can't change its limit mid-run, so each keeps the share it started with.
-            context.networkedBackupsRunning = networkedUploads.count + 1
-            networkedUploads.insert(id)
+        var limitLine: String?
+        if plan.repository.needsNetwork {
+            // Resolved (with a speed test first when one is needed) before this command registers, so a second backup
+            // starting meanwhile joins that test rather than waiting for this one (PlanRunner+SpeedTests.swift).
+            var macWide: Int?
+            if op == .backup { (macWide, limitLine) = await resolveMacWideLimitKiB() }
+            await waitForSpeedTests()
+            // From here to the inserts there is no suspension: no test can start in between, and backups starting
+            // together each see the others. restic can't change its limit mid-run, so each keeps the share it
+            // started with.
+            if op == .backup {
+                context.macWideUploadLimitKiB = macWide
+                context.networkedBackupsRunning = networkedUploads.count + 1
+                networkedUploads.insert(id)
+            }
+            networkedCommands.insert(id)
         }
         let invocation = makeInvocation(op, plan: plan, context: context)
         log.line("Restorey \(op.logSlug) for \(plan.name), \(trigger.rawValue)")
+        if let limitLine { log.line(limitLine) }
         log.line(displayCommand(invocation))
         let process = ResticProcess(
             executable: deps.resticExecutable, invocation: invocation, planID: plan.id,
@@ -111,8 +121,9 @@ extension PlanRunner {
                 exitCode: Self.startFailureExitCode, reason: "Restorey couldn’t start restic: \(error.localizedDescription)")
         }
         handle?.detach()
-        // restic has exited (or never started): it no longer takes a share of the limit.
+        // restic has exited (or never started): it no longer takes a share of the limit, nor holds back a speed test.
         networkedUploads.remove(id)
+        networkedCommands.remove(id)
         await feed?.finish()
         if op == .unlock, outcome == .success(snapshotID: nil) { needsUnlock.remove(session.key) }
 

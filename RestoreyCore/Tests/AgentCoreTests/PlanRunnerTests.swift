@@ -707,7 +707,7 @@ struct PlanRunnerTests {
             """.write(to: stub, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
 
-        let settings = NetworkSettings(uploadLimitKiB: 1000, skipOnConstrainedNetwork: true, skippedWiFiNames: [])
+        let settings = NetworkSettings(uploadLimit: .rate(kiB: 1000, unit: .megabytes), skipOnConstrainedNetwork: true, skippedWiFiNames: [])
         let f = try await RunnerFixture.make(executable: stub, createRepository: false, networkSettings: settings) {
             $0.repository = .raw(repository: "rest:http://127.0.0.1:9/one", environmentNames: [])
         }

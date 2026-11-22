@@ -3,12 +3,13 @@ import Foundation
 /// Schema history for `config.json`. `VersionedStore` runs `migrations[n]` to take a payload from
 /// version `n` to `n + 1`, working on the decoded dictionary so old shapes never need old Swift types.
 public enum ConfigMigrations {
-    public static let currentVersion = 4
+    public static let currentVersion = 5
 
     public static let migrations: [Int: @Sendable (inout [String: Any]) throws -> Void] = [
         1: addFileTypeExclusionsAndOneFileSystem,
         2: moveNetworkRulesToConfig,
         3: addExclusionDefaultsRevision,
+        4: convertUploadLimits,
     ]
 
     public enum MigrationError: Error, Equatable {
@@ -84,5 +85,30 @@ public enum ConfigMigrations {
             list[index]["exclusionDefaultsRevision"] = 1
         }
         payload["plans"] = list
+    }
+
+    /// 4 → 5 (upload limit redesign): the Mac-wide `network.uploadLimitKiB: n` becomes
+    /// `network.uploadLimit = {"kind":"rate","kiB":n,"unit":"MB"}` (an old limit was entered in megabytes), or
+    /// `{"kind":"none"}` when there was none, and `uploadLimitKiB` is removed. No `limitWindow` is added. Every plan
+    /// gets `uploadLimitUnit: "MB"` when it lacks one; its own `uploadLimitKiB` is untouched. A payload without
+    /// `network` stays without one, and an `uploadLimit` already there is kept.
+    @Sendable public static func convertUploadLimits(_ payload: inout [String: Any]) throws {
+        if let plans = payload["plans"] {
+            guard var list = plans as? [[String: Any]] else { throw MigrationError.notAPlanList }
+            for index in list.indices where list[index]["uploadLimitUnit"] == nil {
+                list[index]["uploadLimitUnit"] = "MB"
+            }
+            payload["plans"] = list
+        }
+        guard var network = payload["network"] as? [String: Any] else { return }
+        if network["uploadLimit"] == nil {
+            if let kiB = network["uploadLimitKiB"] as? Int {
+                network["uploadLimit"] = ["kind": "rate", "kiB": kiB, "unit": "MB"] as [String: Any]
+            } else {
+                network["uploadLimit"] = ["kind": "none"]
+            }
+        }
+        network["uploadLimitKiB"] = nil
+        payload["network"] = network
     }
 }
