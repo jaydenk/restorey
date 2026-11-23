@@ -118,7 +118,8 @@ Settings:
   folder. While Full Disk Access is missing it is a section of its own at the top: why it is needed, a tile with
   Restorey's icon and name and "Drag this into the list, then switch it on.", and Open System Settings; once it is on,
   it is one row with a green tick and "Full Disk Access is on".
-- **Notifications**: whether macOS lets Restorey post notifications, with Allow… or Open System Settings.
+- **Notifications**: switches for Backup started, Backup finished and Problems with backups (each applies as it is
+  changed), and whether macOS lets Restorey post notifications, with Allow… or Open System Settings.
 - **Network**: rules for the whole Mac, for plans that back up to another machine (S3, B2, a restic server; never a
   folder or drive): an upload limit shared by the backups uploading at once (a rate, or a percentage of the upload
   speed the agent measures on each network), skipping backups on a phone hotspot or
@@ -533,8 +534,15 @@ background ("Running · 0.1.0 (11)"), each with the menu's fix (Open System Sett
 (Show in Finder), and, while the menu bar icon is hidden, the note saying where to show it. These are read again
 whenever Restorey comes back to the front. The words are `SettingsGeneral`'s (`RestoreyCore`).
 
-**Notifications** (Settings) has the notifications permission as the agent last heard from the notification centre,
-with its fix (Allow…, or Open System Settings), read again whenever Restorey comes back to the front.
+**Notifications** (Settings) has three switches, "Backup started" (off by default), "Backup finished" (off) and
+"Problems with backups" (on), each saved to the agent as it is changed (`saveNotificationSettings`, the whole set at
+once). Under Problems, while it is off: "When this is off, the menu bar icon still shows a problem, and so does a
+check-in URL if you’ve set one." Below them is the notifications permission as the agent last heard from the
+notification centre, with its fix (Allow…, or Open System Settings), read again whenever Restorey comes back to the
+front. Turning a switch on asks macOS for permission if it has never been asked. The switches are disabled, with
+"Waiting for Restorey’s background process…", while the agent isn't connected; a setting the agent refuses goes back
+to what it has, with its sentence under the switches; a second change made while one is saving is sent after it, so
+the agent ends with the last.
 
 **Plans** (the main window) lists the plans, each with a symbol for where it backs up (`Repository.place`): a cloud for a storage
 service (B2, S3, Azure, Google Cloud Storage, Swift, rclone), a server for another machine on the network (SFTP, a
@@ -1073,7 +1081,7 @@ check-in, a configuration error, Full Disk Access missing). Turning `problems` o
 only: the alerts are still raised, so the menu bar icon, the menu's banners and check-in pings behave as before. This
 is additive to schema 5: a `config.json` without the key reads as the defaults, and nothing is migrated. The agent
 saves it through the `saveNotificationSettings` XPC call and returns it as `notifications` in `status`; what each
-option posts is under [Alerts](#alerts). The Settings → Notifications pane comes in a later change.
+option posts is under [Alerts](#alerts).
 
 **The upload limit.** restic's `--limit-upload` (KiB/s) is fixed for a run, so the agent works out the Mac-wide limit
 when each backup to a networked repository starts, in the Mac's current time zone: outside the window (when one is

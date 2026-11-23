@@ -16,6 +16,13 @@ struct SettingsGeneralTests {
     }
 
     /// No hello yet is "unknown", not "never asked": only a hello carrying nil says the agent hasn't asked.
+    @Test func turningASwitchOnAsksOnlyWhenNeverAsked() {
+        #expect(SettingsGeneral.asksPermission(turningOn: true, authorised: nil))
+        #expect(!SettingsGeneral.asksPermission(turningOn: true, authorised: true))
+        #expect(!SettingsGeneral.asksPermission(turningOn: true, authorised: false))
+        #expect(!SettingsGeneral.asksPermission(turningOn: false, authorised: nil))
+    }
+
     @Test func notifications() {
         #expect(SettingsGeneral.notifications(hello: Self.hello(notifications: true)) == .init("Allowed"))
         #expect(SettingsGeneral.notifications(hello: Self.hello(notifications: false))

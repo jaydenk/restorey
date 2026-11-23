@@ -60,6 +60,12 @@ public enum SettingsGeneral {
         }
     }
 
+    /// Turning a notification switch on asks macOS for permission only when it has never been asked
+    /// (`HelloReply.notificationsAuthorised == nil`); a refusal is the permission line's to fix.
+    public static func asksPermission(turningOn: Bool, authorised: Bool?) -> Bool {
+        turningOn && authorised == nil
+    }
+
     /// "Running · 0.1.0 (11)": the supervisor's health and the version from the last hello.
     public static func agent(health: AgentHealthState, hello: HelloReply?) -> Line {
         let version = hello.map { " · \($0.agentVersion) (\($0.agentBuild))" } ?? ""
