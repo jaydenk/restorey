@@ -557,10 +557,11 @@ struct PlanRunnerTests {
         await f.state.attach(notifier: notifier, log: { _ in })
         try f.write("a.txt", "one")
 
-        // Off by default: a successful backup posts nothing.
+        // Off by default: a successful backup posts nothing (and takes away any it posted before).
         _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
         await f.state.eventNotesDelivered()
         #expect(await notifier.events.isEmpty)
+        let removedBefore = await notifier.removed
 
         _ = try await f.state.saveNotificationSettings(
             NotificationSettings(backupStarted: true, backupFinished: true, problems: true))
@@ -571,7 +572,7 @@ struct PlanRunnerTests {
         let events = await notifier.events
         #expect(events.map(\.title) == ["Backing up — Fixture", "Backed up — Fixture"])
         #expect(Set(events.map(\.identifier)) == ["event.\(f.planID.uuidString)"])
-        #expect(await notifier.removed.isEmpty)
+        #expect(await notifier.removed == removedBefore, "a backup that posted Backed up removes nothing")
     }
 
     /// A failed backup takes its "Backing up" notification away, and posts no "Backed up".
@@ -590,6 +591,45 @@ struct PlanRunnerTests {
         await f.state.eventNotesDelivered()
         #expect(await notifier.events.map(\.title) == ["Backing up — Fixture"])
         #expect(await notifier.removed == ["event.\(f.planID.uuidString)"])
+    }
+
+    /// A cancelled backup posts no "Backed up", so its "Backing up" goes.
+    @Test func aCancelledBackupRemovesItsStartedNotification() async throws {
+        let stepped = try steppedBackupStub([.out(Self.cancelStatus), .out(Self.cancelSummary)])
+        defer { stepped.finish() }
+        let f = try await RunnerFixture.make(executable: stepped.stub)
+        defer { f.remove() }
+        let notifier = FakeNotifier(authorised: true)
+        await f.state.attach(notifier: notifier, log: { _ in })
+        _ = try await f.state.saveNotificationSettings(
+            NotificationSettings(backupStarted: true, backupFinished: true, problems: true))
+        let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
+        try await f.waitForPhase { $0.progress?.percentDone == 0.1 }
+        _ = try await f.state.cancel(f.planID)
+        let record = try await run.value
+
+        #expect(record.outcome == .cancelled)
+        await f.state.eventNotesDelivered()
+        #expect(await notifier.events.map(\.title) == ["Backing up — Fixture"])
+        #expect(await notifier.removed == ["event.\(f.planID.uuidString)"])
+    }
+
+    /// A backup the agent died during is marked interrupted on the next start, and the "Backing up" the dead agent
+    /// posted goes.
+    @Test func recoveryRemovesTheInterruptedBackupsStartedNotification() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        try await f.state.updateHistory(f.planID) {
+            $0.runningRecordID = UUID()
+            $0.lastAttemptAt = f.clock.now
+        }
+        let (state, runner) = await f.reloaded()
+        let notifier = FakeNotifier(authorised: true)
+        await state.attach(notifier: notifier, log: { _ in })
+        await runner.recoverAfterStart()
+        await state.eventNotesDelivered()
+        #expect(await notifier.removed == ["event.\(f.planID.uuidString)"])
+        #expect(await notifier.events.isEmpty)
     }
 
     /// Skipped before restic starts: nothing says it started.

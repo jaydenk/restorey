@@ -20,6 +20,8 @@ extension PlanRunner {
             record.outcome = .interrupted
             await commit(record, plan: plan)
             interrupted.insert(plan.id)
+            // A "Backing up" the agent posted before it died goes (nothing, if none was posted or no notifier is attached).
+            if record.operation == .backup { await deps.state.noteBackupEnded(plan, record: record) }
             if record.operation == .backup,
                 let ping = pingAtEnd(outcome: .interrupted, logTail: [], redactor: redactor(for: plan))
             {

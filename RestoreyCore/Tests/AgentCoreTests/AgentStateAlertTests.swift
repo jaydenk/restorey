@@ -749,6 +749,37 @@ struct AgentStateAlertTests {
         await world.state.noteBackupEnded(world.plan, record: backupRecord(.unchanged, world))
         await world.state.eventNotesDelivered()
         #expect(await world.notifier.events.map(\.body) == ["Nothing new to back up"])
+        #expect(await world.notifier.removed == ["event.\(world.plan.id.uuidString)"], "the cancel posted no Backed up")
+    }
+
+    /// Every end that posts no "Backed up" takes the plan's "Backing up" away: not only a failure.
+    @Test func everyEndWithoutABackedUpRemovesTheStartedNotification() async throws {
+        let outcomes: [RunOutcome] = [
+            .cancelled, .paused, .stoppedBySystem, .locked, .interrupted, .wrongPassword,
+            .failed(exitCode: 1, reason: "x"),
+        ]
+        for outcome in outcomes {
+            let world = try await world()
+            try await set(Self.allOn, in: world)
+            await attach(world)
+            await world.state.noteBackupStarted(world.plan, at: world.clock.now)
+            await world.state.noteBackupEnded(world.plan, record: backupRecord(outcome, world))
+            await world.state.eventNotesDelivered()
+            #expect(await world.notifier.events.map(\.title) == ["Backing up — Home"], "\(outcome)")
+            #expect(await world.notifier.removed == ["event.\(world.plan.id.uuidString)"], "\(outcome)")
+        }
+    }
+
+    /// With Backup finished off, a successful end posts nothing and so takes the "Backing up" away.
+    @Test func finishedOffRemovesTheStartedNotificationAtTheEnd() async throws {
+        let world = try await world()
+        try await set(NotificationSettings(backupStarted: true, backupFinished: false, problems: true), in: world)
+        await attach(world)
+        await world.state.noteBackupStarted(world.plan, at: world.clock.now)
+        await world.state.noteBackupEnded(world.plan, record: backupRecord(.success(snapshotID: "abc"), world))
+        await world.state.eventNotesDelivered()
+        #expect(await world.notifier.events.map(\.title) == ["Backing up — Home"])
+        #expect(await world.notifier.removed == ["event.\(world.plan.id.uuidString)"])
     }
 
     @Test func eventsAreNotPostedWithoutPermission() async throws {

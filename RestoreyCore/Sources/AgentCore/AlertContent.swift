@@ -27,6 +27,8 @@ public struct AlertContent: Sendable, Equatable {
     public var threadIdentifier: String
     public var title: String
     public var body: String
+    /// Whether the banner plays the notification sound: problems do, a backup starting or finishing is quiet.
+    public var playsSound: Bool
 
     static let agentThread = "agent"
 
@@ -37,21 +39,22 @@ public struct AlertContent: Sendable, Equatable {
             title: "Restorey has stopped — its settings can’t be read", body: message)
     }
 
-    /// "Backing up — Home", "Started at 9:19 am": a backup's restic step has started.
+    /// "Backing up — Home", "Started at 09:19" (the time as the menu shows it, `DisplayFormat.time`): a backup's restic step has started.
     public static func backupStarted(plan: Plan, at date: Date, calendar: Calendar, locale: Locale) -> AlertContent {
         event(
             plan: plan, title: "Backing up — \(plan.name)",
-            body: "Started at \(UploadLimitText.timeText(date, calendar: calendar, locale: locale))")
+            body: "Started at \(DisplayFormat.time(date, calendar: calendar, locale: locale))")
     }
 
     /// "Backed up — Home", for a backup that ended having saved its data (`PlanRunner.savedData`), with the menu's
-    /// words for how: "Finished at 9:19 am", "Nothing new to back up" or "1 file couldn’t be read". Nil for any
+    /// words for how: "Finished at 09:19", "Nothing new to back up" or "1 file couldn’t be read". Nil for any
     /// other end: a failure is a problem, and a cancel, pause, skip or stop says nothing.
+    /// Both are quiet (`playsSound` false): an hourly backup shouldn’t chime.
     public static func backupFinished(plan: Plan, record: RunRecord, calendar: Calendar, locale: Locale) -> AlertContent? {
         let body: String
         switch record.outcome {
         case .success(snapshotID: .some):
-            body = "Finished at \(UploadLimitText.timeText(record.endedAt, calendar: calendar, locale: locale))"
+            body = "Finished at \(DisplayFormat.time(record.endedAt, calendar: calendar, locale: locale))"
         case .unchanged: body = "Nothing new to back up"
         case .warning(let unreadable): body = DisplayFormat.unreadableFiles(unreadable)
         default: return nil
@@ -65,14 +68,15 @@ public struct AlertContent: Sendable, Equatable {
     private static func event(plan: Plan, title: String, body: String) -> AlertContent {
         AlertContent(
             identifier: eventIdentifier(for: plan.id), threadIdentifier: "plan.\(plan.id.uuidString)", title: title,
-            body: body)
+            body: body, playsSound: false)
     }
 
-    private init(identifier: String, threadIdentifier: String, title: String, body: String) {
+    private init(identifier: String, threadIdentifier: String, title: String, body: String, playsSound: Bool = true) {
         self.identifier = identifier
         self.threadIdentifier = threadIdentifier
         self.title = title
         self.body = body
+        self.playsSound = playsSound
     }
 
     /// Nil for `notificationsOff`, which can't be delivered as a notification.
@@ -113,6 +117,7 @@ public struct AlertContent: Sendable, Equatable {
         }
         identifier = agentWide ? "alert.agent.\(condition.rawValue)" : "alert.\(plan.id.uuidString).\(condition.rawValue)"
         threadIdentifier = agentWide ? Self.agentThread : "plan.\(plan.id.uuidString)"
+        playsSound = true
     }
 
     /// Why the newest failed `operation` failed, as the runner explains it.

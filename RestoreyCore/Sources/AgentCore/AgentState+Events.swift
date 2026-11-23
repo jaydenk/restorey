@@ -9,9 +9,9 @@ import RestoreyCore
 /// Every notifier call is bounded by `alertCallTimeout`, as the alerts' are.
 ///
 /// Nothing is posted unless the agent is known to be allowed to post (posting otherwise reports success and shows
-/// nothing, docs/spike-findings.md, H3b). A backup that ends in a failure verdict takes the plan's event
-/// notification away, so a stale "Backing up" never sits next to the failure; the failure itself is a problem
-/// alert (AgentState+Alerts.swift).
+/// nothing, docs/spike-findings.md, H3b). A backup that ends without a "Backed up" (a failure, a cancel, a pause, a
+/// stop, a lock) takes the plan's event notification away, so a stale "Backing up" never stays behind; a failure
+/// itself is a problem alert (AgentState+Alerts.swift). Both are quiet (`AlertContent.playsSound`).
 extension AgentState {
     /// A backup's restic step is starting: posts "Backing up — <plan>" when Backup started is on.
     public func noteBackupStarted(_ plan: Plan, at date: Date) {
@@ -20,17 +20,18 @@ extension AgentState {
         enqueueEvent(plan.id) { await self.postEvent(alert, kind: "started", planID: plan.id) }
     }
 
-    /// A backup's record is committed: posts "Backed up — <plan>" when Backup finished is on and the backup saved its
-    /// data, and takes the plan's event notification away when it failed.
+    /// A backup's record is committed (or recovery has marked it interrupted): posts "Backed up — <plan>" when Backup
+    /// finished is on and the backup saved its data. Any other end (a failure, a cancel, a pause, the system stopping
+    /// it, a lock, or Backup finished off) posts no "Backed up", so it takes the plan's event notification away
+    /// instead, and no stale "Backing up" stays behind. Removing what was never posted does nothing.
     public func noteBackupEnded(_ plan: Plan, record: RunRecord) {
-        if record.outcome.isFailureVerdict {
-            enqueueEvent(plan.id) { await self.removeEvent(planID: plan.id) }
-            return
-        }
         guard config.notifications.backupFinished,
             let alert = AlertContent.backupFinished(
                 plan: plan, record: record, calendar: eventCalendar, locale: eventLocale)
-        else { return }
+        else {
+            enqueueEvent(plan.id) { await self.removeEvent(planID: plan.id) }
+            return
+        }
         enqueueEvent(plan.id) { await self.postEvent(alert, kind: "finished", planID: plan.id) }
     }
 

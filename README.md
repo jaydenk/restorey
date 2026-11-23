@@ -1201,11 +1201,11 @@ one notification, "Restorey has stopped — its settings can't be read", on the 
 
 **Which notifications are posted.** Three Mac-wide options (`notifications` in `config.json`) decide it:
 
-- **Backup started** (off by default): "Backing up — <plan>", "Started at 9:19 am", when a backup's restic step
+- **Backup started** (off by default): "Backing up — <plan>", "Started at 09:19", when a backup's restic step
   starts, scheduled or Back Up Now. Not for maintenance (forget, prune, check), and not for a backup skipped before
   it starts.
 - **Backup finished** (off by default): "Backed up — <plan>", when a backup ends having saved its data, worded as
-  the menu words it: "Finished at 9:19 am", "Nothing new to back up", or "1 file couldn’t be read". A cancelled,
+  the menu words it: "Finished at 09:19", "Nothing new to back up", or "1 file couldn’t be read". A cancelled,
   paused or stopped-by-the-system backup posts nothing, and a failure is a problem, not "finished".
 - **Problems with backups** (on by default): the notifications above. With it off, the agent still raises and clears
   every alert exactly as before, so the menu bar icon, the menu's banners and check-in pings still show a problem;
@@ -1214,10 +1214,12 @@ one notification, "Restorey has stopped — its settings can't be read", on the 
 
 A plan's started and finished notifications share one identifier (`event.<plan ID>`), so each replaces the last and
 hourly backups leave one per plan; they sit in the plan's group beside its problem notifications, which keep their own.
-When a backup fails, the plan's started (or last finished) notification is taken away, so a stale "Backing up" never
-sits next to the failure. The runner only queues these and carries on, so restic is never held up; each call to the
-notification centre gets the same 10 s, and nothing is posted without permission. The time is the Mac's, in its
-language.
+When a backup ends without a "Backed up" (it failed, was cancelled or paused, was stopped by the system, hit a lock,
+or Backup finished is off), the plan's started (or last finished) notification is taken away, so a stale "Backing up"
+never stays behind or sits next to a failure; so is one left by an agent that died mid-backup, when the next agent
+marks that backup interrupted. Started and finished are quiet; problem notifications play the default sound. The runner only queues these and carries on, so restic is never held up; each call to the
+notification centre gets the same 10 s, and nothing is posted without permission. The time is written as the menu writes
+it, in the Mac's time zone and language.
 
 The agent needs its own notification permission, separate from the app's, and macOS reports a notification
 from an agent without one as posted while showing nothing. So the agent checks its permission before posting.

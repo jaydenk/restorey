@@ -126,7 +126,7 @@ struct AlertContentTests {
 
     // MARK: Backup started and finished
 
-    /// 9:19 am on the test calendar's clock.
+    /// 9:19 am on the test calendar's clock, which `DisplayFormat.time` writes "09:19" for en_AU, as the menu does.
     private let nineNineteen = Date(timeIntervalSince1970: 1_800_004_740)
     private let auLocale = Locale(identifier: "en_AU")
     private var cal: Calendar {
@@ -161,8 +161,21 @@ struct AlertContentTests {
         #expect(finished.threadIdentifier == started.threadIdentifier)
         #expect(started.title == "Backing up — Home")
         #expect(finished.title == "Backed up — Home")
-        #expect(started.body == "Started at 9:19 am")
-        #expect(finished.body == "Finished at 9:19 am")
+        #expect(started.body == "Started at 09:19")
+        #expect(finished.body == "Finished at 09:19")
+    }
+
+    /// Problems chime; a backup starting or finishing is quiet.
+    @Test func onlyProblemsPlayASound() throws {
+        let plan = plan()
+        let started = AlertContent.backupStarted(plan: plan, at: nineNineteen, calendar: cal, locale: auLocale)
+        let finished = try #require(AlertContent.backupFinished(
+            plan: plan, record: backupRecord(.unchanged, plan: plan), calendar: cal, locale: auLocale))
+        #expect(!started.playsSound)
+        #expect(!finished.playsSound)
+        #expect(try #require(content(.backupFailed, plan: plan)).playsSound)
+        #expect(try #require(content(.fullDiskAccessMissing, plan: plan)).playsSound)
+        #expect(AlertContent.loadError("x").playsSound)
     }
 
     /// The same thread as the plan's problem alerts, but never their identifier, so neither replaces the other.

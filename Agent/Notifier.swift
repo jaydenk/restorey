@@ -30,7 +30,8 @@ struct Notifier: AlertNotifying {
         content.title = alert.title
         content.body = alert.body
         content.threadIdentifier = alert.threadIdentifier
-        content.sound = .default
+        // Problems chime; a backup starting or finishing is quiet (`AlertContent.playsSound`).
+        if alert.playsSound { content.sound = .default }
         // The same identifier replaces the banner a re-notification follows.
         try await center.add(UNNotificationRequest(identifier: alert.identifier, content: content, trigger: nil))
     }
