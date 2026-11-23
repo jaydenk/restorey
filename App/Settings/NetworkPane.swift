@@ -23,7 +23,7 @@ struct NetworkPane: View {
     var body: some View {
         Group {
             if let model = slot.model {
-                NetworkForm(model: model)
+                NetworkForm(model: model, connected: supervisor.health == .healthy)
             } else if let configError = status?.configError {
                 unavailable("Restorey can’t read its settings: \(FormValidation.sentence(configError))")
             } else if status != nil {
@@ -61,9 +61,23 @@ struct NetworkPane: View {
 
 private struct NetworkForm: View {
     @Bindable var model: NetworkEditModel
+    /// Restorey’s background process is answering. While it isn't, the form is off and nothing queues: a change
+    /// would only fail, leaving a control showing a value the background process doesn't have.
+    let connected: Bool
+
+    private enum TimeField { case start, end }
+    @FocusState private var timeFocus: TimeField?
 
     var body: some View {
         VStack(spacing: 0) {
+            if !connected {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Waiting for Restorey’s background process…").foregroundStyle(.secondary)
+                }
+                .padding(12)
+                Divider()
+            }
             Form {
                 Section {
                     limit
@@ -90,6 +104,7 @@ private struct NetworkForm: View {
                 }
             }
             .formStyle(.grouped)
+            .disabled(!connected)
             if let message = refusal {
                 Divider()
                 HStack(spacing: 8) {
@@ -105,8 +120,8 @@ private struct NetworkForm: View {
         .onChange(of: model.fields.skipOnConstrainedNetwork) { commitSoon() }
         .onChange(of: model.fields.windowEnabled) { commitSoon() }
         .onChange(of: model.fields.windowDays) { commitSoon() }
-        .onChange(of: model.fields.windowStart) { commitSoon() }
-        .onChange(of: model.fields.windowEnd) { commitSoon() }
+        // A window time applies when editing ends (leaving the picker, or Return), not as each digit is typed.
+        .onChange(of: timeFocus) { old, new in if old != nil, old != new { commitSoon() } }
     }
 
     private func commitSoon() { Task { await model.commit() } }
@@ -164,8 +179,12 @@ private struct NetworkForm: View {
             HStack(spacing: 6) {
                 LimitDaysPicker(days: $model.fields.windowDays)
                 TimeOfDayPicker(name: "Window start", minute: $model.fields.windowStart)
+                    .focused($timeFocus, equals: .start)
+                    .onSubmit { commitSoon() }
                 Text("to").foregroundStyle(.secondary)
                 TimeOfDayPicker(name: "Window end", minute: $model.fields.windowEnd)
+                    .focused($timeFocus, equals: .end)
+                    .onSubmit { commitSoon() }
             }
             .disabled(!model.fields.windowEnabled)
         } label: {

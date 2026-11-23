@@ -188,12 +188,13 @@ final class NetworkEditModel {
         let sent = edit.fields
         switch await supervisor.connection.saveNetworkSettings(request) {
         case .success(let status):
-            // `didSave` starts the form again from what the agent saved; what was changed while this was in flight
-            // is put back so the next pass sends it.
-            let current = edit.fields
-            edit.didSave(status.network ?? request.normalised())
-            if current != sent { edit.fields = current }
+            // What was changed while this was in flight is kept (`didSave`), and the next pass sends it.
+            edit.didSave(status.network ?? request.normalised(), sent: sent)
         case .failure(let error):
+            // Switches and menus show what the agent has again; typed text stays to be corrected. Nothing queues:
+            // a change asked for meanwhile was made on a form that has just been reset.
+            edit.didRefuse()
+            commitAgain = false
             saveError = FormValidation.sentence(error.description)
         }
     }

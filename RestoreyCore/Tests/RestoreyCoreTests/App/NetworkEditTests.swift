@@ -88,12 +88,62 @@ struct NetworkEditTests {
         #expect(settings == expected)
     }
 
-    @Test func aRefusedSaveKeepsTheSavedSettingsAndTheEdits() {
+    @Test func aRefusedToggleReadsAsSavedAgain() {
         var edit = NetworkEdit(settings: .defaults)
         edit.fields.skipOnConstrainedNetwork.toggle()
-        _ = edit.commit()                      // the agent refuses: didSave is never called
+        edit.add(name: "Cafe")
+        edit.didRefuse()
         #expect(edit.saved == .defaults)
+        #expect(edit.fields == NetworkEdit.Fields(settings: .defaults))
+        #expect(!edit.isDirty)
+    }
+
+    @Test func aRefusedTypedAmountKeepsWhatWasTyped() {
+        var edit = NetworkEdit(settings: Self.saved)
+        edit.fields.limitAmount = "99999999999"
+        edit.fields.windowEnabled = true
+        edit.fields.windowStart = 7 * 60
+        edit.didRefuse()
+        #expect(edit.saved == Self.saved)
+        #expect(edit.fields.limitAmount == "99999999999")
+        #expect(edit.fields.windowStart == 7 * 60)
         #expect(edit.isDirty)
+    }
+
+    @Test func aRefusedKindChangeTakesItsAmountBackWithIt() {
+        var edit = NetworkEdit(settings: Self.saved)
+        edit.setLimitKind(.percent)
+        edit.didRefuse()
+        #expect(edit.fields.limitKind == .megabytes)
+        #expect(edit.fields.limitAmount == NetworkEdit.Fields(settings: Self.saved).limitAmount)
+        #expect(!edit.isDirty)
+    }
+
+    @Test func anEditMadeWhileASaveWasInFlightSurvivesIt() {
+        var edit = NetworkEdit(settings: .defaults)
+        edit.fields.skipOnConstrainedNetwork = false
+        let sent = edit.fields
+        var agent = NetworkSettings.defaults
+        agent.skipOnConstrainedNetwork = false
+        edit.fields.wiFiNames = ["Cafe"]            // typed while the save was out
+        edit.didSave(agent, sent: sent)
+        #expect(edit.saved == agent)
+        #expect(edit.fields.skipOnConstrainedNetwork == false)
+        #expect(edit.fields.wiFiNames == ["Cafe"])
+        guard case .send(let next) = edit.commit() else { Issue.record("expected the next send"); return }
+        #expect(next.skippedWiFiNames == ["Cafe"])
+        #expect(next.skipOnConstrainedNetwork == false)
+    }
+
+    @Test func aGroupTheAgentNormalisedConvergesWithoutStayingDirty() {
+        var edit = NetworkEdit(settings: .defaults)
+        edit.setLimitKind(.megabytes)
+        edit.fields.limitAmount = "05"
+        let sent = edit.fields
+        edit.didSave(NetworkSettings(uploadLimit: .rate(kiB: 5 * 1024, unit: .megabytes), skipOnConstrainedNetwork: true, skippedWiFiNames: []), sent: sent)
+        #expect(edit.fields.limitAmount == "5")
+        #expect(!edit.isDirty)
+        #expect(edit.commit() == .nothing)
     }
 
     @Test func aSaveStartsAgainFromWhatTheAgentSaved() {

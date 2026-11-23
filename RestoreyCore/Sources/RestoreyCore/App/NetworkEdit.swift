@@ -281,11 +281,55 @@ public struct NetworkEdit: Sendable, Equatable {
         if fields.wiFiNames == started.wiFiNames { fields.wiFiNames = next.wiFiNames; started.wiFiNames = next.wiFiNames }
     }
 
-    /// The agent saved `settings` (with names trimmed): the form starts again from them.
-    public mutating func didSave(_ settings: NetworkSettings) {
+    /// The agent saved `settings` (with names trimmed): the form starts again from them. `sent` is the form as it was
+    /// when the save was sent (nil: nothing was edited since). A group the user edited while the save was in flight,
+    /// meaning one whose fields now differ from `sent`, keeps those edits (and stays dirty, to be sent next); every
+    /// other group follows what the agent saved, so one it normalised (names trimmed) converges and isn't dirty.
+    public mutating func didSave(_ settings: NetworkSettings, sent: Fields? = nil) {
+        let current = fields
+        let before = sent ?? current
         saved = settings
         fields = Fields(settings: settings)
         started = fields
+        if current.limit != before.limit {
+            fields.limitKind = current.limitKind
+            fields.limitAmount = current.limitAmount
+            fields.limitExact = current.limitExact
+        }
+        if current.window != before.window {
+            fields.windowEnabled = current.windowEnabled
+            fields.windowDays = current.windowDays
+            fields.windowStart = current.windowStart
+            fields.windowEnd = current.windowEnd
+        }
+        if current.skipOnConstrainedNetwork != before.skipOnConstrainedNetwork {
+            fields.skipOnConstrainedNetwork = current.skipOnConstrainedNetwork
+        }
+        if current.wiFiNames != before.wiFiNames { fields.wiFiNames = current.wiFiNames }
+    }
+
+    /// The agent refused (or couldn't be asked): `saved` is unchanged. A toggle, picker or list shows what the agent
+    /// has again, since the user has nothing to correct there; what was typed (the limit's amount, the window's
+    /// times) stays so it can be corrected. The limit's kind and amount go together: when the kind goes back, so does
+    /// its amount, since an amount typed for another kind means something else.
+    public mutating func didRefuse() {
+        let agent = Fields(settings: saved)
+        fields.skipOnConstrainedNetwork = agent.skipOnConstrainedNetwork
+        started.skipOnConstrainedNetwork = agent.skipOnConstrainedNetwork
+        fields.windowEnabled = agent.windowEnabled
+        started.windowEnabled = agent.windowEnabled
+        fields.windowDays = agent.windowDays
+        started.windowDays = agent.windowDays
+        fields.wiFiNames = agent.wiFiNames
+        started.wiFiNames = agent.wiFiNames
+        if fields.limitKind != agent.limitKind {
+            fields.limitKind = agent.limitKind
+            fields.limitAmount = agent.limitAmount
+            fields.limitExact = agent.limitExact
+            started.limitKind = agent.limitKind
+            started.limitAmount = agent.limitAmount
+            started.limitExact = agent.limitExact
+        }
     }
 
     // MARK: The Now and speed lines
