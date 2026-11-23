@@ -666,7 +666,7 @@ public enum MenuPresentation {
         let plans = status?.plans ?? []
         let lines = plans.map { line(for: $0, format: format, suffix: "(not responding)") }
         let banner = MenuBanner(
-            severity: .warning, title: "Restorey’s background process hasn’t answered for 30 minutes",
+            severity: .warning, title: "No answer for 30 minutes",
             detail: "A backup is still running, so Restorey is waiting for it rather than stopping it. "
                 + "Restart Backups stops it now.",
             action: .restartAgent)

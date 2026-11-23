@@ -288,21 +288,21 @@ struct MenuLayoutTests {
     /// problem under it and why in its tooltip, and nothing to dismiss: it goes once the agent answers.
     @Test func theLongWaitBannerOffersRestartBackups() {
         let banner = MenuBanner(
-            severity: .warning, title: "Restorey’s background process hasn’t answered for 30 minutes",
+            severity: .warning, title: "No answer for 30 minutes",
             detail: "A backup is still running, so Restorey is waiting for it rather than stopping it. Restart Backups stops it now.",
             action: .restartAgent)
         #expect(MenuLayout.bannerRows(banner) == [.item(MenuItem(
-            "Restart Backups", subtitle: "Restorey’s background process hasn’t answered for 30 minutes", symbol: .warning,
+            "Restart Backups", subtitle: "No answer for 30 minutes", symbol: .warning,
             toolTip: "A backup is still running, so Restorey is waiting for it rather than stopping it. Restart Backups stops it now.",
             command: .banner(.restartAgent),
-            accessibilityLabel: "Warning: Restorey’s background process hasn’t answered for 30 minutes. Restart Backups"))])
+            accessibilityLabel: "Warning: No answer for 30 minutes. Restart Backups"))])
     }
 
     /// A message's full sentence is its tooltip (audit P5).
     @Test func aMessageCarriesItsDetailAsATooltip() {
         let content = MenuContent(icon: .error, message: "Backups couldn’t be set up", messageDetail: "It failed: because.")
         #expect(MenuLayout.rows(content, developer: false).first
-            == .item(MenuItem("Backups couldn’t be set up", toolTip: "It failed: because.", enabled: false)))
+            == .item(.line("Backups couldn’t be set up", toolTip: "It failed: because.")))
     }
 
     /// The main window's way in (visual polish §1): no shortcut, directly above Settings….

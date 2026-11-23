@@ -106,6 +106,7 @@ private struct NetworkForm: View {
                 }
             }
             .formStyle(.grouped)
+            .helpLink(HelpPage.network)
             .disabled(!connected)
             if let message = refusal {
                 Divider()

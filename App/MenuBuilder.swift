@@ -90,6 +90,10 @@ enum MenuBuilder {
             }
         case .item(let content):
             item.title = content.title
+            // A line (`MenuItem.line`: the diagnostics lines and the message line) is disabled so it can't be chosen, but
+            // AppKit would grey it. It is drawn in the secondary label colour at the menu font, so it reads clearly.
+            // Setting `attributedTitle` replaces the plain title, so every other item clears it.
+            item.attributedTitle = content.isLine ? Self.lineTitle(content.title) : nil
             item.subtitle = content.subtitle
             item.toolTip = content.toolTip
             item.isEnabled = content.enabled
@@ -99,6 +103,12 @@ enum MenuBuilder {
             item.preferredImageVisibility = content.symbol == nil ? .automatic : .visible
             item.setAccessibilityLabel(content.accessibilityLabel)
         }
+    }
+
+    private static func lineTitle(_ title: String) -> NSAttributedString {
+        NSAttributedString(string: title, attributes: [
+            .foregroundColor: NSColor.secondaryLabelColor, .font: NSFont.menuFont(ofSize: 0),
+        ])
     }
 
     // MARK: Symbols
@@ -174,8 +184,9 @@ final class ProgressRowView: NSView {
         ])
     }
 
-    /// The menu's horizontal content inset, which a view item has to keep itself (`NSMenu` publishes no metric for
-    /// it): where the section headers and item symbols start. Checked against the rendered menu on macOS 27.2.
+    /// The menu's horizontal content inset, which a view item has to keep itself: where the section headers and item
+    /// symbols start. No `NSMenu` metric exists for it, so the value is a measurement, not a derivation; 14 matches
+    /// the rendered menu on macOS 27 (visual polish spec §5), and the live look checks it again.
     static let inset: CGFloat = 14
 
     @available(*, unavailable)

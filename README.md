@@ -220,8 +220,8 @@ it registers the embedded agent with `SMAppService`, says `hello` every 10 secon
   says "Updating Restorey’s background process…" and the app waits while the agent restarts by itself, once any
   restic step in flight ends. It never repairs a refused agent on its own: the process table can't always place that
   agent's backup (an old copy moved to the Bin reports restic's new path), and an agent refused for another reason
-  would be refused again after a repair. After 30 minutes of awake time the menu warns instead: "Restorey’s
-  background process hasn’t answered for 30 minutes" if a backup may be running, otherwise "Backups aren’t running",
+  would be refused again after a repair. After 30 minutes of awake time the menu warns instead: "No answer for 30 minutes"
+  (its detail: Restorey’s background process hasn’t answered, and a backup is still running) if a backup may be running, otherwise "Backups aren’t running",
   each with Restart Backups. The time
   refused doesn't count towards the 30-second grace below once the old agent has gone
 - the app's own bundle is missing the agent's plist: "Restorey's installation is damaged — reinstall it from the
@@ -519,7 +519,9 @@ centred above an unboxed grouped form (`PlanTabPicker`, a SwiftUI `Picker` with 
 Settings switches the sub-pages of one pane (Trackpad's Point & Click, Scroll & Zoom and More Gestures; owner's
 decision, Task 17c fix round 1): the grouped cards sit on the window's background, not in a tab view's bezel box.
 VoiceOver names it "Plan page", Full Keyboard Access reaches it and the arrow keys move between segments. The Save bar
-stays under every tab, dimmed where there is nothing to save, so the page doesn't change height as the tabs change.
+shows under the tabs that have fields (Folders, Schedule, Storage, Retention), dimmed until something changes; on
+Overview and History, which edit nothing themselves, it shows only while a sheet has left edits to save or a save is
+under way (`showsSaveBar`), so those two pages are taller by the bar's height.
 The plan list is a bordered list with the
 standard square + and − buttons under it (`SquareButton`, AppKit's `.smallSquare` bezel; HIG Buttons, "Square
 buttons"), as Mail's Accounts and Users & Groups have; Delete (⌫) and the row's context menu delete too. The row's
@@ -565,7 +567,7 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   at 09:00"); and Back Up Now, Pause while a backup runs, Resume while paused and Restore Files…, enabled as the menu's
   items are and asking the agent the same way (`MenuPresentation.overview`, `AgentActions`). They sit under the
   headline: Back Up Now, the most likely action, in the prominent style at the trailing end with Pause or Resume
-  beside it, and Restore Files…, a different task, at the leading end (HIG Buttons). Revert and Save stay dimmed here, since
+  beside it, and Restore Files…, a different task, at the leading end (HIG Buttons). There is no Save bar here, since
   nothing on the page is edited, unless a sheet left edits waiting (History likewise). After a backup that
   couldn't read some files, "Show…" under the reason opens "Files that couldn't be read" (see below). It follows the agent
   live, progress included. The window is at least as wide as the list and the row of six tabs, measured with the
@@ -605,19 +607,7 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   and storage keys or environment values (empty keeps what's saved; a new S3 or B2 key needs both halves), the host
   label, the pack size (read-only) and "Show Recovery Kit…". Entering the repository password doesn't change the
   repository's: it is for one changed outside Restorey.
-- **Retention** ("Keep" until Task 17c): the four counts, one row each under "Keep" (Hourly, Daily, Weekly, Monthly),
-  with a plain-English summary under them that updates as you type ("Keeps the newest
-  backup of each hour for the last 24 hours that have one, each day for the last 30 days that have one, …"; restic
-  counts the hours, days, weeks and months that *have* a backup, not the last 24 hours of wall time, a count of 0
-  leaves a rule out, and `RetentionSummary` words it); one quiet sentence that the weekly `restic check` (no
-  `--read-data`) downloads the repository's snapshots, index and folder lists (tree data) with a temporary cache, never
-  your files' contents, so it uses a little download allowance (restic 0.19.1 `check`); the prune switch, and for an
-  adopted repository how often old snapshots are tidied. Below
-  them, **Earlier snapshots**: a preview, run when the tab appears and after a save changes the folders, host label or
-  retention, lists each earlier group of the plan (its previous folder lists, and for an adopted plan this Mac's
-  snapshots from before Restorey) with how many snapshots it holds and how many retention would remove, and an "Apply
-  Retention…" button that asks first ("Remove N snapshots of the previous folder list?", Cancel the default). With
-  nothing to apply it says so in one line. It counts with the saved plan, so unsaved edits disable the buttons.
+- **Retention**: the four counts, prune and Earlier snapshots, described under Retention below.
 - **History**: the History table for that plan; a warning row has "Show…" for the files that couldn't be read, and a
   backup row "Show…" for its biggest additions.
 
@@ -645,7 +635,25 @@ settings, saved passwords and keys, and history are removed. The repository and 
 agent also removes the plan's run logs, and setup's saved progress is forgotten if it names the deleted plan
 (`SetupProgressStore.forget`), as it is when the Developer window deletes one.
 
-**Network** (Settings) edits the Mac-wide rules (`NetworkEdit` in `RestoreyCore`, held by `NetworkEditModel` for as
+#### Retention
+
+The plan's Retention tab ("Keep" until Task 17c), with a help button at its top right that opens this section: the four counts, one row each under "Keep" (Hourly, Daily, Weekly, Monthly),
+with a plain-English summary under them that updates as you type ("Keeps the newest
+backup of each hour for the last 24 hours that have one, each day for the last 30 days that have one, …"; restic
+counts the hours, days, weeks and months that *have* a backup, not the last 24 hours of wall time, a count of 0
+leaves a rule out, and `RetentionSummary` words it); one quiet sentence that the weekly `restic check` (no
+`--read-data`) downloads the repository's snapshots, index and folder lists (tree data) with a temporary cache, never
+your files' contents, so it uses a little download allowance (restic 0.19.1 `check`); the prune switch, and for an
+adopted repository how often old snapshots are tidied. Below
+them, **Earlier snapshots**: a preview, run when the tab appears and after a save changes the folders, host label or
+retention, lists each earlier group of the plan (its previous folder lists, and for an adopted plan this Mac's
+snapshots from before Restorey) with how many snapshots it holds and how many retention would remove, and an "Apply
+Retention…" button that asks first ("Remove N snapshots of the previous folder list?", Cancel the default). With
+nothing to apply it says so in one line. It counts with the saved plan, so unsaved edits disable the buttons.
+
+#### Network
+
+**Network** (Settings, with a help button at its top right that opens this section) edits the Mac-wide rules (`NetworkEdit` in `RestoreyCore`, held by `NetworkEditModel` for as
 long as the Settings window is open, so going to another pane and back keeps unsaved edits; closing the window drops
 them without asking, since Settings asks no question on close, until Network applies its changes as they are made). Its rows, from the top (the full design is in
 `docs/superpowers/specs/2026-11-21-upload-limit-design.md`):

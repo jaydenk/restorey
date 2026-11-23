@@ -62,5 +62,6 @@ struct PlanRetentionTab: View {
             EarlierSnapshotsSection(plan: model.saved, unsavedEdits: model.edit.isDirty, connection: connection)
         }
         .formStyle(.grouped)
+        .helpLink(HelpPage.retention)
     }
 }

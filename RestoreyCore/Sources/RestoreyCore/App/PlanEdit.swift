@@ -331,3 +331,10 @@ public struct PlanEdit: Sendable, Equatable, CustomStringConvertible, CustomDebu
             displayStyle: .struct)
     }
 }
+
+/// Whether a plan page shows its Save and Revert bar: on a page with fields (Folders, Schedule, Storage, Retention)
+/// always, so the bar is there to dim and light up; on Overview and History, which edit nothing themselves, only when
+/// a sheet has left edits to save or a save is under way, so the bar never hides edits waiting to be saved.
+public func showsSaveBar(pageHasFields: Bool, isDirty: Bool, saving: Bool) -> Bool {
+    pageHasFields || isDirty || saving
+}

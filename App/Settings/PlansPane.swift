@@ -369,9 +369,13 @@ private struct PlanDetail: View {
                 .frame(maxWidth: .infinity)
             page(tab)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // On every tab, so the page keeps its height as the tabs change (review M2); on Overview and History, which
-            // edit nothing themselves, Revert and Save stay dimmed until a sheet leaves edits.
-            SaveBar(model: model)
+            // On the tabs with fields (review M2: the page keeps its height as they change). Overview and History edit
+            // nothing themselves, so the bar shows there only while a sheet has left edits or a save is under way.
+            if showsSaveBar(
+                pageHasFields: tab != .overview && tab != .history, isDirty: model.edit.isDirty, saving: model.saving)
+            {
+                SaveBar(model: model)
+            }
         }
     }
 

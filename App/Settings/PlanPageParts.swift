@@ -104,3 +104,32 @@ struct UnfinishedPlanView: View {
         }
     }
 }
+
+/// A help button at the top trailing corner of a page, opening the README section that explains it (HIG Help:
+/// the system's help button, a question mark in a circle, linking to documentation). It sits above the page's
+/// form, in the form's top safe area, so it never covers a control.
+private struct HelpCorner: ViewModifier {
+    let destination: URL
+
+    func body(content: Content) -> some View {
+        content.safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
+                Spacer()
+                HelpLink(destination: destination)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+        }
+    }
+}
+
+extension View {
+    /// Adds the page's help button, linking to `destination`.
+    func helpLink(_ destination: URL) -> some View { modifier(HelpCorner(destination: destination)) }
+}
+
+/// The README sections the help buttons open.
+enum HelpPage {
+    static let network = URL(string: "https://github.com/jaydenk/restorey#network")!
+    static let retention = URL(string: "https://github.com/jaydenk/restorey#retention")!
+}

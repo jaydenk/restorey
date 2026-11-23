@@ -81,6 +81,9 @@ public struct MenuItem: Sendable, Equatable {
     public var keyEquivalent: String
     /// What VoiceOver reads for the item. Nil: its title (AppKit's default).
     public var accessibilityLabel: String?
+    /// A plain line (`line(_:toolTip:)`) says something and does nothing, so the app draws it in the secondary label
+    /// colour. An action that is dimmed for now ("Show Last Run Log" with no log) is not one, and keeps AppKit's dimming.
+    public private(set) var isLine = false
 
     public init(
         _ title: String, subtitle: String? = nil, symbol: MenuSymbol? = nil, toolTip: String? = nil,
@@ -98,7 +101,9 @@ public struct MenuItem: Sendable, Equatable {
 
     /// A line that says something and does nothing.
     public static func line(_ title: String, toolTip: String? = nil) -> MenuItem {
-        MenuItem(title, toolTip: toolTip, enabled: false)
+        var item = MenuItem(title, toolTip: toolTip, enabled: false)
+        item.isLine = true
+        return item
     }
 }
 
