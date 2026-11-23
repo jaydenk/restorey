@@ -96,7 +96,11 @@ struct PlansPane: View {
 
     private var planList: some View {
         VStack(alignment: .leading, spacing: 6) {
-            VStack(spacing: 0) {
+            BorderedList(
+                addName: "Add Plan…", removeName: "Delete Plan…", canAdd: listAvailable,
+                canRemove: selected != nil && canDelete, add: addPlan,
+                remove: { if let selected { askToDelete(selected.plan) } }
+            ) {
                 List(selection: Binding(get: { selectedID }, set: choose)) {
                     ForEach(plans, id: \.plan.id) { plan in
                         PlanRow(plan: plan)
@@ -104,13 +108,8 @@ struct PlansPane: View {
                             .contextMenu { planMenu(plan) }
                     }
                 }
-                .listStyle(.bordered)
                 .onDeleteCommand { if let selected { askToDelete(selected.plan) } }
                 .accessibilityLabel("Plans")
-                ListAddRemoveBar(
-                    addName: "Add Plan…", removeName: "Delete Plan…", add: addPlan,
-                    remove: { if let selected { askToDelete(selected.plan) } },
-                    canAdd: listAvailable, canRemove: selected != nil && canDelete)
             }
             if deletionInProgress {
                 ProgressView().controlSize(.small)

@@ -31,6 +31,19 @@ extension AssistiveInputField {
 /// An `NSTextField` that reports writes to its text.
 final class ForwardingTextField: NSTextField, AssistiveInputField {
     var onTextWritten: (@MainActor (String) -> Void)?
+    /// Takes keyboard focus once it is in a window (a field in a popover has nothing else to type into).
+    var focusesWhenShown = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if focusesWhenShown, let window {
+            // After the popover's window is key, which it isn't yet while it is being put on screen.
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let self, let window, self.window === window else { return }
+                window.makeFirstResponder(self)
+            }
+        }
+    }
 
     /// This field's undo history, owned by the field. Its actions target this field's own editor and text
     /// storage, so they can't outlive what they point at: the history goes when the field does. Without it the
@@ -275,6 +288,8 @@ struct PlainTextField: NSViewRepresentable {
     var isNumeric = false
     /// What VoiceOver calls the field when its placeholder isn't a name ("0", "None"); nil uses the title.
     var accessibilityName: String?
+    /// Takes keyboard focus when it appears (a popover's field).
+    var focusesWhenShown = false
 
     func makeCoordinator() -> Coordinator { Coordinator(text: $text, onSubmit: onSubmit, onCommit: onCommit) }
 
@@ -283,6 +298,7 @@ struct PlainTextField: NSViewRepresentable {
         TextFieldSupport.configure(field, title: title)
         field.delegate = context.coordinator
         field.stringValue = text
+        field.focusesWhenShown = focusesWhenShown
         field.onTextWritten = { [coordinator = context.coordinator] in coordinator.take($0) }
         return field
     }

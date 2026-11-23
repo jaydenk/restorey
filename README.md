@@ -123,7 +123,8 @@ Settings:
 - **Network**: rules for the whole Mac, for plans that back up to another machine (S3, B2, a restic server; never a
   folder or drive): an upload limit shared by the backups uploading at once (a rate, or a percentage of the upload
   speed the agent measures on each network), skipping backups on a phone hotspot or
-  in Low Data Mode (on by default), and a list of Wi-Fi networks to skip backups on. Adding the first network asks
+  in Low Data Mode (on by default), and a list of Wi-Fi networks to skip backups on (a list with + and − buttons joined to
+  its bottom edge: + opens a small box for the network's name, − removes the selected names, each applying at once). Adding the first network asks
   for Location permission, which macOS requires before it shows any app the Wi-Fi network's name. Network applies
   changes as you make them (a switch or menu at once, a field when you press Return or leave it), with no Save or
   Revert; a value Restorey’s background process refuses stays in its field, with the reason beside the form. The
@@ -582,8 +583,12 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   rule leaves out is said under the list ("“notes.txt” isn't a
   folder. Only folders and drives can be added."). The list is ringed in the accent colour while a drag is over it
   (`dropDestination(for:isEnabled:action:)` and `onDropSessionUpdated`, macOS 26). Delete (⌫ or ⌦,
-  `onDeleteCommand`) removes the selected rows as Remove does (never Restorey's own exclusions), and a folder's
-  context menu has Show in Finder and Remove. Setup's "What to back up" step uses the same list.
+  `onDeleteCommand`) removes the selected rows as − does (never Restorey's own exclusions), and a folder's
+  context menu has Show in Finder and Remove. Setup's "What to back up" step uses the same list. Every list that adds
+  and removes (the plans, a plan's folders, the exclusions sheet's folders and file types, and the skipped Wi-Fi
+  networks) is one bordered unit with small square + and − buttons joined to its bottom edge (`BorderedList`):
+  + on the folders lists opens the folder panel, + on file types and Wi-Fi networks opens a small box anchored to it
+  with the name field (Return adds and closes it, Esc closes it), and − is dimmed until something removable is selected.
 - **Schedule**: the interval, the battery rule and the plan's own upload limit, in KB/s or MB/s by a picker beside the
   amount (empty, the default, is none; choosing the other unit converts the amount, so 5 MB/s becomes 5120 KB/s, and
   the plan remembers its unit, `PlanEdit.setUploadLimitUnit`; a plan's limit is never a percentage). A networked

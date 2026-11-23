@@ -67,6 +67,9 @@ private struct NetworkForm: View {
 
     private enum TimeField { case start, end }
     @FocusState private var timeFocus: TimeField?
+    @State private var wiFiSelection: Set<String> = []
+    /// The popover from the list's + (the typed add).
+    @State private var addingName = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -99,7 +102,6 @@ private struct NetworkForm: View {
                 }
                 Section("Skip on these Wi-Fi networks") {
                     wiFiList
-                    addRow
                     accessNote
                 }
             }
@@ -203,44 +205,77 @@ private struct NetworkForm: View {
         }
     }
 
-    @ViewBuilder private var wiFiList: some View {
-        if model.fields.wiFiNames.isEmpty {
-            Text("No networks").foregroundStyle(.secondary)
-        }
-        ForEach(model.fields.wiFiNames, id: \.self) { name in
-            HStack {
-                Text(name)
-                Spacer()
-                Button("Remove") { Task { await model.remove(name) } }
-                    .controlSize(.small)
-                    .accessibilityLabel("Remove \(name)")
+    /// The skipped networks as a selectable list with the joined + and − buttons. + opens a popover with the name field,
+    /// the Location-permission flow and the problem or note (`NetworkEditModel.addName`); − removes the selected names.
+    /// Each add or removal applies at once, as before.
+    private var wiFiList: some View {
+        BorderedList(
+            addName: "Add Network…", removeName: "Remove Network", canAdd: !blocked,
+            canRemove: !wiFiSelection.isEmpty, isAddPresented: $addingName, remove: removeSelected,
+            popover: { addPopover }, content: { wiFiRows })
+    }
+
+    private var addPopover: some View {
+        TypedAddPopover(
+            title: "Network name", text: $model.newName,
+            canAdd: !model.newName.isEmpty && model.newNameProblem == nil && !model.asking && !blocked,
+            onAdd: addName, footer: { addPopoverFooter })
+    }
+
+    @ViewBuilder private var addPopoverFooter: some View {
+        if model.asking {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Waiting for your answer to the Location question…").foregroundStyle(.secondary)
             }
+            .font(.subheadline)
+        }
+        if let problem = model.newNameProblem ?? model.addNote {
+            SeverityText(problem)
+        }
+    }
+
+    private var wiFiRows: some View {
+        List(selection: $wiFiSelection) {
+            ForEach(model.fields.wiFiNames, id: \.self) { name in
+                Text(name).tag(name)
+            }
+        }
+        .frame(height: 100)
+        .overlay {
+            if model.fields.wiFiNames.isEmpty {
+                Text("No networks")
+                    .foregroundStyle(.secondary)
+                    .allowsHitTesting(false)
+            }
+        }
+        .accessibilityLabel("Wi-Fi networks to skip")
+        .onDeleteCommand(perform: deleteCommand)
+        .onChange(of: model.fields.wiFiNames) { _, names in dropSelection(notIn: names) }
+    }
+
+    private var deleteCommand: (() -> Void)? { wiFiSelection.isEmpty ? nil : { removeSelected() } }
+
+    /// Keeps the selection to names still listed.
+    private func dropSelection(notIn names: [String]) {
+        wiFiSelection = wiFiSelection.intersection(names)
+    }
+
+    private func removeSelected() {
+        let names = model.fields.wiFiNames.filter(wiFiSelection.contains)
+        Task { for name in names { await model.remove(name) } }
+    }
+
+    /// Adds the typed name, and closes the popover once it was added (the field is emptied then); a refusal or a
+    /// Location answer that isn't yes leaves it open with the reason.
+    private func addName() {
+        Task {
+            await model.addName()
+            if model.newName.isEmpty { addingName = false }
         }
     }
 
     private var blocked: Bool { model.access.addStep == .blocked }
-
-    private var addRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                PlainTextField(title: "Network name", text: $model.newName, onSubmit: { Task { await model.addName() } })
-                Button("Add") { Task { await model.addName() } }
-                    .disabled(model.newName.isEmpty || model.newNameProblem != nil || model.asking)
-            }
-            // Also while the Location question is up, so the name added is the one submitted.
-            .disabled(blocked || model.asking)
-            if model.asking {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Waiting for your answer to the Location question…").foregroundStyle(.secondary)
-                }
-                .font(.subheadline)
-            }
-            if let problem = model.newNameProblem ?? model.addNote {
-                SeverityText(problem)
-            }
-        }
-    }
 
     @ViewBuilder private var accessNote: some View {
         let access = model.access
