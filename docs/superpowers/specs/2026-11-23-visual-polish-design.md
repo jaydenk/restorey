@@ -86,9 +86,10 @@ Success: the owner uses Restorey for a while and nothing reads as "not quite Mac
   - (Shortcuts run in the background and the setup flow's end opens no window, so neither needs a route.)
 - Each window has its own frame-autosave name and Window menu entry. A remembered section from before the split
   that now belongs to the other window falls back to that window's default (Plans; General), with no migration.
-- The plan editor is unchanged: its tabs keep their Save and Revert bar and the unsaved-edits question
-  (`SaveQuestion`) when switching plans, switching to History or closing the window. Apply-as-you-go is for the
-  Settings window only.
+- The plan editor is unchanged: its tabs keep their Save and Revert bar, and the unsaved-edits question
+  (`SaveQuestion`) is asked when switching plans or closing the window. Switching to History asks nothing: the
+  edits stay in the window's editor and are there on going back to Plans, as today (ruling, 23 Nov 2026).
+  Apply-as-you-go is for the Settings window only.
 - Whether Restorey shows a Dock icon while this window is open follows today's rule for the Settings window,
   unchanged.
 

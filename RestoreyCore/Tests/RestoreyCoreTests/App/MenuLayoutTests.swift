@@ -452,7 +452,7 @@ struct MenuLayoutTests {
         #expect(BannerAction.finishSetup(id).buttonTitle == "Finish Setup…")
         #expect(BannerAction.saveRecoveryKit(id).buttonTitle == "Save Recovery Kit…")
         #expect(BannerAction.showDetails(id).buttonTitle == "Show Details…")
-        #expect(BannerAction.showSettingsError.buttonTitle == "Show in Settings…")
+        #expect(BannerAction.showSettingsError.buttonTitle == "Show Plan…")
     }
 
     /// The menu names each fix as a command (audit P4).
@@ -468,7 +468,7 @@ struct MenuLayoutTests {
         #expect(BannerAction.setUp.menuTitle == "Finish Setup…")
         #expect(BannerAction.saveRecoveryKit(id).menuTitle == "Save Recovery Kit…")
         #expect(BannerAction.showDetails(id).menuTitle == "Show Details…")
-        #expect(BannerAction.showSettingsError.menuTitle == "Show in Settings…")
+        #expect(BannerAction.showSettingsError.menuTitle == "Show Plan…")
     }
 
     /// What choosing each kind of row does.

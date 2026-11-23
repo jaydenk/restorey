@@ -480,8 +480,9 @@ full screen or tabs. Which one a route opens is `WindowRouter`'s: anything about
 | Settings… (menu) and Settings… ⌘, (app menu) | Settings, as it was left (a new one at the pane last viewed) |
 | Show Details… (menu), and Show Last Run Log with no log left | Main window, History (filtered to the plan) |
 | Add Check-In URL… (menu) | Main window, Plans, that plan's Schedule tab |
-| Show in Settings… (Restorey can't read its settings) | Main window, Plans, which says why |
+| Show Plan… (Restorey can't read its settings) | Main window, Plans, which says why |
 | Allow Full Disk Access… (menu) | Settings, General, and System Settings' Full Disk Access list |
+| Turn On Notifications… (menu) | Settings, Notifications, and Restorey's page in System Settings → Notifications |
 | Show in History (a plan's context menu) | Main window, History, filtered to the plan |
 
 **The main window** has **Plans** and **History** (toolbar `RestoreyMainToolbar`, frame `RestoreyMain`). It is
@@ -796,9 +797,9 @@ own menus do: section headers (`NSMenuItem.sectionHeader(title:)`, macOS 14), a 
   why it matters as its tooltip, and the severity's symbol (the system's red octagon or yellow triangle, in their own
   colours). Choosing it runs the fix: "Allow Full Disk Access…" (Full Disk Access is missing) opens Privacy &
   Security → Full Disk Access and Settings → General, which holds the tile to drag into the list (it goes when the
-  agent finds access granted); "Turn On Notifications…" (Notifications are off) opens the agent's page in
-  Notifications; "Restart Backups" (Backups aren't running, or aren't responding); "Turn On in Login Items…"
-  (Backups are switched off); "Finish Setup…" (No backup plan yet); and "Show in Settings…" (Restorey can't read its
+  agent finds access granted); "Turn On Notifications…" (Notifications are off) opens Settings → Notifications and the agent's
+  page in System Settings → Notifications; "Restart Backups" (Backups aren't running, or aren't responding); "Turn On in Login Items…"
+  (Backups are switched off); "Finish Setup…" (No backup plan yet); and "Show Plan…" (Restorey can't read its
   settings), which opens the main window's Plans with the reason. A line such as "Last known: backed up at 13:16" or
   "Backups couldn't be set up" follows when there is one, with any long reason in its tooltip.
 - **A section per plan**, headed by the plan's name. Its status item has the status as its title ("Backed up at

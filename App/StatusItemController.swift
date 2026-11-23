@@ -280,7 +280,9 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
         case .openLoginItems:
             supervisor.openLoginItems()
         case .turnOnNotifications:
-            // The agent posts the notifications, so it is the app to turn them on for.
+            // Settings → Notifications says whether they are allowed; the agent posts the notifications, so it is the
+            // app to turn them on for in System Settings.
+            router.showSettings(pane: .notifications)
             if let url = Self.notificationsURL(bundleID: supervisor.identity.agentBundleID) { NSWorkspace.shared.open(url) }
         case .addCheckInURL(let planID):
             router.showMain(section: .plans, planID: planID, tab: .schedule)

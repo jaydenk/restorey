@@ -62,7 +62,7 @@ private struct PlanMissingView: View {
                 SeverityIcon(severity: .warning)
             }
             .font(.headline)
-            Text("It may have been deleted elsewhere, in Settings or another window. Start again from where backups go; nothing has been backed up for it.")
+            Text("It may have been deleted elsewhere, in Restorey’s window or another one. Start again from where backups go; nothing has been backed up for it.")
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)
             SetupButtonRow {
