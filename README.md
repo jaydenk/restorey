@@ -41,8 +41,8 @@ works.
 
 **Setup.** The first launch opens setup, which takes one plan from nothing to its first backup: move Restorey to
 Applications, grant Full Disk Access (and, optionally, notifications and Open at login), say where backups go (B2,
-S3, or any other restic location), set or enter the repository password (a new repository, or an existing one to
-adopt with its history), save the recovery kit somewhere other than this Mac, choose what to back up (the home
+S3, a folder or drive on this Mac, or any other restic location), set or enter the repository password (a new
+repository, or an existing one to adopt with its history), save the recovery kit somewhere other than this Mac, choose what to back up (the home
 folder by default, with the default exclusions) and the schedule (hourly by default, with retention and an
 optional check-in URL), then start the first backup. Quitting part-way resumes where you left off. "Add Plan…" in
 the main window's Plans runs the same steps for another plan.
@@ -379,9 +379,11 @@ the app (spike H1), and the app is the only item the list needs. The step's secr
 and when the window closes; the progress is saved only when the step changes.
 
 From the storage step on, each Continue saves the plan through the agent (kit unconfirmed, so it never runs), so a
-resumed setup gets its values back from the agent's status. **Where backups go** offers B2 (the default), S3 or
-another restic location (a path, or any restic backend with its environment variables, whose values go to the
-keychain), with Backblaze's and AWS's pages on making a bucket and a key; `StorageForm` (`RestoreyCore`) checks the
+resumed setup gets its values back from the agent's status. **Where backups go** offers B2 (the default), S3, a
+folder or drive on this Mac (shown with its icon and path, chosen with Choose…, which can make a new folder; the
+agent’s check then finds whether it is empty or holds a repository) or another restic location (an address such as
+sftp:nas:/restic, with its environment variables, whose values go to the keychain), with Backblaze's and AWS's pages on making a bucket and a key; `StorageForm`
+(`RestoreyCore`) checks the
 fields with `FormValidation` and reads them into the plan's repository. "Check" saves the plan with a stand-in
 generated password and asks the agent what is there (`probeRepository`): nothing (`empty`), or a repository the
 stand-in can't open (`passwordRejected`, restic's exit 12), which is how setup learns that one is there before the

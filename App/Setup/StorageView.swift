@@ -1,3 +1,4 @@
+import AppKit
 import RestoreyCore
 import SwiftUI
 
@@ -19,6 +20,7 @@ struct StorageView: View {
 
             switch model.storage.kind {
             case .b2, .s3: BucketFields(model: model)
+            case .folder: FolderFields(model: model)
             case .other: OtherLocationFields(model: model)
             }
             if let link = model.storage.kind.helpLink {
@@ -74,6 +76,49 @@ private struct BucketFields: View {
     }
 }
 
+/// A folder or drive on this Mac, chosen with the open panel: its Finder icon and name, and the full path under
+/// them. Whether it is empty or holds a repository is what "Check" finds out (`SetupModel.check`).
+private struct FolderFields: View {
+    @Bindable var model: SetupModel
+
+    var body: some View {
+        let path = model.storage.folderPath
+        HStack(spacing: 10) {
+            if path.isEmpty {
+                Text("No folder chosen").foregroundStyle(.secondary)
+            } else {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: path))
+                    .resizable()
+                    .frame(width: 32, height: 32)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(SourcePaths.lastComponent(path)).lineLimit(1).truncationMode(.middle)
+                    Text(path).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                }
+                .textSelection(.enabled)
+            }
+            Spacer(minLength: 8)
+            Button("Choose…") { choose() }
+                .disabled(model.working)
+        }
+        Text("An empty folder, or one that holds a restic repository.").explanatoryNote()
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Choose"
+        panel.message = "Choose where the backups go: an empty folder, or one that holds a restic repository."
+        Task { @MainActor in
+            guard await panel.presentForKeyWindow() == .OK, let url = panel.url else { return }
+            model.storage.folderPath = url.standardizedFileURL.path
+        }
+    }
+}
+
 /// Another restic location: the repository string and any environment variables it needs (names in the plan,
 /// values in the keychain).
 private struct OtherLocationFields: View {
@@ -82,9 +127,9 @@ private struct OtherLocationFields: View {
     var body: some View {
         let form = model.storage
         SetupField(label: "Repository", problem: shown(form.repository, form.repositoryProblem)) {
-            PlainTextField(title: "/Volumes/Backup/restic or sftp:nas:/restic", text: $model.storage.repository)
+            PlainTextField(title: "sftp:nas:/restic", text: $model.storage.repository)
         }
-        Text("A folder or drive, or any location restic understands. The folder must be empty or hold a restic repository.")
+        Text("Any location restic understands, such as sftp:nas:/restic.")
             .explanatoryNote()
         if !form.environment.isEmpty {
             Text("Environment variables").font(.callout).foregroundStyle(.secondary)

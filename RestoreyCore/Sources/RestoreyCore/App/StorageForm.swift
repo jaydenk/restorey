@@ -6,13 +6,14 @@ import Foundation
 /// stop, or nil.
 public struct StorageForm: Sendable, Equatable {
     public enum Kind: String, CaseIterable, Sendable, Identifiable {
-        case b2, s3, other
+        case b2, s3, folder, other
         public var id: String { rawValue }
 
         public var title: String {
             switch self {
             case .b2: "B2"
             case .s3: "S3"
+            case .folder: "Folder or Drive"
             case .other: "Other"
             }
         }
@@ -26,7 +27,7 @@ public struct StorageForm: Sendable, Equatable {
             case .s3:
                 ("How to make an access key in AWS",
                  URL(string: "https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html")!)
-            case .other: nil
+            case .folder, .other: nil
             }
         }
     }
@@ -52,6 +53,8 @@ public struct StorageForm: Sendable, Equatable {
     public var endpoint: String
     public var bucket: String
     public var prefix: String
+    /// `.folder`: the folder or drive chosen with the picker, as a full path; empty until one is chosen.
+    public var folderPath: String
     /// `.other`: what restic takes as `-r`, such as `/Volumes/Backup/restic` or `sftp:nas:/restic`.
     public var repository: String
     public var environment: [EnvironmentRow]
@@ -62,6 +65,7 @@ public struct StorageForm: Sendable, Equatable {
         endpoint = ""
         bucket = ""
         prefix = ""
+        folderPath = ""
         repository = ""
         environment = []
     }
@@ -88,26 +92,40 @@ public struct StorageForm: Sendable, Equatable {
             bucket = location.bucket
             prefix = location.prefix
         case .raw(let raw, let names):
-            kind = .other
-            self.repository = raw
-            environment = names.map { EnvironmentRow(name: $0) }
+            if names.isEmpty, let folder = repository.localFolderPath {
+                kind = .folder
+                folderPath = folder
+            } else {
+                kind = .other
+                self.repository = raw
+                environment = names.map { EnvironmentRow(name: $0) }
+            }
         }
     }
 
     // MARK: Problems
 
-    public var endpointProblem: String? { kind == .other ? nil : FormValidation.endpoint(endpoint) }
-    public var bucketProblem: String? { kind == .other ? nil : FormValidation.bucket(bucket) }
+    public var endpointProblem: String? { !isBucketKind ? nil : FormValidation.endpoint(endpoint) }
+    public var bucketProblem: String? { !isBucketKind ? nil : FormValidation.bucket(bucket) }
 
     /// The prefix is a folder inside the bucket: slashes at either end are dropped, and nothing else is refused
     /// except a line break.
     public var prefixProblem: String? {
-        guard kind != .other else { return nil }
+        guard isBucketKind else { return nil }
         return prefix.contains(where: \.isNewline) ? "The folder must be on one line." : nil
     }
 
+    /// B2 and S3, which have an endpoint, a bucket and a folder in it.
+    private var isBucketKind: Bool { kind == .b2 || kind == .s3 }
+
     public var repositoryProblem: String? {
-        guard kind == .other else { return nil }
+        switch kind {
+        case .b2, .s3: return nil
+        case .folder:
+            return folderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Choose a folder or drive for the backups." : nil
+        case .other: break
+        }
         let typed = repository.trimmingCharacters(in: .whitespacesAndNewlines)
         if typed.isEmpty { return "Enter the repository location, such as /Volumes/Backup/restic or sftp:nas:/restic." }
         if typed.contains(where: \.isNewline) { return "The repository location must be on one line." }
@@ -159,6 +177,8 @@ public struct StorageForm: Sendable, Equatable {
             return .s3(S3Location(
                 provider: kind == .b2 ? .b2 : .s3, endpoint: url,
                 bucket: bucket.trimmingCharacters(in: .whitespacesAndNewlines), prefix: folder))
+        case .folder:
+            return .raw(repository: folderPath.trimmingCharacters(in: .whitespacesAndNewlines), environmentNames: [])
         case .other:
             return .raw(
                 repository: Self.expandedPath(repository.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -171,6 +191,7 @@ public struct StorageForm: Sendable, Equatable {
     public func secretKeys(planID: UUID) -> [SecretKey] {
         switch kind {
         case .b2, .s3: [.s3AccessKeyID(planID), .s3SecretAccessKey(planID)]
+        case .folder: []
         case .other: environment.map { .environment(planID, name: $0.name.trimmingCharacters(in: .whitespaces)) }
         }
     }

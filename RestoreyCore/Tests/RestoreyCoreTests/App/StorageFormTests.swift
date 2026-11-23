@@ -153,6 +153,48 @@ import Testing
         #expect(StorageForm.planName(for: .raw(repository: "/Volumes/Backup/restic/x/..", environmentNames: [])) == "Local · restic")
     }
 
+    @Test func aLocalFolderIsTheFolderKind() {
+        let form = StorageForm(repository: .raw(repository: "/Volumes/Backup/restic", environmentNames: []))
+        #expect(form.kind == .folder)
+        #expect(form.folderPath == "/Volumes/Backup/restic")
+        #expect(form.repositoryValue == .raw(repository: "/Volumes/Backup/restic", environmentNames: []))
+        let prefixed = StorageForm(repository: .raw(repository: "local:/Volumes/Drive", environmentNames: []))
+        #expect(prefixed.kind == .folder)
+        #expect(prefixed.folderPath == "/Volumes/Drive")
+    }
+
+    @Test func aRemoteOrEnvironmentRawLocationStaysOther() {
+        #expect(StorageForm(repository: .raw(repository: "sftp:nas:/restic", environmentNames: [])).kind == .other)
+        #expect(StorageForm(repository: .raw(repository: "/Volumes/X", environmentNames: ["A"])).kind == .other)
+        #expect(StorageForm(repository: .raw(repository: "Backups/relative", environmentNames: [])).kind == .other)
+    }
+
+    @Test func aFolderMustBeChosen() {
+        var form = StorageForm()
+        form.choose(.folder)
+        #expect(form.repositoryProblem == "Choose a folder or drive for the backups.")
+        #expect(!form.isValid)
+        #expect(form.repositoryValue == nil)
+        #expect(form.endpointProblem == nil && form.bucketProblem == nil && form.prefixProblem == nil)
+        form.folderPath = "/Volumes/Backup/restic"
+        #expect(form.isValid)
+    }
+
+    @Test func aFolderHasNoSecrets() {
+        var form = StorageForm(kind: .folder)
+        form.folderPath = "/Volumes/Backup"
+        #expect(form.secretKeys(planID: Self.planID).isEmpty)
+        #expect(form.secretEntries(planID: Self.planID, typed: { _ in nil }, saved: false) == .success([]))
+        #expect(form.keepsSavedSecrets(saved: form.repositoryValue))
+        #expect(StorageForm.planName(for: form.repositoryValue!) == "Local · Backup")
+    }
+
+    @Test func kindsAreInOrder() {
+        #expect(StorageForm.Kind.allCases == [.b2, .s3, .folder, .other])
+        #expect(StorageForm.Kind.folder.title == "Folder or Drive")
+        #expect(StorageForm.Kind.folder.helpLink == nil)
+    }
+
     @Test func helpLinksAreTheProvidersDocs() {
         #expect(StorageForm.Kind.b2.helpLink?.url.absoluteString
             == "https://www.backblaze.com/docs/cloud-storage-create-and-manage-app-keys")
