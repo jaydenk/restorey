@@ -15,7 +15,7 @@ extension SetupModel {
         guard step == .storage, let repository = storage.repositoryValue, let supervisor else { return }
         await act {
             let id = planID
-            let sameRepository = draft.plan?.repository == repository
+            let sameRepository = draft.plan?.repository.isSameLocation(repository) ?? false
             let typed: [SecretEntry]
             switch storage.secretEntries(
                 planID: id, typed: { self.draft.secret($0) }, environmentValue: { self.draft.environmentValue($0) },

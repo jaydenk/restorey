@@ -492,6 +492,17 @@ public enum Repository: Codable, Sendable, Equatable {
         return SourcePaths.standardised(String(path))
     }
 
+    /// Whether `other` is the same place: equal, or two local folders with the same environment names whose
+    /// standardised paths agree (`local:/x`, `/x/` and `/x` are one folder). A form that re-reads a saved folder
+    /// gives its standardised path, not the saved string, so `==` would call a resumed setup's folder a new one.
+    public func isSameLocation(_ other: Repository) -> Bool {
+        if self == other { return true }
+        guard case .raw(_, let names) = self, case .raw(_, let otherNames) = other, names == otherNames,
+            let path = localFolderPath, let otherPath = other.localFolderPath
+        else { return false }
+        return path == otherPath
+    }
+
     /// Whether restic needs the network to reach this repository (Ruling R69). An S3 or B2 location
     /// always does. A raw location is read the way restic 0.19.1 reads one
     /// (`internal/backend/location/location.go` `Parse`, with the backends `internal/backend/all` registers):

@@ -189,6 +189,25 @@ import Testing
         #expect(StorageForm.planName(for: form.repositoryValue!) == "Local · Backup")
     }
 
+    @Test func theSameFolderWrittenDifferentlyIsTheSameLocation() {
+        func raw(_ path: String, _ names: [String] = []) -> Repository { .raw(repository: path, environmentNames: names) }
+        #expect(raw("local:/x").isSameLocation(raw("/x")))
+        #expect(raw("/x/").isSameLocation(raw("/x")))
+        #expect(raw("/x/..").isSameLocation(raw("/")))
+        #expect(!raw("/x").isSameLocation(raw("/y")))
+        #expect(!raw("/x").isSameLocation(raw("sftp:nas:/x")))
+        #expect(!raw("/x", ["A"]).isSameLocation(raw("/x")))
+        let s3 = Repository.s3(S3Location(
+            provider: .b2, endpoint: URL(string: "https://s3.example.com")!, bucket: "b", prefix: ""))
+        #expect(s3.isSameLocation(s3))
+        #expect(!s3.isSameLocation(raw("/x")))
+    }
+
+    @Test func aResumedFolderIsTheSameLocationAsWhatWasSaved() {
+        let saved = Repository.raw(repository: "local:/Volumes/B/restic", environmentNames: [])
+        #expect(StorageForm(repository: saved).repositoryValue!.isSameLocation(saved))
+    }
+
     @Test func kindsAreInOrder() {
         #expect(StorageForm.Kind.allCases == [.b2, .s3, .folder, .other])
         #expect(StorageForm.Kind.folder.title == "Folder or Drive")
