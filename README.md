@@ -1072,8 +1072,8 @@ restic step starting; `backupFinished` (off by default) is for a backup that end
 check-in, a configuration error, Full Disk Access missing). Turning `problems` off stops posting those notifications
 only: the alerts are still raised, so the menu bar icon, the menu's banners and check-in pings behave as before. This
 is additive to schema 5: a `config.json` without the key reads as the defaults, and nothing is migrated. The agent
-saves it through the `saveNotificationSettings` XPC call and returns it as `notifications` in `status`; posting the
-started and finished notifications and the Settings → Notifications pane come in later changes.
+saves it through the `saveNotificationSettings` XPC call and returns it as `notifications` in `status`; what each
+option posts is under [Alerts](#alerts). The Settings → Notifications pane comes in a later change.
 
 **The upload limit.** restic's `--limit-upload` (KiB/s) is fixed for a run, so the agent works out the Mac-wide limit
 when each backup to a networked repository starts, in the Mac's current time zone: outside the window (when one is
@@ -1198,6 +1198,26 @@ made, and a permission check that doesn't answer keeps the last answer it gave. 
 10 minutes is abandoned and tried afresh; an abandoned permission check shows "notifications off" until
 macOS answers again. If `config.json` or `state.json` can't be read, the agent posts
 one notification, "Restorey has stopped — its settings can't be read", on the same schedule.
+
+**Which notifications are posted.** Three Mac-wide options (`notifications` in `config.json`) decide it:
+
+- **Backup started** (off by default): "Backing up — <plan>", "Started at 9:19 am", when a backup's restic step
+  starts, scheduled or Back Up Now. Not for maintenance (forget, prune, check), and not for a backup skipped before
+  it starts.
+- **Backup finished** (off by default): "Backed up — <plan>", when a backup ends having saved its data, worded as
+  the menu words it: "Finished at 9:19 am", "Nothing new to back up", or "1 file couldn’t be read". A cancelled,
+  paused or stopped-by-the-system backup posts nothing, and a failure is a problem, not "finished".
+- **Problems with backups** (on by default): the notifications above. With it off, the agent still raises and clears
+  every alert exactly as before, so the menu bar icon, the menu's banners and check-in pings still show a problem;
+  it only stops posting them (and "notifications off", which exists to protect them, isn't raised). Alerts raised
+  meanwhile go out when it is turned back on.
+
+A plan's started and finished notifications share one identifier (`event.<plan ID>`), so each replaces the last and
+hourly backups leave one per plan; they sit in the plan's group beside its problem notifications, which keep their own.
+When a backup fails, the plan's started (or last finished) notification is taken away, so a stale "Backing up" never
+sits next to the failure. The runner only queues these and carries on, so restic is never held up; each call to the
+notification centre gets the same 10 s, and nothing is posted without permission. The time is the Mac's, in its
+language.
 
 The agent needs its own notification permission, separate from the app's, and macOS reports a notification
 from an agent without one as posted while showing nothing. So the agent checks its permission before posting.

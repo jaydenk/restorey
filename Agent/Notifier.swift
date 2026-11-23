@@ -34,4 +34,10 @@ struct Notifier: AlertNotifying {
         // The same identifier replaces the banner a re-notification follows.
         try await center.add(UNNotificationRequest(identifier: alert.identifier, content: content, trigger: nil))
     }
+
+    func remove(identifiers: [String]) async {
+        // Delivered ones in Notification Centre, and any the system hasn't shown yet.
+        center.removeDeliveredNotifications(withIdentifiers: identifiers)
+        center.removePendingNotificationRequests(withIdentifiers: identifiers)
+    }
 }

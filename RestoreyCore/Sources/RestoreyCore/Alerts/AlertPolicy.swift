@@ -69,7 +69,9 @@ extension RunOutcome {
         }
     }
 
-    fileprivate var isFailureVerdict: Bool {
+    /// A verdict that the work failed: what raises `backupFailed` and `checkFailed`. A backup that ends this way
+    /// also takes away the plan's "Backing up" notification.
+    public var isFailureVerdict: Bool {
         switch self {
         case .failed, .interrupted, .wrongPassword, .repositoryMissing, .credentialsUnavailable: true
         default: false

@@ -700,7 +700,7 @@ private enum Words {
 
     static func unreadable(_ backup: RunRecord) -> String? {
         guard case .warning(let unreadable) = backup.outcome else { return nil }
-        return "\(unreadable) \(unreadable == 1 ? "file" : "files") couldn’t be read"
+        return DisplayFormat.unreadableFiles(unreadable)
     }
 
     /// A backup that ended without a verdict because something stopped it (the system, the user's pause or Cancel

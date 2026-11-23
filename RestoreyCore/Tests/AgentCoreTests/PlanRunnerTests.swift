@@ -548,6 +548,69 @@ struct PlanRunnerTests {
         #expect(await f.state.status().fdaMissing == false)
     }
 
+    // MARK: Backup started and finished notifications
+
+    @Test func startedAndFinishedArePostedOnlyWhenOn() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        let notifier = FakeNotifier(authorised: true)
+        await f.state.attach(notifier: notifier, log: { _ in })
+        try f.write("a.txt", "one")
+
+        // Off by default: a successful backup posts nothing.
+        _ = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        await f.state.eventNotesDelivered()
+        #expect(await notifier.events.isEmpty)
+
+        _ = try await f.state.saveNotificationSettings(
+            NotificationSettings(backupStarted: true, backupFinished: true, problems: true))
+        try f.write("b.txt", "two")
+        let record = try await f.runner.runBackup(planID: f.planID, trigger: .manual)
+        #expect(PlanRunner.savedData(record.outcome))
+        await f.state.eventNotesDelivered()
+        let events = await notifier.events
+        #expect(events.map(\.title) == ["Backing up — Fixture", "Backed up — Fixture"])
+        #expect(Set(events.map(\.identifier)) == ["event.\(f.planID.uuidString)"])
+        #expect(await notifier.removed.isEmpty)
+    }
+
+    /// A failed backup takes its "Backing up" notification away, and posts no "Backed up".
+    @Test func aFailedBackupRemovesItsStartedNotification() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        let notifier = FakeNotifier(authorised: true)
+        await f.state.attach(notifier: notifier, log: { _ in })
+        _ = try await f.state.saveNotificationSettings(
+            NotificationSettings(backupStarted: true, backupFinished: true, problems: true))
+        try f.write("a.txt", "one")
+        try "not-the-password".write(to: f.passwordFile, atomically: true, encoding: .utf8)
+
+        let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        #expect(record.outcome == .wrongPassword)
+        await f.state.eventNotesDelivered()
+        #expect(await notifier.events.map(\.title) == ["Backing up — Fixture"])
+        #expect(await notifier.removed == ["event.\(f.planID.uuidString)"])
+    }
+
+    /// Skipped before restic starts: nothing says it started.
+    @Test func aSkippedBackupPostsNoStarted() async throws {
+        let f = try await RunnerFixture.make()
+        defer { f.remove() }
+        let notifier = FakeNotifier(authorised: true)
+        await f.state.attach(notifier: notifier, log: { _ in })
+        _ = try await f.state.saveNotificationSettings(
+            NotificationSettings(backupStarted: true, backupFinished: true, problems: true))
+        f.power.set(PowerState(onBattery: true, percent: 5))
+
+        let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        guard case .skipped = record.outcome else {
+            Issue.record("expected a skip, got \(record.outcome)")
+            return
+        }
+        await f.state.eventNotesDelivered()
+        #expect(await notifier.events.isEmpty)
+    }
+
     @Test func wrongPasswordStopsPlan() async throws {
         let f = try await RunnerFixture.make()
         defer { f.remove() }
@@ -1572,7 +1635,7 @@ struct PlanRunnerTests {
         defer { stepped.finish() }
         let f = try await RunnerFixture.make(executable: stepped.stub)
         defer { f.remove() }
-        let notifier = AgentStateAlertTests.FakeNotifier(authorised: true)
+        let notifier = FakeNotifier(authorised: true)
         await f.state.attach(notifier: notifier, log: { _ in })
         let run = Task { try await f.runner.runBackup(planID: f.planID, trigger: .scheduled) }
         try await f.waitForPhase { $0.progress?.percentDone == 0.1 }

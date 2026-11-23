@@ -6,26 +6,6 @@ import RestoreyCore
 /// The agent's alert bookkeeping end to end: conditions raised in history are posted through the
 /// notifier on the back-off schedule, and the notification state is saved in `state.json`.
 struct AgentStateAlertTests {
-    actor FakeNotifier: AlertNotifying {
-        struct Refused: Error {}
-        private(set) var posted: [AlertContent] = []
-        var authorised: Bool?
-        var refuse = false
-
-        init(authorised: Bool?) { self.authorised = authorised }
-
-        func authorisationStatus() async -> Bool? { authorised }
-
-        func post(_ alert: AlertContent) async throws {
-            if refuse { throw Refused() }
-            posted.append(alert)
-        }
-
-        func set(authorised: Bool?) { self.authorised = authorised }
-        func set(refuse: Bool) { self.refuse = refuse }
-        var titles: [String] { posted.map(\.title) }
-    }
-
     private typealias TempDirectory = AgentStateTests.TempDirectory
     private typealias TestClock = AgentStateTests.TestClock
 
@@ -72,6 +52,8 @@ struct AgentStateAlertTests {
             }
             posted.append(alert)
         }
+
+        func remove(identifiers: [String]) async {}
 
         var hangingCalls: Int { waiting.count }
 
@@ -672,5 +654,139 @@ struct AgentStateAlertTests {
         await world.state.deliverAlerts()
         #expect(await world.state.status().plans.first?.alerts == [.backupFailed])
         #expect(await notifier.posted.map(\.title) == ["Backup failed — Home"])
+    }
+
+    // MARK: Problems off, and backups starting and finishing
+
+    private func set(_ settings: NotificationSettings, in world: World) async throws {
+        _ = try await world.state.saveNotificationSettings(settings)
+    }
+
+    private static let problemsOff = NotificationSettings(backupStarted: false, backupFinished: false, problems: false)
+    private static let allOn = NotificationSettings(backupStarted: true, backupFinished: true, problems: true)
+
+    private func attach(_ world: World) async {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .gmt
+        await world.state.attach(
+            notifier: world.notifier, log: { _ in }, calendar: calendar, locale: Locale(identifier: "en_AU"))
+    }
+
+    private func backupRecord(_ outcome: RunOutcome, _ world: World) -> RunRecord {
+        RunRecord(
+            id: UUID(), planID: world.plan.id, operation: .backup, trigger: .scheduled, startedAt: world.clock.now,
+            endedAt: world.clock.now, outcome: outcome, summary: nil, logFile: "")
+    }
+
+    /// Problems off stops the posting only: the alert is raised and saved, so the menu bar still shows it, and it
+    /// waits uncounted, going out once Problems is turned back on.
+    @Test func problemsOffRaisesButDoesNotPost() async throws {
+        let world = try await world()
+        try await set(Self.problemsOff, in: world)
+        await attach(world)
+        try await recordBackup(.failed(exitCode: 1, reason: "Fatal: unable to open repository"), in: world)
+        await world.state.deliverAlerts()
+        #expect(await world.state.status().plans.first?.alerts == [.backupFailed])
+        #expect(try await savedAlerts(world)[.backupFailed]?.count == 0)
+        #expect(await world.notifier.posted.isEmpty)
+
+        try await set(.defaults, in: world)
+        await world.state.deliverAlerts()
+        #expect(await world.notifier.titles == ["Backup failed — Home"])
+    }
+
+    @Test func notificationsOffIsNotRaisedWhileProblemsIsOff() async throws {
+        let world = try await world(authorised: false)
+        try await set(Self.problemsOff, in: world)
+        await attach(world)
+        try await recordBackup(.failed(exitCode: 1, reason: "x"), in: world)
+        await world.state.deliverAlerts()
+        #expect(await world.state.status().plans.first?.alerts == [.backupFailed])
+    }
+
+    /// Raised while Problems was on, `notificationsOff` clears when it is turned off: it exists to protect them.
+    @Test func turningProblemsOffClearsNotificationsOff() async throws {
+        let world = try await world(authorised: false)
+        await attach(world)
+        try await recordBackup(.failed(exitCode: 1, reason: "x"), in: world)
+        await world.state.deliverAlerts()
+        #expect(await world.state.status().plans.first?.alerts == [.backupFailed, .notificationsOff])
+        try await set(Self.problemsOff, in: world)
+        await world.state.deliverAlerts()
+        #expect(await world.state.status().plans.first?.alerts == [.backupFailed])
+    }
+
+    @Test func startedAndFinishedAreNotPostedByDefault() async throws {
+        let world = try await world()
+        await attach(world)
+        await world.state.noteBackupStarted(world.plan, at: world.clock.now)
+        await world.state.noteBackupEnded(world.plan, record: backupRecord(.success(snapshotID: "abc"), world))
+        await world.state.eventNotesDelivered()
+        #expect(await world.notifier.posted.isEmpty)
+    }
+
+    @Test func startedAndFinishedArePostedWhenOnInOrder() async throws {
+        let world = try await world()
+        try await set(Self.allOn, in: world)
+        await attach(world)
+        await world.state.noteBackupStarted(world.plan, at: world.clock.now)
+        await world.state.noteBackupEnded(world.plan, record: backupRecord(.warning(unreadable: 1), world))
+        await world.state.eventNotesDelivered()
+        let events = await world.notifier.events
+        #expect(events.map(\.title) == ["Backing up — Home", "Backed up — Home"])
+        #expect(events.last?.body == "1 file couldn’t be read")
+        #expect(Set(events.map(\.identifier)) == ["event.\(world.plan.id.uuidString)"])
+        #expect(await world.notifier.removed.isEmpty)
+    }
+
+    /// Only the one that is on: finished without started, and a backup that saved nothing posts nothing.
+    @Test func eachEventFollowsItsOwnSetting() async throws {
+        let world = try await world()
+        try await set(NotificationSettings(backupStarted: false, backupFinished: true, problems: true), in: world)
+        await attach(world)
+        await world.state.noteBackupStarted(world.plan, at: world.clock.now)
+        await world.state.noteBackupEnded(world.plan, record: backupRecord(.cancelled, world))
+        await world.state.noteBackupEnded(world.plan, record: backupRecord(.unchanged, world))
+        await world.state.eventNotesDelivered()
+        #expect(await world.notifier.events.map(\.body) == ["Nothing new to back up"])
+    }
+
+    @Test func eventsAreNotPostedWithoutPermission() async throws {
+        for authorised in [nil, false] as [Bool?] {
+            let world = try await world(authorised: authorised)
+            try await set(Self.allOn, in: world)
+            await attach(world)
+            await world.state.noteBackupStarted(world.plan, at: world.clock.now)
+            await world.state.noteBackupEnded(world.plan, record: backupRecord(.success(snapshotID: "abc"), world))
+            await world.state.eventNotesDelivered()
+            #expect(await world.notifier.posted.isEmpty)
+        }
+    }
+
+    /// A stale "Backing up" never sits next to the failure.
+    @Test func aFailedBackupRemovesItsStartedNotification() async throws {
+        let world = try await world()
+        try await set(Self.allOn, in: world)
+        await attach(world)
+        await world.state.noteBackupStarted(world.plan, at: world.clock.now)
+        await world.state.noteBackupEnded(
+            world.plan, record: backupRecord(.failed(exitCode: 1, reason: "x"), world))
+        await world.state.eventNotesDelivered()
+        #expect(await world.notifier.events.map(\.title) == ["Backing up — Home"])
+        #expect(await world.notifier.removed == ["event.\(world.plan.id.uuidString)"])
+    }
+
+    /// A notification centre that has stopped answering holds the events up by the timeout, no longer.
+    @Test func aHungNotifierHoldsEventsUpOnlyByTheTimeout() async throws {
+        let world = try await world()
+        try await set(Self.allOn, in: world)
+        let notifier = HangingNotifier(hangAuthorisation: false, hangPosts: true)
+        await world.state.attach(notifier: notifier, log: { _ in }, callTimeout: .milliseconds(50))
+        let started = ContinuousClock.now
+        await world.state.noteBackupStarted(world.plan, at: world.clock.now)
+        await world.state.noteBackupEnded(world.plan, record: backupRecord(.success(snapshotID: "abc"), world))
+        await world.state.eventNotesDelivered()
+        #expect(ContinuousClock.now - started < .seconds(5))
+        await notifier.answer()
     }
 }

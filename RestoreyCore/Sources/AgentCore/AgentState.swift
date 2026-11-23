@@ -107,6 +107,12 @@ public actor AgentState {
     var alertDeliveryAgain = false
     /// How long each notifier call may take before it counts as failed.
     var alertCallTimeout: Duration = .seconds(10)
+    /// The clock and language of the times in the started and finished notifications (`attach(notifier:…)`).
+    var eventCalendar: Calendar = .autoupdatingCurrent
+    var eventLocale: Locale = .autoupdatingCurrent
+    /// Per plan, the started and finished notifications still being posted or removed, one after another
+    /// (AgentState+Events.swift), with a token so the last to finish can drop its entry.
+    var eventNotes: [UUID: (token: UUID, task: Task<Void, Never>)] = [:]
     /// The agent-wide load-error alert. In memory only: `state.json` can't be trusted in that state.
     var loadErrorAlert: AlertNotificationState?
     /// The status that raised each plan's `checkInRejected`, for the notification's text.

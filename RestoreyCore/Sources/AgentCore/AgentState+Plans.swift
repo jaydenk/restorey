@@ -308,6 +308,8 @@ extension AgentState {
             var updated = config
             updated.notifications = settings
             try await saveConfig(updated)
+            // Problems with backups gates the alert rounds: bring the alerts up to date with it now, not at the next tick.
+            scheduleAlertDelivery()
             return pushStatus()
         }
     }
