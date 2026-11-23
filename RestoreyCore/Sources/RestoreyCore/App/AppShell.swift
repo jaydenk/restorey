@@ -4,20 +4,14 @@ import Foundation
 // titles, and what switching open-at-login on or off does. The app's `WindowRouter`, `AppDelegate` and
 // `LoginItem` only carry these out.
 
-/// The Settings window's sections (UI design §6).
-public enum SettingsSection: String, CaseIterable, Sendable, Equatable {
-    case general
+/// The main window's sections (UI design §5–§6): what Restorey is doing and has done.
+public enum MainSection: String, CaseIterable, Sendable, Equatable {
     case plans
-    case network
     case history
 
-    /// The pane's name: the toolbar item's label and, as in Apple's Settings windows, the window's title while the
-    /// pane shows (HIG Settings: "update the window's title to reflect the currently visible pane").
     public var title: String {
         switch self {
-        case .general: "General"
         case .plans: "Plans"
-        case .network: "Network"
         case .history: "History"
         }
     }
@@ -25,27 +19,74 @@ public enum SettingsSection: String, CaseIterable, Sendable, Equatable {
     /// The section remembered from an earlier run, `.plans` (where a new window has always started) when nothing
     /// was saved or the saved name isn't a section any more.
     public init(remembered rawValue: String?) {
-        self = rawValue.flatMap(SettingsSection.init(rawValue:)) ?? SettingsRoute.initial.section
+        self = rawValue.flatMap(MainSection.init(rawValue:)) ?? MainRoute.initial.section
     }
 }
 
-/// Where the last-viewed Settings section is kept between launches (HIG Settings: "restore the most recently
-/// viewed pane"). Only the section: not the plan or its tab, which a new window starts afresh.
-public struct SettingsPanePreference {
-    static let key = "settingsSection"
+/// The Settings window's panes (UI design §6): Mac-wide preferences, each saved as it is changed.
+public enum SettingsPane: String, CaseIterable, Sendable, Equatable {
+    case general
+    case notifications
+    case network
+
+    /// The pane's name: the toolbar item's label and, as in Apple's Settings windows, the window's title while the
+    /// pane shows (HIG Settings: "update the window's title to reflect the currently visible pane").
+    public var title: String {
+        switch self {
+        case .general: "General"
+        case .notifications: "Notifications"
+        case .network: "Network"
+        }
+    }
+
+    /// The SF Symbol on the pane's toolbar item.
+    public var symbolName: String {
+        switch self {
+        case .general: "gearshape"
+        case .notifications: "bell.badge"
+        case .network: "network"
+        }
+    }
+
+    /// The pane remembered from an earlier run, General when nothing was saved or the saved name isn't a pane
+    /// any more.
+    public init(remembered rawValue: String?) {
+        self = rawValue.flatMap(SettingsPane.init(rawValue:)) ?? .general
+    }
+}
+
+/// Where the last-viewed main window section is kept between launches. Only the section: not the plan or its
+/// tab, which a new window starts afresh.
+public struct MainSectionPreference {
+    static let key = "mainSection"
     private let defaults: UserDefaults
 
     public init(defaults: UserDefaults) { self.defaults = defaults }
 
-    public func load() -> SettingsSection { SettingsSection(remembered: defaults.string(forKey: Self.key)) }
+    public func load() -> MainSection { MainSection(remembered: defaults.string(forKey: Self.key)) }
 
-    public func save(_ section: SettingsSection) { defaults.set(section.rawValue, forKey: Self.key) }
+    public func save(_ section: MainSection) { defaults.set(section.rawValue, forKey: Self.key) }
+}
+
+/// Where the last-viewed Settings pane is kept between launches (HIG Settings: "restore the most recently
+/// viewed pane"). The old combined window's `settingsSection` key is not read: its values named sections that
+/// now live in the main window.
+public struct SettingsPanePreference {
+    static let key = "settingsPane"
+    private let defaults: UserDefaults
+
+    public init(defaults: UserDefaults) { self.defaults = defaults }
+
+    public func load() -> SettingsPane { SettingsPane(remembered: defaults.string(forKey: Self.key)) }
+
+    public func save(_ pane: SettingsPane) { defaults.set(pane.rawValue, forKey: Self.key) }
 }
 
 /// The app's windows. There is at most one window of each kind: asking for one that is open brings it to the
 /// front (and, for a plan's window, shows that plan in it).
 public enum AppWindowKind: String, CaseIterable, Sendable, Hashable {
     case setup
+    case main
     case settings
     case recoveryKit
     case restoreFiles
@@ -53,18 +94,19 @@ public enum AppWindowKind: String, CaseIterable, Sendable, Hashable {
     public var title: String {
         switch self {
         case .setup: "Set Up Restorey"
-        case .settings: "Restorey Settings"
+        case .main: "Restorey"
+        case .settings: "Settings"
         case .recoveryKit: "Recovery Kit"
         case .restoreFiles: "Restore Files"
         }
     }
 
     /// Whether the window has a Minimise button. Settings has none (HIG Settings: "dim a settings window's minimize
-    /// and maximize buttons"): it needs no place in the Dock. The task windows keep theirs.
+    /// and maximize buttons"): it needs no place in the Dock. The main and task windows keep theirs.
     public var isMiniaturizable: Bool { self != .settings }
 }
 
-/// The note the General section shows while the status item is hidden (UI design §8).
+/// The note the General pane shows while the status item is hidden (UI design §8).
 public let statusItemHiddenNote = "Restorey’s menu bar icon is hidden. Show it in System Settings → Menu Bar."
 
 /// What this copy of the app is doing, as far as the shell is concerned.
@@ -80,19 +122,21 @@ public enum ShellMode: Sendable, Equatable {
 /// A window the shell opens on its own.
 public enum ShellOpening: Sendable, Equatable {
     case setup
-    /// Settings, switched to this section, or left on whatever it shows when nil (`settingsRoute`).
-    case settings(SettingsSection?)
+    /// The main window, switched to this section, or left on whatever it shows when nil (`mainRoute`).
+    case main(MainSection?)
+    /// Settings, switched to this pane, or left on whatever it shows when nil.
+    case settings(SettingsPane?)
     /// The damaged-build message, for a broken copy (there is no window to show it in).
     case damagedNotice
 }
 
 /// Opening the app again (Finder, Spotlight, `open`) while it runs. A menu bar app has nothing in the Dock, so
 /// this is how someone who can't see the status item (hidden, or squeezed out of a full menu bar) still reaches
-/// it (UI design §8). An open Settings window comes forward as it is; only while the icon is hidden does it
-/// switch to General, which holds the hidden-icon note.
+/// it (UI design §8). An open main window comes forward as it is; while the icon is hidden, Settings opens on
+/// General, which holds the hidden-icon note.
 public func shellOpeningOnReopen(mode: ShellMode, statusItemVisible: Bool) -> ShellOpening {
     switch mode {
-    case .running: .settings(statusItemVisible ? nil : .general)
+    case .running: statusItemVisible ? .main(nil) : .settings(.general)
     case .refused: .setup
     case .broken: .damagedNotice
     }
@@ -140,41 +184,41 @@ public struct LaunchWindowGate: Sendable, Equatable {
     }
 }
 
-// MARK: Settings section and plan
+// MARK: Main window section and plan
 
-/// What the Settings window shows: a section, and in Plans, a plan.
-public struct SettingsRoute: Sendable, Equatable {
-    public var section: SettingsSection
+/// What the main window shows: a section, and in Plans, a plan.
+public struct MainRoute: Sendable, Equatable {
+    public var section: MainSection
     public var planID: UUID?
 
-    public init(section: SettingsSection, planID: UUID? = nil) {
+    public init(section: MainSection, planID: UUID? = nil) {
         self.section = section
         self.planID = planID
     }
 
-    /// A new Settings window asked for nothing in particular.
-    public static let initial = SettingsRoute(section: .plans)
+    /// A new main window asked for nothing in particular.
+    public static let initial = MainRoute(section: .plans)
 }
 
-/// What Settings shows after a request for `section` and `planID` (nil when not asked for). `open` is what an
-/// open window shows, nil when there is none.
+/// What the main window shows after a request for `section` and `planID` (nil when not asked for). `open` is what
+/// an open window shows, nil when there is none.
 /// - Nothing asked for: an open window keeps what it shows (a reopen brings it forward unchanged); a new one
 ///   starts at `initial` (Plans, or the section last viewed).
 /// - A plan asked for: that plan, in `section` or Plans.
 /// - Only a section asked for: that section, with no plan selected.
 /// `initial` is what a new window starts at when asked for nothing: the section last viewed.
-public func settingsRoute(
-    open: SettingsRoute?, section: SettingsSection?, planID: UUID?, initial: SettingsRoute = .initial
-) -> SettingsRoute {
+public func mainRoute(
+    open: MainRoute?, section: MainSection?, planID: UUID?, initial: MainRoute = .initial
+) -> MainRoute {
     if section == nil, planID == nil { return open ?? initial }
-    return SettingsRoute(section: section ?? .plans, planID: planID)
+    return MainRoute(section: section ?? .plans, planID: planID)
 }
 
-/// Where a request to show a plan in Settings → Plans comes from (Task 14c).
+/// Where a request to show a plan in the main window's Plans comes from (Task 14c).
 public enum PlanRequestSource: Sendable, Equatable {
     /// The user picked the plan in the sidebar.
     case sidebarPick
-    /// A route into Settings: the menu's plan line or "Add…" (a plan), or "Settings…" and a reopen (none).
+    /// A route into the main window: the menu's plan line or "Add…" (a plan), or a reopen (none).
     case route(planID: UUID?)
 }
 

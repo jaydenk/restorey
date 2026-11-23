@@ -6,9 +6,13 @@ struct AppShellTests {
     // MARK: Reopen and launch
 
     /// Carry list (UI design §8): someone who can't see the status item opens the app again and reaches it.
-    @Test func reopenOpensSettingsWhileRunning() {
-        #expect(shellOpeningOnReopen(mode: .running, statusItemVisible: true) == .settings(nil))
+    @Test func reopenOpensTheMainWindowWhileTheIconShows() {
+        #expect(shellOpeningOnReopen(mode: .running, statusItemVisible: true) == .main(nil))
+    }
+
+    @Test func reopenWithAHiddenIconOpensSettingsGeneral() {
         #expect(shellOpeningOnReopen(mode: .running, statusItemVisible: false) == .settings(.general))
+        #expect(shellOpeningAtLaunch(mode: .running, statusItemVisible: false) == .settings(.general))
     }
 
     /// A copy outside /Applications has no Settings to show; it shows the Move to Applications step.
@@ -39,76 +43,96 @@ struct AppShellTests {
     @Test func eachWindowKindHasItsOwnTitle() {
         let titles = AppWindowKind.allCases.map(\.title)
         #expect(Set(titles).count == titles.count)
-        #expect(AppWindowKind.settings.title == "Restorey Settings")
-        #expect(SettingsSection.allCases.map(\.title) == ["General", "Plans", "Network", "History"])
+        #expect(AppWindowKind.main.title == "Restorey")
+        #expect(AppWindowKind.settings.title == "Settings")
     }
 
-    // MARK: Settings route
+    @Test func paneOrderTitlesAndSymbols() {
+        #expect(MainSection.allCases.map(\.title) == ["Plans", "History"])
+        #expect(SettingsPane.allCases.map(\.title) == ["General", "Notifications", "Network"])
+        #expect(SettingsPane.allCases.map(\.symbolName) == ["gearshape", "bell.badge", "network"])
+        #expect(AppWindowKind.main.isMiniaturizable && !AppWindowKind.settings.isMiniaturizable)
+    }
+
+    // MARK: Main window route
 
     private static let planA = UUID(uuidString: "00000000-0000-0000-0000-00000000000A")!
     private static let planB = UUID(uuidString: "00000000-0000-0000-0000-00000000000B")!
 
-    /// A reopen while Settings is open brings it forward showing what it showed (review fix round 1).
-    @Test func reopenKeepsWhatAnOpenSettingsWindowShows() {
-        let open = SettingsRoute(section: .plans, planID: Self.planA)
-        #expect(settingsRoute(open: open, section: nil, planID: nil) == open)
-        let history = SettingsRoute(section: .history)
-        #expect(settingsRoute(open: history, section: nil, planID: nil) == history)
+    /// A reopen while the main window is open brings it forward showing what it showed (review fix round 1).
+    @Test func reopenKeepsWhatAnOpenMainWindowShows() {
+        let open = MainRoute(section: .plans, planID: Self.planA)
+        #expect(mainRoute(open: open, section: nil, planID: nil) == open)
+        let history = MainRoute(section: .history)
+        #expect(mainRoute(open: history, section: nil, planID: nil) == history)
     }
 
-    @Test func newSettingsWindowStartsAtPlans() {
-        #expect(settingsRoute(open: nil, section: nil, planID: nil) == SettingsRoute(section: .plans, planID: nil))
+    @Test func newMainWindowStartsAtPlans() {
+        #expect(mainRoute(open: nil, section: nil, planID: nil) == MainRoute(section: .plans, planID: nil))
     }
 
-    @Test func newSettingsWindowStartsAtTheSectionLastViewed() {
-        let remembered = SettingsRoute(section: .history)
-        #expect(settingsRoute(open: nil, section: nil, planID: nil, initial: remembered) == remembered)
+    @Test func newMainWindowStartsAtTheSectionLastViewed() {
+        let remembered = MainRoute(section: .history)
+        #expect(mainRoute(open: nil, section: nil, planID: nil, initial: remembered) == remembered)
         // An open window and an explicit request are unaffected.
-        let open = SettingsRoute(section: .network)
-        #expect(settingsRoute(open: open, section: nil, planID: nil, initial: remembered) == open)
-        #expect(settingsRoute(open: nil, section: .general, planID: nil, initial: remembered) == SettingsRoute(section: .general))
+        let open = MainRoute(section: .plans, planID: Self.planA)
+        #expect(mainRoute(open: open, section: nil, planID: nil, initial: remembered) == open)
+        #expect(mainRoute(open: nil, section: .plans, planID: nil, initial: remembered) == MainRoute(section: .plans))
+    }
+
+    @Test func eachWindowRemembersItsOwnSectionAndIgnoresTheOldKey() throws {
+        let name = "RestoreyCoreTests.sections.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set("network", forKey: "settingsSection")
+        #expect(MainSectionPreference(defaults: defaults).load() == .plans)
+        #expect(SettingsPanePreference(defaults: defaults).load() == .general)
+        SettingsPanePreference(defaults: defaults).save(.notifications)
+        #expect(SettingsPanePreference(defaults: defaults).load() == .notifications)
+        #expect(MainSectionPreference(defaults: defaults).load() == .plans, "the two keys are separate")
     }
 
     @Test func theLastSectionIsKeptBetweenLaunches() throws {
-        let name = "RestoreyCoreTests.settingsPane.\(UUID().uuidString)"
+        let name = "RestoreyCoreTests.mainSection.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
-        let preference = SettingsPanePreference(defaults: defaults)
+        let preference = MainSectionPreference(defaults: defaults)
         #expect(preference.load() == .plans, "nothing saved yet: Plans")
-        for section in SettingsSection.allCases {
+        for section in MainSection.allCases {
             preference.save(section)
-            #expect(SettingsPanePreference(defaults: defaults).load() == section)
+            #expect(MainSectionPreference(defaults: defaults).load() == section)
         }
-        defaults.set("a section removed in a later version", forKey: "settingsSection")
+        defaults.set("a section removed in a later version", forKey: "mainSection")
         #expect(preference.load() == .plans)
+        defaults.set("a pane removed in a later version", forKey: "settingsPane")
+        #expect(SettingsPanePreference(defaults: defaults).load() == .general)
     }
 
-    /// F4: the window is titled with the pane, as Apple's Settings windows are.
-    @Test func theSettingsWindowIsTitledWithThePane() {
-        #expect(SettingsSection.allCases.map(\.title) == ["General", "Plans", "Network", "History"])
-        #expect(!SettingsSection.allCases.map(\.title).contains { $0.contains("Settings") })
+    /// The Settings window is titled with the pane, as Apple's Settings windows are, so no pane is called "Settings".
+    @Test func thePaneTitlesNeverSaySettings() {
+        #expect(!SettingsPane.allCases.map(\.title).contains { $0.contains("Settings") })
     }
 
-    /// F3: Settings has no Minimise button; the task windows keep theirs.
+    /// Settings has no Minimise button; the main and task windows keep theirs.
     @Test func onlySettingsLacksMinimise() {
         #expect(AppWindowKind.allCases.filter { !$0.isMiniaturizable } == [.settings])
     }
 
     @Test func explicitRequestsReplaceWhatIsShown() {
-        let open = SettingsRoute(section: .plans, planID: Self.planA)
-        #expect(settingsRoute(open: open, section: .general, planID: nil) == SettingsRoute(section: .general))
-        #expect(settingsRoute(open: open, section: nil, planID: Self.planB) == SettingsRoute(section: .plans, planID: Self.planB))
-        #expect(settingsRoute(open: nil, section: .network, planID: nil) == SettingsRoute(section: .network))
-        #expect(settingsRoute(open: nil, section: .plans, planID: Self.planB) == SettingsRoute(section: .plans, planID: Self.planB))
+        let open = MainRoute(section: .plans, planID: Self.planA)
+        #expect(mainRoute(open: open, section: .history, planID: nil) == MainRoute(section: .history))
+        #expect(mainRoute(open: open, section: nil, planID: Self.planB) == MainRoute(section: .plans, planID: Self.planB))
+        #expect(mainRoute(open: nil, section: .history, planID: nil) == MainRoute(section: .history))
+        #expect(mainRoute(open: nil, section: .plans, planID: Self.planB) == MainRoute(section: .plans, planID: Self.planB))
     }
 
     /// End to end: a visible-icon reopen asks for nothing, so an open window is unchanged.
     @Test func reopenOpeningLeavesTheRouteAlone() throws {
-        guard case .settings(let section) = shellOpeningOnReopen(mode: .running, statusItemVisible: true) else {
-            Issue.record("expected Settings"); return
+        guard case .main(let section) = shellOpeningOnReopen(mode: .running, statusItemVisible: true) else {
+            Issue.record("expected the main window"); return
         }
-        let open = SettingsRoute(section: .history)
-        #expect(settingsRoute(open: open, section: section, planID: nil) == open)
+        let open = MainRoute(section: .history)
+        #expect(mainRoute(open: open, section: section, planID: nil) == open)
     }
 
     // MARK: Open at login
