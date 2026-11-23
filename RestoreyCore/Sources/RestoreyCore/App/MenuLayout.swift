@@ -4,7 +4,7 @@ import Foundation
 public enum MenuCommand: Sendable, Equatable {
     /// A banner's fix, its dismiss, or a plan's "Show Details…".
     case banner(BannerAction)
-    /// A plan's status item: open Settings at that plan.
+    /// A plan's status item: open the main window at that plan.
     case openPlan(UUID)
     case backUpAll
     case backUp(UUID)
@@ -17,6 +17,9 @@ public enum MenuCommand: Sendable, Equatable {
     case resumeAll
     case resume(UUID)
     case restoreFiles(UUID)
+    /// Open Restorey: the main window (Plans and History), as it was left.
+    case openRestorey
+    /// Settings…: the Settings window (General, Notifications, Network).
     case settings
     /// The Debug-only developer window.
     case developer
@@ -236,6 +239,8 @@ public enum MenuLayout {
             rows.append(.item(MenuItem("Copy Diagnostics", command: .copyDiagnostics)))
             rows.append(.separator)
         }
+        // The main window's way in, with no shortcut, just above Settings… (visual polish §1).
+        rows.append(.item(MenuItem("Open Restorey", command: .openRestorey)))
         rows.append(.item(MenuItem("Settings…", command: .settings, keyEquivalent: ",")))
         if developer { rows.append(.item(MenuItem("Developer…", command: .developer))) }
         rows.append(.item(MenuItem("Quit Restorey", command: .quit, keyEquivalent: "q")))

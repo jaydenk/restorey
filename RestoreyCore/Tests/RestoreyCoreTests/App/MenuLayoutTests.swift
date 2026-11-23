@@ -50,9 +50,10 @@ struct MenuLayoutTests {
         }
     }
 
+    private static let openRestorey = MenuRow.item(MenuItem("Open Restorey", command: .openRestorey))
     private static let settings = MenuRow.item(MenuItem("Settings…", command: .settings, keyEquivalent: ","))
     private static let quit = MenuRow.item(MenuItem("Quit Restorey", command: .quit, keyEquivalent: "q"))
-    private static let tail: [MenuRow] = [.separator, settings, quit]
+    private static let tail: [MenuRow] = [.separator, openRestorey, settings, quit]
 
     @Test func onePlanIdle() {
         let content = MenuContent(
@@ -76,7 +77,7 @@ struct MenuLayoutTests {
         let content = MenuContent(
             icon: .backingUp, plans: [Self.line(Self.a, "MacBook"), photos], actions: Self.actions(plans))
         let rows = MenuLayout.rows(content, developer: true)
-        #expect(rows.count == 15)
+        #expect(rows.count == 16)
         #expect(Array(rows[2...5]) == [
             .separator,
             .header("Photos"),
@@ -100,6 +101,7 @@ struct MenuLayoutTests {
                 Self.button("Photos", .restoreFiles(Self.b)),
             ]),
             .separator,
+            Self.openRestorey,
             Self.settings,
             Self.button("Developer…", .developer),
             Self.quit,
@@ -303,8 +305,17 @@ struct MenuLayoutTests {
             == .item(MenuItem("Backups couldn’t be set up", toolTip: "It failed: because.", enabled: false)))
     }
 
+    /// The main window's way in (visual polish §1): no shortcut, directly above Settings….
+    @Test func openRestoreyComesJustBeforeSettings() throws {
+        let rows = MenuLayout.rows(MenuContent(icon: .ok), developer: false)
+        let titles = rows.compactMap { if case .item(let i) = $0 { i.title } else { nil } }
+        let open = try #require(titles.firstIndex(of: "Open Restorey"))
+        #expect(titles[open + 1] == "Settings…")
+        #expect(rows.contains(.item(MenuItem("Open Restorey", command: .openRestorey))))
+    }
+
     @Test func emptyContentHasJustTheTail() {
-        #expect(MenuLayout.rows(MenuContent(icon: .ok), developer: false) == [Self.settings, Self.quit])
+        #expect(MenuLayout.rows(MenuContent(icon: .ok), developer: false) == [Self.openRestorey, Self.settings, Self.quit])
     }
 
     // MARK: Status items
@@ -360,6 +371,7 @@ struct MenuLayoutTests {
             Self.button("Show Logs in Finder", .showLogsFolder),
             Self.button("Copy Diagnostics", .copyDiagnostics),
             .separator,
+            Self.openRestorey,
             Self.settings,
             Self.quit,
         ])

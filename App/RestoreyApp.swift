@@ -73,8 +73,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for now in launchWindows.request(opening) { open(now) }
     }
 
-    /// Opening the app again from Finder, Spotlight or `open` while it runs: the only way in for someone who
-    /// can't see the status item.
+    /// Opening the app again from Finder, Spotlight, the Dock or `open` while it runs: the main window, or Settings ▸
+    /// General while the status item is hidden, since that is the only way in for someone who can't see it
+    /// (`shellOpeningOnReopen`).
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         open(shellOpeningOnReopen(mode: mode, statusItemVisible: statusItem?.isVisible ?? false))
         return false
@@ -168,7 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Unsaved plan edits in Settings are asked about first (Save, Don't Save, Cancel), as closing the window asks.
+    /// Unsaved plan edits in the main window are asked about first (Save, Don't Save, Cancel), as closing it asks.
     /// The save is async, so the answer comes later (`reply(toApplicationShouldTerminate:)`).
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         switch router.askBeforeQuitting({ proceed in NSApplication.shared.reply(toApplicationShouldTerminate: proceed) }) {

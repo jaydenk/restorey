@@ -2,12 +2,12 @@ import AppKit
 import RestoreyCore
 import SwiftUI
 
-/// Settings → Plans (UI design §6.2, mockup `v0.1-settings.html`): the plans in a bordered list with + and − under it,
+/// The main window's Plans (UI design §6.2, mockup `v0.1-settings.html`): the plans in a bordered list with + and − under it,
 /// as a settings pane with a list of things has them (Mail's Accounts, Users & Groups; Task 17c, P9), and the selected
 /// plan's tabs. An unfinished plan offers "Finish Setup…" instead of tabs, since setup is still editing it. The plan's
 /// edits live in one `PlanEditModel`, made afresh for each plan shown, so switching plans (after "Discard Changes" when
 /// something is unsaved) or closing the window drops what was typed. It is held by the window (`PlanEditorSlot`), not
-/// this pane, so going to General and back keeps unsaved edits.
+/// this pane, so going to History and back keeps unsaved edits.
 struct PlansPane: View {
     let context: SettingsContext
     @Bindable var state: ShellState
@@ -39,7 +39,7 @@ struct PlansPane: View {
 
     /// The plan asked for while it exists, otherwise the first.
     private var selectedID: UUID? {
-        if let id = state.settingsPlanID, plans.contains(where: { $0.plan.id == id }) { return id }
+        if let id = state.planID, plans.contains(where: { $0.plan.id == id }) { return id }
         return plans.first?.plan.id
     }
 
@@ -54,7 +54,7 @@ struct PlansPane: View {
     static let pagePadding: CGFloat = 16
 
     /// The narrowest the pane can be with every tab showing in full: the list, the gap after it, and the tab row
-    /// (`tabRowWidth`, measured), inside the pane's padding. The Settings window's minimum width comes from it (Task 14c R1).
+    /// (`tabRowWidth`, measured), inside the pane's padding. The main window's minimum width comes from it (Task 14c R1).
     static func minimumWidth(tabRowWidth: CGFloat) -> CGFloat {
         listWidth + 3 * pagePadding + tabRowWidth
     }
@@ -147,10 +147,10 @@ struct PlansPane: View {
         Button("Restore Files…") { context.showRestoreFiles(id) }
             .disabled(choice?.canRestore != true)
         Divider()
-        // The menu's "Show Details…" route: Settings → History, filtered to the plan.
+        // The menu's "Show Details…" route: the main window's History, filtered to the plan.
         Button("Show in History") {
             state.historyFilter = HistoryFilterRequest(planID: id)
-            state.settingsSection = .history
+            state.mainSection = .history
         }
         Divider()
         Button("Delete Plan…") { askToDelete(plan.plan) }
@@ -238,7 +238,7 @@ struct PlansPane: View {
             if selected.setupState == .unfinished {
                 UnfinishedPlanView(plan: selected.plan, context: context)
             } else if let editor = slot.editor, editor.planID == selected.plan.id {
-                PlanDetail(status: selected, model: editor, context: context, tab: $state.settingsPlanTab)
+                PlanDetail(status: selected, model: editor, context: context, tab: $state.planTab)
                     .id(selected.plan.id)
             }
         } else {
@@ -301,7 +301,7 @@ private struct PlanListNote: View {
 }
 
 /// A plan's tabs (UI design §6.2; Task 17c, P10): six, named for what each holds.
-/// Which one shows is `ShellState.settingsPlanTab`, so the menu's "No off-Mac monitoring — Add…" can open Schedule,
+/// Which one shows is `ShellState.planTab`, so the menu's "No off-Mac monitoring — Add…" can open Schedule,
 /// whose Alerts section holds the check-in URL.
 enum PlanTab: String, CaseIterable, Identifiable {
     /// First, and where a plan opens (Task 14c): the menu's line for the plan, with its actions.
@@ -342,8 +342,8 @@ struct PlanTabPicker: View {
         .accessibilityLabel("Plan page")
     }
 
-    /// The row's natural width with the system's fonts as they are now. Measured each time a Settings window is made
-    /// (`WindowRouter.showSettings`), so a change to the text size applies from the next one; one off-screen layout of
+    /// The row's natural width with the system's fonts as they are now. Measured each time a main window is made
+    /// (`WindowRouter.showMain`), so a change to the text size applies from the next one; one off-screen layout of
     /// a six-segment control, so cheap.
     @MainActor static func naturalWidth() -> CGFloat {
         NSHostingView(rootView: PlanTabPicker(tab: .constant(.overview))).fittingSize.width
@@ -393,8 +393,8 @@ private struct PlanDetail: View {
     }
 }
 
-/// The plan editor Settings has open, owned by the window (`WindowRouter`) so it outlives a switch to another
-/// section, and closed with the window so the typed secrets go at once.
+/// The plan editor the main window has open, owned by the window (`WindowRouter`) so it outlives a switch to History,
+/// and closed with the window so the typed secrets go at once.
 @MainActor
 @Observable
 final class PlanEditorSlot {

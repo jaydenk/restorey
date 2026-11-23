@@ -1,7 +1,7 @@
 import RestoreyCore
 import SwiftUI
 
-// The pieces of a plan's page in Settings → Plans around its tabs: the stop and new-kit banners, the save bar, and an
+// The pieces of a plan's page in the main window's Plans around its tabs: the stop and new-kit banners, the save bar, and an
 // unfinished plan's page. Deleting a plan is the list's − (`PlansPane`), as a settings list of things has it.
 
 /// "New recovery kit needed" (the menu's banner, UI design §6.2): backups wait until the new kit is confirmed.

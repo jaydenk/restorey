@@ -2,7 +2,7 @@ import Foundation
 import Observation
 import RestoreyCore
 
-/// The plan open in Settings → Plans: its edits (`PlanEdit`, where every decision is made) and the save in flight.
+/// The plan open in the main window's Plans: its edits (`PlanEdit`, where every decision is made) and the save in flight.
 /// One per plan shown: switching plans or closing the window makes a new one or none, and `close` drops the typed
 /// secrets at once. The tabs bind straight to `fields` and the secrets, which store what is typed unchanged.
 @MainActor

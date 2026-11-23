@@ -3,47 +3,54 @@ import Observation
 import RestoreyCore
 import SwiftUI
 
-/// What the shell's windows show that the shell, not the window, decides: the Settings section and plan asked
-/// for, and whether the status item is hidden (the General section's note, UI design §8). Settings reads it and
-/// writes the section and plan the user picks; `WindowRouter` and `AppDelegate` write it.
+/// What the shell's windows show that the shell, not the window, decides: the main window's section and plan, the
+/// Settings window's pane, and whether the status item is hidden (General's note, UI design §8). The windows read it
+/// and write what the user picks; `WindowRouter` and `AppDelegate` write it.
 @MainActor
 @Observable
 final class ShellState {
-    /// The section shown. Every change is kept for the next launch (`SettingsPanePreference`, P1).
-    var settingsSection: SettingsSection {
-        didSet { if settingsSection != oldValue { panePreference.save(settingsSection) } }
+    /// The main window's section. Every change is kept for the next launch (`MainSectionPreference`, P1).
+    var mainSection: MainSection {
+        didSet { if mainSection != oldValue { sectionPreference.save(mainSection) } }
     }
+    /// The Settings window's pane. Every change is kept for the next launch (`SettingsPanePreference`).
+    var settingsPane: SettingsPane {
+        didSet { if settingsPane != oldValue { panePreference.save(settingsPane) } }
+    }
+    @ObservationIgnored private let sectionPreference: MainSectionPreference
     @ObservationIgnored private let panePreference: SettingsPanePreference
     /// The plan Plans shows. Every change goes through `requestPlan`, so unsaved edits are never dropped unasked.
-    private(set) var planSelection = PlanSelection<PlanTab>(selected: SettingsRoute.initial.planID)
-    var settingsPlanID: UUID? { planSelection.selected }
+    private(set) var planSelection = PlanSelection<PlanTab>(selected: MainRoute.initial.planID)
+    var planID: UUID? { planSelection.selected }
     /// The plan the History section's list was last asked to show (the menu's "Show Details…"); a new request each
     /// time, so asking again for the same plan resets a filter the user changed. Cleared when the user picks a
-    /// section and when Settings closes, so History opened later starts with every plan.
+    /// section and when the main window closes, so History opened later starts with every plan.
     var historyFilter: HistoryFilterRequest?
     /// The plan's tab shown in Plans; kept as the user switches plans.
-    var settingsPlanTab: PlanTab = .overview
+    var planTab: PlanTab = .overview
     /// The status item's `isVisible` is false: the user hid it (System Settings → Menu Bar, or dragged it out).
     /// A status item squeezed out of a full menu bar still reads visible (`NSStatusItem.isVisible`).
     var statusItemHidden = false
 
     init(defaults: UserDefaults = .standard) {
+        sectionPreference = MainSectionPreference(defaults: defaults)
         panePreference = SettingsPanePreference(defaults: defaults)
-        settingsSection = panePreference.load()
+        mainSection = sectionPreference.load()
+        settingsPane = panePreference.load()
     }
 
     /// The one way to change the plan Plans shows: from the sidebar, the menu's routes and a reopen. `editing` is
     /// the plan with unsaved edits, if any (`PlanEditorSlot.unsavedPlanID`); a request for another then waits for
     /// the discard question (`PlanSelection`).
-    /// A tab named with the plan (the menu's "Add…" opens Alerts) shows once the switch happens, now or after
+    /// A tab named with the plan (the menu's "Add…" opens Schedule) shows once the switch happens, now or after
     /// "Discard Changes".
     /// `landing`: the tab a request for a plan opens on when it names none (the Overview); nil keeps the tab shown.
     func requestPlan(_ planID: UUID?, tab: PlanTab? = nil, landing: PlanTab? = nil, editing: UUID?) {
-        if let tab = planSelection.request(planID, tab: tab, landing: landing, editing: editing) { settingsPlanTab = tab }
+        if let tab = planSelection.request(planID, tab: tab, landing: landing, editing: editing) { planTab = tab }
     }
 
     func confirmPlanSwitch() {
-        if let tab = planSelection.confirm() { settingsPlanTab = tab }
+        if let tab = planSelection.confirm() { planTab = tab }
     }
     func cancelPlanSwitch() { planSelection.cancel() }
     /// The plan shown was deleted.
@@ -58,8 +65,11 @@ struct HistoryFilterRequest: Equatable {
 
 /// Opens the app's windows: one per kind (`AppWindowKind`), brought to the front if it is already open, with
 /// the app activated, since a menu bar app is usually not the active one when asked. The windows are never
-/// state-restored, so a menu bar app doesn't reopen Settings by itself at every launch. Closing a window
-/// releases it and its content, so a recovery kit's secrets go with it (and Settings' typed keys with its).
+/// state-restored, so a menu bar app doesn't reopen one by itself at every launch. Closing a window releases it and
+/// its content, so a recovery kit's secrets go with it (and the main window's typed keys with its).
+///
+/// The main window holds Plans and History; the Settings window holds General, Notifications and Network (visual
+/// polish §1). Anything about a plan opens the main window; a fix that names a Mac-wide setting opens Settings.
 @MainActor
 final class WindowRouter: NSObject, NSWindowDelegate {
     let state = ShellState()
@@ -72,10 +82,13 @@ final class WindowRouter: NSObject, NSWindowDelegate {
     /// The installed copy's saved setup progress, for "Add Plan…" (`AppDelegate` sets it).
     var setupStore: SetupProgressStore?
     /// The installed copy's open-at-login switch (`AppDelegate` sets it, P2-16): Settings → General. Like the
-    /// supervisor, a copy outside /Applications has none, and no Settings.
+    /// supervisor, a copy outside /Applications has none, and neither the main window nor Settings.
     var loginItem: LoginItem?
-    /// The Settings window's toolbar of sections, and the plan editor it holds, while the window is open.
-    private var settingsToolbar: SettingsToolbar?
+    /// Each window's toolbar of sections or panes, while the window is open.
+    private var mainToolbar: SectionToolbar?
+    private var settingsToolbar: SectionToolbar?
+    /// The plan editor the main window holds, and the Network pane's unsaved edits the Settings window holds, while
+    /// each is open.
     private var planEditorSlot: PlanEditorSlot?
     private var networkEditorSlot: NetworkEditorSlot?
     /// The open setup window's model, told when the window closes so its secrets go at once.
@@ -104,28 +117,71 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         }
     }
 
-    /// Shows Settings. With neither argument, an open window comes forward as it is and a new one starts at
-    /// Plans; a section or plan passed switches to it (`settingsRoute`), and a tab to that plan's tab.
-    func showSettings(section: SettingsSection? = nil, planID: UUID? = nil, tab: PlanTab? = nil) {
-        let open = slots.openWindow(for: .settings).map { _ in
-            SettingsRoute(section: state.settingsSection, planID: state.settingsPlanID)
-        }
+    /// Shows the main window. With no argument, an open window comes forward as it is and a new one starts at the
+    /// section last viewed; a section or plan passed switches to it (`mainRoute`), and a tab to that plan's tab.
+    func showMain(section: MainSection? = nil, planID: UUID? = nil, tab: PlanTab? = nil) {
+        let open = slots.openWindow(for: .main).map { _ in MainRoute(section: state.mainSection, planID: state.planID) }
         // A new window asked for nothing opens at the section last viewed, this run's or an earlier one's (P1).
-        let route = settingsRoute(
-            open: open, section: section, planID: planID, initial: SettingsRoute(section: state.settingsSection))
-        state.settingsSection = route.section
+        let route = mainRoute(open: open, section: section, planID: planID, initial: MainRoute(section: state.mainSection))
+        state.mainSection = route.section
         if route.section == .history {
             // A plan asked for in History is the list's filter, not the plan Plans shows.
             if section != nil || planID != nil { state.historyFilter = HistoryFilterRequest(planID: route.planID) }
         } else {
             // A plan asked for (the menu's plan line, "Add…") opens on the Overview unless the route names a tab;
-            // Settings brought forward as it is keeps its tab (Task 14c).
+            // the window brought forward as it is keeps its tab (Task 14c).
             state.requestPlan(
                 route.planID, tab: tab, landing: planRequestLandsOnFirstTab(.route(planID: planID)) ? .overview : nil,
                 editing: planEditorSlot?.unsavedPlanID)
         }
-        guard let supervisor, let loginItem else { return }
-        let context = SettingsContext(
+        guard let context = windowContext() else { return }
+        show(.main, configure: { [weak self, state] window in
+            // Plans and History need room: the main window is resizable, and remembers its frame (`restoreFrame`).
+            window.styleMask.insert(.resizable)
+            let toolbar = SectionToolbar.main(state: state)
+            toolbar.attach(to: window, style: .preference)
+            self?.mainToolbar = toolbar
+            self?.followEditedState(of: window)
+        }) { [weak self, state] in
+            let slot = PlanEditorSlot()
+            self?.planEditorSlot = slot
+            let controller = NSHostingController(
+                rootView: MainWindow(
+                    context: context, minimumWidth: MainWindow.measuredMinimumWidth(), state: state, editorSlot: slot
+                ).environment(\.appLog, context.supervisor.log))
+            // The window may be made larger than the content's minimum, never smaller.
+            controller.sizingOptions = [.minSize]
+            return controller
+        }
+    }
+
+    /// Shows Settings, switched to `pane` when one is passed; otherwise an open window comes forward as it is and a
+    /// new one opens at the pane last viewed.
+    func showSettings(pane: SettingsPane? = nil) {
+        if let pane { state.settingsPane = pane }
+        guard let context = windowContext() else { return }
+        show(.settings, configure: { [weak self, state] window in
+            // A fixed width (`SettingsWindow.width`) with the height following the pane: not resizable, so its Zoom
+            // button is dimmed, and it has no Minimise (`AppWindowKind.isMiniaturizable`; HIG Settings).
+            let toolbar = SectionToolbar.settings(state: state)
+            toolbar.attach(to: window, style: .preference)
+            self?.settingsToolbar = toolbar
+        }) { [weak self, state] in
+            let network = NetworkEditorSlot(supervisor: context.supervisor)
+            self?.networkEditorSlot = network
+            let controller = NSHostingController(
+                rootView: SettingsWindow(context: context, state: state, networkSlot: network)
+                    .environment(\.appLog, context.supervisor.log))
+            // The window takes each pane's height as the pane changes, as System Settings-style windows do.
+            controller.sizingOptions = [.preferredContentSize]
+            return controller
+        }
+    }
+
+    /// What the main and Settings windows work with; nil for a copy outside /Applications, which has neither.
+    private func windowContext() -> SettingsContext? {
+        guard let supervisor, let loginItem else { return nil }
+        return SettingsContext(
             supervisor: supervisor, loginItem: loginItem,
             finishSetup: { [weak self] in self?.showSetup() },
             openSetup: { [weak self] in self?.showSetup(progress: $0) },
@@ -133,33 +189,10 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             showRecoveryKit: { [weak self] in self?.showRecoveryKit(planID: $0) },
             showRestoreFiles: { [weak self] in self?.showRestoreFiles(planID: $0) },
             planDeleted: { [weak self] in self?.planDeleted($0) })
-        show(.settings, configure: { [weak self, state] window in
-            window.styleMask.insert(.resizable)
-            // Plans and History need room, so it stays resizable, but a settings window has no full screen: its
-            // Zoom button is dimmed too (HIG Settings: "dim a settings window's minimize and maximize buttons").
-            window.standardWindowButton(.zoomButton)?.isEnabled = false
-            let toolbar = SettingsToolbar(state: state)
-            toolbar.attach(to: window)
-            self?.settingsToolbar = toolbar
-            self?.followEditedState(of: window)
-        }) { [weak self, state] in
-            let slot = PlanEditorSlot()
-            self?.planEditorSlot = slot
-            let network = NetworkEditorSlot(supervisor: supervisor)
-            self?.networkEditorSlot = network
-            let controller = NSHostingController(
-                rootView: SettingsWindow(
-                    context: context, minimumWidth: SettingsWindow.measuredMinimumWidth(), state: state,
-                    editorSlot: slot, networkSlot: network
-                ).environment(\.appLog, supervisor.log))
-            // The window may be made larger than the content's minimum, never smaller.
-            controller.sizingOptions = [.minSize]
-            return controller
-        }
     }
 
     /// "Add Plan…" (`SetupFlow.addingPlan`): opens setup itself unless there is an unfinished plan's setup to
-    /// finish first, which Settings asks about. An open setup window just comes forward (nil).
+    /// finish first, which the main window asks about. An open setup window just comes forward (nil).
     private func addPlan() -> AddPlanStart? {
         if slots.openWindow(for: .setup) != nil {
             showSetup()
@@ -169,9 +202,9 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         return SetupFlow.addingPlan(saved: setupStore?.load(), plans: plans, installed: true)
     }
 
-    /// A plan was deleted (Settings or the Developer window). A setup window still on that plan closes first, so none of
-    /// its steps saves progress naming the plan again (review M4); then saved progress that names it is forgotten
-    /// (live finding 2). Closing setup keeps no progress of its own.
+    /// A plan was deleted (the main window or the Developer window). A setup window still on that plan closes first,
+    /// so none of its steps saves progress naming the plan again (review M4); then saved progress that names it is
+    /// forgotten (live finding 2). Closing setup keeps no progress of its own.
     func planDeleted(_ planID: UUID) {
         if let setupModel, setupModel.plan?.id == planID || setupModel.draft.progress.planID == planID {
             slots.openWindow(for: .setup)?.close()
@@ -179,7 +212,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         setupStore?.forget(planID: planID)
     }
 
-    /// "Save Recovery Kit…" (a plan needing a new kit) and Settings' "Show Recovery Kit…".
+    /// "Save Recovery Kit…" (a plan needing a new kit) and the plan's "Show Recovery Kit…".
     func showRecoveryKit(planID: UUID) {
         guard let supervisor else { return }
         show(.recoveryKit, planID: planID) { [weak self] in
@@ -211,7 +244,8 @@ final class WindowRouter: NSObject, NSWindowDelegate {
     func show(_ opening: ShellOpening) {
         switch opening {
         case .setup: showSetup()
-        case .settings(let section): showSettings(section: section)
+        case .main(let section): showMain(section: section)
+        case .settings(let pane): showSettings(pane: pane)
         case .damagedNotice: break // AppDelegate shows it: the router has no window for it
         }
     }
@@ -246,21 +280,34 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         return window
     }
 
-    /// Settings keeps its frame between launches (P1). `setFrameAutosaveName` only saves; `setFrameUsingName` loads the
-    /// saved one (appkit-gotchas: window frame autosave). Returns whether one was restored, else the caller centres.
-    /// The other windows size themselves to their content and open centred.
+    /// The main and Settings windows keep their frames between launches (P1), each under its own name (the Settings
+    /// window's size follows its pane; only its place is kept). `setFrameAutosaveName` only saves; `setFrameUsingName`
+    /// loads the saved one (appkit-gotchas: window frame autosave). Returns whether one was restored, else the caller
+    /// centres. The other windows size themselves to their content and open centred.
     private func restoreFrame(of window: NSWindow, _ kind: AppWindowKind) -> Bool {
-        guard kind == .settings else { return false }
-        let name = "RestoreySettings"
+        let name: String
+        switch kind {
+        case .main: name = "RestoreyMain"
+        case .settings: name = "RestoreySettingsWindow"
+        case .setup, .recoveryKit, .restoreFiles: return false
+        }
         _ = window.setFrameAutosaveName(name)
-        return window.setFrameUsingName(name)
+        guard window.setFrameUsingName(name) else { return false }
+        if kind == .settings, let content = window.contentViewController {
+            // Only the place is kept: the height is the pane's, which may have changed since it was saved (Full Disk
+            // Access granted, another text size), and the content asks for it again only when it changes.
+            let topLeft = NSPoint(x: window.frame.minX, y: window.frame.maxY)
+            window.setContentSize(content.view.fittingSize)
+            window.setFrameTopLeftPoint(topLeft)
+        }
+        return true
     }
 
-    /// The dot in Settings' close button while a plan or the Network section has unsaved edits (P7): the same
-    /// `unsavedSettings` the close and quit questions ask about. Re-reads whenever any of it changes; stops with the window.
+    /// The dot in the main window's close button while a plan has unsaved edits (P7): the same `unsavedEdits` the
+    /// close and quit questions ask about. Re-reads whenever any of it changes; stops with the window.
     private func followEditedState(of window: NSWindow) {
         let edited = withObservationTracking {
-            !unsavedSettings.isEmpty
+            !unsavedEdits.isEmpty
         } onChange: { [weak self, weak window] in
             Task { @MainActor in
                 guard let self, let window, window.isVisible || window.isMiniaturized else { return }
@@ -270,11 +317,11 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         window.isDocumentEdited = edited
     }
 
-    /// Ruling R1: closing Settings with unsaved edits asks Save, Don't Save or Cancel, as switching plans asks: a
-    /// plan's, then the Network section's (Task 15 fix round 1, I1).
+    /// Ruling R1: closing the main window with unsaved plan edits asks Save, Don't Save or Cancel, as switching plans
+    /// asks. Closing Settings never asks: its changes apply as they are made (visual polish §1).
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard sender.identifier?.rawValue == AppWindowKind.settings.rawValue, !unsavedSettings.isEmpty else { return true }
-        askToSave(unsavedSettings, in: sender) { proceed in if proceed { sender.close() } }
+        guard sender.identifier?.rawValue == AppWindowKind.main.rawValue, !unsavedEdits.isEmpty else { return true }
+        askToSave(unsavedEdits, in: sender) { proceed in if proceed { sender.close() } }
         return false
     }
 
@@ -283,28 +330,26 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         case none
         /// Asked; `reply` will say whether the quit goes on.
         case asked
-        /// Settings already has a question up (closing it, or discarding changes): the quit is cancelled, and the
+        /// The main window already has a question up (closing it, or discarding changes): the quit is cancelled, and the
         /// window brought forward so that question is answered first. Chaining onto it would mean guessing what each
         /// answer means for the quit; cancelling leaves nothing waiting on a sheet that may never answer it.
         case busy
     }
 
-    /// Fix round 2: quitting with unsaved edits asks the same questions, over the Settings window. `reply` gets
-    /// whether the quit may go on: after every question is answered with a save that worked or "Don't Save", not after
-    /// Cancel or a refused save.
+    /// Fix round 2: quitting with unsaved edits asks the same questions, over the main window. `reply` gets whether
+    /// the quit may go on: after every question is answered with a save that worked or "Don't Save", not after Cancel
+    /// or a refused save.
     func askBeforeQuitting(_ reply: @escaping @MainActor (Bool) -> Void) -> QuitQuestion {
-        guard let window = slots.openWindow(for: .settings), !unsavedSettings.isEmpty else { return .none }
-        WindowActivation.bringForward(window, as: .window(.settings))
+        guard let window = slots.openWindow(for: .main), !unsavedEdits.isEmpty else { return .none }
+        WindowActivation.bringForward(window, as: .window(.main))
         if window.attachedSheet != nil { return .busy }
-        askToSave(unsavedSettings, in: window, then: reply)
+        askToSave(unsavedEdits, in: window, then: reply)
         return .asked
     }
 
-    /// The Settings sections with unsaved edits, in the order they are asked about (`UnsavedSettings.toAsk`).
-    private var unsavedSettings: [UnsavedSettings] {
-        UnsavedSettings.toAsk(
-            plan: planEditorSlot?.editor?.edit.isDirty == true,
-            network: networkEditorSlot?.model?.edit.isDirty == true)
+    /// The main window's sections with unsaved edits, in the order they are asked about (`UnsavedSettings.toAsk`).
+    private var unsavedEdits: [UnsavedSettings] {
+        UnsavedSettings.toAsk(plan: planEditorSlot?.editor?.edit.isDirty == true)
     }
 
     /// Save, Don't Save or Cancel for each of `sections` in turn, as sheets on `window`. `then` gets true once every
@@ -324,11 +369,6 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             question = .plan(name: editor.saved.name, pausesBackups: editor.edit.pausesBackups)
             save = { await editor.save(); return !editor.edit.isDirty }
             discard = { editor.revert() }
-        case .network:
-            guard let model = networkEditorSlot?.model else { return askToSave(rest, in: window, then: then) }
-            question = .network
-            save = { await model.save(); return !model.edit.isDirty }
-            discard = { model.revert() }
         }
         let alert = NSAlert()
         alert.messageText = question.message
@@ -343,7 +383,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
                     if await save() {
                         self?.askToSave(rest, in: window, then: then)
                     } else {
-                        self?.state.settingsSection = section.section
+                        self?.state.mainSection = section.section
                         then(false)
                     }
                 }
@@ -380,12 +420,15 @@ final class WindowRouter: NSObject, NSWindowDelegate {
         case .restoreFiles:
             restoreFilesModel?.close()
             restoreFilesModel = nil
-        case .settings:
+        case .main:
             state.historyFilter = nil
-            // A new Settings window opens a plan on its Overview (Task 14c).
-            state.settingsPlanTab = .overview
+            // A new main window opens a plan on its Overview (Task 14c).
+            state.planTab = .overview
             planEditorSlot?.close()
             planEditorSlot = nil
+            mainToolbar = nil
+        case .settings:
+            // Network edits not yet saved go with the window (its Save bar stays until changes apply as made).
             networkEditorSlot?.close()
             networkEditorSlot = nil
             settingsToolbar = nil

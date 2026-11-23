@@ -4,8 +4,8 @@ A free, open-source macOS menu bar app that puts an Arq/Backblaze-style front en
 [restic](https://restic.net).
 
 > **Status: v0.1 in testing on the owner's Mac.** There is no app to download yet. The engine (background agent,
-> scheduler, plans, Keychain secrets, check-ins and notifications) and the app (setup, the menu bar, Settings, the
-> recovery kit and Restore Files) run from a development build; the owner's live checks of the whole app are in
+> scheduler, plans, Keychain secrets, check-ins and notifications) and the app (setup, the menu bar, the main window,
+> Settings, the recovery kit and Restore Files) run from a development build; the owner's live checks of the whole app are in
 > [docs/v0.1-measurements.md](docs/v0.1-measurements.md). Nothing here is ready to protect your data yet.
 
 ## What it will do
@@ -29,6 +29,7 @@ because the App Store sandbox rules out the Full Disk Access a backup tool needs
 - [Design](docs/superpowers/specs/2026-11-09-restorey-design.md)
 - [Menu bar and restore window mockup](docs/mockups/menubar-and-restore.html)
 - [v0.1 UI design](docs/superpowers/specs/2026-11-12-restorey-v0.1-ui-design.md), with mockups of [setup](docs/mockups/v0.1-setup-flow.html), [Settings](docs/mockups/v0.1-settings.html) and the [menu bar states](docs/mockups/v0.1-menu-states.html)
+- [Visual polish design](docs/superpowers/specs/2026-11-23-visual-polish-design.md) (the main window and Settings split, §1)
 - [Platform spike plan](docs/superpowers/plans/2026-11-10-platform-spike.md)
 - [Platform spike findings](docs/spike-findings.md) (throwaway spike code in [`spike/`](spike/))
 - [v0.1 engine plan](docs/superpowers/plans/2026-11-10-v0.1-engine.md), [measurements](docs/v0.1-measurements.md) and [rulings](docs/v0.1-rulings.md) (R1–R78)
@@ -44,15 +45,16 @@ S3, or any other restic location), set or enter the repository password (a new r
 adopt with its history), save the recovery kit somewhere other than this Mac, choose what to back up (the home
 folder by default, with the default exclusions) and the schedule (hourly by default, with retention and an
 optional check-in URL), then start the first backup. Quitting part-way resumes where you left off. "Add Plan…" in
-Settings → Plans runs the same steps for another plan.
+the main window's Plans runs the same steps for another plan.
 
 **The menu.** The menu bar icon shows the worst state across all plans, and its tooltip says it in words
 ("Restorey — Last backup at 14:16", or the worst problem). The menu lists any problem with the whole Mac first, each as
 an item named for its fix with the problem under it (Allow Full Disk Access…, Turn On Notifications…, Restart Backups,
 Turn On in Login Items…); then a section per plan, headed by its name, with its status, progress or next run, and
-destination (choosing it opens the plan in Settings), then that plan's own problems (Finish Setup…, Save Recovery
+destination (choosing it opens the plan in the main window), then that plan's own problems (Finish Setup…, Save Recovery
 Kit…, Add Check-In URL… with Don't Show This Again) and, after a failure, Show Details… for its history; then Resume,
-Back Up Now and, while a backup runs, Pause and Cancel Backup, then Restore Files…, Settings… (⌘,) and Quit Restorey.
+Back Up Now and, while a backup runs, Pause and Cancel Backup, then Restore Files…, Open Restorey, Settings… (⌘,) and
+Quit Restorey.
 Pause opens a submenu of how long: For 1 Hour, For 4 Hours or Until Tomorrow (with several backups running, headed All
 Plans and then each running plan by name). Cancel Backup stops the backup in progress only: nothing is paused, no alert
 or check-in is sent, and the schedule doesn't move: with a backup every 4 hours, cancelling the 12:00 one still lets the
@@ -73,12 +75,14 @@ switched off.". Use them in a shortcut or a Focus or shortcut automation, such a
 lid. Siri can't run them by voice on the Mac: Apple says voice invocation of App Shortcuts isn't available on macOS
 (Apple Developer Forums, thread 764609), and nothing documents a change since.
 
-**Settings** has four sections in its toolbar:
+Restorey has two windows. **The main window** (Open Restorey in the menu, a plan's line in the menu, or opening the
+app again from Finder, Spotlight or the Dock) is about your backups, with two sections in its toolbar, Plans and
+History. **Settings** (Settings… ⌘, in the app menu or the menu bar menu) holds the preferences for the whole Mac,
+with three panes, General, Notifications and Network. Settings… never opens the plans, and nothing about a plan
+opens Settings.
 
-- **General**: Open at login, Full Disk Access, notifications and Backups in the background, each with its fix, and the
-  logs folder. While Full Disk Access is missing it is a section of its own at the top: why it is needed, a tile with
-  Restorey's icon and name and "Drag this into the list, then switch it on.", and Open System Settings; once it is on,
-  it is one row with a green tick and "Full Disk Access is on".
+The main window:
+
 - **Plans**: the plans in a list with + (Add Plan…) and − (Delete Plan…) under it, and the selected plan's six tabs.
   A plan's context menu has Back Up Now, Resume while it's paused, Pause (a submenu of For 1 Hour, For 4 Hours and
   Until Tomorrow) and Cancel Backup while it runs, Restore Files…, Show in History and Delete Plan….
@@ -104,14 +108,22 @@ lid. Siri can't run them by voice on the Mac: Apple says voice invocation of App
   repository); and **History** (the plan's runs). Edits are saved with Save (⌘S) or undone with Revert; changing the
   password, a key or the host label pauses backups until a new recovery kit is saved. Deleting a plan leaves the
   repository alone.
+- **History**: every plan's runs in a table, newest first, sortable by any column and filtered by plan and by outcome,
+  each with its log (double-click a run, or use its context menu: Show Log, Show Log in Finder, Copy Outcome and the
+  run's sheets). ⌘C copies the selected runs as text.
+
+Settings:
+
+- **General**: Open at login, Full Disk Access and Backups in the background, each with its fix, and the logs
+  folder. While Full Disk Access is missing it is a section of its own at the top: why it is needed, a tile with
+  Restorey's icon and name and "Drag this into the list, then switch it on.", and Open System Settings; once it is on,
+  it is one row with a green tick and "Full Disk Access is on".
+- **Notifications**: whether macOS lets Restorey post notifications, with Allow… or Open System Settings.
 - **Network**: rules for the whole Mac, for plans that back up to another machine (S3, B2, a restic server; never a
   folder or drive): an upload limit shared by the backups uploading at once (a rate, or a percentage of the upload
   speed the agent measures on each network), skipping backups on a phone hotspot or
   in Low Data Mode (on by default), and a list of Wi-Fi networks to skip backups on. Adding the first network asks
   for Location permission, which macOS requires before it shows any app the Wi-Fi network's name.
-- **History**: every plan's runs in a table, newest first, sortable by any column and filtered by plan and by outcome,
-  each with its log (double-click a run, or use its context menu: Show Log, Show Log in Finder, Copy Outcome and the
-  run's sheets). ⌘C copies the selected runs as text.
 
 When files exist only in iCloud, not on this Mac, a backup skips them. The plan's Overview then says "iCloud Drive
 files skipped" under the last backup, and its info button explains how many and how to include them. Restorey counts
@@ -292,25 +304,25 @@ diagnostics go to `diagnostics/` beside it.
 
 ### Menus and windows
 
-Restorey is a menu bar (accessory) app while none of its windows is open. While any is (setup, Settings, the recovery
-kit, Restore Files, an alert, or the Debug-only Developer window), it is an ordinary app: a Dock icon, a place in ⌘-Tab
+Restorey is a menu bar (accessory) app while none of its windows is open. While any is (setup, the main window,
+Settings, the recovery kit, Restore Files, an alert, or the Debug-only Developer window), it is an ordinary app: a Dock icon, a place in ⌘-Tab
 and its own menu bar, and it goes back to the menu bar when the last window closes (`WindowPresence`,
 `ActivationController`, `WindowActivation`). A minimised window still counts, and its own tile in the Dock brings it
-back; clicking Restorey's app icon in the Dock is a reopen, which opens Settings (below). Open panels are sheets on the
+back; clicking Restorey's app icon in the Dock is a reopen, which opens the main window (below). Open panels are sheets on the
 window that asked, and the About panel counts while it is up, so no Restorey window is left on screen in a menu bar
 app. As an accessory app it had no menu bar, so Quit and Edit weren't there while its window was in
 use, and macOS passed it over when a Touch ID prompt went away, so the window that asked fell behind the app before
 (diagnosis in `docs/build-records/2026-11-12-v0.1-ui/o1-diagnosis.md`). The main menu is the app menu (About Restorey,
-Settings… ⌘, which opens Settings from any of the windows and is dimmed in a copy outside /Applications, which has
-none, Services, Hide, Hide Others, Show All, Quit), an Edit menu (Undo, Redo, Cut, Copy, Paste, Paste and Match
+Settings… ⌘, which opens Settings (never the plans) from any of the windows and is dimmed in a copy outside
+/Applications, which has none, Services, Hide, Hide Others, Show All, Quit), an Edit menu (Undo, Redo, Cut, Copy, Paste, Paste and Match
 Style, Delete, Select All), a Window menu (Minimise, Zoom, Close, Bring All to Front; Minimise and Zoom dim for a
 window that doesn't allow them, and there are no tab items: every window opts out of tabbing and full screen) and a
 Help menu, so ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V, ⌘A, ⌘, ⌘H, ⌥⌘H, ⌘W and ⌘Q work in its windows. "Restorey Help" (⌘?) opens
 the README's "Using Restorey" section on GitHub (<https://github.com/jaydenk/restorey#using-restorey>): Restorey has
 no Help Book, and the repository is public. The About panel shows the copyright line and `App/Credits.rtf`, which
 carries restic's BSD 2-Clause licence (verbatim from its v0.19.1 LICENSE) and the EFF word list's attribution;
-`scripts/verify-bundle.sh` checks both are in every build, Release included. Each kind of window (setup,
-Settings, recovery kit, Restore Files) opens at most once: asking again brings the open one to the front. A window is
+`scripts/verify-bundle.sh` checks both are in every build, Release included. Each kind of window (setup, the main
+window, Settings, recovery kit, Restore Files) opens at most once: asking again brings the open one to the front. A window is
 ordered front and activation asked for once, while the click that opened it is handled. Since macOS 14 that request
 can be refused; then, on the next turn of the run loop, a window still on screen is ordered in front anyway
 (`orderFrontRegardless`), though it isn't key until clicked. A hidden Restorey (⌘H) is shown again first, without
@@ -318,10 +330,11 @@ activating it, so that window can be seen either way. After a Touch ID prompt, o
 again. None is restored at launch, and closing a
 window releases it, so a recovery kit's secrets go with it. The setup window follows its content's size from step to step.
 
-Opening Restorey again while it runs (from Finder, Spotlight, `open` or its Dock icon) opens Settings, or brings an open Settings
-window forward as it is, so the app can still be reached when its menu bar icon can't be seen. If the icon is hidden (System Settings → Menu Bar) when Restorey
-starts, it opens Settings at once, in General (as does opening it again while the icon is hidden), with the note "Restorey's menu bar icon is hidden. Show it in System
-Settings → Menu Bar." An icon squeezed out of a full menu bar isn't detected (macOS still reports it as visible), so
+Opening Restorey again while it runs (from Finder, Spotlight, `open` or its Dock icon) opens the main window, or brings
+an open one forward as it is, so the app can still be reached when its menu bar icon can't be seen. If the icon is
+hidden (System Settings → Menu Bar) when Restorey starts, it opens Settings at once, in General (as does opening it
+again while the icon is hidden, `shellOpeningOnReopen`), since General has the note "Restorey's menu bar icon is
+hidden. Show it in System Settings → Menu Bar." An icon squeezed out of a full menu bar isn't detected (macOS still reports it as visible), so
 opening the app again is the way in. A copy outside `/Applications` opens setup's "Move to Applications" step
 instead. Open at login registers the app itself with `SMAppService.mainApp`, from the installed copy only; it is
 switched in setup's permissions step and in Settings → General.
@@ -448,16 +461,42 @@ every jump to System Settings is "Open System Settings"; headings and labels are
 apostrophes are curly; and the person never sees the word "agent" ("Backups aren’t running", "Restart Backups",
 "Backups in the background" in General, "Restorey’s background process").
 
-### Settings
+### The main window and Settings
 
-Settings (⌘, in the app menu, and in the status item's menu) is a window with a toolbar of sections, as macOS draws
-them for settings: **General**, **Plans**, **Network** and **History** (mockup `docs/mockups/v0.1-settings.html`).
-As Apple's Settings windows do, it is titled with the pane showing ("Plans", not "Restorey Settings — Plans"); has no
-Minimise button, a dimmed Zoom button and no full screen or tabs (it stays resizable, since Plans and History need
-room); opens at the section last viewed and at the size and place it was left (`SettingsPanePreference` in
-`UserDefaults`; the frame autosaves as `RestoreySettings`, and a window with no saved frame is centred); and shows
-the dot in its close button while a plan or the Network section has unsaved edits, the same state the Save, Don't
-Save or Cancel question on close and quit asks about (the router's one `unsavedSettings`). Esc closes the sheets that have
+Restorey has two windows, each with a toolbar of sections as macOS draws them for settings (`SectionToolbar`; the
+split is in `docs/superpowers/specs/2026-11-23-visual-polish-design.md` §1, the earlier one-window layout in the
+mockup `docs/mockups/v0.1-settings.html`). Each is titled with the section or pane showing ("Plans", not "Restorey —
+Plans"), opens at the one last viewed (`MainSectionPreference` and `SettingsPanePreference` in `UserDefaults`; a
+name saved before the split that now belongs to the other window falls back to Plans or General) and where it was
+left (its frame autosaves, and a window with no saved frame is centred), is listed in the Window menu, and has no
+full screen or tabs. Which one a route opens is `WindowRouter`'s: anything about a plan opens the main window
+(`showMain`), and a fix that names a Mac-wide setting opens Settings (`showSettings`):
+
+| Route | Opens |
+| --- | --- |
+| A plan's status in the menu | Main window, Plans, that plan (on its Overview) |
+| Open Restorey (menu), opening the app again, the Dock icon | Main window, as it was left (a new one at the section last viewed) |
+| …while the menu bar icon is hidden, and at launch with it hidden | Settings, General |
+| Settings… (menu) and Settings… ⌘, (app menu) | Settings, as it was left (a new one at the pane last viewed) |
+| Show Details… (menu), and Show Last Run Log with no log left | Main window, History (filtered to the plan) |
+| Add Check-In URL… (menu) | Main window, Plans, that plan's Schedule tab |
+| Show in Settings… (Restorey can't read its settings) | Main window, Plans, which says why |
+| Allow Full Disk Access… (menu) | Settings, General, and System Settings' Full Disk Access list |
+| Show in History (a plan's context menu) | Main window, History, filtered to the plan |
+
+**The main window** has **Plans** and **History** (toolbar `RestoreyMainToolbar`, frame `RestoreyMain`). It is
+resizable, at least as wide as Plans' list and row of tabs, and has Minimise and Zoom. It holds the plan editor, so
+it shows the dot in its close button while a plan has unsaved edits, the same state the Save, Don't Save or Cancel
+question on close and quit asks about (the router's one `unsavedEdits`), and the "Discard your changes…?" question
+when a route asks for another plan.
+
+**Settings** has **General**, **Notifications** and **Network** (toolbar `RestoreySettingsToolbar`, frame
+`RestoreySettingsWindow`). As Apple's Settings windows do, it has a fixed width (560 points, the widest row being
+Network's limit window; longer text wraps) with the height of the pane showing, no Minimise button and a dimmed Zoom
+button. Closing it never asks a question. Until Network applies its changes as they are made, its unsaved edits go
+with the window.
+
+Esc closes the sheets that have
 only a Done button (exclusions, items marked not for backup, biggest additions, files that couldn't be read) as
 Done does; the two that edit apply into the page's unsaved fields, so the page's Revert is their way back. The menu's routes pick the section
 and plan: a plan's status opens it in Plans, "Show Details…" opens History for that plan, and "Add Check-In URL…" opens
@@ -483,15 +522,17 @@ asking the agent the same way (`AgentActions`), and Show in History, which opens
 menu's "Show Details…" does. Delete Plan… there asks first, as − does. Nothing in it is new: each item is elsewhere
 already.
 
-**General** has Open at login (the switch re-reads `SMAppService` after every change, so a Restorey switched off in
-System Settings → General → Login Items shows as off with a note and "Open System Settings", never as what was asked),
-Full Disk Access as the agent's own probe finds it, notifications as the agent last heard from the notification
-centre, the state and version of backups in the background ("Running · 0.1.0 (11)"), each with the menu's fix (Open
-System Settings, Allow…, Restart Backups), the logs folder (Show in Finder), and, while the menu bar icon is hidden, the
-note saying where to show it. These are read again whenever Restorey comes back to the front. The words are
-`SettingsGeneral`'s (`RestoreyCore`).
+**General** (Settings) has Open at login (the switch re-reads `SMAppService` after every change, so a Restorey
+switched off in System Settings → General → Login Items shows as off with a note and "Open System Settings", never as
+what was asked), Full Disk Access as the agent's own probe finds it, the state and version of backups in the
+background ("Running · 0.1.0 (11)"), each with the menu's fix (Open System Settings, Restart Backups), the logs folder
+(Show in Finder), and, while the menu bar icon is hidden, the note saying where to show it. These are read again
+whenever Restorey comes back to the front. The words are `SettingsGeneral`'s (`RestoreyCore`).
 
-**Plans** lists the plans, each with a symbol for where it backs up (`Repository.place`): a cloud for a storage
+**Notifications** (Settings) has the notifications permission as the agent last heard from the notification centre,
+with its fix (Allow…, or Open System Settings), read again whenever Restorey comes back to the front.
+
+**Plans** (the main window) lists the plans, each with a symbol for where it backs up (`Repository.place`): a cloud for a storage
 service (B2, S3, Azure, Google Cloud Storage, Swift, rclone), a server for another machine on the network (SFTP, a
 restic REST server), a drive for a folder or drive on this Mac, with + ("Add Plan…") under the list, which opens setup from "Where backups go" (`SetupProgress.addingPlan`).
 Setup keeps one saved progress, so `SetupFlow.addingPlan` decides what it opens: a new add, the add or first run
@@ -501,7 +542,7 @@ needing a new kit shows "New recovery kit needed" with "Save Recovery Kit…"; a
 "Stopped" and its reason, as its line in the menu does. The list notes the same under each plan's name, one at a
 time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`PlanNote`). Every other plan has tabs:
 
-- **Overview**, first and where a plan opens (picked in the list, the menu's plan line, a new Settings window; a
+- **Overview**, first and where a plan opens (picked in the list, the menu's plan line, a new main window; a
   route that names a tab, such as the menu's "Add Check-In URL…" for Schedule, keeps it; `planRequestLandsOnFirstTab`): a headline with the
   plan's state only ("Up to date", "Backing up — 42%", "Paused", "Backup failed", "Stopped", "Needs attention",
   "Waiting for a new recovery kit", "No backup yet") and the menu's reason under it, coloured only when the plan
@@ -513,7 +554,7 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   nothing on the page is edited, unless a sheet left edits waiting (History likewise). After a backup that
   couldn't read some files, "Show…" under the reason opens "Files that couldn't be read" (see below). It follows the agent
   live, progress included. The window is at least as wide as the list and the row of six tabs, measured with the
-  system's fonts each time a Settings window opens (`PlanTabPicker.naturalWidth`), so a text-size change applies from the next one.
+  system's fonts each time a main window opens (`PlanTabPicker.naturalWidth`), so a text-size change applies from the next one.
 - **Folders** ("What" until Task 17c): its name, the folders and drives, the exclusions (setup's line and "Review Exclusions…" sheet), and a
   line counting the items apps mark as not for backup ("Also skipped: 1,145 items apps mark as not for backup") with
   "Show…", a sheet with the plan's switch for them and the list, each with "Back up anyway". Folders and drives
@@ -579,16 +620,15 @@ the window closes. Every change of the plan shown (the list, a plan's status in 
 again) goes through one guard (`PlanSelection`): with unsaved edits, a request for another plan waits for "Discard
 your changes…?" (a tab the route named, such as Alerts for "Add Check-In URL…", is shown once the switch happens), and closing
 the window or quitting Restorey asks Save, Don't Save or Cancel (a refused save cancels the quit; a quit while
-Settings already has a question up is cancelled, and the window brought forward so that question is answered first). The editor belongs to the window, so going
-to General and back keeps them. − under the list (or Delete, or "Delete Plan…" in a plan's context menu) asks with the developer window's words ("Its
+the main window already has a question up is cancelled, and the window brought forward so that question is answered first). The editor belongs to the window, so going
+to History and back keeps them. − under the list (or Delete, or "Delete Plan…" in a plan's context menu) asks with the developer window's words ("Its
 settings, saved passwords and keys, and history are removed. The repository and its snapshots aren't touched."); the
 agent also removes the plan's run logs, and setup's saved progress is forgotten if it names the deleted plan
 (`SetupProgressStore.forget`), as it is when the Developer window deletes one.
 
-**Network** edits the Mac-wide rules (`NetworkEdit` in `RestoreyCore`, held by `NetworkEditModel` for as long as
-the window is open, so going to another section and back keeps unsaved edits; closing the window or quitting with
-unsaved Network edits asks Save, Don't Save or Cancel, after a plan's question if both have edits,
-`UnsavedSettings`). Its rows, from the top (the full design is in
+**Network** (Settings) edits the Mac-wide rules (`NetworkEdit` in `RestoreyCore`, held by `NetworkEditModel` for as
+long as the Settings window is open, so going to another pane and back keeps unsaved edits; closing the window drops
+them without asking, since Settings asks no question on close, until Network applies its changes as they are made). Its rows, from the top (the full design is in
 `docs/superpowers/specs/2026-11-21-upload-limit-design.md`):
 
 - **Upload limit for this Mac**: an amount and a picker of None (the default), KB/s, MB/s or "% of upload speed"
@@ -625,8 +665,8 @@ why ("Restorey needs Location permission to see Wi-Fi names.") with "Open System
 Location Services); Location restricted by a configuration profile or Screen Time says so, with no button, since
 System Settings can't change it.
 
-**History** lists every plan's runs, newest first, with a plan filter (set again by each "Show Details…", and back to every plan once you pick a section yourself or
-close Settings) and
+**History** (the main window) lists every plan's runs, newest first, with a plan filter (set again by each "Show Details…", and back to every plan once you pick a section yourself or
+close the main window) and
 Everything, Backups, Problems or Skipped and Paused (`HistoryPresentation`): local time, plan, the step (Backup, Tidy,
 Check…), how the run ended in the menu's wording ("Backed up", "Old snapshots
 tidied", "Skipped: Photos isn't connected", "Backup failed" with the menu's reason; never "failed" for a pause, a
@@ -759,7 +799,7 @@ own menus do: section headers (`NSMenuItem.sectionHeader(title:)`, macOS 14), a 
   agent finds access granted); "Turn On Notifications…" (Notifications are off) opens the agent's page in
   Notifications; "Restart Backups" (Backups aren't running, or aren't responding); "Turn On in Login Items…"
   (Backups are switched off); "Finish Setup…" (No backup plan yet); and "Show in Settings…" (Restorey can't read its
-  settings), which opens Settings → Plans with the reason. A line such as "Last known: backed up at 13:16" or
+  settings), which opens the main window's Plans with the reason. A line such as "Last known: backed up at 13:16" or
   "Backups couldn't be set up" follows when there is one, with any long reason in its tooltip.
 - **A section per plan**, headed by the plan's name. Its status item has the status as its title ("Backed up at
   14:16", "Backing up", "Paused", "Backup failed at 14:16", "Stopped") and a symbol for the state: a tick once backed
@@ -770,7 +810,7 @@ own menus do: section headers (`NSMenuItem.sectionHeader(title:)`, macOS 14), a 
   up (the name setup gave it, such as "restic · sftp" for an SFTP repository, or the line's own words, ignoring case
   and spacing) shows only the size there, not its place again. A menu line is never restic's raw error: a failure from
   restic, a stop's reason or a retry's cause is the item's tooltip and the plan's Overview, one click away (choosing
-  the status opens the plan in Settings); Restorey's own short reasons ("Wrong password") do show. A running backup
+  the status opens the plan in the main window); Restorey's own short reasons ("Wrong password") do show. A running backup
   has a progress bar under the status, across the menu's width. restic counts the files while it is already backing
   them up, so its totals only grow until the count is done and a percentage would read 100% long before the backup
   is. Until restic reports the count as finished (`verbose_status` `scan_finished`), the bar has no end and the
@@ -798,7 +838,8 @@ own menus do: section headers (`NSMenuItem.sectionHeader(title:)`, macOS 14), a 
   Nothing in it changes a backup or a setting. The section comes with the click and stays until the menu closes;
   NSMenu reports no change of modifier keys while it is open, and an Option alternate (`isAlternate`) only swaps
   one existing item for another, so holding Option after opening doesn't add it.
-- **Settings…** (⌘,), the Debug-only **Developer…**, and **Quit Restorey** (⌘Q).
+- **Open Restorey** (no shortcut), which opens the main window, **Settings…** (⌘,), which opens Settings, the
+  Debug-only **Developer…**, and **Quit Restorey** (⌘Q).
 
 Status words are never coloured; a warning or an error has its symbol, a triangle or an octagon, so the state doesn't
 rest on colour alone, and VoiceOver reads each item as one sentence with the plan's name and the severity's word
@@ -993,7 +1034,7 @@ reasons are in the design spec, §5.7):
   (`MarkedNotForBackup.swift`). Before each backup the agent asks Spotlight for them within the plan's sources, checks
   each still carries the attribute, folds items inside another (or inside an excluded folder) away, and passes the
   list to restic in a per-run file (`--exclude-file`, removed when restic finishes). Each plan has a switch for this
-  (on by default) and a "Back up anyway" list (Settings → Folders → Show…). Spotlight is the source, so items in folders
+  (on by default) and a "Back up anyway" list (Plans → Folders → Show…). Spotlight is the source, so items in folders
   Spotlight doesn't index (indexing off, an unindexed drive, a folder on Spotlight's privacy list) are backed up.
   If the look takes over 10 seconds or finds over 100,000 items, that backup includes them all, and while a look
   Spotlight never answered is still outstanding no new one starts (one blocked thread at most). Without Full Disk
@@ -1007,7 +1048,7 @@ so Restorey doesn't try. Plans saved by an earlier build get the file types and 
 added to that plan once: each plan records the revision of the default list it has been given
 (`exclusionDefaultsRevision`; schema 4 gives older plans revision 1, new plans start at the current one), and when the
 agent starts it adds the later defaults the plan doesn't already list to the end of its exclusions, saves once and
-logs the plan and patterns in `agent.log`. Nothing is ever removed or changed, so a default you remove (Settings →
+logs the plan and patterns in `agent.log`. Nothing is ever removed or changed, so a default you remove (Plans →
 Folders, Review Exclusions…) stays removed. Before a file is
 rewritten by an upgrade, the old one is kept beside it as `config.json.v1.bak` (`<file>.v<schema>.bak`, readable
 only by you). If an upgrade fails, the agent says so and leaves the file alone.
