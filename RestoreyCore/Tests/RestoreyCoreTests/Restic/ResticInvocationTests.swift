@@ -568,4 +568,21 @@ struct ResticInvocationTests {
         // Only backup takes it.
         #expect(!inv(.forget(dryRun: false)).arguments.contains("--one-file-system"))
     }
+
+    /// Other file systems mounted inside the plan's folders (fix, 23 Nov 2026): found by the runner off its actor and
+    /// passed in the context, each left out as a literal folder, so restic never reads the mount-point folder from the
+    /// mounted file system. With one file system off, restic backs up what is inside them, so they stay in.
+    @Test func otherFileSystemsInsideTheFoldersAreExcludedWithOneFileSystemOn() {
+        var context = Self.context
+        context.otherFileSystemMountPoints = ["/Users/x/Library/Developer/CoreDevice/DeviceFS", "/Users/x/Or[b]"]
+        var p = plan()
+        let args = inv(.backup, p, context).arguments
+        #expect(args.contains("--exclude=/Users/x/Library/Developer/CoreDevice/DeviceFS"))
+        #expect(args.contains(#"--exclude=/Users/x/Or\[b\]"#))
+        #expect(args.firstIndex(of: "--exclude=/Users/x/Library/Developer/CoreDevice/DeviceFS")! < args.firstIndex(of: "--")!)
+
+        p.oneFileSystem = false
+        #expect(!inv(.backup, p, context).arguments.contains { $0.contains("DeviceFS") })
+        #expect(!inv(.forget(dryRun: false), plan(), context).arguments.contains { $0.contains("DeviceFS") })
+    }
 }

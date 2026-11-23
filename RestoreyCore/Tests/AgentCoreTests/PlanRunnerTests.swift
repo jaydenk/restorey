@@ -74,6 +74,33 @@ struct PlanRunnerTests {
         #expect(log.contains("--exclude=\(DefaultExclusions.pattern(forFolder: resolved)) "))
     }
 
+    /// Fix, 23 Nov 2026: other file systems mounted inside the plan's folders are found before the backup, off the
+    /// runner's actor, and restic gets each as an exclusion, so it never reads a mount point from the mounted file
+    /// system (CoreDevice's DeviceFS failed that read on every run). With one file system off, none are looked for.
+    @Test func otherFileSystemsInsideTheFoldersAreExcluded() async throws {
+        let asked = Locked<[[String]]>([])
+        let f = try await RunnerFixture.make(otherFileSystems: { sources in
+            asked.mutate { $0.append(sources) }
+            return sources.map { $0 + "/DeviceFS" }
+        })
+        defer { f.remove() }
+        try f.write("a.txt", "hello")
+        _ = try await f.state.confirmRecoveryKit(f.planID)
+
+        let record = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        guard case .success = record.outcome else { Issue.record("expected a success, got \(record.outcome)"); return }
+        let log = try String(contentsOf: f.logs.appendingPathComponent(record.logFile), encoding: .utf8)
+        let sources = await f.plan().sources
+        #expect(asked.value == [sources])
+        #expect(log.contains("--exclude=\(DefaultExclusions.pattern(forFolder: sources[0] + "/DeviceFS"))"))
+
+        try await f.updatePlan { $0.oneFileSystem = false }
+        let off = try await f.runner.runBackup(planID: f.planID, trigger: .scheduled)
+        let offLog = try String(contentsOf: f.logs.appendingPathComponent(off.logFile), encoding: .utf8)
+        #expect(asked.value.count == 1, "not looked for with one file system off")
+        #expect(!offLog.contains("DeviceFS"))
+    }
+
     /// Round 2: following the repository's link has a deadline (the subject: tiny, the check held past it). When the
     /// file system doesn't answer, the backup still runs and leaves out the folder as given, and the agent log says so.
     @Test func aRepositoryLinkThatCantBeFollowedInTimeLeavesOutThePathAsGiven() async throws {

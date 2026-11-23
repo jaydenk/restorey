@@ -63,7 +63,10 @@ extension PlanRunner {
         }
 
         var context = session.context
-        if op == .backup { context.repositoryLinkTarget = await repositoryLinkTarget(plan) }
+        if op == .backup {
+            context.repositoryLinkTarget = await repositoryLinkTarget(plan)
+            context.otherFileSystemMountPoints = await otherFileSystemMountPoints(plan)
+        }
         var limitLine: String?
         if plan.repository.needsNetwork {
             // Resolved (with a speed test first when one is needed) before this command registers, so a second backup

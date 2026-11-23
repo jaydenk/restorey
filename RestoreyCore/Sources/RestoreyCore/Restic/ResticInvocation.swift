@@ -39,6 +39,10 @@ public struct ResticContext: Sendable {
     /// out by the caller off its actor: a backup excludes it as well as the path as given. Nil when not resolved; the
     /// builder never reads the file system itself (final review I1).
     public var repositoryLinkTarget: String?
+    /// Other file systems mounted inside the plan's folders (`OtherFileSystems.current`), found by the caller off its
+    /// actor. With one file system on, `backup` leaves each out as a literal folder, so restic never reads the
+    /// mount-point folder from the mounted file system; with it off, restic backs up what is inside them.
+    public var otherFileSystemMountPoints: [String]
 
     public init(
         cacheDirectory: URL,
@@ -50,7 +54,8 @@ public struct ResticContext: Sendable {
         networkedBackupsRunning: Int = 1,
         maintenanceRetryLock: String = "5m",
         notForBackupExcludeFile: URL? = nil,
-        repositoryLinkTarget: String? = nil
+        repositoryLinkTarget: String? = nil,
+        otherFileSystemMountPoints: [String] = []
     ) {
         self.cacheDirectory = cacheDirectory
         self.helperExecutable = helperExecutable
@@ -62,6 +67,7 @@ public struct ResticContext: Sendable {
         self.maintenanceRetryLock = maintenanceRetryLock
         self.repositoryLinkTarget = repositoryLinkTarget
         self.notForBackupExcludeFile = notForBackupExcludeFile
+        self.otherFileSystemMountPoints = otherFileSystemMountPoints
     }
 }
 
@@ -194,7 +200,12 @@ public func makeInvocation(_ op: ResticOperation, plan: Plan, context: ResticCon
             + ["--host=\(plan.hostLabel)", "--tag=\(tag)",
                "--skip-if-unchanged", "--exclude-cloud-files", "--exclude-caches"]
             + packSize(plan)
-        if plan.oneFileSystem { args.append("--one-file-system") }
+        if plan.oneFileSystem {
+            args.append("--one-file-system")
+            // restic keeps a mount point it skips the inside of, and reads that folder from the mounted file system
+            // (`OtherFileSystems`): left out whole instead.
+            for path in context.otherFileSystemMountPoints { args.append("--exclude=\(DefaultExclusions.pattern(forFolder: path))") }
+        }
         // The Mac-wide limit is for the network (Ruling P2-7): a folder or drive gets the plan's own alone.
         let limit = plan.repository.needsNetwork
             ? effectiveUploadLimitKiB(
