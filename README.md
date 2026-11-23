@@ -299,7 +299,7 @@ plan and how many secrets it sent, and the app keeps them only while the kit or 
 (see "The recovery kit"). The other calls the setup and
 Settings screens use return no secret: `probeRepository` (is the address empty, or a repository the password opens,
 with its snapshots by host), `history` (run records, newest first, for one plan or all), `probeFullDiskAccess`
-(runs the agent's own probe and pushes the status) and `dismissOffMacNote`; Settings → Network also calls `runUploadSpeedTest` (Test now). It is the only writer of `config.json`,
+(runs the agent's own probe and pushes the status) and `dismissOffMacNote`; Settings → Network also calls `runUploadSpeedTest` (Test now), and `saveNotificationSettings` stores which notifications are posted. It is the only writer of `config.json`,
 `state.json` and the plans' keychain items, all under `~/Library/Application Support/<root ID>` (mode 0700).
 If either file is corrupt or was written by a newer Restorey, the agent reports it in `status`, refuses every
 change and leaves the file as it is. Its log is `~/Library/Logs/Restorey-Dev/agent.log`, and MetricKit
@@ -1064,6 +1064,16 @@ limit for this Mac (none by default; a fixed rate in KB/s or MB/s, or a percenta
 optionally only during a window of days and hours, whether to skip a backup on a constrained or expensive network
 (on by default), and Wi-Fi network names to skip backups on (none by default). These rules apply only to a
 repository on another machine; a backup to a folder or an external drive ignores them.
+
+**Notification settings.** Beside `network` sits `notifications`, which says which notifications Restorey posts, Mac-wide:
+`{"backupStarted":false,"backupFinished":false,"problems":true}`. `backupStarted` (off by default) is for a backup's
+restic step starting; `backupFinished` (off by default) is for a backup that ended having saved its data; `problems`
+(on by default) is for the alerts Restorey posts today (a backup or check that failed, no recent success, a rejected
+check-in, a configuration error, Full Disk Access missing). Turning `problems` off stops posting those notifications
+only: the alerts are still raised, so the menu bar icon, the menu's banners and check-in pings behave as before. This
+is additive to schema 5: a `config.json` without the key reads as the defaults, and nothing is migrated. The agent
+saves it through the `saveNotificationSettings` XPC call and returns it as `notifications` in `status`; posting the
+started and finished notifications and the Settings → Notifications pane come in later changes.
 
 **The upload limit.** restic's `--limit-upload` (KiB/s) is fixed for a run, so the agent works out the Mac-wide limit
 when each backup to a networked repository starts, in the Mac's current time zone: outside the window (when one is

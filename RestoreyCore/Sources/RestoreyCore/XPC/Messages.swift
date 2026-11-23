@@ -147,6 +147,9 @@ public struct AgentStatus: Codable, Sendable, Equatable {
     /// The Mac-wide network rules from `config.json`. Nil when `config.json` couldn't be read, and from an
     /// agent older than schema 3.
     public var network: NetworkSettings?
+    /// Which notifications are posted. Nil when `config.json` couldn't be read, and from an agent older than
+    /// notification settings.
+    public var notifications: NotificationSettings?
     /// The upload speed on the network the Mac is on, and whether a test is running. Nil from an agent older than
     /// the upload speed tests, until the agent has looked at the network, and while `config.json` can't be read.
     public var uploadSpeed: UploadSpeedStatus?
@@ -154,7 +157,7 @@ public struct AgentStatus: Codable, Sendable, Equatable {
     public init(
         plans: [PlanStatus], configError: String?, fdaMissing: Bool?, generatedAt: Date,
         agentRun: UUID? = nil, sequence: UInt64? = nil, network: NetworkSettings? = nil,
-        uploadSpeed: UploadSpeedStatus? = nil
+        notifications: NotificationSettings? = nil, uploadSpeed: UploadSpeedStatus? = nil
     ) {
         self.plans = plans
         self.configError = configError
@@ -163,6 +166,7 @@ public struct AgentStatus: Codable, Sendable, Equatable {
         self.agentRun = agentRun
         self.sequence = sequence
         self.network = network
+        self.notifications = notifications
         self.uploadSpeed = uploadSpeed
     }
 

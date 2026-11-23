@@ -24,12 +24,13 @@ extension AgentState {
                 : []
             return AgentStatus(
                 plans: plans, configError: loadError, fdaMissing: nil, generatedAt: now,
-                agentRun: statusRun, sequence: statusSequence, network: onlyStateUnreadable ? config.network : nil)
+                agentRun: statusRun, sequence: statusSequence, network: onlyStateUnreadable ? config.network : nil,
+                notifications: onlyStateUnreadable ? config.notifications : nil)
         }
         return AgentStatus(
             plans: config.plans.map { planStatus($0, now: now) }, configError: nil, fdaMissing: fdaMissing,
             generatedAt: now, agentRun: statusRun, sequence: statusSequence, network: config.network,
-            uploadSpeed: uploadSpeedStatus)
+            notifications: config.notifications, uploadSpeed: uploadSpeedStatus)
     }
 
     /// The upload speed where the Mac is, and whether any test is running.

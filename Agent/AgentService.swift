@@ -80,6 +80,18 @@ final class AgentService: NSObject, AgentXPC, Sendable {
         }
     }
 
+    func saveNotificationSettings(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
+        respond(reply, "saveNotificationSettings") { [state, log] in
+            let settings = try Self.decode(NotificationSettings.self, from: request)
+            let status = try await state.saveNotificationSettings(settings)
+            log.info(
+                "Saved the notification settings: backup started \(settings.backupStarted ? "on" : "off"), "
+                    + "backup finished \(settings.backupFinished ? "on" : "off"), "
+                    + "problems \(settings.problems ? "on" : "off")")
+            return status
+        }
+    }
+
     func runUploadSpeedTest(withReply reply: @escaping @Sendable (Data?, String?) -> Void) {
         // The test logs itself (`SpeedTester`), so only a refusal is logged here. Not by `respond`: its message names a
         // skipped Wi-Fi network, which a Release log never does.

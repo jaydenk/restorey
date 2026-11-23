@@ -722,6 +722,31 @@ struct AgentStateTests {
         #expect(status.plans.map(\.plan) == before)
     }
 
+    // MARK: Notification settings
+
+    @Test func aConfigWithoutNotificationsDecodesToTheDefaults() throws {
+        let json = #"{"plans":[],"network":{"skipOnConstrainedNetwork":true,"skippedWiFiNames":[]}}"#
+        let config = try JSONDecoder().decode(ConfigFile.self, from: Data(json.utf8))
+        #expect(config.notifications == .defaults)
+    }
+
+    @Test func savedNotificationSettingsAreInTheStatus() async throws {
+        let dir = try TempDirectory()
+        let state = await Self.makeState(dir)
+        let pushes = Mutex<[AgentStatus]>([])
+        await state.setStatusObserver { status in pushes.withLock { $0.append(status) } }
+        #expect(await state.status().notifications == .defaults)
+        let settings = NotificationSettings(backupStarted: true, backupFinished: false, problems: true)
+
+        let status = try await state.saveNotificationSettings(settings)
+
+        #expect(status.notifications?.backupStarted == true)
+        #expect(pushes.withLock { $0 }.map(\.notifications) == [settings])
+        let reloaded = await Self.makeState(dir)
+        #expect(await reloaded.status().notifications == settings, "kept in config.json")
+        #expect(await reloaded.status().network == .defaults, "the network rules are untouched")
+    }
+
     @Test func configWriteFailureRestoresTheOldSecrets() async throws {
         let dir = try TempDirectory()
         let clock = TestClock()
