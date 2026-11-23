@@ -83,7 +83,7 @@ Success: the owner uses Restorey for a while and nothing reads as "not quite Mac
   - the Dock icon and reopen (`applicationShouldHandleReopen`), except when the menu bar item is hidden: then
     reopen keeps today's rule (`shellOpeningOnReopen`) and opens Settings ▸ General, where the control to show it
     again is (my call: a hidden menu bar item must stay recoverable);
-  - Shortcuts and the setup flow's end, wherever they open a plan or History today.
+  - (Shortcuts run in the background and the setup flow's end opens no window, so neither needs a route.)
 - Each window has its own frame-autosave name and Window menu entry. A remembered section from before the split
   that now belongs to the other window falls back to that window's default (Plans; General), with no migration.
 - The plan editor is unchanged: its tabs keep their Save and Revert bar and the unsaved-edits question
@@ -115,7 +115,7 @@ Success: the owner uses Restorey for a while and nothing reads as "not quite Mac
 
 **Routing (`AppShell`):** `SettingsSection` splits into the main window's sections (plans, history) and the Settings
 window's panes (general, notifications, network). Every route that names a section today (`SettingsRoute`, menu
-commands, banners such as "Allow Full Disk Access…" and "Turn On Notifications…", Shortcuts, the Developer window, `ShellWindowKind`)
+commands, banners such as "Allow Full Disk Access…" and "Turn On Notifications…", Shortcuts, the Developer window, `AppWindowKind`)
 maps to the right window. A banner's fix opens the Settings pane it names; anything about a plan opens the main
 window.
 
@@ -136,8 +136,11 @@ Menu bar menu                      App menu
 
 Every list that adds and removes items gets the Mac's standard control: small square + and − buttons joined to the
 list's bottom edge, inside its border, with no gap (as in System Settings, Finder's sidebar settings and Mail's
-accounts). − is disabled when nothing removable is selected. This covers the plan list, a plan's folders, the
-exclusions sheet, and the skipped Wi-Fi networks list. The buttons keep their accessibility labels ("Add Plan",
+accounts). The plan list already has + and − (`ListAddRemoveBar`, audit P9), but as a separate row under the list's
+border; the shared control becomes one bordered unit, list and buttons together. − is disabled when nothing removable is selected. This covers the plan list, a plan's folders, the
+exclusions sheet, its file types, and the skipped Wi-Fi networks list (today a plain column of rows, each with its own
+Remove button). Setup's environment-variable rows for an Other location keep their own controls (rarely used, set
+once). The buttons keep their accessibility labels ("Add Plan",
 "Remove Plan", and so on) and their existing actions.
 
 ### 3. Pickers
@@ -145,16 +148,16 @@ exclusions sheet, and the skipped Wi-Fi networks list. The buttons keep their ac
 - **A plan's folders** (setup and the Folders tab, `SourcesEditor`): the + button opens the existing `NSOpenPanel`
   for folders and drives (multiple selection). Drag and drop onto the list stays. The separate "Add Folder or
   Drive…" and "Remove" buttons go, replaced by + and −. The add rule (`FolderDrop`) is unchanged.
-- **A local repository** (setup's storage step, and anywhere the repository folder is shown for editing): a new
+- **A local repository** (setup's storage step; a plan's repository can't be changed after setup, as today): a new
   storage choice, **A folder or drive on this Mac**, separate from **Other**. It shows the chosen folder (name and
   icon, the full path under it) and a **Choose…** button that opens an `NSOpenPanel` for one folder, with
   New Folder allowed. The existing rules still apply: the folder must be empty or hold a restic repository, and a
   plan's own repository can't be inside its sources in a way the add rule refuses. **Other** stays for any location
   restic understands (sftp, rest, and so on), as a typed string.
 - The chosen folder is stored as a path, as today (no security-scoped bookmark: the agent isn't sandboxed). Editing
-  an existing plan whose repository is a local path shows this form with that path; a path that is missing (a drive
-  not connected) shows the folder's name with the existing "can't be found" problem, and Choose… still works (my
-  call).
+  an existing plan whose repository is a local path (a resumed setup) shows this form with that path. Whether the
+  folder exists, is empty or holds a repository is reported by the agent's check after Check, as today (my call;
+  there is no separate "can't be found" text for a repository).
 - The + of a list that adds by typing or choosing (exclusion patterns, skipped Wi-Fi names) opens that list's
   existing add flow; only the buttons' look and place change (my call).
 
@@ -200,16 +203,19 @@ Notifications
 From the audit's status check and TODO (each was folded into this pass by the owner):
 
 - **No Save bar where there's nothing to edit** (P15): a plan's Overview and History pages don't show the dimmed
-  Revert and Save row.
+  Revert and Save row, unless a sheet opened from them (such as Files that couldn't be read) has left unsaved edits
+  or a save is running.
 - **Shorter menu banner lines** (P5): each banner's subtitle is one short line; the full explanation stays in its
-  tooltip and on the page the item opens. For example "Notifications are off" rather than "Restorey can't alert
-  you. Turn them on so a problem with a backup reaches you."
+  tooltip. Today only one is long: "Restorey's background process hasn't answered for 30 minutes".
 - **Help buttons** (T8): the round "?" help button (`NSButton` help style) on the Network pane and the Keep
-  (retention) tab, opening the README's matching section on GitHub until there is Help Book content.
+  (retention) tab, opening the README's matching section on GitHub until there is Help Book content. The README
+  gains a heading for each (its Network and Retention text are run-in paragraphs today, with no anchor).
 - **The tab row overhang** (17c minor): at the main window's minimum width, the plan tab row no longer overhangs the
   form by about 10 pt.
 - **Diagnostics version lines** (17d minor): readable, not disabled grey.
-- **The progress bar's inset** (17d minor): from the menu's own layout, not a hard-coded 14 pt.
+- **The progress bar's inset** (17d minor): NSMenu publishes no metric for where a standard item's title starts, so
+  the 14 pt stays a named constant matched to macOS 27's menus, checked in the live look (my call; the alternative,
+  guessing from a font metric, is no more right).
 - **The owner's live look** (TODO L134): the owner checks the main window, Settings, the lists, the pickers and the
   notifications on a Dev build, as the last task.
 
