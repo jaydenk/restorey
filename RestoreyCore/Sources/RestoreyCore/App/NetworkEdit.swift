@@ -29,7 +29,7 @@ public enum LimitKind: String, CaseIterable, Sendable {
 }
 
 /// Settings → Network (UI design §6.3, product spec §5.5, Ruling P2-6, and the upload-limit design): the Mac-wide
-/// rules being edited, with Save and Revert as a plan's tabs have them. Pure; the app's `NetworkEditModel` does the
+/// rules being edited, applied as the user goes (`commit()`). Pure; the app's `NetworkEditModel` does the
 /// calls.
 ///
 /// The fields hold exactly what the controls show: the limit is parsed in `request()`, never as the user types. A
@@ -227,6 +227,21 @@ public struct NetworkEdit: Sendable, Equatable {
         return settings
     }
 
+    /// What applying the edits now does: nothing (no change), sending the whole set, or stopping on a problem.
+    /// Settings → Network applies as the user goes (a toggle or picker at once, a text field when editing ends), so
+    /// this is asked after each change. It never changes `saved`: only `didSave` does, once the agent accepts.
+    public enum Commit: Sendable, Equatable {
+        case nothing
+        case send(NetworkSettings)
+        case problem(String)
+    }
+
+    public func commit() -> Commit {
+        guard isDirty else { return .nothing }
+        if let problem { return .problem(problem) }
+        return .send(candidate())
+    }
+
     /// What a save sends, or the first problem. Only what the user changed is applied, so a limit the field shows
     /// rounded is kept exactly unless it is retyped.
     public func request() -> Result<NetworkSettings, FormValidation.Problem> {
@@ -273,11 +288,6 @@ public struct NetworkEdit: Sendable, Equatable {
         started = fields
     }
 
-    public mutating func revert() {
-        fields = Fields(settings: saved)
-        started = fields
-    }
-
     // MARK: The Now and speed lines
 
     /// What a backup starting at `date` would get as the Mac-wide limit, and when that next changes: "Now: 20 MB/s,
@@ -304,8 +314,7 @@ public struct NetworkEdit: Sendable, Equatable {
             let limit = resolved.kiB.map { UploadLimitText.limitText(kiB: $0, setting: saved.uploadLimit) } ?? "no limit"
             line = "Now: \(limit)" + (resolved.changesAt.map { ", until \(when($0))" } ?? "")
         }
-        // The line is about what is saved; with the limit or window edited and not saved it may be about to change.
-        return limitChanged || windowChanged ? line + ". Updates when you save." : line
+        return line
     }
 
     /// The current network's speed and its age, or why there isn't one: "Upload speed on “Kerr Home”: 38 MB/s,

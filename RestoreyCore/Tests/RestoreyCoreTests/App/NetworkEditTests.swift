@@ -59,13 +59,41 @@ struct NetworkEditTests {
         #expect(try edit.request().get().uploadLimit == .rate(kiB: 3, unit: .megabytes))
     }
 
-    @Test func revertGoesBackToTheSavedSettings() {
+    @Test func aCleanEditCommitsNothing() {
+        #expect(NetworkEdit(settings: .defaults).commit() == .nothing)
+    }
+
+    @Test func aCommitWithAProblemSendsNothing() {
+        var edit = NetworkEdit(settings: .defaults)
+        edit.setLimitKind(.percent)
+        edit.fields.windowEnabled = true
+        edit.fields.windowStart = 10 * 60
+        edit.fields.windowEnd = 10 * 60
+        #expect(edit.commit() == .problem("The limit’s start and end times can’t be the same."))
+    }
+
+    @Test func aCommitOfAnInvalidLimitSendsNothing() {
+        var edit = NetworkEdit(settings: .defaults)
+        edit.setLimitKind(.megabytes)
+        edit.fields.limitAmount = "abc"
+        guard case .problem = edit.commit() else { Issue.record("expected a problem"); return }
+    }
+
+    @Test func aValidChangeIsSentWhole() {
         var edit = NetworkEdit(settings: Self.saved)
-        edit.fields.limitAmount = "9"
-        edit.remove(name: "Cafe")
-        edit.revert()
-        #expect(!edit.isDirty)
-        #expect(edit.fields == NetworkEdit.Fields(settings: Self.saved))
+        edit.fields.skipOnConstrainedNetwork.toggle()
+        guard case .send(let settings) = edit.commit() else { Issue.record("expected send"); return }
+        var expected = Self.saved
+        expected.skipOnConstrainedNetwork.toggle()
+        #expect(settings == expected)
+    }
+
+    @Test func aRefusedSaveKeepsTheSavedSettingsAndTheEdits() {
+        var edit = NetworkEdit(settings: .defaults)
+        edit.fields.skipOnConstrainedNetwork.toggle()
+        _ = edit.commit()                      // the agent refuses: didSave is never called
+        #expect(edit.saved == .defaults)
+        #expect(edit.isDirty)
     }
 
     @Test func aSaveStartsAgainFromWhatTheAgentSaved() {
@@ -320,8 +348,8 @@ struct NetworkEditTests {
         #expect(line == "Now: 512 KB/s, until 6:00 am Saturday")
     }
 
-    /// With the limit or the window edited and not saved, the line (about what is saved) says it will update.
-    @Test func nowLineSaysItUpdatesWhenYouSaveWhileTheLimitOrWindowIsEdited() {
+    /// The line is about what the agent has; an edit not yet applied doesn't change it, and it never mentions saving.
+    @Test func nowLineNeverMentionsSaving() {
         let friday10am = Self.adelaideDate(2027, 1, 15, 10)
         let status = Self.measured(at: friday10am)
         func now(_ edit: NetworkEdit) -> String {
@@ -330,16 +358,12 @@ struct NetworkEditTests {
         var edit = Self.percentEdit()
         #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm")
         edit.fields.limitAmount = "60"
-        #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm. Updates when you save.")
-        edit.revert()
+        #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm")
         edit.fields.windowEnd = 19 * 60
-        #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm. Updates when you save.")
-        edit.revert()
-        edit.fields.skipOnConstrainedNetwork.toggle()
-        #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm", "the other groups don't change the line")
+        #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm")
         var none = NetworkEdit(settings: .defaults)
         none.setLimitKind(.megabytes)
-        #expect(now(none) == "No limit right now. Updates when you save.")
+        #expect(now(none) == "No limit right now")
     }
 
     // MARK: The speed line

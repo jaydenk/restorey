@@ -123,7 +123,10 @@ Settings:
   folder or drive): an upload limit shared by the backups uploading at once (a rate, or a percentage of the upload
   speed the agent measures on each network), skipping backups on a phone hotspot or
   in Low Data Mode (on by default), and a list of Wi-Fi networks to skip backups on. Adding the first network asks
-  for Location permission, which macOS requires before it shows any app the Wi-Fi network's name.
+  for Location permission, which macOS requires before it shows any app the Wi-Fi network's name. Network applies
+  changes as you make them (a switch or menu at once, a field when you press Return or leave it), with no Save or
+  Revert; a value Restorey’s background process refuses stays in its field, with the reason beside the form. The
+  "Now:" line shows what a backup would get, without mentioning saving.
 
 When files exist only in iCloud, not on this Mac, a backup skips them. The plan's Overview then says "iCloud Drive
 files skipped" under the last backup, and its info button explains how many and how to include them. Restorey counts
@@ -494,8 +497,8 @@ when a route asks for another plan.
 **Settings** has **General**, **Notifications** and **Network** (toolbar `RestoreySettingsToolbar`, frame
 `RestoreySettingsWindow`). As Apple's Settings windows do, it has a fixed width (560 points, the widest row being
 Network's limit window; longer text wraps) with the height of the pane showing, no Minimise button and a dimmed Zoom
-button. Closing it never asks a question. Until Network applies its changes as they are made, its unsaved edits go
-with the window.
+button. Closing it never asks a question: Network applies changes as they are made, so only an edit the background
+process refused is dropped with the window.
 
 Esc closes the sheets that have
 only a Done button (exclusions, items marked not for backup, biggest additions, files that couldn't be read) as

@@ -269,12 +269,14 @@ struct PlainTextField: NSViewRepresentable {
     @Binding var text: String
     /// Called when Return is pressed in the field.
     var onSubmit: (@MainActor () -> Void)?
+    /// Called when editing ends: Return, Tab, or leaving the field (Settings applies a field's value then).
+    var onCommit: (@MainActor () -> Void)?
     /// A number's field: right-aligned, in digits of one width, so the numbers line up (`NumberField`, Task 17c).
     var isNumeric = false
     /// What VoiceOver calls the field when its placeholder isn't a name ("0", "None"); nil uses the title.
     var accessibilityName: String?
 
-    func makeCoordinator() -> Coordinator { Coordinator(text: $text, onSubmit: onSubmit) }
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text, onSubmit: onSubmit, onCommit: onCommit) }
 
     func makeNSView(context: Context) -> ForwardingTextField {
         let field = ForwardingTextField()
@@ -288,6 +290,7 @@ struct PlainTextField: NSViewRepresentable {
     func updateNSView(_ field: ForwardingTextField, context: Context) {
         context.coordinator.text = $text
         context.coordinator.onSubmit = onSubmit
+        context.coordinator.onCommit = onCommit
         field.placeholderString = title
         field.setAccessibilityLabel(accessibilityName ?? title)
         if isNumeric {
@@ -308,15 +311,24 @@ struct PlainTextField: NSViewRepresentable {
     @MainActor
     final class Coordinator: TextBindingCoordinator {
         var onSubmit: (@MainActor () -> Void)?
-        init(text: Binding<String>, onSubmit: (@MainActor () -> Void)?) {
+        var onCommit: (@MainActor () -> Void)?
+        init(text: Binding<String>, onSubmit: (@MainActor () -> Void)?, onCommit: (@MainActor () -> Void)? = nil) {
             self.onSubmit = onSubmit
+            self.onCommit = onCommit
             super.init(text: text)
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-            guard selector == #selector(NSResponder.insertNewline(_:)), let onSubmit else { return false }
-            onSubmit()
+            guard selector == #selector(NSResponder.insertNewline(_:)) else { return false }
+            if onSubmit == nil, onCommit == nil { return false }
+            onSubmit?()
+            onCommit?()
             return true
+        }
+
+        /// Tab or leaving the field (Return is handled above, which keeps editing going).
+        func controlTextDidEndEditing(_ notification: Notification) {
+            onCommit?()
         }
     }
 }

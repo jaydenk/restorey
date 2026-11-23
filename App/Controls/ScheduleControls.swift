@@ -74,14 +74,19 @@ struct NumberField: View {
     @Binding var text: String
     var unit: String?
     var width: CGFloat = 52
+    /// Called when editing ends or a step is taken (Settings → Network applies the value then).
+    var onCommit: (@MainActor () -> Void)?
     /// The text one step up (+1) or down (−1) from the text given.
     let step: (String, Int) -> String
 
     var body: some View {
         HStack(spacing: 4) {
-            PlainTextField(title: placeholder, text: $text, isNumeric: true, accessibilityName: name)
+            PlainTextField(title: placeholder, text: $text, onCommit: onCommit, isNumeric: true, accessibilityName: name)
                 .frame(width: width)
-            Stepper(name, onIncrement: { text = step(text, 1) }, onDecrement: { text = step(text, -1) })
+            Stepper(
+                name,
+                onIncrement: { text = step(text, 1); onCommit?() },
+                onDecrement: { text = step(text, -1); onCommit?() })
                 .labelsHidden()
                 .accessibilityLabel(name)
             if let unit { Text(unit).foregroundStyle(.secondary) }
@@ -126,11 +131,12 @@ struct MacLimitField: View {
     @Binding var amount: String
     let kind: LimitKind
     let onKind: (LimitKind) -> Void
+    var onCommit: (@MainActor () -> Void)?
 
     var body: some View {
         HStack(spacing: 6) {
             if kind != .none {
-                NumberField(name: name, placeholder: kind == .percent ? "50" : "Amount", text: $amount, width: 70) { text, by in
+                NumberField(name: name, placeholder: kind == .percent ? "50" : "Amount", text: $amount, width: 70, onCommit: onCommit) { text, by in
                     kind == .percent ? StepperText.percent(text, by: by) : StepperText.uploadLimit(text, by: by, unit: kind.unit ?? .megabytes)
                 }
             }

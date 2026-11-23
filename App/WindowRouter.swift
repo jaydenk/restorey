@@ -87,7 +87,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
     /// Each window's toolbar of sections or panes, while the window is open.
     private var mainToolbar: SectionToolbar?
     private var settingsToolbar: SectionToolbar?
-    /// The plan editor the main window holds, and the Network pane's unsaved edits the Settings window holds, while
+    /// The plan editor the main window holds, and the Network pane’s model the Settings window holds, while
     /// each is open.
     private var planEditorSlot: PlanEditorSlot?
     private var networkEditorSlot: NetworkEditorSlot?

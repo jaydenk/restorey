@@ -3,8 +3,9 @@ import RestoreyCore
 import SwiftUI
 
 /// Settings → Network (UI design §6.3, product spec §5.5, Rulings P2-6 to P2-8 and R69): the Mac-wide upload limit,
-/// the hotspot and Low Data Mode rule, and the Wi-Fi networks to skip, with Revert and Save as a plan's tabs have
-/// them. Every decision is `NetworkEdit`'s and `WiFiNameAccess`'s; `NetworkEditModel` does the calls.
+/// the hotspot and Low Data Mode rule, and the Wi-Fi networks to skip. Changes apply as they are made: a toggle or
+/// picker at once, a text field when editing ends. A value the agent refuses stays in its field, with the agent's
+/// sentence beside the form. Every decision is `NetworkEdit`'s and `WiFiNameAccess`'s; `NetworkEditModel` does the calls.
 ///
 /// Location permission is asked for only when the user first adds a network, and what the list says without it is
 /// asked of the agent (`locationAccess`, never a prompt) when the pane appears and whenever Restorey comes back to the
@@ -29,7 +30,11 @@ struct NetworkPane: View {
                 // An agent from before the Mac-wide rules (schema 3) sends none.
                 unavailable("Restorey didn’t get the network settings. Use Restart Backups in General.")
             } else {
-                ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Waiting for Restorey’s background process…").foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .onChange(of: status?.network, initial: true) { _, network in
@@ -85,9 +90,32 @@ private struct NetworkForm: View {
                 }
             }
             .formStyle(.grouped)
-            Divider()
-            saveBar.padding(12)
+            if let message = refusal {
+                Divider()
+                HStack(spacing: 8) {
+                    SeverityText(message)
+                    Spacer()
+                    if model.saving { ProgressView().controlSize(.small) }
+                }
+                .font(.callout)
+                .padding(12)
+            }
         }
+        // A toggle or picker applies at once; a text field when editing ends (`commitSoon`).
+        .onChange(of: model.fields.skipOnConstrainedNetwork) { commitSoon() }
+        .onChange(of: model.fields.windowEnabled) { commitSoon() }
+        .onChange(of: model.fields.windowDays) { commitSoon() }
+        .onChange(of: model.fields.windowStart) { commitSoon() }
+        .onChange(of: model.fields.windowEnd) { commitSoon() }
+    }
+
+    private func commitSoon() { Task { await model.commit() } }
+
+    /// The agent's sentence for a refused save, or a problem with the list that no field shows (the limit's and the
+    /// window's are beside their rows).
+    private var refusal: String? {
+        guard let message = model.saveError else { return nil }
+        return message == model.edit.uploadLimitProblem || message == model.edit.windowProblem ? nil : message
     }
 
     /// The limit's explanation is in the section's footer, so the row holds only the controls (Task 17c, as P6 has it
@@ -96,7 +124,7 @@ private struct NetworkForm: View {
         LabeledContent("Upload limit for this Mac") {
             MacLimitField(
                 name: "Upload limit for this Mac", amount: $model.fields.limitAmount, kind: model.fields.limitKind,
-                onKind: { kind in Task { await model.setLimitKind(kind) } })
+                onKind: { kind in Task { await model.setLimitKind(kind) } }, onCommit: { commitSoon() })
                 .disabled(model.asking)
         }
         if let problem = model.edit.uploadLimitProblem {
@@ -164,7 +192,7 @@ private struct NetworkForm: View {
             HStack {
                 Text(name)
                 Spacer()
-                Button("Remove") { model.remove(name) }
+                Button("Remove") { Task { await model.remove(name) } }
                     .controlSize(.small)
                     .accessibilityLabel("Remove \(name)")
             }
@@ -210,29 +238,6 @@ private struct NetworkForm: View {
                         .controlSize(.small)
                 }
             }
-        }
-    }
-
-    /// The first problem or the save's sentence, Revert and Save (⌘S), as a plan's page has them.
-    private var saveBar: some View {
-        HStack(spacing: 8) {
-            Spacer()
-            Group {
-                if let error = model.saveError {
-                    SeverityText(error)
-                } else if model.edit.isDirty, let problem = model.edit.problem {
-                    SeverityText(problem)
-                }
-            }
-            .font(.callout)
-            .multilineTextAlignment(.trailing)
-            .fixedSize(horizontal: false, vertical: true)
-            if model.saving { ProgressView().controlSize(.small) }
-            Button("Revert") { model.revert() }
-                .disabled(!model.edit.isDirty || model.saving)
-            Button("Save") { Task { await model.save() } }
-                .keyboardShortcut("s", modifiers: .command)
-                .disabled(!model.edit.isDirty || model.edit.problem != nil || model.saving)
         }
     }
 }
