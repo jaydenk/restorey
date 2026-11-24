@@ -4,7 +4,7 @@ import Foundation
 public enum MenuCommand: Sendable, Equatable {
     /// A banner's fix, its dismiss, or a plan's "Show Details…".
     case banner(BannerAction)
-    /// A plan's status item: open Settings at that plan.
+    /// A plan's status item: open the main window at that plan.
     case openPlan(UUID)
     case backUpAll
     case backUp(UUID)
@@ -17,6 +17,9 @@ public enum MenuCommand: Sendable, Equatable {
     case resumeAll
     case resume(UUID)
     case restoreFiles(UUID)
+    /// Open Restorey: the main window (Plans and History), as it was left.
+    case openRestorey
+    /// Settings…: the Settings window (General, Notifications, Network).
     case settings
     /// The Debug-only developer window.
     case developer
@@ -78,6 +81,9 @@ public struct MenuItem: Sendable, Equatable {
     public var keyEquivalent: String
     /// What VoiceOver reads for the item. Nil: its title (AppKit's default).
     public var accessibilityLabel: String?
+    /// A plain line (`line(_:toolTip:)`) says something and does nothing, so the app draws it in the secondary label
+    /// colour. An action that is dimmed for now ("Show Last Run Log" with no log) is not one, and keeps AppKit's dimming.
+    public private(set) var isLine = false
 
     public init(
         _ title: String, subtitle: String? = nil, symbol: MenuSymbol? = nil, toolTip: String? = nil,
@@ -95,7 +101,9 @@ public struct MenuItem: Sendable, Equatable {
 
     /// A line that says something and does nothing.
     public static func line(_ title: String, toolTip: String? = nil) -> MenuItem {
-        MenuItem(title, toolTip: toolTip, enabled: false)
+        var item = MenuItem(title, toolTip: toolTip, enabled: false)
+        item.isLine = true
+        return item
     }
 }
 
@@ -236,6 +244,8 @@ public enum MenuLayout {
             rows.append(.item(MenuItem("Copy Diagnostics", command: .copyDiagnostics)))
             rows.append(.separator)
         }
+        // The main window's way in, with no shortcut, just above Settings… (visual polish §1).
+        rows.append(.item(MenuItem("Open Restorey", command: .openRestorey)))
         rows.append(.item(MenuItem("Settings…", command: .settings, keyEquivalent: ",")))
         if developer { rows.append(.item(MenuItem("Developer…", command: .developer))) }
         rows.append(.item(MenuItem("Quit Restorey", command: .quit, keyEquivalent: "q")))

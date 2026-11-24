@@ -3,14 +3,16 @@ import Observation
 import RestoreyCore
 
 /// Settings → Network's edits (`NetworkEdit`, where every decision is made), the save in flight, and the Location
-/// question asked when a Wi-Fi network is first added (UI design §6.3). Held by the Settings window
-/// (`NetworkEditorSlot`), so going to another section and back keeps unsaved edits; closing the window or quitting
-/// asks about them first, as for a plan's (`WindowRouter.askToSave`).
+/// question asked when a Wi-Fi network is first added (UI design §6.3). Changes apply as they are made. Held by the
+/// Settings window (`NetworkEditorSlot`), so going to another section and back keeps an edit the agent refused; it
+/// goes with the window (after applying what was changed), and nothing asks about it.
 @MainActor
 @Observable
 final class NetworkEditModel {
     private(set) var edit: NetworkEdit
     private(set) var saving = false
+    /// A commit was asked for while a save was in flight.
+    @ObservationIgnored private var commitAgain = false
     /// The last save's sentence. Any edit clears it, so it never hides the current problem.
     private(set) var saveError: String?
     /// The agent is waiting for the user to answer macOS's Location question.
@@ -74,8 +76,10 @@ final class NetworkEditModel {
         edit.setLimitKind(kind)
         saveError = nil
         locationError = nil
-        guard kind == .percent, !asking, access != .allowed else { return }
-        _ = await askForLocation(onFailure: { [self] in locationError = FormValidation.sentence($0) })
+        if kind == .percent, !asking, access != .allowed {
+            _ = await askForLocation(onFailure: { [self] in locationError = FormValidation.sentence($0) })
+        }
+        await commit()
     }
 
     /// Runs a speed test now and shows its refusal, if it has one. A test's own failure comes back in the status
@@ -106,14 +110,10 @@ final class NetworkEditModel {
         }
     }
 
-    func remove(_ name: String) {
+    func remove(_ name: String) async {
         edit.remove(name: name)
         saveError = nil
-    }
-
-    func revert() {
-        edit.revert()
-        saveError = nil
+        await commit()
     }
 
     /// Adds the typed name. The first time, while the agent has never been asked, the agent asks macOS for Location
@@ -147,28 +147,56 @@ final class NetworkEditModel {
         if edit.add(name: name) {
             if newName == name { newName = "" }
             saveError = nil
+            await commit()
         }
     }
 
-    /// Sends the edits; on success the form starts again from what the agent saved (names trimmed). A refusal keeps
-    /// everything as typed.
-    func save() async {
-        guard !saving else { return }
-        let request: NetworkSettings
-        switch edit.request() {
-        case .failure(let problem):
-            saveError = problem.message
+    /// Applies the edits as the user goes: a toggle or picker at once, a text field when editing ends. `NetworkEdit`
+    /// decides what to do (nothing, send the whole set, or stop on a problem). A refusal keeps everything as typed,
+    /// so it can be corrected, and `saved` stays as it was.
+    ///
+    /// Commits are serialised: one asked for while a save is in flight sets `commitAgain`, and the loop that is
+    /// sending runs it when that save returns, so a quick second change is never lost and the agent ends with the
+    /// last value. The in-flight save was built from the edits as they were; the second is built after it, from
+    /// `saved` as the agent then has it.
+    func commit() async {
+        if saving {
+            commitAgain = true
             return
-        case .success(let built):
-            request = built
         }
         saving = true
-        saveError = nil
         defer { saving = false }
+        repeat {
+            commitAgain = false
+            await send()
+        } while commitAgain
+    }
+
+    private func send() async {
+        let request: NetworkSettings
+        switch edit.commit() {
+        case .nothing:
+            // Nothing to send, and nothing here made `saveError`: a refused switch that flips back re-commits to
+            // find nothing, and must leave the agent's sentence on show. Every edit the user makes clears it
+            // (`fields`, `setLimitKind`, `remove`, `addName`), so it never outlives the form it was about.
+            return
+        case .problem(let problem):
+            saveError = problem
+            return
+        case .send(let settings):
+            request = settings
+        }
+        saveError = nil
+        let sent = edit.fields
         switch await supervisor.connection.saveNetworkSettings(request) {
         case .success(let status):
-            edit.didSave(status.network ?? request.normalised())
+            // What was changed while this was in flight is kept (`didSave`), and the next pass sends it.
+            edit.didSave(status.network ?? request.normalised(), sent: sent)
         case .failure(let error):
+            // Switches and menus show what the agent has again; typed text stays to be corrected. Nothing queues:
+            // a change asked for meanwhile was made on a form that has just been reset.
+            edit.didRefuse()
+            commitAgain = false
             saveError = FormValidation.sentence(error.description)
         }
     }
@@ -202,8 +230,7 @@ final class LocationAccessState {
     func answered(_ access: WiFiNameAccess) { checked = access }
 }
 
-/// Holds the Network section's model and Location state while the Settings window is open. The router reads it to
-/// ask about unsaved edits when the window closes or Restorey quits.
+/// Holds the Network section's model and Location state while the Settings window is open.
 @MainActor
 @Observable
 final class NetworkEditorSlot {
@@ -214,6 +241,11 @@ final class NetworkEditorSlot {
         location = LocationAccessState(supervisor: supervisor)
     }
 
-    /// The edits go with the window.
-    func close() { model = nil }
+    /// The window is closing. Leaving it ends editing, as leaving a field does, so what was changed is applied
+    /// first (`commit` sends nothing for a set that isn't valid as a whole, so a half-typed value is dropped). The
+    /// Task holds the model, so it runs to completion after the slot lets go and the window's content is gone.
+    func close() {
+        if let model { Task { await model.commit() } }
+        model = nil
+    }
 }

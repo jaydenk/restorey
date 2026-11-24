@@ -1,3 +1,4 @@
+import AppKit
 import RestoreyCore
 import SwiftUI
 
@@ -10,15 +11,14 @@ struct StorageView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("Storage", selection: Binding(get: { model.storage.kind }, set: { model.storage.choose($0) })) {
-                ForEach(StorageForm.Kind.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            FillingSegmentedControl(
+                name: "Storage", options: StorageForm.Kind.allCases.map { ($0, $0.title) },
+                selection: Binding(get: { model.storage.kind }, set: { model.storage.choose($0) }))
             .disabled(model.working)
 
             switch model.storage.kind {
             case .b2, .s3: BucketFields(model: model)
+            case .folder: FolderFields(model: model)
             case .other: OtherLocationFields(model: model)
             }
             if let link = model.storage.kind.helpLink {
@@ -74,6 +74,39 @@ private struct BucketFields: View {
     }
 }
 
+/// A folder or drive on this Mac, chosen with the open panel. Laid out like the other storage pages: a labelled field
+/// (read-only here, showing the chosen path) with Choose… beside it, as Key ID has Show (owner's live check, 24 Nov
+/// 2026: the bare "No folder chosen" line and its far-off button didn't line up with anything). Whether the folder is
+/// empty or holds a repository is what "Check" finds out (`SetupModel.check`).
+private struct FolderFields: View {
+    @Bindable var model: SetupModel
+
+    var body: some View {
+        SetupField(label: "Folder or drive") {
+            HStack(spacing: 8) {
+                ChosenPathField(path: model.storage.folderPath, placeholder: "No folder chosen")
+                Button("Choose…") { choose() }
+                    .disabled(model.working)
+            }
+        }
+        Text("An empty folder, or one that holds a restic repository.").explanatoryNote()
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Choose"
+        panel.message = "Choose where the backups go: an empty folder, or one that holds a restic repository."
+        Task { @MainActor in
+            guard await panel.presentForKeyWindow() == .OK, let url = panel.url else { return }
+            model.storage.folderPath = url.standardizedFileURL.path
+        }
+    }
+}
+
 /// Another restic location: the repository string and any environment variables it needs (names in the plan,
 /// values in the keychain).
 private struct OtherLocationFields: View {
@@ -82,9 +115,9 @@ private struct OtherLocationFields: View {
     var body: some View {
         let form = model.storage
         SetupField(label: "Repository", problem: shown(form.repository, form.repositoryProblem)) {
-            PlainTextField(title: "/Volumes/Backup/restic or sftp:nas:/restic", text: $model.storage.repository)
+            PlainTextField(title: "sftp:nas:/restic", text: $model.storage.repository)
         }
-        Text("A folder or drive, or any location restic understands. The folder must be empty or hold a restic repository.")
+        Text("Any location restic understands, such as sftp:nas:/restic.")
             .explanatoryNote()
         if !form.environment.isEmpty {
             Text("Environment variables").font(.callout).foregroundStyle(.secondary)
@@ -129,4 +162,25 @@ private func shown(_ text: String, _ problem: String?) -> String? {
 extension String {
     /// "key ID" → "Key ID".
     var capitalisedFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
+/// A read-only field showing a chosen path: the same bezel and height as the editable fields beside it, selectable so
+/// the path can be copied, and truncated in the middle so both the volume and the folder's name stay visible.
+private struct ChosenPathField: NSViewRepresentable {
+    let path: String
+    let placeholder: String
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        TextFieldSupport.configure(field, title: placeholder)
+        field.isEditable = false
+        field.isSelectable = true
+        field.lineBreakMode = .byTruncatingMiddle
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        field.stringValue = path
+        field.toolTip = path.isEmpty ? nil : path
+    }
 }

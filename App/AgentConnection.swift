@@ -95,6 +95,11 @@ final class AgentConnection {
         return await statusCall(timeout: .seconds(60)) { $0.saveNetworkSettings(data, withReply: $1) }
     }
 
+    func saveNotificationSettings(_ settings: NotificationSettings) async -> Result<AgentStatus, AgentCallError> {
+        guard let data = try? XPCCoding.encode(settings) else { return .failure(.badReply("notification settings")) }
+        return await statusCall(timeout: .seconds(60)) { $0.saveNotificationSettings(data, withReply: $1) }
+    }
+
     /// Runs an upload speed test on the current network and returns once it has ended; a test that fails comes back as
     /// the status with `uploadSpeed.record.lastFailure`, only a refusal is an error. Its status also feeds `onStatus`, like
     /// the status calls'. No timeout shorter than a test's own bounds (25 s, then a 10 s kill), with room for waiting

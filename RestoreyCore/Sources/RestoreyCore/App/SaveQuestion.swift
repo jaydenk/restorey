@@ -1,7 +1,7 @@
 import Foundation
 
-/// The Save, Don't Save or Cancel question asked when Settings closes or Restorey quits with unsaved edits (Ruling R1,
-/// fix round 2; the Network section since Task 15 fix round 1). The app shows it as a sheet on the Settings window.
+/// The Save, Don't Save or Cancel question asked when the main window closes or Restorey quits with unsaved plan
+/// edits (Ruling R1, fix round 2). The app shows it as a sheet on the main window.
 public struct SaveQuestion: Sendable, Equatable {
     public var message: String
     public var information: String
@@ -18,26 +18,21 @@ public struct SaveQuestion: Sendable, Equatable {
             message: "Do you want to save the changes to “\(name)”?",
             information: pausesBackups ? "\(PlanEdit.pauseWarning) \(lost)" : lost)
     }
-
-    public static let network = SaveQuestion(
-        message: "Do you want to save the changes to the network settings?", information: lost)
 }
 
-/// A Settings section with unsaved edits, asked about in turn when the window closes or Restorey quits.
+/// A section with unsaved edits, asked about when the main window closes or Restorey quits.
 public enum UnsavedSettings: Sendable, Equatable {
     case plan
-    case network
 
-    /// What to ask about, the plan first: its question names it, and a refused save shows where it was refused.
-    public static func toAsk(plan: Bool, network: Bool) -> [UnsavedSettings] {
-        (plan ? [.plan] : []) + (network ? [.network] : [])
+    /// What to ask about.
+    public static func toAsk(plan: Bool) -> [UnsavedSettings] {
+        plan ? [.plan] : []
     }
 
     /// Where a refused save is shown, with why.
-    public var section: SettingsSection {
+    public var section: MainSection {
         switch self {
         case .plan: .plans
-        case .network: .network
         }
     }
 }

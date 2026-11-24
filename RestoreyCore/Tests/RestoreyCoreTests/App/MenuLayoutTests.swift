@@ -50,9 +50,10 @@ struct MenuLayoutTests {
         }
     }
 
+    private static let openRestorey = MenuRow.item(MenuItem("Open Restorey", command: .openRestorey))
     private static let settings = MenuRow.item(MenuItem("Settings…", command: .settings, keyEquivalent: ","))
     private static let quit = MenuRow.item(MenuItem("Quit Restorey", command: .quit, keyEquivalent: "q"))
-    private static let tail: [MenuRow] = [.separator, settings, quit]
+    private static let tail: [MenuRow] = [.separator, openRestorey, settings, quit]
 
     @Test func onePlanIdle() {
         let content = MenuContent(
@@ -76,7 +77,7 @@ struct MenuLayoutTests {
         let content = MenuContent(
             icon: .backingUp, plans: [Self.line(Self.a, "MacBook"), photos], actions: Self.actions(plans))
         let rows = MenuLayout.rows(content, developer: true)
-        #expect(rows.count == 15)
+        #expect(rows.count == 16)
         #expect(Array(rows[2...5]) == [
             .separator,
             .header("Photos"),
@@ -100,6 +101,7 @@ struct MenuLayoutTests {
                 Self.button("Photos", .restoreFiles(Self.b)),
             ]),
             .separator,
+            Self.openRestorey,
             Self.settings,
             Self.button("Developer…", .developer),
             Self.quit,
@@ -286,25 +288,34 @@ struct MenuLayoutTests {
     /// problem under it and why in its tooltip, and nothing to dismiss: it goes once the agent answers.
     @Test func theLongWaitBannerOffersRestartBackups() {
         let banner = MenuBanner(
-            severity: .warning, title: "Restorey’s background process hasn’t answered for 30 minutes",
+            severity: .warning, title: "No answer for 30 minutes",
             detail: "A backup is still running, so Restorey is waiting for it rather than stopping it. Restart Backups stops it now.",
             action: .restartAgent)
         #expect(MenuLayout.bannerRows(banner) == [.item(MenuItem(
-            "Restart Backups", subtitle: "Restorey’s background process hasn’t answered for 30 minutes", symbol: .warning,
+            "Restart Backups", subtitle: "No answer for 30 minutes", symbol: .warning,
             toolTip: "A backup is still running, so Restorey is waiting for it rather than stopping it. Restart Backups stops it now.",
             command: .banner(.restartAgent),
-            accessibilityLabel: "Warning: Restorey’s background process hasn’t answered for 30 minutes. Restart Backups"))])
+            accessibilityLabel: "Warning: No answer for 30 minutes. Restart Backups"))])
     }
 
     /// A message's full sentence is its tooltip (audit P5).
     @Test func aMessageCarriesItsDetailAsATooltip() {
         let content = MenuContent(icon: .error, message: "Backups couldn’t be set up", messageDetail: "It failed: because.")
         #expect(MenuLayout.rows(content, developer: false).first
-            == .item(MenuItem("Backups couldn’t be set up", toolTip: "It failed: because.", enabled: false)))
+            == .item(.line("Backups couldn’t be set up", toolTip: "It failed: because.")))
+    }
+
+    /// The main window's way in (visual polish §1): no shortcut, directly above Settings….
+    @Test func openRestoreyComesJustBeforeSettings() throws {
+        let rows = MenuLayout.rows(MenuContent(icon: .ok), developer: false)
+        let titles = rows.compactMap { if case .item(let i) = $0 { i.title } else { nil } }
+        let open = try #require(titles.firstIndex(of: "Open Restorey"))
+        #expect(titles[open + 1] == "Settings…")
+        #expect(rows.contains(.item(MenuItem("Open Restorey", command: .openRestorey))))
     }
 
     @Test func emptyContentHasJustTheTail() {
-        #expect(MenuLayout.rows(MenuContent(icon: .ok), developer: false) == [Self.settings, Self.quit])
+        #expect(MenuLayout.rows(MenuContent(icon: .ok), developer: false) == [Self.openRestorey, Self.settings, Self.quit])
     }
 
     // MARK: Status items
@@ -360,6 +371,7 @@ struct MenuLayoutTests {
             Self.button("Show Logs in Finder", .showLogsFolder),
             Self.button("Copy Diagnostics", .copyDiagnostics),
             .separator,
+            Self.openRestorey,
             Self.settings,
             Self.quit,
         ])
@@ -440,7 +452,7 @@ struct MenuLayoutTests {
         #expect(BannerAction.finishSetup(id).buttonTitle == "Finish Setup…")
         #expect(BannerAction.saveRecoveryKit(id).buttonTitle == "Save Recovery Kit…")
         #expect(BannerAction.showDetails(id).buttonTitle == "Show Details…")
-        #expect(BannerAction.showSettingsError.buttonTitle == "Show in Settings…")
+        #expect(BannerAction.showSettingsError.buttonTitle == "Show Plan…")
     }
 
     /// The menu names each fix as a command (audit P4).
@@ -456,7 +468,7 @@ struct MenuLayoutTests {
         #expect(BannerAction.setUp.menuTitle == "Finish Setup…")
         #expect(BannerAction.saveRecoveryKit(id).menuTitle == "Save Recovery Kit…")
         #expect(BannerAction.showDetails(id).menuTitle == "Show Details…")
-        #expect(BannerAction.showSettingsError.menuTitle == "Show in Settings…")
+        #expect(BannerAction.showSettingsError.menuTitle == "Show Plan…")
     }
 
     /// What choosing each kind of row does.

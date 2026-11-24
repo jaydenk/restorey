@@ -123,4 +123,87 @@ struct AlertContentTests {
         #expect(a.threadIdentifier == b.threadIdentifier)
         #expect(a.threadIdentifier != c.threadIdentifier)
     }
+
+    // MARK: Backup started and finished
+
+    /// 9:19 am on the test calendar's clock, which `DisplayFormat.time` writes "09:19" for en_AU, as the menu does.
+    private let nineNineteen = Date(timeIntervalSince1970: 1_800_004_740)
+    private let auLocale = Locale(identifier: "en_AU")
+    private var cal: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .gmt
+        return calendar
+    }
+
+    private func named(_ name: String) -> Plan {
+        var plan = plan()
+        plan.name = name
+        return plan
+    }
+
+    private func backupRecord(_ outcome: RunOutcome, plan: Plan) -> RunRecord {
+        RunRecord(
+            id: UUID(), planID: plan.id, operation: .backup, trigger: .scheduled, startedAt: now,
+            endedAt: nineNineteen, outcome: outcome, summary: nil, logFile: "")
+    }
+
+    @Test func startedAndFinishedShareOnePerPlanIdentifier() throws {
+        let planA = named("Home")
+        let planB = named("Photos")
+        let started = AlertContent.backupStarted(plan: planA, at: nineNineteen, calendar: cal, locale: auLocale)
+        let finished = try #require(AlertContent.backupFinished(
+            plan: planA, record: backupRecord(.success(snapshotID: "abc"), plan: planA), calendar: cal, locale: auLocale))
+        let other = AlertContent.backupStarted(plan: planB, at: nineNineteen, calendar: cal, locale: auLocale)
+        #expect(started.identifier == finished.identifier)
+        #expect(started.identifier == "event.\(planA.id.uuidString)")
+        #expect(other.identifier != started.identifier)
+        #expect(started.threadIdentifier == "plan.\(planA.id.uuidString)")
+        #expect(finished.threadIdentifier == started.threadIdentifier)
+        #expect(started.title == "Backing up — Home")
+        #expect(finished.title == "Backed up — Home")
+        #expect(started.body == "Started at 09:19")
+        #expect(finished.body == "Finished at 09:19")
+    }
+
+    /// Problems chime; a backup starting or finishing is quiet.
+    @Test func onlyProblemsPlayASound() throws {
+        let plan = plan()
+        let started = AlertContent.backupStarted(plan: plan, at: nineNineteen, calendar: cal, locale: auLocale)
+        let finished = try #require(AlertContent.backupFinished(
+            plan: plan, record: backupRecord(.unchanged, plan: plan), calendar: cal, locale: auLocale))
+        #expect(!started.playsSound)
+        #expect(!finished.playsSound)
+        #expect(try #require(content(.backupFailed, plan: plan)).playsSound)
+        #expect(try #require(content(.fullDiskAccessMissing, plan: plan)).playsSound)
+        #expect(AlertContent.loadError("x").playsSound)
+    }
+
+    /// The same thread as the plan's problem alerts, but never their identifier, so neither replaces the other.
+    @Test func eventsSitBesideTheProblemAlerts() throws {
+        let plan = plan()
+        let started = AlertContent.backupStarted(plan: plan, at: nineNineteen, calendar: cal, locale: auLocale)
+        let failed = try #require(content(.backupFailed, plan: plan))
+        #expect(started.threadIdentifier == failed.threadIdentifier)
+        #expect(started.identifier != failed.identifier)
+    }
+
+    @Test func finishedIsOnlyForABackupThatSavedItsData() {
+        let plan = plan()
+        func finished(_ outcome: RunOutcome) -> AlertContent? {
+            AlertContent.backupFinished(plan: plan, record: backupRecord(outcome, plan: plan), calendar: cal, locale: auLocale)
+        }
+        #expect(finished(.cancelled) == nil)
+        #expect(finished(.paused) == nil)
+        #expect(finished(.stoppedBySystem) == nil)
+        #expect(finished(.skipped(.onBattery)) == nil)
+        #expect(finished(.locked) == nil)
+        #expect(finished(.failed(exitCode: 1, reason: "x")) == nil)
+        #expect(finished(.interrupted) == nil)
+        #expect(finished(.wrongPassword) == nil)
+        #expect(finished(.success(snapshotID: nil)) == nil, "a backup always makes a snapshot or is unchanged")
+        #expect(finished(.warning(unreadable: 1))?.body == "1 file couldn’t be read")
+        #expect(finished(.warning(unreadable: 3))?.body == "3 files couldn’t be read")
+        #expect(finished(.unchanged)?.body == "Nothing new to back up")
+        #expect(finished(.unchanged)?.title == "Backed up — Home")
+    }
 }

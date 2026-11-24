@@ -2,15 +2,16 @@ import AppKit
 import RestoreyCore
 import SwiftUI
 
-/// The folders and drives a plan backs up: a bordered list with "Add Folder or Drive…" and "Remove".
+/// The folders and drives a plan backs up: a bordered list with the joined + (Add Folder or Drive…, an open panel)
+/// and − (Remove) buttons at its bottom edge.
 /// Paths are stored as absolute paths (the agent refuses anything else); the list shows them with `~` for
 /// the home folder.
 ///
 /// Folders dragged in from Finder are added by the same rule as the button's (`FolderDrop`: only folders and drives,
 /// nothing listed twice, nothing already inside a listed folder, nothing in the plan's own repository), with the list
 /// ringed while the drag is over it; what the rule leaves out is said under the list, and what it did that isn't a
-/// problem (folders a new one replaced, the repository left out of one) as a note below that. Delete (⌫ or ⌦) removes the selected rows as Remove does, and a row's context menu has Show in Finder and
-/// Remove (Task 17e, audit T3 and T4). Settings' Folders tab and setup's sources step share it.
+/// problem (folders a new one replaced, the repository left out of one) as a note below that. Delete (⌫ or ⌦) removes the selected rows as − does, and a row's context menu has
+/// Show in Finder and Remove (Task 17e, audit T3 and T4). Settings' Folders tab and setup's sources step share it.
 struct SourcesEditor: View {
     @Binding var sources: [String]
     /// The plan's repository, so a folder it is in can't be added and one holding it says it is left out; nil before
@@ -26,46 +27,45 @@ struct SourcesEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            List(selection: $selection) {
-                ForEach(sources, id: \.self) { path in
-                    Text(FormValidation.displayPath(path))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(path)
-                        .tag(path)
+            BorderedList(
+                addName: "Add Folder or Drive…", removeName: "Remove", canAdd: isEnabled,
+                canRemove: isEnabled && !selection.isEmpty, add: choose, remove: { remove(selection) }
+            ) {
+                List(selection: $selection) {
+                    ForEach(sources, id: \.self) { path in
+                        Text(FormValidation.displayPath(path))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(path)
+                            .tag(path)
+                    }
                 }
-            }
-            .listStyle(.bordered)
-            .frame(minHeight: 80, idealHeight: 110)
-            .overlay {
-                if sources.isEmpty {
-                    Text("No folders or drives yet")
-                        .foregroundStyle(.secondary)
-                        .allowsHitTesting(false)
+                .frame(minHeight: 80, idealHeight: 110)
+                .overlay {
+                    if sources.isEmpty {
+                        Text("No folders or drives yet")
+                            .foregroundStyle(.secondary)
+                            .allowsHitTesting(false)
+                    }
                 }
-            }
-            .accessibilityLabel("Folders and drives to back up")
-            .contextMenu(forSelectionType: String.self) { paths in
-                if !paths.isEmpty {
-                    Button("Show in Finder") { reveal(paths) }
-                    // Dimmed exactly when the Remove button and the Delete key can't act: the list is disabled.
-                    Button("Remove") { remove(paths) }
-                        .disabled(!isEnabled)
+                .accessibilityLabel("Folders and drives to back up")
+                .contextMenu(forSelectionType: String.self) { paths in
+                    if !paths.isEmpty {
+                        Button("Show in Finder") { reveal(paths) }
+                        // Dimmed exactly when the Remove button and the Delete key can't act: the list is disabled.
+                        Button("Remove") { remove(paths) }
+                            .disabled(!isEnabled)
+                    }
                 }
+                .onDeleteCommand(perform: selection.isEmpty || !isEnabled ? nil : { remove(selection) })
+                .acceptsDroppedFolders(isEnabled: isEnabled) { add($0) }
+                .onChange(of: sources) { selection.formIntersection(sources) }
             }
-            .onDeleteCommand(perform: selection.isEmpty || !isEnabled ? nil : { remove(selection) })
-            .acceptsDroppedFolders(isEnabled: isEnabled) { add($0) }
-            .onChange(of: sources) { selection.formIntersection(sources) }
             if let addProblem {
                 SeverityText(addProblem, severity: .warning)
             }
             if let addNote {
                 Text(addNote).explanatoryNote()
-            }
-            HStack {
-                Button("Add Folder or Drive…", action: choose)
-                Button("Remove") { remove(selection) }
-                    .disabled(selection.isEmpty)
             }
         }
     }

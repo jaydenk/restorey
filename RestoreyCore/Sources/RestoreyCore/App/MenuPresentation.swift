@@ -19,7 +19,7 @@ public enum BannerAction: Sendable, Equatable {
     case setUp
     case saveRecoveryKit(UUID)
     case showDetails(UUID)
-    /// `config.json` can't be read: Settings → Plans says why.
+    /// `config.json` can't be read: the main window's Plans says why.
     case showSettingsError
 
     /// The words on the banner's (or line's) button.
@@ -34,7 +34,7 @@ public enum BannerAction: Sendable, Equatable {
         case .finishSetup, .setUp: "Finish Setup…"
         case .saveRecoveryKit: "Save Recovery Kit…"
         case .showDetails: "Show Details…"
-        case .showSettingsError: "Show in Settings…"
+        case .showSettingsError: "Show Plan…"
         }
     }
 
@@ -51,7 +51,7 @@ public enum BannerAction: Sendable, Equatable {
         case .finishSetup, .setUp: "Finish Setup…"
         case .saveRecoveryKit: "Save Recovery Kit…"
         case .showDetails: "Show Details…"
-        case .showSettingsError: "Show in Settings…"
+        case .showSettingsError: "Show Plan…"
         }
     }
 }
@@ -289,7 +289,7 @@ public enum MenuPresentation {
         status: AgentStatus, notificationsAuthorised: Bool?, format: TextContext
     ) -> MenuContent {
         if let configError = status.configError {
-            // Never the raw error in the menu (audit P5): Settings → Plans shows it.
+            // Never the raw error in the menu (audit P5): the main window's Plans shows it.
             let banner = MenuBanner(
                 severity: .error, title: "Restorey can’t read its settings", detail: configError,
                 action: .showSettingsError)
@@ -666,7 +666,7 @@ public enum MenuPresentation {
         let plans = status?.plans ?? []
         let lines = plans.map { line(for: $0, format: format, suffix: "(not responding)") }
         let banner = MenuBanner(
-            severity: .warning, title: "Restorey’s background process hasn’t answered for 30 minutes",
+            severity: .warning, title: "No answer for 30 minutes",
             detail: "A backup is still running, so Restorey is waiting for it rather than stopping it. "
                 + "Restart Backups stops it now.",
             action: .restartAgent)
@@ -700,7 +700,7 @@ private enum Words {
 
     static func unreadable(_ backup: RunRecord) -> String? {
         guard case .warning(let unreadable) = backup.outcome else { return nil }
-        return "\(unreadable) \(unreadable == 1 ? "file" : "files") couldn’t be read"
+        return DisplayFormat.unreadableFiles(unreadable)
     }
 
     /// A backup that ended without a verdict because something stopped it (the system, the user's pause or Cancel

@@ -461,4 +461,11 @@ struct PlanEditTests {
         #expect(edit.secret(.repositoryPassword(edit.planID)) == "")
         #expect(edit.fields.name == "Mine")
     }
+
+    @Test func theSaveBarHidesOnPagesWithoutFieldsUnlessThereIsSomethingToSave() {
+        #expect(showsSaveBar(pageHasFields: true, isDirty: false, saving: false))
+        #expect(!showsSaveBar(pageHasFields: false, isDirty: false, saving: false))
+        #expect(showsSaveBar(pageHasFields: false, isDirty: true, saving: false))
+        #expect(showsSaveBar(pageHasFields: false, isDirty: false, saving: true))
+    }
 }

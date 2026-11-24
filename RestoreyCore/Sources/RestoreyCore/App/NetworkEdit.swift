@@ -29,7 +29,7 @@ public enum LimitKind: String, CaseIterable, Sendable {
 }
 
 /// Settings → Network (UI design §6.3, product spec §5.5, Ruling P2-6, and the upload-limit design): the Mac-wide
-/// rules being edited, with Save and Revert as a plan's tabs have them. Pure; the app's `NetworkEditModel` does the
+/// rules being edited, applied as the user goes (`commit()`). Pure; the app's `NetworkEditModel` does the
 /// calls.
 ///
 /// The fields hold exactly what the controls show: the limit is parsed in `request()`, never as the user types. A
@@ -227,6 +227,21 @@ public struct NetworkEdit: Sendable, Equatable {
         return settings
     }
 
+    /// What applying the edits now does: nothing (no change), sending the whole set, or stopping on a problem.
+    /// Settings → Network applies as the user goes (a toggle or picker at once, a text field when editing ends), so
+    /// this is asked after each change. It never changes `saved`: only `didSave` does, once the agent accepts.
+    public enum Commit: Sendable, Equatable {
+        case nothing
+        case send(NetworkSettings)
+        case problem(String)
+    }
+
+    public func commit() -> Commit {
+        guard isDirty else { return .nothing }
+        if let problem { return .problem(problem) }
+        return .send(candidate())
+    }
+
     /// What a save sends, or the first problem. Only what the user changed is applied, so a limit the field shows
     /// rounded is kept exactly unless it is retyped.
     public func request() -> Result<NetworkSettings, FormValidation.Problem> {
@@ -266,16 +281,55 @@ public struct NetworkEdit: Sendable, Equatable {
         if fields.wiFiNames == started.wiFiNames { fields.wiFiNames = next.wiFiNames; started.wiFiNames = next.wiFiNames }
     }
 
-    /// The agent saved `settings` (with names trimmed): the form starts again from them.
-    public mutating func didSave(_ settings: NetworkSettings) {
+    /// The agent saved `settings` (with names trimmed): the form starts again from them. `sent` is the form as it was
+    /// when the save was sent (nil: nothing was edited since). A group the user edited while the save was in flight,
+    /// meaning one whose fields now differ from `sent`, keeps those edits (and stays dirty, to be sent next); every
+    /// other group follows what the agent saved, so one it normalised (names trimmed) converges and isn't dirty.
+    public mutating func didSave(_ settings: NetworkSettings, sent: Fields? = nil) {
+        let current = fields
+        let before = sent ?? current
         saved = settings
         fields = Fields(settings: settings)
         started = fields
+        if current.limit != before.limit {
+            fields.limitKind = current.limitKind
+            fields.limitAmount = current.limitAmount
+            fields.limitExact = current.limitExact
+        }
+        if current.window != before.window {
+            fields.windowEnabled = current.windowEnabled
+            fields.windowDays = current.windowDays
+            fields.windowStart = current.windowStart
+            fields.windowEnd = current.windowEnd
+        }
+        if current.skipOnConstrainedNetwork != before.skipOnConstrainedNetwork {
+            fields.skipOnConstrainedNetwork = current.skipOnConstrainedNetwork
+        }
+        if current.wiFiNames != before.wiFiNames { fields.wiFiNames = current.wiFiNames }
     }
 
-    public mutating func revert() {
-        fields = Fields(settings: saved)
-        started = fields
+    /// The agent refused (or couldn't be asked): `saved` is unchanged. A toggle, picker or list shows what the agent
+    /// has again, since the user has nothing to correct there; what was typed (the limit's amount, the window's
+    /// times) stays so it can be corrected. The limit's kind and amount go together: when the kind goes back, so does
+    /// its amount, since an amount typed for another kind means something else.
+    public mutating func didRefuse() {
+        let agent = Fields(settings: saved)
+        fields.skipOnConstrainedNetwork = agent.skipOnConstrainedNetwork
+        started.skipOnConstrainedNetwork = agent.skipOnConstrainedNetwork
+        fields.windowEnabled = agent.windowEnabled
+        started.windowEnabled = agent.windowEnabled
+        fields.windowDays = agent.windowDays
+        started.windowDays = agent.windowDays
+        fields.wiFiNames = agent.wiFiNames
+        started.wiFiNames = agent.wiFiNames
+        if fields.limitKind != agent.limitKind {
+            fields.limitKind = agent.limitKind
+            fields.limitAmount = agent.limitAmount
+            fields.limitExact = agent.limitExact
+            started.limitKind = agent.limitKind
+            started.limitAmount = agent.limitAmount
+            started.limitExact = agent.limitExact
+        }
     }
 
     // MARK: The Now and speed lines
@@ -304,8 +358,7 @@ public struct NetworkEdit: Sendable, Equatable {
             let limit = resolved.kiB.map { UploadLimitText.limitText(kiB: $0, setting: saved.uploadLimit) } ?? "no limit"
             line = "Now: \(limit)" + (resolved.changesAt.map { ", until \(when($0))" } ?? "")
         }
-        // The line is about what is saved; with the limit or window edited and not saved it may be about to change.
-        return limitChanged || windowChanged ? line + ". Updates when you save." : line
+        return line
     }
 
     /// The current network's speed and its age, or why there isn't one: "Upload speed on “Kerr Home”: 38 MB/s,

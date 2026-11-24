@@ -28,6 +28,8 @@ import Foundation
     /// `NetworkSettings` → `AgentStatus`. The Mac-wide network rules, saved with Wi-Fi names trimmed; settings
     /// with a problem (`NetworkSettings.validationErrors`) are refused with every reason.
     func saveNetworkSettings(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
+    /// `NotificationSettings` → `AgentStatus`. Which notifications are posted, saved as sent.
+    func saveNotificationSettings(_ request: Data, withReply reply: @escaping @Sendable (Data?, String?) -> Void)
     /// → `AgentStatus`. Runs an upload speed test on the current network now, or joins one in flight, and replies once it
     /// has ended. A test that fails isn't an error: the status then carries the failure (`uploadSpeed.record`). What
     /// refuses it, with a sentence (`SpeedTestRefusal.message`), is no network, a constrained or expensive network, a

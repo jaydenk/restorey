@@ -1,7 +1,7 @@
 import RestoreyCore
 import SwiftUI
 
-/// Settings → Plans → Overview (Task 14c, owner 15 Nov 2026; layout ruling R1; Task 17c): the plan's state with the
+/// Plans → Overview (Task 14c, owner 15 Nov 2026; layout ruling R1; Task 17c): the plan's state with the
 /// menu's reason and the menu's Back Up Now, Pause, Resume and Restore Files… for it, then its last and next backup. The words and which
 /// buttons are enabled are `MenuPresentation.overview`'s, from the same inputs as the menu, so it follows the agent
 /// live, progress included.

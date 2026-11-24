@@ -5,7 +5,7 @@ import SwiftUI
 /// What a plan leaves out, as a sheet (setup's sources step and Settings' Folders tab): folders (restic patterns;
 /// Restorey's own folders stay), file types, and whether other file systems mounted inside a source are skipped.
 /// Folders dragged in from Finder are left out by the same rule as "Add Folder…" (`FolderDrop`), with the list ringed
-/// while the drag is over it, and Delete (⌫ or ⌦) removes the selected rows as Remove does (Task 17e, audit T3).
+/// while the drag is over it, and Delete (⌫ or ⌦) removes the selected rows as − does (Task 17e, audit T3).
 struct ExclusionsSheet: View {
     @Binding var exclusions: [String]
     @Binding var fileTypes: [String]
@@ -29,38 +29,37 @@ struct ExclusionsSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Exclusions").pageTitle()
             Text("Folders").font(.headline)
-            List(selection: $selection) {
-                if let repositoryPath = ExclusionsSummary.repositoryRow(repository: repository, sources: sources) {
-                    repositoryRow(repositoryPath)
-                }
-                ForEach(exclusions, id: \.self) { pattern in
-                    HStack {
-                        Text(DefaultExclusions.displayPattern(pattern, home: home))
-                            .lineLimit(1).truncationMode(.middle)
-                        if own.contains(pattern) {
-                            Spacer()
-                            Text("Restorey’s own").font(.caption).foregroundStyle(.secondary)
-                        }
+            BorderedList(
+                addName: "Add Folder…", removeName: "Remove", canAdd: true,
+                canRemove: !selection.subtracting(own).isEmpty, add: addFolder, remove: { remove(own: own) }
+            ) {
+                List(selection: $selection) {
+                    if let repositoryPath = ExclusionsSummary.repositoryRow(repository: repository, sources: sources) {
+                        repositoryRow(repositoryPath)
                     }
-                    .help(pattern)
-                    .tag(pattern)
+                    ForEach(exclusions, id: \.self) { pattern in
+                        HStack {
+                            Text(DefaultExclusions.displayPattern(pattern, home: home))
+                                .lineLimit(1).truncationMode(.middle)
+                            if own.contains(pattern) {
+                                Spacer()
+                                Text("Restorey’s own").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .help(pattern)
+                        .tag(pattern)
+                    }
                 }
+                .frame(minHeight: 140, idealHeight: 180)
+                .accessibilityLabel("Folders left out")
+                .onDeleteCommand(perform: selection.subtracting(own).isEmpty ? nil : { remove(own: own) })
+                .acceptsDroppedFolders { add($0) }
             }
-            .listStyle(.bordered)
-            .frame(minHeight: 140, idealHeight: 180)
-            .accessibilityLabel("Folders left out")
-            .onDeleteCommand(perform: selection.subtracting(own).isEmpty ? nil : { remove(own: own) })
-            .acceptsDroppedFolders { add($0) }
             if let addProblem {
                 SeverityText(addProblem, severity: .warning)
             }
             if let addNote {
                 Text(addNote).explanatoryNote()
-            }
-            HStack {
-                Button("Add Folder…", action: addFolder)
-                Button("Remove") { remove(own: own) }
-                    .disabled(selection.subtracting(own).isEmpty)
             }
             Text("File types").font(.headline)
             FileTypesEditor(types: $fileTypes)

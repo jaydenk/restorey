@@ -3,8 +3,8 @@ import Observation
 import RestoreyCore
 import SwiftUI
 
-/// What Settings works with, from the shell: the installed copy's supervisor and login item, and the other windows
-/// it opens. `WindowRouter` makes it; a copy outside /Applications has no Settings.
+/// What the main and Settings windows work with, from the shell: the installed copy's supervisor and login item, and
+/// the other windows they open. `WindowRouter` makes it; a copy outside /Applications has neither window.
 @MainActor
 struct SettingsContext {
     let supervisor: AgentSupervisor
@@ -23,138 +23,125 @@ struct SettingsContext {
     let planDeleted: (UUID) -> Void
 }
 
-/// The Settings window's content (UI design §6, mockup `v0.1-settings.html`): the section the toolbar picks.
-/// General, Plans, Network and History.
+/// The Settings window's content (visual polish §1): the pane the toolbar picks, General, Notifications or Network,
+/// at a fixed width with the height the pane needs, as System Settings-style preference windows have it.
 struct SettingsWindow: View {
-    /// The narrowest every section fits in: General and History need about 760, Plans its tab row (`PlansPane`),
-    /// measured now. `WindowRouter` takes it once per window made (Task 14c R2), so a text-size change applies from the next one.
-    @MainActor static func measuredMinimumWidth() -> CGFloat {
-        max(760, PlansPane.minimumWidth(tabRowWidth: PlanTabPicker.naturalWidth()).rounded(.up))
-    }
+    /// The window's one width. Every pane's rows fit in it, the Network pane's limit window (a days menu and two
+    /// times) the widest; longer text wraps.
+    static let width: CGFloat = 560
+    static let minimumHeight: CGFloat = 160
 
     let context: SettingsContext
-    /// `measuredMinimumWidth()` when the window was made.
-    let minimumWidth: CGFloat
     @Bindable var state: ShellState
-    let editorSlot: PlanEditorSlot
-    /// The Network section's unsaved edits, held by the router while the window is open.
+    /// The Network pane's edits in progress, held by the router while the window is open (committed when it closes).
     let networkSlot: NetworkEditorSlot
 
     var body: some View {
         Group {
-            switch state.settingsSection {
+            switch state.settingsPane {
             case .general:
                 GeneralPane(context: context, state: state)
-            case .plans:
-                PlansPane(context: context, state: state, slot: editorSlot)
+            case .notifications:
+                NotificationsPane(supervisor: context.supervisor)
             case .network:
                 NetworkPane(supervisor: context.supervisor, slot: networkSlot)
-            case .history:
-                HistoryPane(filterRequest: state.historyFilter)
             }
         }
-        // Wide enough for every section, Plans' row of tabs the widest (measured, not guessed: a fixed 760 let the old
-        // segmented row overflow, and the hosting view centred the overflow, clipping both edges; Task 14c R1).
-        .frame(
-            minWidth: minimumWidth, idealWidth: minimumWidth + 20, minHeight: 520, idealHeight: 560)
+        // The pane's own height, which the window takes (`sizingOptions = .preferredContentSize`): a grouped form
+        // reports its rows' height when not stretched, so the window neither scrolls a short pane nor pads it. A pane
+        // still waiting for its first status (a spinner) keeps a usable height rather than a sliver.
+        .frame(minHeight: Self.minimumHeight)
+        .frame(width: Self.width)
+        .fixedSize(horizontal: false, vertical: true)
         .environment(context.supervisor)
-        // Here rather than in Plans: a route from the menu can ask for another plan while any section shows.
-        .alert(
-            "Discard your changes to “\(editorSlot.editor?.saved.name ?? "")”?",
-            isPresented: Binding(
-                get: { state.planSelection.pending != nil }, set: { if !$0 { state.cancelPlanSwitch() } })
-        ) {
-            Button("Discard Changes", role: .destructive) {
-                state.settingsSection = .plans
-                state.confirmPlanSwitch()
-            }
-            Button("Keep Editing", role: .cancel) {
-                state.settingsSection = .plans
-                state.cancelPlanSwitch()
-            }
-        } message: {
-            Text("They haven’t been saved.")
-        }
     }
 }
 
-/// The window's toolbar of sections, as macOS Settings windows have it (`NSWindow.ToolbarStyle.preference`):
-/// AppKit's, so the selected section shows the way the system draws it. It follows `ShellState`, which the
-/// menu's routes also set (`WindowRouter.showSettings`), and writes the user's choice back to it.
+extension SectionToolbar {
+    /// The Settings window's panes, in `SettingsPane` order.
+    static func settings(state: ShellState) -> SectionToolbar {
+        SectionToolbar(
+            identifier: "RestoreySettingsToolbar",
+            items: SettingsPane.allCases.map { Item(id: $0.rawValue, title: $0.title, symbolName: $0.symbolName) },
+            selected: { state.settingsPane.rawValue },
+            choose: { id in if let pane = SettingsPane(rawValue: id) { state.settingsPane = pane } })
+    }
+}
+
+/// A window's toolbar of sections or panes, as macOS Settings windows have it: AppKit's selectable toolbar items, so
+/// the selected one shows the way the system draws it. It follows `selected` (which the menu's routes also change,
+/// through `ShellState`), titles the window with the selected item's name, and passes the user's pick to `choose`.
+/// The main window (Plans, History) and the Settings window (General, Notifications, Network) each have one.
 @MainActor
-final class SettingsToolbar: NSObject, NSToolbarDelegate {
-    private let state: ShellState
-    private let toolbar = NSToolbar(identifier: "RestoreySettings")
+final class SectionToolbar: NSObject, NSToolbarDelegate {
+    struct Item {
+        let id: String
+        let title: String
+        let symbolName: String
+    }
+
+    private let toolbar: NSToolbar
+    private let items: [Item]
+    private let selected: @MainActor () -> String
+    private let choose: @MainActor (String) -> Void
     private weak var window: NSWindow?
 
-    init(state: ShellState) {
-        self.state = state
+    /// `selected` is read under observation tracking, so it should read observable state (`ShellState`).
+    init(
+        identifier: String, items: [Item], selected: @escaping @MainActor () -> String,
+        choose: @escaping @MainActor (String) -> Void
+    ) {
+        toolbar = NSToolbar(identifier: identifier)
+        self.items = items
+        self.selected = selected
+        self.choose = choose
         super.init()
         toolbar.delegate = self
         toolbar.displayMode = .iconAndLabel
         toolbar.allowsUserCustomization = false
     }
 
-    func attach(to window: NSWindow) {
+    func attach(to window: NSWindow, style: NSWindow.ToolbarStyle) {
         self.window = window
         window.toolbar = toolbar
-        window.toolbarStyle = .preference
+        window.toolbarStyle = style
         follow()
     }
 
-    private static func identifier(_ section: SettingsSection) -> NSToolbarItem.Identifier {
-        NSToolbarItem.Identifier(section.rawValue)
-    }
+    private var identifiers: [NSToolbarItem.Identifier] { items.map { NSToolbarItem.Identifier($0.id) } }
 
-    private static func symbol(_ section: SettingsSection) -> String {
-        switch section {
-        case .general: "gearshape"
-        case .plans: "list.bullet.rectangle"
-        case .network: "network"
-        case .history: "clock.arrow.circlepath"
-        }
-    }
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { identifiers }
 
-    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        SettingsSection.allCases.map(Self.identifier)
-    }
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { identifiers }
 
-    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        SettingsSection.allCases.map(Self.identifier)
-    }
-
-    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        SettingsSection.allCases.map(Self.identifier)
-    }
+    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { identifiers }
 
     func toolbar(
         _ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
-        guard let section = SettingsSection(rawValue: itemIdentifier.rawValue) else { return nil }
+        guard let section = items.first(where: { $0.id == itemIdentifier.rawValue }) else { return nil }
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
         item.label = section.title
-        item.image = NSImage(systemSymbolName: Self.symbol(section), accessibilityDescription: section.title)
+        item.image = NSImage(systemSymbolName: section.symbolName, accessibilityDescription: section.title)
         item.target = self
-        item.action = #selector(choose(_:))
+        item.action = #selector(chose(_:))
         return item
     }
 
-    @objc private func choose(_ item: NSToolbarItem) {
-        guard let section = SettingsSection(rawValue: item.itemIdentifier.rawValue) else { return }
-        // The user's own choice: a filter a route asked for no longer applies.
-        state.historyFilter = nil
-        state.settingsSection = section
+    @objc private func chose(_ item: NSToolbarItem) {
+        choose(item.itemIdentifier.rawValue)
     }
 
-    /// Shows the state's section, and again each time it changes.
+    /// Shows the selected item, and again each time it changes; the window's title is its name (HIG Settings: "update
+    /// the window's title to reflect the currently visible pane").
     private func follow() {
-        let section = withObservationTracking {
-            state.settingsSection
+        let id = withObservationTracking {
+            selected()
         } onChange: { [weak self] in
             Task { @MainActor in self?.follow() }
         }
-        toolbar.selectedItemIdentifier = Self.identifier(section)
-        window?.title = section.title
+        toolbar.selectedItemIdentifier = NSToolbarItem.Identifier(id)
+        if let title = items.first(where: { $0.id == id })?.title { window?.title = title }
     }
 }

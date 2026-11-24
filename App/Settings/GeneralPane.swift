@@ -2,18 +2,17 @@ import AppKit
 import RestoreyCore
 import SwiftUI
 
-/// Settings → General (UI design §6.1, mockup `v0.1-settings.html`): open at login, Full Disk Access and
-/// notifications with their fixes, the background agent and its version, the logs folder, and the note shown while
-/// the menu bar icon is hidden. The words are `SettingsGeneral`'s.
+/// Settings → General (UI design §6.1, mockup `v0.1-settings.html`): open at login and Full Disk Access with their
+/// fixes, the background agent and its version, the logs folder, and the note shown while the menu bar icon is
+/// hidden. The words are `SettingsGeneral`'s. The notifications permission is in Settings → Notifications.
 ///
-/// What the user can change elsewhere (Login Items, Full Disk Access, notifications in System Settings) is read
-/// again whenever Restorey comes back to the front.
+/// What the user can change elsewhere (Login Items, Full Disk Access in System Settings) is read again whenever
+/// Restorey comes back to the front.
 struct GeneralPane: View {
     let context: SettingsContext
     @Bindable var state: ShellState
     @State private var loginStatus: AgentServiceStatus?
     @State private var loginError: String?
-    @State private var asking = false
 
     private var supervisor: AgentSupervisor { context.supervisor }
 
@@ -35,10 +34,6 @@ struct GeneralPane: View {
                 openAtLogin
                 if fullDiskAccess != .missing {
                     LabeledContent("Full Disk Access") { fullDiskAccessBlock }
-                }
-                LabeledContent("Notifications") {
-                    LineView(line: SettingsGeneral.notifications(hello: supervisor.lastHello),
-                             busy: asking, perform: perform)
                 }
                 LabeledContent("Backups in the background") {
                     LineView(line: SettingsGeneral.agent(health: supervisor.health, hello: supervisor.lastHello),
@@ -106,17 +101,22 @@ struct GeneralPane: View {
     }
 
     private func perform(_ action: GeneralAction) {
+        Task { await GeneralActionRunner.run(action, supervisor: supervisor) }
+    }
+}
+
+/// What a General or Notifications line's button does.
+@MainActor
+enum GeneralActionRunner {
+    /// Returns once the action is done: for the notifications permission, once the question is answered and the
+    /// line can read the answer.
+    static func run(_ action: GeneralAction, supervisor: AgentSupervisor) async {
         switch action {
         case .openFullDiskAccess:
             NSWorkspace.shared.open(StatusItemController.fullDiskAccessURL)
         case .askForNotifications:
-            guard !asking else { return }
-            asking = true
-            Task {
-                _ = await supervisor.connection.requestNotificationPermission()
-                await supervisor.refreshHello()
-                asking = false
-            }
+            _ = await supervisor.connection.requestNotificationPermission()
+            await supervisor.refreshHello()
         case .openNotificationSettings:
             // The agent posts the notifications, so it is the app to turn them on for.
             if let url = StatusItemController.notificationsURL(bundleID: supervisor.identity.agentBundleID) {
@@ -130,8 +130,8 @@ struct GeneralPane: View {
     }
 }
 
-/// A General line: its severity’s symbol, its words and its fix’s button.
-private struct LineView: View {
+/// A General or Notifications line: its severity’s symbol, its words and its fix’s button.
+struct LineView: View {
     let line: SettingsGeneral.Line
     var busy = false
     let perform: (GeneralAction) -> Void

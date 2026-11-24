@@ -34,12 +34,16 @@ extension AgentState {
     /// - Parameters:
     ///   - log: lines for the agent's log, which name the plan and condition, never a secret.
     ///   - callTimeout: how long each notifier call may take; injectable for tests.
+    ///   - calendar, locale: for the times in the started and finished notifications; injectable for tests.
     public func attach(
-        notifier: any AlertNotifying, log: @escaping @Sendable (String) -> Void, callTimeout: Duration = .seconds(10)
+        notifier: any AlertNotifying, log: @escaping @Sendable (String) -> Void, callTimeout: Duration = .seconds(10),
+        calendar: Calendar = .autoupdatingCurrent, locale: Locale = .autoupdatingCurrent
     ) {
         self.notifier = notifier
         alertLog = log
         alertCallTimeout = callTimeout
+        eventCalendar = calendar
+        eventLocale = locale
         scheduleAlertDelivery()
     }
 
@@ -117,12 +121,7 @@ extension AgentState {
     private func deliverOnce() async {
         guard let notifier else { return }
         let timeout = alertCallTimeout
-        // An answer that arrives after its timeout is still recorded, for the next round.
-        _ = await guardedCall("authorisation", timeout: timeout) {
-            let answer = await notifier.authorisationStatus()
-            await self.noteAuthorisation(answer)
-            return answer
-        }
+        await refreshAuthorisation(notifier: notifier, timeout: timeout)
         // `.none`: the notifier has never answered. Nothing is posted, and `notificationsOff` is neither
         // raised nor cleared. An abandoned call with no answer since counts as not authorised.
         let abandoned = authorisationAbandoned
@@ -133,7 +132,11 @@ extension AgentState {
             return
         }
 
-        // 1. Raise and clear, and work out what is due.
+        // 1. Raise and clear, and work out what is due. With Problems with backups off, the alerts are still
+        // raised and cleared (the menu bar icon, the menu's banners and check-in pings follow them), but none is
+        // posted, and `notificationsOff`, which exists to protect them, is neither raised nor kept. What is due
+        // waits uncounted, so it goes out once Problems is turned back on.
+        let problems = config.notifications.problems
         let now = now()
         var pending: [Pending] = []
         await underGate("the alert state") {
@@ -143,10 +146,12 @@ extension AgentState {
                 let history = state.plans[plan.id] ?? PlanRunHistory()
                 var active = alertConditions(
                     history: history, plan: plan, now: now, fullDiskAccessMissing: fdaMissing,
-                    notificationsAuthorised: known == nil ? true : authorised)
-                if known == nil, history.activeAlerts[.notificationsOff] != nil { active.insert(.notificationsOff) }
+                    notificationsAuthorised: known == nil || !problems ? true : authorised)
+                if problems, known == nil, history.activeAlerts[.notificationsOff] != nil {
+                    active.insert(.notificationsOff)
+                }
                 let (next, toNotify) = reconcileAlerts(previous: history.activeAlerts, active: active, now: now)
-                if authorised == true {
+                if problems, authorised == true {
                     for condition in toNotify {
                         guard let raisedAt = next[condition]?.raisedAt,
                             let alert = AlertContent(
@@ -210,8 +215,20 @@ extension AgentState {
         loadErrorAlert = state
     }
 
+    /// Asks the notifier whether the agent may post, bounded by `timeout`. An answer that arrives after its
+    /// timeout is still recorded, for the next round; read it from `lastAuthorisation`.
+    /// - Parameter key: the alert rounds' `authorisation`, or a key of the caller's own, so its question isn't
+    ///   skipped while a round's is in flight.
+    func refreshAuthorisation(notifier: any AlertNotifying, timeout: Duration, key: String = "authorisation") async {
+        _ = await guardedCall(key, timeout: timeout) {
+            let answer = await notifier.authorisationStatus()
+            await self.noteAuthorisation(answer)
+            return answer
+        }
+    }
+
     /// Nil when posted, otherwise why not.
-    private func post(_ alert: AlertContent, notifier: any AlertNotifying, timeout: Duration) async -> String? {
+    func post(_ alert: AlertContent, notifier: any AlertNotifying, timeout: Duration) async -> String? {
         let outcome = await guardedCall("post.\(alert.identifier)", timeout: timeout) { () -> String? in
             do {
                 try await notifier.post(alert)

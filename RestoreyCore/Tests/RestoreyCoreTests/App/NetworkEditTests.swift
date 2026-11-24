@@ -59,13 +59,125 @@ struct NetworkEditTests {
         #expect(try edit.request().get().uploadLimit == .rate(kiB: 3, unit: .megabytes))
     }
 
-    @Test func revertGoesBackToTheSavedSettings() {
+    @Test func aCleanEditCommitsNothing() {
+        #expect(NetworkEdit(settings: .defaults).commit() == .nothing)
+    }
+
+    @Test func aCommitWithAProblemSendsNothing() {
+        var edit = NetworkEdit(settings: .defaults)
+        edit.setLimitKind(.percent)
+        edit.fields.windowEnabled = true
+        edit.fields.windowStart = 10 * 60
+        edit.fields.windowEnd = 10 * 60
+        #expect(edit.commit() == .problem("The limit’s start and end times can’t be the same."))
+    }
+
+    @Test func aCommitOfAnInvalidLimitSendsNothing() {
+        var edit = NetworkEdit(settings: .defaults)
+        edit.setLimitKind(.megabytes)
+        edit.fields.limitAmount = "abc"
+        guard case .problem = edit.commit() else { Issue.record("expected a problem"); return }
+    }
+
+    @Test func aValidChangeIsSentWhole() {
         var edit = NetworkEdit(settings: Self.saved)
-        edit.fields.limitAmount = "9"
-        edit.remove(name: "Cafe")
-        edit.revert()
+        edit.fields.skipOnConstrainedNetwork.toggle()
+        guard case .send(let settings) = edit.commit() else { Issue.record("expected send"); return }
+        var expected = Self.saved
+        expected.skipOnConstrainedNetwork.toggle()
+        #expect(settings == expected)
+    }
+
+    @Test func aRefusedToggleReadsAsSavedAgain() {
+        var edit = NetworkEdit(settings: .defaults)
+        edit.fields.skipOnConstrainedNetwork.toggle()
+        edit.add(name: "Cafe")
+        edit.didRefuse()
+        #expect(edit.saved == .defaults)
+        #expect(edit.fields == NetworkEdit.Fields(settings: .defaults))
         #expect(!edit.isDirty)
-        #expect(edit.fields == NetworkEdit.Fields(settings: Self.saved))
+    }
+
+    @Test func aRefusedWindowSwitchAndDaysChoiceReadAsSavedAgain() {
+        var settings = Self.saved
+        settings.limitWindow = LimitWindow(days: .weekdays, startMinute: 480, endMinute: 1080)
+        var edit = NetworkEdit(settings: settings)
+        edit.fields.windowEnabled = false
+        edit.fields.windowDays = .weekends
+        edit.didRefuse()
+        #expect(edit.saved == settings)
+        #expect(edit.fields.windowEnabled)
+        #expect(edit.fields.windowDays == .weekdays)
+        #expect(!edit.isDirty)
+    }
+
+    /// The app re-commits when a refused switch flips back (its `onChange` fires). That must find nothing to send,
+    /// so the model can leave the agent's sentence on show: a `.nothing` result never means "the error is stale".
+    @Test func afterARefusalTheFlippedBackFormHasNothingToSend() {
+        var edit = NetworkEdit(settings: Self.saved)
+        edit.fields.skipOnConstrainedNetwork.toggle()
+        edit.didRefuse()
+        #expect(edit.commit() == .nothing)
+    }
+
+    @Test func aRefusalLeavesAnUntouchedGroupAndTheTypedGroupAlone() {
+        var settings = Self.saved
+        settings.limitWindow = LimitWindow(days: .weekdays, startMinute: 480, endMinute: 1080)
+        var edit = NetworkEdit(settings: settings)
+        edit.fields.skipOnConstrainedNetwork.toggle()
+        edit.fields.windowStart = 9 * 60            // typed, to be corrected
+        edit.didRefuse()
+        #expect(edit.fields.skipOnConstrainedNetwork)
+        #expect(edit.fields.windowStart == 9 * 60)
+        #expect(edit.isDirty)
+    }
+
+    @Test func aRefusedTypedAmountKeepsWhatWasTyped() {
+        var edit = NetworkEdit(settings: Self.saved)
+        edit.fields.limitAmount = "99999999999"
+        edit.fields.windowEnabled = true
+        edit.fields.windowStart = 7 * 60
+        edit.didRefuse()
+        #expect(edit.saved == Self.saved)
+        #expect(edit.fields.limitAmount == "99999999999")
+        #expect(edit.fields.windowStart == 7 * 60)
+        #expect(edit.isDirty)
+    }
+
+    @Test func aRefusedKindChangeTakesItsAmountBackWithIt() {
+        var edit = NetworkEdit(settings: Self.saved)
+        edit.setLimitKind(.percent)
+        edit.didRefuse()
+        #expect(edit.fields.limitKind == .megabytes)
+        #expect(edit.fields.limitAmount == NetworkEdit.Fields(settings: Self.saved).limitAmount)
+        #expect(!edit.isDirty)
+    }
+
+    @Test func anEditMadeWhileASaveWasInFlightSurvivesIt() {
+        var edit = NetworkEdit(settings: .defaults)
+        edit.fields.skipOnConstrainedNetwork = false
+        let sent = edit.fields
+        var agent = NetworkSettings.defaults
+        agent.skipOnConstrainedNetwork = false
+        edit.fields.wiFiNames = ["Cafe"]            // typed while the save was out
+        edit.didSave(agent, sent: sent)
+        #expect(edit.saved == agent)
+        #expect(edit.fields.skipOnConstrainedNetwork == false)
+        #expect(edit.fields.wiFiNames == ["Cafe"])
+        guard case .send(let next) = edit.commit() else { Issue.record("expected the next send"); return }
+        #expect(next.skippedWiFiNames == ["Cafe"])
+        #expect(next.skipOnConstrainedNetwork == false)
+    }
+
+    @Test func aGroupTheAgentNormalisedConvergesWithoutStayingDirty() {
+        var edit = NetworkEdit(settings: .defaults)
+        edit.setLimitKind(.megabytes)
+        edit.fields.limitAmount = "05"
+        let sent = edit.fields
+        edit.didSave(NetworkSettings(uploadLimit: .rate(kiB: 5 * 1024, unit: .megabytes), skipOnConstrainedNetwork: true, skippedWiFiNames: []), sent: sent)
+        #expect(edit.fields.limitAmount == "5")
+        #expect(!edit.isDirty)
+        #expect(edit.commit() == .nothing)
     }
 
     @Test func aSaveStartsAgainFromWhatTheAgentSaved() {
@@ -320,8 +432,8 @@ struct NetworkEditTests {
         #expect(line == "Now: 512 KB/s, until 6:00 am Saturday")
     }
 
-    /// With the limit or the window edited and not saved, the line (about what is saved) says it will update.
-    @Test func nowLineSaysItUpdatesWhenYouSaveWhileTheLimitOrWindowIsEdited() {
+    /// The line is about what the agent has; an edit not yet applied doesn't change it, and it never mentions saving.
+    @Test func nowLineNeverMentionsSaving() {
         let friday10am = Self.adelaideDate(2027, 1, 15, 10)
         let status = Self.measured(at: friday10am)
         func now(_ edit: NetworkEdit) -> String {
@@ -330,16 +442,12 @@ struct NetworkEditTests {
         var edit = Self.percentEdit()
         #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm")
         edit.fields.limitAmount = "60"
-        #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm. Updates when you save.")
-        edit.revert()
+        #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm")
         edit.fields.windowEnd = 19 * 60
-        #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm. Updates when you save.")
-        edit.revert()
-        edit.fields.skipOnConstrainedNetwork.toggle()
-        #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm", "the other groups don't change the line")
+        #expect(now(edit) == "Now: 20 MB/s, until 6:00 pm")
         var none = NetworkEdit(settings: .defaults)
         none.setLimitKind(.megabytes)
-        #expect(now(none) == "No limit right now. Updates when you save.")
+        #expect(now(none) == "No limit right now")
     }
 
     // MARK: The speed line

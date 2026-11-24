@@ -72,6 +72,12 @@ public enum DisplayFormat {
         formatter(template: "Hmm", calendar: calendar, locale: locale).string(from: date)
     }
 
+    /// "1 file couldn’t be read", "3 files couldn’t be read": a warning backup, as the menu and the "Backed up"
+    /// notification word it.
+    public static func unreadableFiles(_ count: Int) -> String {
+        "\(count) \(count == 1 ? "file" : "files") couldn’t be read"
+    }
+
     /// "9 Nov", in the calendar's time zone.
     public static func dayAndMonth(_ date: Date, calendar: Calendar, locale: Locale) -> String {
         formatter(template: "dMMM", calendar: calendar, locale: locale).string(from: date)

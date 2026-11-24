@@ -300,6 +300,20 @@ extension AgentState {
         }
     }
 
+    /// Saves which notifications are posted, beside the plans in `config.json`, and pushes the status. Three
+    /// booleans have no invalid value, so there is nothing to refuse beyond the usual `requireMutable()`.
+    public func saveNotificationSettings(_ settings: NotificationSettings) async throws -> AgentStatus {
+        try requireMutable()
+        return try await serialisedWrite {
+            var updated = config
+            updated.notifications = settings
+            try await saveConfig(updated)
+            // Problems with backups gates the alert rounds: bring the alerts up to date with it now, not at the next tick.
+            scheduleAlertDelivery()
+            return pushStatus()
+        }
+    }
+
     /// Pauses for `length`, after which the plan is due at once, and asks the runner to stop a
     /// run in progress (SIGINT, then SIGKILL; the run ends `.paused`). Allowed while draining.
     public func pause(_ id: UUID, for length: PauseLength) async throws -> AgentStatus {

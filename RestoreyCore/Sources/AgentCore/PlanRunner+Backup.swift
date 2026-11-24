@@ -76,7 +76,9 @@ extension PlanRunner {
     /// The backup and its maintenance, in one turn of the repository's queue. The backup's end ping is
     /// queued as soon as its record is committed, before any maintenance (Ruling R37): it reports the
     /// backup, and a slow or failing check must neither delay nor change it. Before each step, an agent
-    /// winding down stops (Ruling R55): before the backup, it records it `.skipped(.agentUpdating)`.
+    /// winding down stops (Ruling R55): before the backup, it records it `.skipped(.agentUpdating)`. The "Backing up"
+    /// and "Backed up" notifications are queued right before restic starts and once its record is committed
+    /// (AgentState+Events.swift), never for a backup skipped before it starts.
     private func backupSlot(
         session: RunSession, trigger: RunTrigger, handle: RunHandle, fda: FDAProbeResult, startedAt: Date
     ) async -> StepResult {
@@ -105,6 +107,8 @@ extension PlanRunner {
         }
         var backupSession = session
         backupSession.context.notForBackupExcludeFile = marked.file
+        // Queued, not awaited: the notification centre never holds restic up.
+        await deps.state.noteBackupStarted(plan, at: deps.now())
         var backup = await runStep(.backup, trigger: trigger, session: backupSession, handle: handle, progress: true)
         // restic has exited (or never started), however the step ended: success, failure, a cancel, a pause or the
         // system stopping the agent (which waits for the run to end before it exits).
@@ -116,6 +120,7 @@ extension PlanRunner {
         let previousBackup = try? await deps.state.runInputs(plan.id).history.lastBackupRecord
         await commit(backup.record, plan: plan, fda: fda, stoppedReason: backup.stoppedReason)
         queueEndPing(backup, redactor: session.redactor)
+        await deps.state.noteBackupEnded(plan, record: backup.record)
 
         guard handle.intent == nil, let history = try? await deps.state.runInputs(plan.id).history else {
             return backup

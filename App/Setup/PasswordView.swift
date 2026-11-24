@@ -159,7 +159,7 @@ private struct ExistingRepositorySummary: View {
 
     var body: some View {
         Text("A repository is already here: \(SetupAdoption.summary(report)).").font(.headline)
-        Text("Restorey adds this Mac’s backups to it and never removes snapshots it didn’t make. It doesn’t prune an existing repository, since that locks out other Macs; you can turn pruning on in Settings.")
+        Text("Restorey adds this Mac’s backups to it and never removes snapshots it didn’t make. It doesn’t prune an existing repository, since that locks out other Macs; you can turn pruning on in the plan’s Retention tab.")
             .fixedSize(horizontal: false, vertical: true)
         SetupField(label: "This Mac’s snapshots are under") {
             Picker("Host label", selection: $model.hostLabel) {

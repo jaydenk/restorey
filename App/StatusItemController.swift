@@ -219,7 +219,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
         case .banner(let action):
             perform(action, supervisor, router)
         case .openPlan(let planID):
-            router.showSettings(section: .plans, planID: planID)
+            router.showMain(section: .plans, planID: planID)
         case .backUpAll:
             AgentActions.backUpNow(nil, connection)
         case .backUp(let planID):
@@ -241,6 +241,8 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
             AgentActions.resume([planID], connection)
         case .restoreFiles(let planID):
             router.showRestoreFiles(planID: planID)
+        case .openRestorey:
+            router.showMain()
         case .settings:
             router.showSettings()
         case .developer:
@@ -254,7 +256,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
             {
                 NSWorkspace.shared.open(url)
             } else {
-                router.showSettings(section: .history)
+                router.showMain(section: .history)
             }
         case .showLogsFolder:
             NSWorkspace.shared.activateFileViewerSelecting([supervisor.identity.logsDirectory()])
@@ -271,17 +273,19 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
         switch action {
         case .openFullDiskAccess:
             // Settings → General holds the tile to drag into the list System Settings opens here.
-            router.showSettings(section: .general)
+            router.showSettings(pane: .general)
             NSWorkspace.shared.open(Self.fullDiskAccessURL)
         case .restartAgent:
             supervisor.restartAgent()
         case .openLoginItems:
             supervisor.openLoginItems()
         case .turnOnNotifications:
-            // The agent posts the notifications, so it is the app to turn them on for.
+            // Settings → Notifications says whether they are allowed; the agent posts the notifications, so it is the
+            // app to turn them on for in System Settings.
+            router.showSettings(pane: .notifications)
             if let url = Self.notificationsURL(bundleID: supervisor.identity.agentBundleID) { NSWorkspace.shared.open(url) }
         case .addCheckInURL(let planID):
-            router.showSettings(section: .plans, planID: planID, tab: .schedule)
+            router.showMain(section: .plans, planID: planID, tab: .schedule)
         case .dismissOffMacNote(let planID):
             let connection = supervisor.connection
             AgentActions.run("Restorey couldn’t dismiss the note") { [await connection.dismissOffMacNote(planID)] }
@@ -290,9 +294,10 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuActionTarget {
         case .saveRecoveryKit(let planID):
             router.showRecoveryKit(planID: planID)
         case .showDetails(let planID):
-            router.showSettings(section: .history, planID: planID)
+            router.showMain(section: .history, planID: planID)
         case .showSettingsError:
-            router.showSettings(section: .plans)
+            // Plans says why `config.json` can't be read.
+            router.showMain(section: .plans)
         }
     }
 

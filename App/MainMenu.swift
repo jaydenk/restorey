@@ -15,8 +15,8 @@ import AppKit
 /// replaces this menu after launch.
 @MainActor
 enum MainMenu {
-    /// `settings` opens the Settings window; `canShowSettings` says whether this copy has one (a copy outside
-    /// /Applications has none, so the item is dimmed).
+    /// `showSettings` opens the Settings window (General, Notifications, Network), never the plans; `canShowSettings`
+    /// says whether this copy has one (a copy outside /Applications has none, so the item is dimmed).
     static func install(canShowSettings: @escaping @MainActor () -> Bool, showSettings: @escaping @MainActor () -> Void) {
         MenuActions.shared.canShowSettings = canShowSettings
         MenuActions.shared.openSettings = showSettings

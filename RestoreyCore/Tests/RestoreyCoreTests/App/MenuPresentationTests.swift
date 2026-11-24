@@ -767,9 +767,18 @@ struct MenuPresentationTests {
     // MARK: A long wait on a running backup (owner, 20 Nov 2026)
 
     private static let longWaitBanner = MenuBanner(
-        severity: .warning, title: "Restorey’s background process hasn’t answered for 30 minutes",
+        severity: .warning, title: "No answer for 30 minutes",
         detail: "A backup is still running, so Restorey is waiting for it rather than stopping it. Restart Backups stops it now.",
         action: .restartAgent)
+
+    @Test func theLongWaitBannerIsShort() {
+        #expect(Self.longWaitBanner.title == "No answer for 30 minutes")
+        #expect(Self.longWaitBanner.title.count <= 32)
+        let running = Self.status([Self.line(Self.plan(), phase: .running(nil, retrying: nil))], generatedAt: Self.at(13, 30))
+        let banner = Self.make(running, health: .waitingForRunningBackup(longWait: true)).banners.first
+        #expect(banner?.title == "No answer for 30 minutes")
+        #expect(banner?.title.count ?? 99 <= 32)
+    }
 
     /// After 30 awake minutes without an answer while a backup runs, Restorey keeps waiting and warns; stopping the
     /// backup is the person's choice (Restart Backups). The last state is still shown, however old it is.
@@ -783,7 +792,7 @@ struct MenuPresentationTests {
         #expect(content.icon == .warning)
         #expect(content.plans.map(\.status) == ["Backing up (not responding)"])
         #expect(content.actions == MenuActions(backUpNow: false, pause: false, resume: false, perPlanSubmenus: false))
-        #expect(content.toolTip == "Restorey’s background process hasn’t answered for 30 minutes")
+        #expect(content.toolTip == "Restorey — No answer for 30 minutes")
 
         // Nothing known about the plans (the app was relaunched during the wait): the warning still stands.
         let unknown = Self.make(nil, health: .waitingForRunningBackup(longWait: true))

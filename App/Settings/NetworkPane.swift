@@ -3,8 +3,9 @@ import RestoreyCore
 import SwiftUI
 
 /// Settings → Network (UI design §6.3, product spec §5.5, Rulings P2-6 to P2-8 and R69): the Mac-wide upload limit,
-/// the hotspot and Low Data Mode rule, and the Wi-Fi networks to skip, with Revert and Save as a plan's tabs have
-/// them. Every decision is `NetworkEdit`'s and `WiFiNameAccess`'s; `NetworkEditModel` does the calls.
+/// the hotspot and Low Data Mode rule, and the Wi-Fi networks to skip. Changes apply as they are made: a toggle or
+/// picker at once, a text field when editing ends. A value the agent refuses stays in its field, with the agent's
+/// sentence beside the form. Every decision is `NetworkEdit`'s and `WiFiNameAccess`'s; `NetworkEditModel` does the calls.
 ///
 /// Location permission is asked for only when the user first adds a network, and what the list says without it is
 /// asked of the agent (`locationAccess`, never a prompt) when the pane appears and whenever Restorey comes back to the
@@ -22,14 +23,18 @@ struct NetworkPane: View {
     var body: some View {
         Group {
             if let model = slot.model {
-                NetworkForm(model: model)
+                NetworkForm(model: model, connected: supervisor.health == .healthy)
             } else if let configError = status?.configError {
                 unavailable("Restorey can’t read its settings: \(FormValidation.sentence(configError))")
             } else if status != nil {
                 // An agent from before the Mac-wide rules (schema 3) sends none.
                 unavailable("Restorey didn’t get the network settings. Use Restart Backups in General.")
             } else {
-                ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Waiting for Restorey’s background process…").foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .onChange(of: status?.network, initial: true) { _, network in
@@ -56,9 +61,26 @@ struct NetworkPane: View {
 
 private struct NetworkForm: View {
     @Bindable var model: NetworkEditModel
+    /// Restorey’s background process is answering. While it isn't, the form is off and nothing queues: a change
+    /// would only fail, leaving a control showing a value the background process doesn't have.
+    let connected: Bool
+
+    private enum TimeField { case start, end }
+    @FocusState private var timeFocus: TimeField?
+    @State private var wiFiSelection: Set<String> = []
+    /// The popover from the list's + (the typed add).
+    @State private var addingName = false
 
     var body: some View {
         VStack(spacing: 0) {
+            if !connected {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Waiting for Restorey’s background process…").foregroundStyle(.secondary)
+                }
+                .padding(12)
+                Divider()
+            }
             Form {
                 Section {
                     limit
@@ -80,14 +102,40 @@ private struct NetworkForm: View {
                 }
                 Section("Skip on these Wi-Fi networks") {
                     wiFiList
-                    addRow
                     accessNote
                 }
             }
             .formStyle(.grouped)
-            Divider()
-            saveBar.padding(12)
+            .helpLink(HelpPage.network)
+            .disabled(!connected)
+            if let message = refusal {
+                Divider()
+                HStack(spacing: 8) {
+                    SeverityText(message)
+                    Spacer()
+                    if model.saving { ProgressView().controlSize(.small) }
+                }
+                .font(.callout)
+                .padding(12)
+            }
         }
+        // A toggle or picker applies at once; a text field when editing ends (`commitSoon`).
+        .onChange(of: model.fields.skipOnConstrainedNetwork) { commitSoon() }
+        .onChange(of: model.fields.windowEnabled) { commitSoon() }
+        .onChange(of: model.fields.windowDays) { commitSoon() }
+        // A window time applies when editing ends (leaving the picker, or Return), not as each digit is typed.
+        .onChange(of: timeFocus) { old, new in if old != nil, old != new { commitSoon() } }
+        // Leaving the pane ends editing too: a picker still focused hasn't reported the change.
+        .onDisappear { commitSoon() }
+    }
+
+    private func commitSoon() { Task { await model.commit() } }
+
+    /// The agent's sentence for a refused save, or a problem with the list that no field shows (the limit's and the
+    /// window's are beside their rows).
+    private var refusal: String? {
+        guard let message = model.saveError else { return nil }
+        return message == model.edit.uploadLimitProblem || message == model.edit.windowProblem ? nil : message
     }
 
     /// The limit's explanation is in the section's footer, so the row holds only the controls (Task 17c, as P6 has it
@@ -96,7 +144,7 @@ private struct NetworkForm: View {
         LabeledContent("Upload limit for this Mac") {
             MacLimitField(
                 name: "Upload limit for this Mac", amount: $model.fields.limitAmount, kind: model.fields.limitKind,
-                onKind: { kind in Task { await model.setLimitKind(kind) } })
+                onKind: { kind in Task { await model.setLimitKind(kind) } }, onCommit: { commitSoon() })
                 .disabled(model.asking)
         }
         if let problem = model.edit.uploadLimitProblem {
@@ -136,8 +184,12 @@ private struct NetworkForm: View {
             HStack(spacing: 6) {
                 LimitDaysPicker(days: $model.fields.windowDays)
                 TimeOfDayPicker(name: "Window start", minute: $model.fields.windowStart)
+                    .focused($timeFocus, equals: .start)
+                    .onSubmit { commitSoon() }
                 Text("to").foregroundStyle(.secondary)
                 TimeOfDayPicker(name: "Window end", minute: $model.fields.windowEnd)
+                    .focused($timeFocus, equals: .end)
+                    .onSubmit { commitSoon() }
             }
             .disabled(!model.fields.windowEnabled)
         } label: {
@@ -156,44 +208,77 @@ private struct NetworkForm: View {
         }
     }
 
-    @ViewBuilder private var wiFiList: some View {
-        if model.fields.wiFiNames.isEmpty {
-            Text("No networks").foregroundStyle(.secondary)
-        }
-        ForEach(model.fields.wiFiNames, id: \.self) { name in
-            HStack {
-                Text(name)
-                Spacer()
-                Button("Remove") { model.remove(name) }
-                    .controlSize(.small)
-                    .accessibilityLabel("Remove \(name)")
+    /// The skipped networks as a selectable list with the joined + and − buttons. + opens a popover with the name field,
+    /// the Location-permission flow and the problem or note (`NetworkEditModel.addName`); − removes the selected names.
+    /// Each add or removal applies at once, as before.
+    private var wiFiList: some View {
+        BorderedList(
+            addName: "Add Network…", removeName: "Remove Network", canAdd: !blocked,
+            canRemove: !wiFiSelection.isEmpty, isAddPresented: $addingName, remove: removeSelected,
+            popover: { addPopover }, content: { wiFiRows })
+    }
+
+    private var addPopover: some View {
+        TypedAddPopover(
+            title: "Network name", text: $model.newName,
+            canAdd: !model.newName.isEmpty && model.newNameProblem == nil && !model.asking && !blocked,
+            onAdd: addName, footer: { addPopoverFooter })
+    }
+
+    @ViewBuilder private var addPopoverFooter: some View {
+        if model.asking {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Waiting for your answer to the Location question…").foregroundStyle(.secondary)
             }
+            .font(.subheadline)
+        }
+        if let problem = model.newNameProblem ?? model.addNote {
+            SeverityText(problem)
+        }
+    }
+
+    private var wiFiRows: some View {
+        List(selection: $wiFiSelection) {
+            ForEach(model.fields.wiFiNames, id: \.self) { name in
+                Text(name).tag(name)
+            }
+        }
+        .frame(height: 100)
+        .overlay {
+            if model.fields.wiFiNames.isEmpty {
+                Text("No networks")
+                    .foregroundStyle(.secondary)
+                    .allowsHitTesting(false)
+            }
+        }
+        .accessibilityLabel("Wi-Fi networks to skip")
+        .onDeleteCommand(perform: deleteCommand)
+        .onChange(of: model.fields.wiFiNames) { _, names in dropSelection(notIn: names) }
+    }
+
+    private var deleteCommand: (() -> Void)? { wiFiSelection.isEmpty ? nil : { removeSelected() } }
+
+    /// Keeps the selection to names still listed.
+    private func dropSelection(notIn names: [String]) {
+        wiFiSelection = wiFiSelection.intersection(names)
+    }
+
+    private func removeSelected() {
+        let names = model.fields.wiFiNames.filter(wiFiSelection.contains)
+        Task { for name in names { await model.remove(name) } }
+    }
+
+    /// Adds the typed name, and closes the popover once it was added (the field is emptied then); a refusal or a
+    /// Location answer that isn't yes leaves it open with the reason.
+    private func addName() {
+        Task {
+            await model.addName()
+            if model.newName.isEmpty { addingName = false }
         }
     }
 
     private var blocked: Bool { model.access.addStep == .blocked }
-
-    private var addRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                PlainTextField(title: "Network name", text: $model.newName, onSubmit: { Task { await model.addName() } })
-                Button("Add") { Task { await model.addName() } }
-                    .disabled(model.newName.isEmpty || model.newNameProblem != nil || model.asking)
-            }
-            // Also while the Location question is up, so the name added is the one submitted.
-            .disabled(blocked || model.asking)
-            if model.asking {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Waiting for your answer to the Location question…").foregroundStyle(.secondary)
-                }
-                .font(.subheadline)
-            }
-            if let problem = model.newNameProblem ?? model.addNote {
-                SeverityText(problem)
-            }
-        }
-    }
 
     @ViewBuilder private var accessNote: some View {
         let access = model.access
@@ -210,29 +295,6 @@ private struct NetworkForm: View {
                         .controlSize(.small)
                 }
             }
-        }
-    }
-
-    /// The first problem or the save's sentence, Revert and Save (⌘S), as a plan's page has them.
-    private var saveBar: some View {
-        HStack(spacing: 8) {
-            Spacer()
-            Group {
-                if let error = model.saveError {
-                    SeverityText(error)
-                } else if model.edit.isDirty, let problem = model.edit.problem {
-                    SeverityText(problem)
-                }
-            }
-            .font(.callout)
-            .multilineTextAlignment(.trailing)
-            .fixedSize(horizontal: false, vertical: true)
-            if model.saving { ProgressView().controlSize(.small) }
-            Button("Revert") { model.revert() }
-                .disabled(!model.edit.isDirty || model.saving)
-            Button("Save") { Task { await model.save() } }
-                .keyboardShortcut("s", modifiers: .command)
-                .disabled(!model.edit.isDirty || model.edit.problem != nil || model.saving)
         }
     }
 }
