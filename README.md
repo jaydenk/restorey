@@ -685,7 +685,7 @@ Choosing "% of upload speed" while the agent isn't authorised for Location sends
 percentage needs the Wi-Fi name to tell networks apart); if that is refused the choice stands and a line says "Without
 Location permission, Restorey can't tell Wi-Fi networks apart, so they share one measurement." Times and dates in these
 lines use the Mac's locale (`UploadLimitText`, which the agent's log line also uses, pinned to Australian English so a
-log reads the same on every Mac). Save (⌘S) and Revert apply only the fields you changed, as a plan's tabs do: the
+log reads the same on every Mac). There is no Save button: a switch or menu applies as it changes, and a field or time when editing ends (Return, Tab, leaving it, switching pane or closing the window). Only the fields you changed are sent: the
 limit's kind and amount go together, as do the window's fields. A name is added
 trimmed, at most 32 bytes (an SSID's limit), and not twice ignoring case; the agent's own checks are shown before a
 save. Whether Restorey can see Wi-Fi names is `WiFiNameAccess`, from the agent's `locationAccess` reply (asked, never
