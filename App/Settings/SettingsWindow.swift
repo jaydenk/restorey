@@ -33,7 +33,7 @@ struct SettingsWindow: View {
 
     let context: SettingsContext
     @Bindable var state: ShellState
-    /// The Network pane's unsaved edits, held by the router while the window is open.
+    /// The Network pane's edits in progress, held by the router while the window is open (committed when it closes).
     let networkSlot: NetworkEditorSlot
 
     var body: some View {

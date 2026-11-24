@@ -677,8 +677,8 @@ any change still being made, then drops the rest without asking, since Settings 
 - **Now** (`NetworkEdit.nowLine`, worked out each minute from the settings the agent has, by the same
   `resolveMacWideLimit` a backup uses): "Now: 20 MB/s, until 6:00 pm", "Now: no limit, from 8:00 am Monday", "No limit
   right now" or "Now: no limit until this network is measured". A fixed rate reads in the unit it was set in ("Now: 5120
-  KB/s"), as the run log does. While the limit or the window has unsaved changes the line, which is about what is
-  saved, ends "Updates when you save."
+  KB/s"), as the run log does. The line reads what is saved, which a change
+  becomes as soon as it applies.
 - "Skip on a hotspot or in Low Data Mode" and "Skip on these Wi-Fi networks".
 
 Choosing "% of upload speed" while the agent isn't authorised for Location sends `requestLocationPermission` (a
