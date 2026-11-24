@@ -379,8 +379,10 @@ the app (spike H1), and the app is the only item the list needs. The step's secr
 and when the window closes; the progress is saved only when the step changes.
 
 From the storage step on, each Continue saves the plan through the agent (kit unconfirmed, so it never runs), so a
-resumed setup gets its values back from the agent's status. **Where backups go** offers B2 (the default), S3, a
-folder or drive on this Mac (shown with its icon and path, chosen with Choose…, which can make a new folder; the
+resumed setup gets its values back from the agent's status. **Where backups go** offers, as one segmented control spanning the step with four equal segments
+(`FillingSegmentedControl`), B2 (the default), S3, a
+folder or drive on this Mac (a read-only "Folder or drive" field showing the path, with Choose… beside it, which can
+make a new folder; the
 agent’s check then finds whether it is empty or holds a repository) or another restic location (an address such as
 sftp:nas:/restic, with its environment variables, whose values go to the keychain), with Backblaze's and AWS's pages on making a bucket and a key; `StorageForm`
 (`RestoreyCore`) checks the
@@ -523,8 +525,8 @@ shows under the tabs that have fields (Folders, Schedule, Storage, Retention), d
 Overview and History, which edit nothing themselves, it shows only while a sheet has left edits to save or a save is
 under way (`showsSaveBar`), so those two pages are taller by the bar's height.
 The plan list is a bordered list with the
-standard square + and − buttons under it (`SquareButton`, AppKit's `.smallSquare` bezel; HIG Buttons, "Square
-buttons"), as Mail's Accounts and Users & Groups have; Delete (⌫) and the row's context menu delete too. The row's
++ and − buttons under it (`SquareButton`: borderless glyphs on a shaded bar along the list's bottom edge; HIG Buttons),
+as Mail's Accounts, Users & Groups and Fantastical's calendar sets have; Delete (⌫) and the row's context menu delete too. The row's
 context menu (Task 17e) also has the menu's Back Up Now, Resume (while the plan is paused), Pause and Cancel Backup
 (while it backs up) and Restore Files…,
 enabled as the status menu's items are for that plan (its `PlanChoice` from `MenuPresentation`, the same inputs) and
@@ -590,7 +592,8 @@ time: "Setup not finished", then "Stopped", then "New recovery kit needed" (`Pla
   `onDeleteCommand`) removes the selected rows as − does (never Restorey's own exclusions), and a folder's
   context menu has Show in Finder and Remove. Setup's "What to back up" step uses the same list. Every list that adds
   and removes (the plans, a plan's folders, the exclusions sheet's folders and file types, and the skipped Wi-Fi
-  networks) is one bordered unit with small square + and − buttons joined to its bottom edge (`BorderedList`):
+  networks) is one bordered unit, without alternating row stripes, with borderless + and − glyphs on a shaded bar joined to its
+  bottom edge (`BorderedList`):
   + on the folders lists opens the folder panel, + on file types and Wi-Fi networks opens a small box anchored to it
   with the name field (Return adds and closes it, Esc closes it), and − is dimmed until something removable is selected.
 - **Schedule**: the interval, the battery rule and the plan's own upload limit, in KB/s or MB/s by a picker beside the

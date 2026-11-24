@@ -1,10 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// A square (gradient) button with a symbol, for the add and remove buttons under a list (HIG Buttons, "Square
-/// buttons": they act on the view they sit beneath, contain a symbol rather than text, and need no label). SwiftUI has
-/// no such style, so this is AppKit's own `NSButton` with the `.smallSquare` bezel; the help tag and the VoiceOver name
-/// are `name`. Enabled and disabled follow SwiftUI's `disabled(_:)`.
+/// A borderless symbol button for the add and remove buttons under a list (HIG Buttons: they act on the view they sit
+/// beneath, contain a symbol rather than text, and need no label). Current macOS draws these as bare glyphs on the
+/// list's bottom bar (System Settings, Finder's settings, Fantastical), not as the older bevelled squares, so this is
+/// AppKit's `NSButton` with the `.smallSquare` bezel and no border (owner's live check, 24 Nov 2026). The help tag and
+/// the VoiceOver name are `name`. Enabled and disabled follow SwiftUI's `disabled(_:)`.
 struct SquareButton: NSViewRepresentable {
     let systemImage: String
     let name: String
@@ -17,6 +18,7 @@ struct SquareButton: NSViewRepresentable {
             image: NSImage(systemSymbolName: systemImage, accessibilityDescription: name) ?? NSImage(),
             target: context.coordinator, action: #selector(Coordinator.press))
         button.bezelStyle = .smallSquare
+        button.isBordered = false
         button.imagePosition = .imageOnly
         button.setContentHuggingPriority(.required, for: .horizontal)
         return button
@@ -30,7 +32,7 @@ struct SquareButton: NSViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSButton, context: Context) -> CGSize? {
-        CGSize(width: 24, height: 22)
+        CGSize(width: 26, height: 24)
     }
 
     @MainActor
@@ -42,10 +44,12 @@ struct SquareButton: NSViewRepresentable {
 }
 
 /// A list with the Mac's joined + and − buttons: one rounded border (the system's bordered-list stroke and corner
-/// radius) around the list and, at its bottom edge, a bar of two square buttons set off by a hairline, with no gap, as
-/// System Settings, Finder's sidebar settings and Mail's accounts have them (HIG Lists and tables). The content is a
-/// `List`; it is given the inset style so there aren't two borders, and keeps whatever frame and modifiers the caller
-/// puts on it. The buttons' VoiceOver names and help tags are `addName` and `removeName`.
+/// radius) around the list and, along its bottom edge, a shaded bar the full width of the list holding the two glyph
+/// buttons, set off by a hairline, as System Settings, Finder's sidebar settings and Mail's accounts have them (HIG
+/// Lists and tables). The content is a `List`; it is given the inset style without alternating rows (on current macOS
+/// those draw as rounded stripes down the empty part of a short list), so there aren't two borders, and keeps whatever
+/// frame and modifiers the caller puts on it. The buttons' VoiceOver names and help tags are `addName` and
+/// `removeName`.
 ///
 /// A list that adds by typing (file types, Wi-Fi names) passes `isAddPresented` and a `popover`: + then shows the
 /// popover, anchored to the button, instead of calling an action.
@@ -66,13 +70,17 @@ struct BorderedList<Content: View, AddPopover: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             content
-                .listStyle(.inset(alternatesRowBackgrounds: true))
+                .listStyle(.inset(alternatesRowBackgrounds: false))
             Divider()
             HStack(spacing: 0) {
                 addButton
                 SquareButton(systemImage: "minus", name: removeName, action: remove).disabled(!canRemove)
                 Spacer(minLength: 0)
             }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .frame(maxWidth: .infinity)
+            .background(Color(nsColor: .quaternarySystemFill))
         }
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
         .overlay {

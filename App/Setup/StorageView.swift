@@ -11,11 +11,9 @@ struct StorageView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("Storage", selection: Binding(get: { model.storage.kind }, set: { model.storage.choose($0) })) {
-                ForEach(StorageForm.Kind.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            FillingSegmentedControl(
+                name: "Storage", options: StorageForm.Kind.allCases.map { ($0, $0.title) },
+                selection: Binding(get: { model.storage.kind }, set: { model.storage.choose($0) }))
             .disabled(model.working)
 
             switch model.storage.kind {
@@ -76,30 +74,20 @@ private struct BucketFields: View {
     }
 }
 
-/// A folder or drive on this Mac, chosen with the open panel: its Finder icon and name, and the full path under
-/// them. Whether it is empty or holds a repository is what "Check" finds out (`SetupModel.check`).
+/// A folder or drive on this Mac, chosen with the open panel. Laid out like the other storage pages: a labelled field
+/// (read-only here, showing the chosen path) with Choose… beside it, as Key ID has Show (owner's live check, 24 Nov
+/// 2026: the bare "No folder chosen" line and its far-off button didn't line up with anything). Whether the folder is
+/// empty or holds a repository is what "Check" finds out (`SetupModel.check`).
 private struct FolderFields: View {
     @Bindable var model: SetupModel
 
     var body: some View {
-        let path = model.storage.folderPath
-        HStack(spacing: 10) {
-            if path.isEmpty {
-                Text("No folder chosen").foregroundStyle(.secondary)
-            } else {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: path))
-                    .resizable()
-                    .frame(width: 32, height: 32)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(SourcePaths.lastComponent(path)).lineLimit(1).truncationMode(.middle)
-                    Text(path).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                }
-                .textSelection(.enabled)
+        SetupField(label: "Folder or drive") {
+            HStack(spacing: 8) {
+                ChosenPathField(path: model.storage.folderPath, placeholder: "No folder chosen")
+                Button("Choose…") { choose() }
+                    .disabled(model.working)
             }
-            Spacer(minLength: 8)
-            Button("Choose…") { choose() }
-                .disabled(model.working)
         }
         Text("An empty folder, or one that holds a restic repository.").explanatoryNote()
     }
@@ -174,4 +162,25 @@ private func shown(_ text: String, _ problem: String?) -> String? {
 extension String {
     /// "key ID" → "Key ID".
     var capitalisedFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
+/// A read-only field showing a chosen path: the same bezel and height as the editable fields beside it, selectable so
+/// the path can be copied, and truncated in the middle so both the volume and the folder's name stay visible.
+private struct ChosenPathField: NSViewRepresentable {
+    let path: String
+    let placeholder: String
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        TextFieldSupport.configure(field, title: placeholder)
+        field.isEditable = false
+        field.isSelectable = true
+        field.lineBreakMode = .byTruncatingMiddle
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        field.stringValue = path
+        field.toolTip = path.isEmpty ? nil : path
+    }
 }
