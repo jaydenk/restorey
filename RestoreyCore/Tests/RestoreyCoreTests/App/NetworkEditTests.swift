@@ -98,6 +98,40 @@ struct NetworkEditTests {
         #expect(!edit.isDirty)
     }
 
+    @Test func aRefusedWindowSwitchAndDaysChoiceReadAsSavedAgain() {
+        var settings = Self.saved
+        settings.limitWindow = LimitWindow(days: .weekdays, startMinute: 480, endMinute: 1080)
+        var edit = NetworkEdit(settings: settings)
+        edit.fields.windowEnabled = false
+        edit.fields.windowDays = .weekends
+        edit.didRefuse()
+        #expect(edit.saved == settings)
+        #expect(edit.fields.windowEnabled)
+        #expect(edit.fields.windowDays == .weekdays)
+        #expect(!edit.isDirty)
+    }
+
+    /// The app re-commits when a refused switch flips back (its `onChange` fires). That must find nothing to send,
+    /// so the model can leave the agent's sentence on show: a `.nothing` result never means "the error is stale".
+    @Test func afterARefusalTheFlippedBackFormHasNothingToSend() {
+        var edit = NetworkEdit(settings: Self.saved)
+        edit.fields.skipOnConstrainedNetwork.toggle()
+        edit.didRefuse()
+        #expect(edit.commit() == .nothing)
+    }
+
+    @Test func aRefusalLeavesAnUntouchedGroupAndTheTypedGroupAlone() {
+        var settings = Self.saved
+        settings.limitWindow = LimitWindow(days: .weekdays, startMinute: 480, endMinute: 1080)
+        var edit = NetworkEdit(settings: settings)
+        edit.fields.skipOnConstrainedNetwork.toggle()
+        edit.fields.windowStart = 9 * 60            // typed, to be corrected
+        edit.didRefuse()
+        #expect(edit.fields.skipOnConstrainedNetwork)
+        #expect(edit.fields.windowStart == 9 * 60)
+        #expect(edit.isDirty)
+    }
+
     @Test func aRefusedTypedAmountKeepsWhatWasTyped() {
         var edit = NetworkEdit(settings: Self.saved)
         edit.fields.limitAmount = "99999999999"

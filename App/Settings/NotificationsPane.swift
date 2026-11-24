@@ -29,10 +29,15 @@ struct NotificationsPane: View {
                         Text("Waiting for Restorey’s background process…").foregroundStyle(.secondary)
                     }
                 }
+                // In a grouped form the switch's own label is drawn apart from it, and VoiceOver reads the switch as
+                // "0" (live finding 4), so each is named.
                 Toggle("Backup started", isOn: binding(\.backupStarted))
+                    .accessibilityLabel("Backup started")
                 Toggle("Backup finished", isOn: binding(\.backupFinished))
+                    .accessibilityLabel("Backup finished")
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle("Problems with backups", isOn: binding(\.problems))
+                        .accessibilityLabel("Problems with backups")
                     if !model.shown.problems {
                         Text("When this is off, the menu bar icon still shows a problem, and so does a check-in URL if you’ve set one.")
                             .font(.callout)

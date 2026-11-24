@@ -127,7 +127,8 @@ Settings:
   its bottom edge: + opens a small box for the network's name, − removes the selected names, each applying at once). Adding the first network asks
   for Location permission, which macOS requires before it shows any app the Wi-Fi network's name. Network applies
   changes as you make them (a switch or menu at once, a field when you press Return or leave it), with no Save or
-  Revert; a value Restorey’s background process refuses stays in its field, with the reason beside the form. The
+  Revert; closing Settings or leaving the pane applies a change still being made (a window time, say), and a value
+  Restorey’s background process refuses stays in its field, with the reason beside the form until you next edit. The
   "Now:" line shows what a backup would get, without mentioning saving.
 
 When files exist only in iCloud, not on this Mac, a backup skips them. The plan's Overview then says "iCloud Drive
@@ -503,8 +504,9 @@ when a route asks for another plan.
 **Settings** has **General**, **Notifications** and **Network** (toolbar `RestoreySettingsToolbar`, frame
 `RestoreySettingsWindow`). As Apple's Settings windows do, it has a fixed width (560 points, the widest row being
 Network's limit window; longer text wraps) with the height of the pane showing, no Minimise button and a dimmed Zoom
-button. Closing it never asks a question: Network applies changes as they are made, so only an edit the background
-process refused is dropped with the window.
+button. Closing it never asks a question: Network applies changes as they are made, and closing applies one still
+being made (a window time just changed), so only an edit the background process refused, or one that isn't valid as
+a whole, is dropped with the window.
 
 Esc closes the sheets that have
 only a Done button (exclusions, items marked not for backup, biggest additions, files that couldn't be read) as
@@ -657,8 +659,8 @@ nothing to apply it says so in one line. It counts with the saved plan, so unsav
 #### Network
 
 **Network** (Settings, with a help button at its top right that opens this section) edits the Mac-wide rules (`NetworkEdit` in `RestoreyCore`, held by `NetworkEditModel` for as
-long as the Settings window is open, so going to another pane and back keeps unsaved edits; closing the window drops
-them without asking, since Settings asks no question on close, until Network applies its changes as they are made). Its rows, from the top (the full design is in
+long as the Settings window is open, so going to another pane and back keeps an edit the agent refused; closing the window first applies
+any change still being made, then drops the rest without asking, since Settings asks no question on close). Its rows, from the top (the full design is in
 `docs/superpowers/specs/2026-11-21-upload-limit-design.md`):
 
 - **Upload limit for this Mac**: an amount and a picker of None (the default), KB/s, MB/s or "% of upload speed"

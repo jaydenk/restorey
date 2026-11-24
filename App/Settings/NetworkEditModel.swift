@@ -5,7 +5,7 @@ import RestoreyCore
 /// Settings → Network's edits (`NetworkEdit`, where every decision is made), the save in flight, and the Location
 /// question asked when a Wi-Fi network is first added (UI design §6.3). Changes apply as they are made. Held by the
 /// Settings window (`NetworkEditorSlot`), so going to another section and back keeps an edit the agent refused; it
-/// goes with the window, and nothing asks about it.
+/// goes with the window (after applying what was changed), and nothing asks about it.
 @MainActor
 @Observable
 final class NetworkEditModel {
@@ -176,7 +176,9 @@ final class NetworkEditModel {
         let request: NetworkSettings
         switch edit.commit() {
         case .nothing:
-            saveError = nil
+            // Nothing to send, and nothing here made `saveError`: a refused switch that flips back re-commits to
+            // find nothing, and must leave the agent's sentence on show. Every edit the user makes clears it
+            // (`fields`, `setLimitKind`, `remove`, `addName`), so it never outlives the form it was about.
             return
         case .problem(let problem):
             saveError = problem
@@ -239,6 +241,11 @@ final class NetworkEditorSlot {
         location = LocationAccessState(supervisor: supervisor)
     }
 
-    /// The edits go with the window.
-    func close() { model = nil }
+    /// The window is closing. Leaving it ends editing, as leaving a field does, so what was changed is applied
+    /// first (`commit` sends nothing for a set that isn't valid as a whole, so a half-typed value is dropped). The
+    /// Task holds the model, so it runs to completion after the slot lets go and the window's content is gone.
+    func close() {
+        if let model { Task { await model.commit() } }
+        model = nil
+    }
 }

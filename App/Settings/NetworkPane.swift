@@ -125,6 +125,8 @@ private struct NetworkForm: View {
         .onChange(of: model.fields.windowDays) { commitSoon() }
         // A window time applies when editing ends (leaving the picker, or Return), not as each digit is typed.
         .onChange(of: timeFocus) { old, new in if old != nil, old != new { commitSoon() } }
+        // Leaving the pane ends editing too: a picker still focused hasn't reported the change.
+        .onDisappear { commitSoon() }
     }
 
     private func commitSoon() { Task { await model.commit() } }

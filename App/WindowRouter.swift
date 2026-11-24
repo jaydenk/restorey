@@ -428,7 +428,7 @@ final class WindowRouter: NSObject, NSWindowDelegate {
             planEditorSlot = nil
             mainToolbar = nil
         case .settings:
-            // Network edits not yet saved go with the window (its Save bar stays until changes apply as made).
+            // Closing ends editing: Network applies what was changed (a time still being edited) before the model goes.
             networkEditorSlot?.close()
             networkEditorSlot = nil
             settingsToolbar = nil
